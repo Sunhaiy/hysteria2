@@ -1,0 +1,13 @@
+{
+  "name": "@hysteria/ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ui-preset": "./src/ui-preset.ts",
+    "./styles/base-themes.scss": "./styles/base-themes.scss",
+    "./styles/accent-themes.scss": "./styles/accent-themes.scss",
+    "./styles/themes.scss": "./styles/themes.scss"
+  }
+}

@@ -1,0 +1,31 @@
+listen: :59630
+
+tls:
+  cert: /etc/hysteria/cert.crt
+  key: /etc/hysteria/private.key
+
+quic:
+  initStreamReceiveWindow: 16777216
+  maxStreamReceiveWindow: 16777216
+  initConnReceiveWindow: 33554432
+  maxConnReceiveWindow: 33554432
+
+bandwidth:
+  up: 40 mbps
+  down: 240 mbps
+ignoreClientBandwidth: true
+
+auth:
+  type: http
+  http:
+    url: http://127.0.0.1:4000/integrations/hysteria/auth?nodeId=node_hk_pro
+
+trafficStats:
+  listen: 127.0.0.1:9998
+  secret: replace-with-shared-stats-secret
+
+masquerade:
+  type: proxy
+  proxy:
+    url: https://bing.com
+    rewriteHost: true

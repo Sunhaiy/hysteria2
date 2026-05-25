@@ -1,0 +1,38 @@
+@use "./base-themes.scss";
+@use "./accent-themes.scss";
+
+:root {
+  --font-body: "Inter Variable", "Inter", sans-serif;
+  --font-mono: "Roboto Mono Variable", "Roboto Mono", monospace;
+  --text-body: 12px;
+  --text-tiny: 10px;
+  --line-body: 16px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --header-height: 44px;
+  --toolbar-height: 36px;
+  --control-height: 32px;
+  --semantic-get: #22c55e;
+  --semantic-post: #f59e0b;
+  --semantic-put: #3b82f6;
+  --semantic-patch: #8b5cf6;
+  --semantic-delete: #ef4444;
+  --semantic-head: #14b8a6;
+  --semantic-options: #6366f1;
+  --status-info: #3b82f6;
+  --status-success: #22c55e;
+  --status-redirect: #f59e0b;
+  --status-critical: #ef4444;
+  --status-server: #f43f5e;
+  --status-missing: #64748b;
+  --accent-soft: color-mix(in srgb, var(--accent-500) 15%, transparent);
+  --accent-ghost: color-mix(in srgb, var(--accent-500) 9%, transparent);
+  --focus-ring: 0 0 0 1px color-mix(in srgb, var(--accent-500) 55%, transparent);
+}

@@ -1,0 +1,433 @@
+import {
+  IsDateString,
+  IsBoolean,
+  IsEmail,
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
+
+export class LoginDto {
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  password!: string;
+}
+
+export class CreateUserDto {
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  displayName!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  password!: string;
+
+  @IsOptional()
+  @IsIn(['admin', 'member'])
+  role?: 'admin' | 'member';
+
+  @IsOptional()
+  @IsIn(['active', 'suspended', 'banned'])
+  status?: 'active' | 'suspended' | 'banned';
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
+  @IsOptional()
+  @IsString()
+  initialPlanId?: string;
+
+  @IsOptional()
+  @IsString()
+  initialNodeGroupId?: string;
+}
+
+export class UpdateUserDto {
+  @IsOptional()
+  @IsString()
+  displayName?: string;
+
+  @IsOptional()
+  @IsString()
+  password?: string;
+
+  @IsOptional()
+  @IsIn(['admin', 'member'])
+  role?: 'admin' | 'member';
+
+  @IsOptional()
+  @IsIn(['active', 'suspended', 'banned'])
+  status?: 'active' | 'suspended' | 'banned';
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+export class CreatePlanDto {
+  @IsString()
+  slug!: string;
+
+  @IsString()
+  name!: string;
+
+  @IsString()
+  description!: string;
+
+  @IsBoolean()
+  active!: boolean;
+
+  @IsNumber()
+  @Min(1)
+  trafficBytes!: number;
+
+  @IsInt()
+  @Min(1)
+  durationDays!: number;
+
+  @IsInt()
+  @Min(1)
+  speedUpMbps!: number;
+
+  @IsInt()
+  @Min(1)
+  speedDownMbps!: number;
+
+  @IsInt()
+  @Min(1)
+  deviceLimit!: number;
+
+  @IsInt()
+  @Min(0)
+  priceCents!: number;
+
+  @IsString()
+  accent!: string;
+}
+
+export class UpdatePlanDto {
+  @IsOptional()
+  @IsString()
+  slug?: string;
+
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  trafficBytes?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  durationDays?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  speedUpMbps?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  speedDownMbps?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  deviceLimit?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  priceCents?: number;
+
+  @IsOptional()
+  @IsString()
+  accent?: string;
+}
+
+export class CreateSubscriptionDto {
+  @IsString()
+  userId!: string;
+
+  @IsString()
+  planId!: string;
+
+  @IsOptional()
+  @IsString()
+  nodeGroupId?: string;
+
+  @IsOptional()
+  @IsIn(['active', 'expired', 'paused', 'canceled'])
+  status?: 'active' | 'expired' | 'paused' | 'canceled';
+
+  @IsOptional()
+  @IsDateString()
+  startsAt?: string;
+}
+
+export class UpdateSubscriptionDto {
+  @IsOptional()
+  @IsIn(['active', 'expired', 'paused', 'canceled'])
+  status?: 'active' | 'expired' | 'paused' | 'canceled';
+
+  @IsOptional()
+  @IsDateString()
+  endsAt?: string;
+
+  @IsOptional()
+  @IsString()
+  nodeGroupId?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  includedTrafficBytes?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  bonusTrafficBytes?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  consumedTrafficBytes?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  speedUpMbpsSnapshot?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  speedDownMbpsSnapshot?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  deviceLimitSnapshot?: number;
+}
+
+export class CreateNodeDto {
+  @IsString()
+  nodeGroupId!: string;
+
+  @IsString()
+  label!: string;
+
+  @IsString()
+  hostname!: string;
+
+  @IsInt()
+  @Min(1)
+  port!: number;
+
+  @IsOptional()
+  @IsString()
+  obfsPassword?: string;
+
+  @IsOptional()
+  @IsString()
+  sni?: string;
+
+  @IsOptional()
+  @IsString()
+  pinSHA256?: string;
+
+  @IsBoolean()
+  allowInsecureTls!: boolean;
+
+  @IsString()
+  trafficApiBaseUrl!: string;
+
+  @IsString()
+  trafficApiSecret!: string;
+
+  @IsBoolean()
+  active!: boolean;
+
+  @IsInt()
+  @Min(1)
+  speedUpMbps!: number;
+
+  @IsInt()
+  @Min(1)
+  speedDownMbps!: number;
+}
+
+export class UpdateNodeDto {
+  @IsOptional()
+  @IsString()
+  nodeGroupId?: string;
+
+  @IsOptional()
+  @IsString()
+  label?: string;
+
+  @IsOptional()
+  @IsString()
+  hostname?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  port?: number;
+
+  @IsOptional()
+  @IsString()
+  obfsPassword?: string;
+
+  @IsOptional()
+  @IsString()
+  sni?: string;
+
+  @IsOptional()
+  @IsString()
+  pinSHA256?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  allowInsecureTls?: boolean;
+
+  @IsOptional()
+  @IsString()
+  trafficApiBaseUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  trafficApiSecret?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  speedUpMbps?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  speedDownMbps?: number;
+}
+
+export class ManualCreditDto {
+  @IsString()
+  userId!: string;
+
+  @IsIn(['renewal', 'traffic_pack', 'manual_credit'])
+  kind!: 'renewal' | 'traffic_pack' | 'manual_credit';
+
+  @IsInt()
+  @Min(0)
+  amountCents!: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  durationDays?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  trafficBytes?: number;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+export class CreateNodeGroupDto {
+  @IsString()
+  slug!: string;
+
+  @IsString()
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+}
+
+export class UpdateNodeGroupDto {
+  @IsOptional()
+  @IsString()
+  slug?: string;
+
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+}
+
+export class CreatePlanBindingDto {
+  @IsString()
+  planId!: string;
+
+  @IsString()
+  nodeGroupId!: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  priority?: number;
+}
+
+export class UpdatePlanBindingDto {
+  @IsOptional()
+  @IsString()
+  nodeGroupId?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  priority?: number;
+}
+
+export class HysteriaAuthDto {
+  @IsString()
+  addr!: string;
+
+  @IsString()
+  auth!: string;
+
+  @IsInt()
+  @Min(0)
+  tx!: number;
+}

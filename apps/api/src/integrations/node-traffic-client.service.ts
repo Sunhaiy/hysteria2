@@ -1,0 +1,88 @@
+import { Injectable } from '@nestjs/common';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
+
+interface TrafficNode {
+  id: string;
+  trafficApiBaseUrl: string;
+  trafficApiSecret: string;
+}
+
+@Injectable()
+export class NodeTrafficClientService {
+  constructor(private readonly httpService: HttpService) {}
+
+  async fetchTraffic(node: TrafficNode) {
+    if (node.trafficApiBaseUrl.startsWith('mock://')) {
+      if (node.id === 'node_hk_core') {
+        return { usr_lin: { tx: 128 * 1024 * 1024, rx: 512 * 1024 * 1024 } };
+      }
+      return {};
+    }
+
+    const { data } = await firstValueFrom(
+      this.httpService.get<Record<string, { tx: number; rx: number }>>(
+        `${node.trafficApiBaseUrl}/traffic`,
+        {
+          headers: { Authorization: node.trafficApiSecret },
+        },
+      ),
+    );
+    return data;
+  }
+
+  async clearTraffic(node: TrafficNode) {
+    if (node.trafficApiBaseUrl.startsWith('mock://')) {
+      return {};
+    }
+
+    const response = await firstValueFrom(
+      this.httpService.get<Record<string, { tx: number; rx: number }>>(
+        `${node.trafficApiBaseUrl}/traffic?clear=1`,
+        {
+          headers: { Authorization: node.trafficApiSecret },
+        },
+      ),
+    );
+    return response.data;
+  }
+
+  async fetchOnline(node: TrafficNode) {
+    if (node.trafficApiBaseUrl.startsWith('mock://')) {
+      if (node.id === 'node_hk_core') {
+        return { usr_lin: 2 };
+      }
+      if (node.id === 'node_hk_pro') {
+        return { usr_zhou: 1 };
+      }
+      return {};
+    }
+
+    const response = await firstValueFrom(
+      this.httpService.get<Record<string, number>>(
+        `${node.trafficApiBaseUrl}/online`,
+        {
+          headers: { Authorization: node.trafficApiSecret },
+        },
+      ),
+    );
+    return response.data;
+  }
+
+  async kickUsers(node: TrafficNode, userIds: string[]) {
+    if (node.trafficApiBaseUrl.startsWith('mock://')) {
+      return { kicked: userIds.length };
+    }
+
+    const response = await firstValueFrom(
+      this.httpService.post<{ kicked?: number }>(
+        `${node.trafficApiBaseUrl}/kick`,
+        userIds,
+        {
+          headers: { Authorization: node.trafficApiSecret },
+        },
+      ),
+    );
+    return response.data;
+  }
+}

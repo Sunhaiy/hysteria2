@@ -1,0 +1,244 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  MEMBER
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  PAUSED
+  CANCELED
+}
+
+enum TrafficPackStatus {
+  ACTIVE
+  EXHAUSTED
+  EXPIRED
+}
+
+enum OrderStatus {
+  PENDING
+  APPLIED
+  VOID
+}
+
+enum OrderKind {
+  RENEWAL
+  TRAFFIC_PACK
+  MANUAL_CREDIT
+}
+
+model User {
+  id              String           @id @default(cuid())
+  email           String           @unique
+  displayName     String
+  passwordHash    String
+  role            UserRole         @default(MEMBER)
+  status          UserStatus       @default(ACTIVE)
+  notes           String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  accessTokens    AccessToken[]
+  subscriptions   Subscription[]
+  trafficPacks    TrafficPack[]
+  manualOrders    ManualOrder[]    @relation("ManualOrderTargetUser")
+  processedOrders ManualOrder[]    @relation("ManualOrderProcessedBy")
+  authEvents      AuthEvent[]
+  usageRollups    UsageRollup[]
+  onlineSnapshots OnlineSnapshot[]
+}
+
+model AccessToken {
+  id         String      @id @default(cuid())
+  userId     String
+  label      String
+  token      String      @unique
+  createdAt  DateTime    @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  authEvents AuthEvent[]
+}
+
+model Plan {
+  id            String         @id @default(cuid())
+  slug          String         @unique
+  name          String
+  description   String?
+  active        Boolean        @default(true)
+  trafficBytes  BigInt
+  durationDays  Int
+  speedUpMbps   Int
+  speedDownMbps Int
+  deviceLimit   Int
+  priceCents    Int
+  accent        String         @default("green")
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  subscriptions Subscription[]
+  bindings      PlanBinding[]
+}
+
+model NodeGroup {
+  id            String         @id @default(cuid())
+  slug          String         @unique
+  name          String
+  description   String?
+  active        Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  nodes         Node[]
+  planBindings  PlanBinding[]
+  subscriptions Subscription[]
+}
+
+model Node {
+  id                String           @id @default(cuid())
+  nodeGroupId       String
+  label             String           @unique
+  hostname          String
+  port              Int
+  obfsPassword      String?
+  sni               String?
+  pinSHA256         String?
+  allowInsecureTls  Boolean          @default(false)
+  trafficApiBaseUrl String
+  trafficApiSecret  String
+  active            Boolean          @default(true)
+  speedUpMbps       Int
+  speedDownMbps     Int
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  nodeGroup         NodeGroup        @relation(fields: [nodeGroupId], references: [id], onDelete: Cascade)
+  authEvents        AuthEvent[]
+  usageRollups      UsageRollup[]
+  onlineSnapshots   OnlineSnapshot[]
+
+  @@unique([hostname, port])
+}
+
+model PlanBinding {
+  id          String    @id @default(cuid())
+  planId      String
+  nodeGroupId String
+  priority    Int       @default(0)
+  createdAt   DateTime  @default(now())
+  plan        Plan      @relation(fields: [planId], references: [id], onDelete: Cascade)
+  nodeGroup   NodeGroup @relation(fields: [nodeGroupId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, nodeGroupId])
+}
+
+model Subscription {
+  id                    String             @id @default(cuid())
+  userId                String
+  planId                String
+  nodeGroupId           String
+  status                SubscriptionStatus @default(ACTIVE)
+  startsAt              DateTime
+  endsAt                DateTime
+  includedTrafficBytes  BigInt
+  bonusTrafficBytes     BigInt             @default(0)
+  consumedTrafficBytes  BigInt             @default(0)
+  speedUpMbpsSnapshot   Int
+  speedDownMbpsSnapshot Int
+  deviceLimitSnapshot   Int
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  user                  User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan                  Plan               @relation(fields: [planId], references: [id], onDelete: Restrict)
+  nodeGroup             NodeGroup          @relation(fields: [nodeGroupId], references: [id], onDelete: Restrict)
+  trafficPacks          TrafficPack[]
+  usageRollups          UsageRollup[]
+}
+
+model TrafficPack {
+  id             String            @id @default(cuid())
+  userId         String
+  subscriptionId String
+  label          String
+  totalBytes     BigInt
+  remainingBytes BigInt
+  status         TrafficPackStatus @default(ACTIVE)
+  expiresAt      DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription   Subscription      @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+}
+
+model ManualOrder {
+  id            String      @id @default(cuid())
+  userId        String
+  processedById String?
+  status        OrderStatus @default(PENDING)
+  kind          OrderKind
+  amountCents   Int
+  durationDays  Int?
+  trafficBytes  BigInt?
+  note          String?
+  createdAt     DateTime    @default(now())
+  processedAt   DateTime?
+  user          User        @relation("ManualOrderTargetUser", fields: [userId], references: [id], onDelete: Cascade)
+  processedBy   User?       @relation("ManualOrderProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
+}
+
+model AuthEvent {
+  id                    String       @id @default(cuid())
+  userId                String?
+  accessTokenId         String?
+  nodeId                String?
+  granted               Boolean
+  reason                String
+  remoteAddr            String?
+  requestedTxBps        Int?
+  submittedTokenPreview String?
+  createdAt             DateTime     @default(now())
+  user                  User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  accessToken           AccessToken? @relation(fields: [accessTokenId], references: [id], onDelete: SetNull)
+  node                  Node?        @relation(fields: [nodeId], references: [id], onDelete: SetNull)
+}
+
+model UsageRollup {
+  id             String       @id @default(cuid())
+  userId         String
+  subscriptionId String
+  nodeId         String
+  bucketStart    DateTime
+  txBytes        BigInt
+  rxBytes        BigInt
+  source         String
+  createdAt      DateTime     @default(now())
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  node           Node         @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([userId, bucketStart])
+}
+
+model OnlineSnapshot {
+  id                String   @id @default(cuid())
+  userId            String
+  nodeId            String
+  concurrentClients Int
+  capturedAt        DateTime @default(now())
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  node              Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([userId, capturedAt])
+}
