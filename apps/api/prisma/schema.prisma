@@ -43,6 +43,18 @@ enum OrderKind {
   MANUAL_CREDIT
 }
 
+enum RedemptionCodeKind {
+  PLAN
+  TRAFFIC_PACK
+}
+
+enum RedemptionCodeStatus {
+  ACTIVE
+  REDEEMED
+  VOID
+  EXPIRED
+}
+
 model User {
   id              String           @id @default(cuid())
   email           String           @unique
@@ -58,6 +70,8 @@ model User {
   trafficPacks    TrafficPack[]
   manualOrders    ManualOrder[]    @relation("ManualOrderTargetUser")
   processedOrders ManualOrder[]    @relation("ManualOrderProcessedBy")
+  createdCodes    RedemptionCode[] @relation("RedemptionCodeCreatedBy")
+  redeemedCodes   RedemptionCode[] @relation("RedemptionCodeRedeemedBy")
   authEvents      AuthEvent[]
   usageRollups    UsageRollup[]
   onlineSnapshots OnlineSnapshot[]
@@ -92,6 +106,8 @@ model Plan {
   updatedAt     DateTime       @updatedAt
   subscriptions Subscription[]
   bindings      PlanBinding[]
+  manualOrders  ManualOrder[]
+  redemptionCodes RedemptionCode[]
 }
 
 model NodeGroup {
@@ -186,6 +202,7 @@ model ManualOrder {
   id            String      @id @default(cuid())
   userId        String
   processedById String?
+  planId        String?
   status        OrderStatus @default(PENDING)
   kind          OrderKind
   amountCents   Int
@@ -196,6 +213,30 @@ model ManualOrder {
   processedAt   DateTime?
   user          User        @relation("ManualOrderTargetUser", fields: [userId], references: [id], onDelete: Cascade)
   processedBy   User?       @relation("ManualOrderProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
+  plan          Plan?       @relation(fields: [planId], references: [id], onDelete: SetNull)
+}
+
+model RedemptionCode {
+  id           String               @id @default(cuid())
+  code         String               @unique
+  label        String
+  kind         RedemptionCodeKind
+  status       RedemptionCodeStatus @default(ACTIVE)
+  planId       String?
+  trafficBytes BigInt?
+  amountCents  Int                  @default(0)
+  note         String?
+  expiresAt    DateTime?
+  createdById  String?
+  redeemedById String?
+  redeemedAt   DateTime?
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  plan         Plan?                @relation(fields: [planId], references: [id], onDelete: SetNull)
+  createdBy    User?                @relation("RedemptionCodeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  redeemedBy   User?                @relation("RedemptionCodeRedeemedBy", fields: [redeemedById], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
 }
 
 model AuthEvent {

@@ -10,6 +10,8 @@ import {
   OrderStatus,
   Plan,
   Prisma,
+  RedemptionCodeKind,
+  RedemptionCodeStatus,
   SubscriptionStatus,
   TrafficPackStatus,
   UserRole,
@@ -58,6 +60,15 @@ type OrderWithRelations = Prisma.ManualOrderGetPayload<{
   include: {
     user: true;
     processedBy: true;
+    plan: true;
+  };
+}>;
+
+type RedemptionCodeWithRelations = Prisma.RedemptionCodeGetPayload<{
+  include: {
+    plan: true;
+    createdBy: true;
+    redeemedBy: true;
   };
 }>;
 
@@ -173,7 +184,10 @@ export class ControlPlaneStoreService {
               nodeGroupId,
               status: SubscriptionStatus.ACTIVE,
               startsAt,
-              endsAt: this.buildSubscriptionEndDate(startsAt, plan.durationDays),
+              endsAt: this.buildSubscriptionEndDate(
+                startsAt,
+                plan.durationDays,
+              ),
               includedTrafficBytes: plan.trafficBytes,
               bonusTrafficBytes: BigInt(0),
               consumedTrafficBytes: BigInt(0),
@@ -249,6 +263,35 @@ export class ControlPlaneStoreService {
         },
       },
       orderBy: { createdAt: 'desc' },
+    });
+
+    return plans.map((plan) => this.presentPlan(plan));
+  }
+
+  async getPurchasablePlans() {
+    const plans = await this.prisma.plan.findMany({
+      where: {
+        active: true,
+        bindings: {
+          some: {
+            nodeGroup: {
+              active: true,
+            },
+          },
+        },
+      },
+      include: {
+        bindings: {
+          where: {
+            nodeGroup: {
+              active: true,
+            },
+          },
+          include: { nodeGroup: true },
+          orderBy: { priority: 'asc' },
+        },
+      },
+      orderBy: [{ priceCents: 'asc' }, { createdAt: 'asc' }],
     });
 
     return plans.map((plan) => this.presentPlan(plan));
@@ -563,8 +606,8 @@ export class ControlPlaneStoreService {
     const { plan, nodeGroupId } = await this.resolvePlanProvisioning(
       this.prisma,
       {
-      planId: input.planId,
-      requestedNodeGroupId: input.nodeGroupId,
+        planId: input.planId,
+        requestedNodeGroupId: input.nodeGroupId,
       },
     );
 
@@ -910,89 +953,206 @@ export class ControlPlaneStoreService {
 
   async createManualOrder(input: {
     userId: string;
-    processedById: string;
+    processedById?: string;
     kind: 'renewal' | 'traffic_pack' | 'manual_credit';
+    status?: 'pending' | 'applied';
+    planId?: string;
     amountCents: number;
     durationDays?: number;
     trafficBytes?: number;
     note?: string;
   }) {
     await this.mustGetUserRecord(input.userId);
-    await this.mustGetUserRecord(input.processedById);
 
-    const subscription = await this.prisma.subscription.findFirst({
-      where: {
-        userId: input.userId,
-        status: {
-          in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED],
-        },
-      },
-      orderBy: { endsAt: 'desc' },
-    });
+    if (input.processedById) {
+      await this.mustGetUserRecord(input.processedById);
+    }
 
-    if ((input.durationDays || input.trafficBytes) && !subscription) {
+    if (input.planId) {
+      await this.mustGetPlanRecord(input.planId);
+    }
+
+    const requestedStatus = input.status ?? 'applied';
+    const timestamp = new Date();
+
+    if (input.kind === 'renewal' && !input.planId && !input.durationDays) {
       throw new BadRequestException(
-        'Manual credit requires an existing active or paused subscription',
+        'Renewal order requires a plan or duration days',
       );
     }
 
-    const timestamp = new Date();
+    if (
+      input.kind === 'traffic_pack' &&
+      (input.trafficBytes === undefined || input.trafficBytes <= 0)
+    ) {
+      throw new BadRequestException(
+        'Traffic pack order requires traffic bytes',
+      );
+    }
+
+    if (requestedStatus === 'applied' && !input.processedById) {
+      throw new BadRequestException('Applied order requires processedById');
+    }
 
     try {
       const order = await this.prisma.$transaction(async (tx) => {
+        const plan = input.planId
+          ? await tx.plan.findUnique({
+              where: { id: input.planId },
+            })
+          : null;
+
         const createdOrder = await tx.manualOrder.create({
           data: {
             userId: input.userId,
-            processedById: input.processedById,
-            status: OrderStatus.APPLIED,
+            processedById:
+              requestedStatus === 'applied' ? input.processedById : undefined,
+            planId: input.planId,
+            status:
+              requestedStatus === 'applied'
+                ? OrderStatus.APPLIED
+                : OrderStatus.PENDING,
             kind: this.toDbOrderKind(input.kind),
             amountCents: input.amountCents,
-            durationDays: input.durationDays,
+            durationDays:
+              input.durationDays ?? (plan ? plan.durationDays : undefined),
             trafficBytes:
               input.trafficBytes !== undefined
                 ? BigInt(input.trafficBytes)
                 : undefined,
             note: input.note,
-            processedAt: timestamp,
+            processedAt: requestedStatus === 'applied' ? timestamp : undefined,
           },
           include: {
             user: true,
             processedBy: true,
+            plan: true,
           },
         });
 
-        if (subscription) {
-          if (input.durationDays) {
-            const extensionBase =
-              subscription.endsAt.getTime() > timestamp.getTime()
-                ? new Date(subscription.endsAt)
-                : new Date(timestamp);
-            extensionBase.setUTCDate(
-              extensionBase.getUTCDate() + input.durationDays,
-            );
-
-            await tx.subscription.update({
-              where: { id: subscription.id },
-              data: { endsAt: extensionBase },
-            });
-          }
-
-          if (input.trafficBytes) {
-            await tx.trafficPack.create({
-              data: {
-                userId: subscription.userId,
-                subscriptionId: subscription.id,
-                label: input.note || 'Manual top-up',
-                totalBytes: BigInt(input.trafficBytes),
-                remainingBytes: BigInt(input.trafficBytes),
-                status: TrafficPackStatus.ACTIVE,
-                expiresAt: subscription.endsAt,
-              },
-            });
-          }
+        if (requestedStatus === 'applied') {
+          await this.applyManualOrderEffects(tx, createdOrder, timestamp);
         }
 
         return createdOrder;
+      });
+
+      return this.presentManualOrder(order);
+    } catch (error) {
+      this.handlePrismaError(error);
+    }
+  }
+
+  async createPlanOrderRequest(input: {
+    userId: string;
+    planId: string;
+    note?: string;
+  }) {
+    const user = await this.mustGetUserRecord(input.userId);
+    const plan = await this.mustGetPlanRecord(input.planId);
+
+    if (!plan.active) {
+      throw new BadRequestException('Selected plan is not active');
+    }
+
+    await this.resolvePlanProvisioning(this.prisma, {
+      planId: input.planId,
+    });
+
+    const existingPending = await this.prisma.manualOrder.findFirst({
+      where: {
+        userId: input.userId,
+        status: OrderStatus.PENDING,
+        kind: OrderKind.RENEWAL,
+      },
+    });
+
+    if (existingPending) {
+      throw new ConflictException(
+        'User already has a pending plan order awaiting processing',
+      );
+    }
+
+    try {
+      const order = await this.prisma.manualOrder.create({
+        data: {
+          userId: input.userId,
+          planId: plan.id,
+          status: OrderStatus.PENDING,
+          kind: OrderKind.RENEWAL,
+          amountCents: plan.priceCents,
+          durationDays: plan.durationDays,
+          note:
+            input.note?.trim() ||
+            `Plan request for ${plan.name} by ${user.email}`,
+        },
+        include: {
+          user: true,
+          processedBy: true,
+          plan: true,
+        },
+      });
+
+      return this.presentManualOrder(order);
+    } catch (error) {
+      this.handlePrismaError(error);
+    }
+  }
+
+  async patchManualOrder(
+    orderId: string,
+    input: {
+      status?: 'applied' | 'void';
+      processedById: string;
+    },
+  ) {
+    await this.mustGetUserRecord(input.processedById);
+
+    const current = await this.prisma.manualOrder.findUnique({
+      where: { id: orderId },
+      include: {
+        user: true,
+        processedBy: true,
+        plan: true,
+      },
+    });
+
+    if (!current) {
+      throw new NotFoundException(`Unknown manual order: ${orderId}`);
+    }
+
+    if (current.status !== OrderStatus.PENDING) {
+      throw new BadRequestException('Only pending orders can be updated');
+    }
+
+    if (!input.status) {
+      return this.presentManualOrder(current);
+    }
+
+    const processedAt = new Date();
+
+    try {
+      const order = await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.manualOrder.update({
+          where: { id: orderId },
+          data: {
+            processedById: input.processedById,
+            status:
+              input.status === 'void' ? OrderStatus.VOID : OrderStatus.APPLIED,
+            processedAt,
+          },
+          include: {
+            user: true,
+            processedBy: true,
+            plan: true,
+          },
+        });
+
+        if (input.status === 'applied') {
+          await this.applyManualOrderEffects(tx, updated, processedAt);
+        }
+
+        return updated;
       });
 
       return this.presentManualOrder(order);
@@ -1359,6 +1519,7 @@ export class ControlPlaneStoreService {
       include: {
         user: true,
         processedBy: true,
+        plan: true,
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -1372,11 +1533,255 @@ export class ControlPlaneStoreService {
       include: {
         user: true,
         processedBy: true,
+        plan: true,
       },
       orderBy: { createdAt: 'desc' },
     });
 
     return orders.map((order) => this.presentManualOrder(order));
+  }
+
+  async getRedemptionCodes() {
+    await this.expireRedemptionCodes();
+
+    const codes = await this.prisma.redemptionCode.findMany({
+      include: {
+        plan: true,
+        createdBy: true,
+        redeemedBy: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return codes.map((code) => this.presentRedemptionCode(code));
+  }
+
+  async createRedemptionCode(input: {
+    label: string;
+    kind: 'plan' | 'traffic_pack';
+    planId?: string;
+    trafficBytes?: number;
+    amountCents?: number;
+    note?: string;
+    expiresAt?: string;
+    createdById?: string;
+  }) {
+    if (input.kind === 'plan' && !input.planId) {
+      throw new BadRequestException('Plan redemption code requires a plan');
+    }
+
+    if (input.kind === 'traffic_pack' && !input.trafficBytes) {
+      throw new BadRequestException(
+        'Traffic pack redemption code requires traffic bytes',
+      );
+    }
+
+    if (input.planId) {
+      await this.mustGetPlanRecord(input.planId);
+    }
+
+    if (input.createdById) {
+      await this.mustGetUserRecord(input.createdById);
+    }
+
+    const expiresAt = input.expiresAt ? new Date(input.expiresAt) : undefined;
+    if (expiresAt && Number.isNaN(expiresAt.getTime())) {
+      throw new BadRequestException('Invalid expiresAt');
+    }
+
+    try {
+      const code = await this.prisma.redemptionCode.create({
+        data: {
+          code: await this.generateUniqueRedemptionCode(),
+          label: input.label,
+          kind: this.toDbRedemptionCodeKind(input.kind),
+          planId: input.planId,
+          trafficBytes:
+            input.trafficBytes !== undefined
+              ? BigInt(input.trafficBytes)
+              : undefined,
+          amountCents: input.amountCents ?? 0,
+          note: input.note,
+          expiresAt,
+          createdById: input.createdById,
+        },
+        include: {
+          plan: true,
+          createdBy: true,
+          redeemedBy: true,
+        },
+      });
+
+      return this.presentRedemptionCode(code);
+    } catch (error) {
+      this.handlePrismaError(error);
+    }
+  }
+
+  async patchRedemptionCode(
+    codeId: string,
+    input: {
+      status?: 'active' | 'void';
+    },
+  ) {
+    const current = await this.prisma.redemptionCode.findUnique({
+      where: { id: codeId },
+      include: {
+        plan: true,
+        createdBy: true,
+        redeemedBy: true,
+      },
+    });
+
+    if (!current) {
+      throw new NotFoundException(`Unknown redemption code: ${codeId}`);
+    }
+
+    if (
+      current.status === RedemptionCodeStatus.REDEEMED &&
+      input.status &&
+      input.status !== 'void'
+    ) {
+      throw new BadRequestException('Redeemed code cannot be reactivated');
+    }
+
+    if (
+      current.status === RedemptionCodeStatus.EXPIRED &&
+      input.status &&
+      input.status !== 'void'
+    ) {
+      throw new BadRequestException('Expired code cannot be reactivated');
+    }
+
+    try {
+      const updated = await this.prisma.redemptionCode.update({
+        where: { id: codeId },
+        data: this.withDefinedValues({
+          status: input.status
+            ? this.toDbRedemptionCodeStatus(input.status)
+            : undefined,
+        }),
+        include: {
+          plan: true,
+          createdBy: true,
+          redeemedBy: true,
+        },
+      });
+
+      return this.presentRedemptionCode(updated);
+    } catch (error) {
+      this.handlePrismaError(error);
+    }
+  }
+
+  async redeemRedemptionCode(userId: string, rawCode: string) {
+    await this.mustGetUserRecord(userId);
+    await this.expireOverdueSubscriptions();
+    await this.expireTrafficPacks();
+    await this.expireRedemptionCodes();
+
+    const codeValue = this.normalizeRedemptionCode(rawCode);
+    const existing = await this.prisma.redemptionCode.findUnique({
+      where: { code: codeValue },
+      include: {
+        plan: true,
+        createdBy: true,
+        redeemedBy: true,
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('兑换码不存在');
+    }
+
+    if (existing.status === RedemptionCodeStatus.REDEEMED) {
+      throw new BadRequestException('兑换码已被使用');
+    }
+
+    if (existing.status === RedemptionCodeStatus.VOID) {
+      throw new BadRequestException('兑换码已作废');
+    }
+
+    if (existing.status === RedemptionCodeStatus.EXPIRED) {
+      throw new BadRequestException('兑换码已过期');
+    }
+
+    if (existing.expiresAt && existing.expiresAt.getTime() <= Date.now()) {
+      await this.prisma.redemptionCode.update({
+        where: { id: existing.id },
+        data: { status: RedemptionCodeStatus.EXPIRED },
+      });
+      throw new BadRequestException('兑换码已过期');
+    }
+
+    const timestamp = new Date();
+
+    try {
+      const result = await this.prisma.$transaction(async (tx) => {
+        const code = await tx.redemptionCode.findUnique({
+          where: { id: existing.id },
+          include: {
+            plan: true,
+            createdBy: true,
+            redeemedBy: true,
+          },
+        });
+
+        if (!code) {
+          throw new NotFoundException('兑换码不存在');
+        }
+
+        if (code.status !== RedemptionCodeStatus.ACTIVE) {
+          throw new BadRequestException('兑换码当前不可使用');
+        }
+
+        const openSubscription = await this.findOpenSubscriptionForUser(
+          tx,
+          userId,
+        );
+
+        const order =
+          code.kind === RedemptionCodeKind.PLAN
+            ? await this.applyPlanRedemptionCode(tx, {
+                userId,
+                code,
+                openSubscription,
+                redeemedAt: timestamp,
+              })
+            : await this.applyTrafficPackRedemptionCode(tx, {
+                userId,
+                code,
+                openSubscription,
+                redeemedAt: timestamp,
+              });
+
+        const redeemedCode = await tx.redemptionCode.update({
+          where: { id: code.id },
+          data: {
+            status: RedemptionCodeStatus.REDEEMED,
+            redeemedById: userId,
+            redeemedAt: timestamp,
+          },
+          include: {
+            plan: true,
+            createdBy: true,
+            redeemedBy: true,
+          },
+        });
+
+        return {
+          code: redeemedCode,
+          order,
+        };
+      });
+
+      return {
+        code: this.presentRedemptionCode(result.code),
+        order: this.presentManualOrder(result.order),
+      };
+    } catch (error) {
+      this.handlePrismaError(error);
+    }
   }
 
   async getAuthEvents(limit = 20) {
@@ -1470,6 +1875,268 @@ export class ControlPlaneStoreService {
 
   humanizeBytes(bytes: number) {
     return `${(bytes / bytesInGiB).toFixed(1)} GB`;
+  }
+
+  private async applyPlanRedemptionCode(
+    tx: Prisma.TransactionClient,
+    input: {
+      userId: string;
+      code: RedemptionCodeWithRelations;
+      openSubscription: Prisma.SubscriptionGetPayload<object> | null;
+      redeemedAt: Date;
+    },
+  ) {
+    if (!input.code.planId) {
+      throw new BadRequestException('Plan redemption code is missing a plan');
+    }
+
+    const plan = await this.mustGetPlanRecord(input.code.planId);
+
+    const order = await tx.manualOrder.create({
+      data: {
+        userId: input.userId,
+        planId: plan.id,
+        status: OrderStatus.APPLIED,
+        kind: OrderKind.RENEWAL,
+        amountCents: input.code.amountCents,
+        durationDays: plan.durationDays,
+        note: input.code.note || `Redeemed ${input.code.code}`,
+        processedAt: input.redeemedAt,
+      },
+      include: {
+        user: true,
+        processedBy: true,
+        plan: true,
+      },
+    });
+
+    await this.grantPlanEntitlement(tx, {
+      userId: input.userId,
+      planId: plan.id,
+      grantedAt: input.redeemedAt,
+      openSubscription: input.openSubscription,
+    });
+
+    return order;
+  }
+
+  private async applyManualOrderEffects(
+    tx: Prisma.TransactionClient,
+    order: Prisma.ManualOrderGetPayload<{
+      include: { plan: true };
+    }>,
+    processedAt: Date,
+  ) {
+    if (order.kind === OrderKind.RENEWAL) {
+      if (order.planId) {
+        await this.grantPlanEntitlement(tx, {
+          userId: order.userId,
+          planId: order.planId,
+          grantedAt: processedAt,
+        });
+        return;
+      }
+
+      if (!order.durationDays || order.durationDays <= 0) {
+        throw new BadRequestException(
+          'Renewal order is missing duration or plan information',
+        );
+      }
+
+      const subscription = await this.requireOpenSubscription(tx, order.userId);
+      const extensionBase =
+        subscription.endsAt.getTime() > processedAt.getTime()
+          ? new Date(subscription.endsAt)
+          : new Date(processedAt);
+      extensionBase.setUTCDate(extensionBase.getUTCDate() + order.durationDays);
+
+      await tx.subscription.update({
+        where: { id: subscription.id },
+        data: {
+          status: SubscriptionStatus.ACTIVE,
+          endsAt: extensionBase,
+        },
+      });
+      return;
+    }
+
+    if (order.kind === OrderKind.TRAFFIC_PACK) {
+      if (!order.trafficBytes || order.trafficBytes <= BigInt(0)) {
+        throw new BadRequestException(
+          'Traffic pack order is missing traffic bytes',
+        );
+      }
+    }
+
+    if (
+      order.kind === OrderKind.MANUAL_CREDIT &&
+      (!order.durationDays || order.durationDays <= 0) &&
+      (!order.trafficBytes || order.trafficBytes <= BigInt(0))
+    ) {
+      throw new BadRequestException(
+        'Manual credit order must grant duration days or traffic bytes',
+      );
+    }
+
+    const subscription = await this.requireOpenSubscription(tx, order.userId);
+    let effectiveEndsAt = subscription.endsAt;
+
+    if (order.kind === OrderKind.MANUAL_CREDIT && order.durationDays) {
+      const extensionBase =
+        subscription.endsAt.getTime() > processedAt.getTime()
+          ? new Date(subscription.endsAt)
+          : new Date(processedAt);
+      extensionBase.setUTCDate(extensionBase.getUTCDate() + order.durationDays);
+
+      await tx.subscription.update({
+        where: { id: subscription.id },
+        data: {
+          status: SubscriptionStatus.ACTIVE,
+          endsAt: extensionBase,
+        },
+      });
+      effectiveEndsAt = extensionBase;
+    }
+
+    if (order.trafficBytes && order.trafficBytes > BigInt(0)) {
+      await tx.trafficPack.create({
+        data: {
+          userId: subscription.userId,
+          subscriptionId: subscription.id,
+          label:
+            order.note ||
+            (order.kind === OrderKind.TRAFFIC_PACK
+              ? 'Manual traffic pack'
+              : 'Manual top-up'),
+          totalBytes: order.trafficBytes,
+          remainingBytes: order.trafficBytes,
+          status: TrafficPackStatus.ACTIVE,
+          expiresAt: effectiveEndsAt,
+        },
+      });
+    }
+  }
+
+  private async grantPlanEntitlement(
+    tx: Prisma.TransactionClient,
+    input: {
+      userId: string;
+      planId: string;
+      grantedAt: Date;
+      openSubscription?: Prisma.SubscriptionGetPayload<object> | null;
+    },
+  ) {
+    const existingSubscription =
+      input.openSubscription !== undefined
+        ? input.openSubscription
+        : await tx.subscription.findFirst({
+            where: {
+              userId: input.userId,
+              status: {
+                in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED],
+              },
+            },
+            orderBy: { endsAt: 'desc' },
+          });
+
+    const { plan, nodeGroupId } = await this.resolvePlanProvisioning(tx, {
+      planId: input.planId,
+    });
+
+    if (existingSubscription) {
+      const extensionBase =
+        existingSubscription.endsAt.getTime() > input.grantedAt.getTime()
+          ? new Date(existingSubscription.endsAt)
+          : new Date(input.grantedAt);
+      extensionBase.setUTCDate(extensionBase.getUTCDate() + plan.durationDays);
+
+      await tx.subscription.update({
+        where: { id: existingSubscription.id },
+        data: {
+          planId: plan.id,
+          nodeGroupId,
+          status: SubscriptionStatus.ACTIVE,
+          endsAt: extensionBase,
+          includedTrafficBytes:
+            existingSubscription.includedTrafficBytes + plan.trafficBytes,
+          speedUpMbpsSnapshot: plan.speedUpMbps,
+          speedDownMbpsSnapshot: plan.speedDownMbps,
+          deviceLimitSnapshot: plan.deviceLimit,
+        },
+      });
+      return;
+    }
+
+    await tx.subscription.create({
+      data: {
+        userId: input.userId,
+        planId: plan.id,
+        nodeGroupId,
+        status: SubscriptionStatus.ACTIVE,
+        startsAt: input.grantedAt,
+        endsAt: this.buildSubscriptionEndDate(
+          input.grantedAt,
+          plan.durationDays,
+        ),
+        includedTrafficBytes: plan.trafficBytes,
+        bonusTrafficBytes: BigInt(0),
+        consumedTrafficBytes: BigInt(0),
+        speedUpMbpsSnapshot: plan.speedUpMbps,
+        speedDownMbpsSnapshot: plan.speedDownMbps,
+        deviceLimitSnapshot: plan.deviceLimit,
+      },
+    });
+  }
+
+  private async applyTrafficPackRedemptionCode(
+    tx: Prisma.TransactionClient,
+    input: {
+      userId: string;
+      code: RedemptionCodeWithRelations;
+      openSubscription: Prisma.SubscriptionGetPayload<object> | null;
+      redeemedAt: Date;
+    },
+  ) {
+    if (!input.openSubscription) {
+      throw new BadRequestException('流量包兑换需要先有生效中的套餐');
+    }
+
+    if (!input.code.trafficBytes || input.code.trafficBytes <= BigInt(0)) {
+      throw new BadRequestException(
+        'Traffic pack redemption code is missing traffic bytes',
+      );
+    }
+
+    const order = await tx.manualOrder.create({
+      data: {
+        userId: input.userId,
+        status: OrderStatus.APPLIED,
+        kind: OrderKind.TRAFFIC_PACK,
+        amountCents: input.code.amountCents,
+        trafficBytes: input.code.trafficBytes,
+        note: input.code.note || `Redeemed ${input.code.code}`,
+        processedAt: input.redeemedAt,
+      },
+      include: {
+        user: true,
+        processedBy: true,
+        plan: true,
+      },
+    });
+
+    await tx.trafficPack.create({
+      data: {
+        userId: input.userId,
+        subscriptionId: input.openSubscription.id,
+        label: input.code.label,
+        totalBytes: input.code.trafficBytes,
+        remainingBytes: input.code.trafficBytes,
+        status: TrafficPackStatus.ACTIVE,
+        expiresAt: input.openSubscription.endsAt,
+      },
+    });
+
+    return order;
   }
 
   private async rejectAuth(
@@ -1676,6 +2343,8 @@ export class ControlPlaneStoreService {
       userDisplayName: order.user.displayName,
       processedById: order.processedById,
       processedByEmail: order.processedBy?.email ?? null,
+      planId: order.planId ?? null,
+      planName: order.plan?.name ?? null,
       status: this.fromDbOrderStatus(order.status),
       kind: this.fromDbOrderKind(order.kind),
       amountCents: order.amountCents,
@@ -1687,6 +2356,32 @@ export class ControlPlaneStoreService {
       note: order.note,
       createdAt: order.createdAt.toISOString(),
       processedAt: order.processedAt?.toISOString() ?? null,
+    };
+  }
+
+  private presentRedemptionCode(code: RedemptionCodeWithRelations) {
+    return {
+      id: code.id,
+      code: code.code,
+      label: code.label,
+      kind: this.fromDbRedemptionCodeKind(code.kind),
+      status: this.fromDbRedemptionCodeStatus(code.status),
+      planId: code.planId,
+      planName: code.plan?.name ?? null,
+      trafficBytes:
+        code.trafficBytes !== null && code.trafficBytes !== undefined
+          ? Number(code.trafficBytes)
+          : null,
+      amountCents: code.amountCents,
+      note: code.note,
+      expiresAt: code.expiresAt?.toISOString() ?? null,
+      createdById: code.createdById,
+      createdByEmail: code.createdBy?.email ?? null,
+      redeemedById: code.redeemedById,
+      redeemedByEmail: code.redeemedBy?.email ?? null,
+      redeemedAt: code.redeemedAt?.toISOString() ?? null,
+      createdAt: code.createdAt.toISOString(),
+      updatedAt: code.updatedAt.toISOString(),
     };
   }
 
@@ -1752,6 +2447,36 @@ export class ControlPlaneStoreService {
     if (!subscription) {
       throw new NotFoundException(`Unknown subscription: ${subscriptionId}`);
     }
+    return subscription;
+  }
+
+  private async findOpenSubscriptionForUser(
+    tx: Prisma.TransactionClient | PrismaService,
+    userId: string,
+  ) {
+    return tx.subscription.findFirst({
+      where: {
+        userId,
+        status: {
+          in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED],
+        },
+      },
+      orderBy: { endsAt: 'desc' },
+    });
+  }
+
+  private async requireOpenSubscription(
+    tx: Prisma.TransactionClient | PrismaService,
+    userId: string,
+  ) {
+    const subscription = await this.findOpenSubscriptionForUser(tx, userId);
+
+    if (!subscription) {
+      throw new BadRequestException(
+        'This order requires an existing active or paused subscription',
+      );
+    }
+
     return subscription;
   }
 
@@ -1821,8 +2546,53 @@ export class ControlPlaneStoreService {
     });
   }
 
+  private async expireRedemptionCodes() {
+    await this.prisma.redemptionCode.updateMany({
+      where: {
+        status: RedemptionCodeStatus.ACTIVE,
+        expiresAt: {
+          lte: new Date(),
+        },
+      },
+      data: {
+        status: RedemptionCodeStatus.EXPIRED,
+      },
+    });
+  }
+
   private generateAccessToken() {
     return `hy2_${randomBytes(12).toString('hex')}`;
+  }
+
+  private async generateUniqueRedemptionCode() {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const code = this.generateRedemptionCode();
+      const exists = await this.prisma.redemptionCode.findUnique({
+        where: { code },
+        select: { id: true },
+      });
+      if (!exists) {
+        return code;
+      }
+    }
+
+    throw new ConflictException('Failed to generate a unique redemption code');
+  }
+
+  private generateRedemptionCode() {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const bytes = randomBytes(12);
+    const chars = Array.from(
+      bytes,
+      (value) => alphabet[value % alphabet.length],
+    );
+    return `HY2-${chars.slice(0, 4).join('')}-${chars
+      .slice(4, 8)
+      .join('')}-${chars.slice(8, 12).join('')}`;
+  }
+
+  private normalizeRedemptionCode(value: string) {
+    return value.trim().toUpperCase();
   }
 
   private buildSubscriptionEndDate(startsAt: Date, durationDays: number) {
@@ -2011,6 +2781,39 @@ export class ControlPlaneStoreService {
       default:
         return OrderKind.RENEWAL;
     }
+  }
+
+  private fromDbRedemptionCodeKind(
+    kind: RedemptionCodeKind,
+  ): 'plan' | 'traffic_pack' {
+    return kind === RedemptionCodeKind.TRAFFIC_PACK ? 'traffic_pack' : 'plan';
+  }
+
+  private toDbRedemptionCodeKind(kind: 'plan' | 'traffic_pack') {
+    return kind === 'traffic_pack'
+      ? RedemptionCodeKind.TRAFFIC_PACK
+      : RedemptionCodeKind.PLAN;
+  }
+
+  private fromDbRedemptionCodeStatus(
+    status: RedemptionCodeStatus,
+  ): 'active' | 'redeemed' | 'void' | 'expired' {
+    switch (status) {
+      case RedemptionCodeStatus.REDEEMED:
+        return 'redeemed';
+      case RedemptionCodeStatus.VOID:
+        return 'void';
+      case RedemptionCodeStatus.EXPIRED:
+        return 'expired';
+      default:
+        return 'active';
+    }
+  }
+
+  private toDbRedemptionCodeStatus(status: 'active' | 'void') {
+    return status === 'void'
+      ? RedemptionCodeStatus.VOID
+      : RedemptionCodeStatus.ACTIVE;
   }
 
   private withDefinedValues<T extends object>(value: T): Partial<T> {

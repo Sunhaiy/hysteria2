@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { DataTable } from "@/components/data-table";
@@ -15,6 +16,7 @@ export default function PortalUsagePage() {
   const { token } = useAuth();
   const [usage, setUsage] = useState<PortalUsageResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [emptyState, setEmptyState] = useState(false);
 
   const load = useCallback(async () => {
     if (!token) {
@@ -26,7 +28,13 @@ export default function PortalUsagePage() {
         token,
       });
       setUsage(nextUsage);
+      setEmptyState(false);
     } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 404) {
+        setUsage(null);
+        setEmptyState(true);
+        return;
+      }
       setError(cause instanceof ApiError ? cause.message : "流量记录加载失败。");
     }
   }, [token]);
@@ -72,6 +80,14 @@ export default function PortalUsagePage() {
             />
           </Panel>
         </>
+      ) : emptyState ? (
+        <Panel title="还没有可统计的流量" copy="当前账号还没有生效中的套餐，所以暂时没有流量记录。先去兑换中心开通套餐，系统才会开始统计接入和用量。">
+          <div className="toolbar-actions">
+            <Link className="action-button" href="/portal/redeem">
+              去兑换中心
+            </Link>
+          </div>
+        </Panel>
       ) : null}
     </ConsoleShell>
   );

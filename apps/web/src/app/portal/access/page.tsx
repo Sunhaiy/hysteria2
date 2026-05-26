@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { Panel } from "@/components/panel";
@@ -15,6 +16,7 @@ export default function PortalAccessPage() {
   const [access, setAccess] = useState<PortalAccessResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [emptyState, setEmptyState] = useState(false);
 
   const load = useCallback(async () => {
     if (!token) {
@@ -26,7 +28,13 @@ export default function PortalAccessPage() {
         token,
       });
       setAccess(nextAccess);
+      setEmptyState(false);
     } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 404) {
+        setAccess(null);
+        setEmptyState(true);
+        return;
+      }
       setError(cause instanceof ApiError ? cause.message : "接入信息加载失败。");
     }
   }, [token]);
@@ -121,6 +129,14 @@ export default function PortalAccessPage() {
             </Panel>
           </div>
         </section>
+      ) : emptyState ? (
+        <Panel title="还没有可用接入信息" copy="当前账号还没有生效中的套餐或兑换尚未完成。先去兑换中心使用一张 CDK，系统会自动生成专属接入信息。">
+          <div className="toolbar-actions">
+            <Link className="action-button" href="/portal/redeem">
+              去兑换中心
+            </Link>
+          </div>
+        </Panel>
       ) : null}
     </ConsoleShell>
   );

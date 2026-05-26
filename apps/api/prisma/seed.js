@@ -30,6 +30,7 @@ async function main() {
     prisma.usageRollup.deleteMany(),
     prisma.trafficPack.deleteMany(),
     prisma.manualOrder.deleteMany(),
+    prisma.redemptionCode.deleteMany(),
     prisma.subscription.deleteMany(),
     prisma.planBinding.deleteMany(),
     prisma.node.deleteMany(),
@@ -305,6 +306,37 @@ async function main() {
         note: 'Manual booster top-up',
         createdAt: minusDays(7),
         processedAt: minusDays(7),
+      },
+    ],
+  });
+
+  await prisma.redemptionCode.createMany({
+    data: [
+      {
+        id: 'code_core_seed',
+        code: 'HY2-CORE-2026-DEMO',
+        label: 'Core 200 开通码',
+        kind: 'PLAN',
+        status: 'ACTIVE',
+        planId: 'plan_core',
+        amountCents: 1800,
+        note: 'Seed plan redemption code',
+        createdById: 'usr_admin',
+        createdAt: minusDays(3),
+        updatedAt: minusDays(1),
+      },
+      {
+        id: 'code_flow_seed',
+        code: 'HY2-FLOW-050G-DEMO',
+        label: '50GB 流量包兑换码',
+        kind: 'TRAFFIC_PACK',
+        status: 'ACTIVE',
+        trafficBytes: BigInt(50 * gb),
+        amountCents: 900,
+        note: 'Seed traffic pack redemption code',
+        createdById: 'usr_admin',
+        createdAt: minusDays(2),
+        updatedAt: minusDays(1),
       },
     ],
   });

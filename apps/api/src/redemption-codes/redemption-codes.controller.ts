@@ -11,46 +11,43 @@ import { AdminGuard } from '../common/admin.guard';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { CurrentPrincipal } from '../common/current-principal.decorator';
 import type { SessionPrincipal } from '../common/auth.types';
-import { ManualCreditDto, UpdateManualOrderDto } from '../contracts/http.dto';
+import {
+  CreateRedemptionCodeDto,
+  UpdateRedemptionCodeDto,
+} from '../contracts/http.dto';
 import { ControlPlaneStoreService } from '../domain/control-plane.store';
 
-@Controller('api/admin/orders')
+@Controller('api/admin/redemption-codes')
 @UseGuards(JwtAuthGuard, AdminGuard)
-export class OrdersController {
+export class RedemptionCodesController {
   constructor(private readonly store: ControlPlaneStoreService) {}
 
   @Get()
-  listOrders() {
-    return this.store.getManualOrders();
+  listCodes() {
+    return this.store.getRedemptionCodes();
   }
 
-  @Post('manual-credit')
-  createManualCredit(
-    @Body() body: ManualCreditDto,
+  @Post()
+  createCode(
+    @Body() body: CreateRedemptionCodeDto,
     @CurrentPrincipal() principal: SessionPrincipal,
   ) {
-    return this.store.createManualOrder({
-      userId: body.userId,
-      processedById: body.status === 'pending' ? undefined : principal.sub,
+    return this.store.createRedemptionCode({
+      label: body.label,
       kind: body.kind,
-      status: body.status,
       planId: body.planId,
-      amountCents: body.amountCents,
-      durationDays: body.durationDays,
       trafficBytes: body.trafficBytes,
+      amountCents: body.amountCents,
       note: body.note,
+      expiresAt: body.expiresAt,
+      createdById: principal.sub,
     });
   }
 
   @Patch(':id')
-  updateManualOrder(
-    @Param('id') id: string,
-    @Body() body: UpdateManualOrderDto,
-    @CurrentPrincipal() principal: SessionPrincipal,
-  ) {
-    return this.store.patchManualOrder(id, {
+  updateCode(@Param('id') id: string, @Body() body: UpdateRedemptionCodeDto) {
+    return this.store.patchRedemptionCode(id, {
       status: body.status,
-      processedById: principal.sub,
     });
   }
 }

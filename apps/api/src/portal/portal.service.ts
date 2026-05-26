@@ -10,12 +10,34 @@ export class PortalService {
     return this.store.getPortalOverview(userId);
   }
 
+  getPlans() {
+    return this.store.getPurchasablePlans();
+  }
+
   getUsage(userId: string) {
     return this.store.getUsageForUser(userId);
   }
 
   getOrders(userId: string) {
     return this.store.getManualOrdersForUser(userId);
+  }
+
+  createPlanOrderRequest(userId: string, planId: string, note?: string) {
+    return this.store.createPlanOrderRequest({
+      userId,
+      planId,
+      note,
+    });
+  }
+
+  async redeemCode(userId: string, code: string) {
+    const result = await this.store.redeemRedemptionCode(userId, code);
+
+    return {
+      ...result,
+      overview: await this.store.getPortalOverview(userId),
+      access: await this.getAccess(userId),
+    };
   }
 
   async getAccess(userId: string) {

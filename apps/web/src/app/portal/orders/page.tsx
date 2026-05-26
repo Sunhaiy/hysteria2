@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { DataTable } from "@/components/data-table";
@@ -11,6 +12,19 @@ import { formatBytes, formatDateTime, formatMoney } from "@/lib/format";
 import type { ManualOrderRecord } from "@/lib/types";
 import { humanizeOrderKind, statusTone } from "@/lib/ui";
 
+function describeOrderRights(order: ManualOrderRecord) {
+  if (order.planName) {
+    return `${order.planName}${order.durationDays ? ` / ${order.durationDays} 天` : ""}`;
+  }
+  if (order.trafficBytes) {
+    return formatBytes(order.trafficBytes);
+  }
+  if (order.durationDays) {
+    return `${order.durationDays} 天`;
+  }
+  return "-";
+}
+
 export default function PortalOrdersPage() {
   const { token } = useAuth();
   const [orders, setOrders] = useState<ManualOrderRecord[]>([]);
@@ -20,6 +34,7 @@ export default function PortalOrdersPage() {
     if (!token) {
       return;
     }
+
     setError(null);
     try {
       const nextOrders = await apiRequest<ManualOrderRecord[]>("/api/portal/orders", {
@@ -38,35 +53,60 @@ export default function PortalOrdersPage() {
     return () => window.clearTimeout(timeoutId);
   }, [load]);
 
+  const pendingOrders = orders.filter((order) => order.status === "pending");
+
   return (
     <ConsoleShell
       title="订单记录"
-      subtitle="查看历史续期、流量包与人工入账记录"
+      subtitle="查看套餐申请、CDK 兑换、流量包和人工入账的完整处理轨迹"
       scope="Member"
       navItems={portalNav}
       requireRole="member"
-      toolbarMeta={<span className="badge info">{orders.length} 条记录</span>}
-      toolbarActions={<button className="toolbar-button" type="button" onClick={() => void load()}>刷新</button>}
+      toolbarMeta={
+        <>
+          <span className="badge info">{orders.length} 条记录</span>
+          <span className="badge warn">{pendingOrders.length} 条待处理</span>
+        </>
+      }
+      toolbarActions={
+        <button className="toolbar-button" type="button" onClick={() => void load()}>
+          刷新
+        </button>
+      }
     >
       {error ? <div className="feedback error">{error}</div> : null}
-      <Panel title="历史订单" copy="这里展示已经应用到你账户上的人工订单记录。">
+
+      {pendingOrders.length ? (
+        <div className="feedback warn">
+          你当前有 {pendingOrders.length} 笔待处理订单。后台确认到账后，套餐或流量会自动写入账号。
+        </div>
+      ) : null}
+
+      <Panel title="历史订单" copy="pending 表示等待人工确认，applied 表示权益已经到账。">
         <DataTable
-          headers={["类型", "状态", "金额", "附加权益", "处理时间", "备注"]}
+          headers={["类型", "套餐 / 权益", "状态", "金额", "处理时间", "备注"]}
           rows={orders.map((order) => [
             humanizeOrderKind(order.kind),
+            describeOrderRights(order),
             <span key={order.id} className={`badge ${statusTone(order.status)}`}>
               {order.status}
             </span>,
             formatMoney(order.amountCents),
-            order.trafficBytes
-              ? formatBytes(order.trafficBytes)
-              : order.durationDays
-                ? `${order.durationDays} 天`
-                : "无",
-            order.processedAt ? formatDateTime(order.processedAt) : "待处理",
+            order.processedAt ? formatDateTime(order.processedAt) : "等待处理",
             order.note ?? "-",
           ])}
         />
+      </Panel>
+
+      <Panel title="还想开通新套餐？" copy="你可以直接在前台选择套餐提交申请，也可以继续使用 CDK 兑换。">
+        <div className="toolbar-actions">
+          <Link className="action-button" href="/portal/plans">
+            去选套餐
+          </Link>
+          <Link className="ghost-button" href="/portal/redeem">
+            去兑换中心
+          </Link>
+        </div>
       </Panel>
     </ConsoleShell>
   );

@@ -343,6 +343,14 @@ export class ManualCreditDto {
   @IsIn(['renewal', 'traffic_pack', 'manual_credit'])
   kind!: 'renewal' | 'traffic_pack' | 'manual_credit';
 
+  @IsOptional()
+  @IsString()
+  planId?: string;
+
+  @IsOptional()
+  @IsIn(['pending', 'applied'])
+  status?: 'pending' | 'applied';
+
   @IsInt()
   @Min(0)
   amountCents!: number;
@@ -360,6 +368,12 @@ export class ManualCreditDto {
   @IsOptional()
   @IsString()
   note?: string;
+}
+
+export class UpdateManualOrderDto {
+  @IsOptional()
+  @IsIn(['applied', 'void'])
+  status?: 'applied' | 'void';
 }
 
 export class CreateNodeGroupDto {
@@ -418,6 +432,59 @@ export class UpdatePlanBindingDto {
   @IsInt()
   @Min(0)
   priority?: number;
+}
+
+export class CreateRedemptionCodeDto {
+  @IsString()
+  @IsNotEmpty()
+  label!: string;
+
+  @IsIn(['plan', 'traffic_pack'])
+  kind!: 'plan' | 'traffic_pack';
+
+  @IsOptional()
+  @IsString()
+  planId?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  trafficBytes?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  amountCents?: number;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+
+  @IsOptional()
+  @IsDateString()
+  expiresAt?: string;
+}
+
+export class UpdateRedemptionCodeDto {
+  @IsOptional()
+  @IsIn(['active', 'void'])
+  status?: 'active' | 'void';
+}
+
+export class RedeemCodeDto {
+  @IsString()
+  @IsNotEmpty()
+  code!: string;
+}
+
+export class RequestPlanOrderDto {
+  @IsString()
+  @IsNotEmpty()
+  planId!: string;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
 }
 
 export class HysteriaAuthDto {

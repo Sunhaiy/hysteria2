@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { MetricCard } from "@/components/metric-card";
@@ -14,11 +15,13 @@ export default function PortalPage() {
   const { token } = useAuth();
   const [overview, setOverview] = useState<PortalOverviewResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [emptyState, setEmptyState] = useState(false);
 
   const load = useCallback(async () => {
     if (!token) {
       return;
     }
+
     setError(null);
     try {
       const nextOverview = await apiRequest<PortalOverviewResponse>(
@@ -26,7 +29,13 @@ export default function PortalPage() {
         { token },
       );
       setOverview(nextOverview);
+      setEmptyState(false);
     } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 404) {
+        setOverview(null);
+        setEmptyState(true);
+        return;
+      }
       setError(cause instanceof ApiError ? cause.message : "用户中心加载失败。");
     }
   }, [token]);
@@ -47,7 +56,7 @@ export default function PortalPage() {
   return (
     <ConsoleShell
       title="用户中心"
-      subtitle="查看当前套餐、剩余流量、在线设备与推荐接入节点"
+      subtitle="查看当前套餐、剩余流量、在线设备和接入状态，也可以继续下单续期"
       scope="Member"
       navItems={portalNav}
       requireRole="member"
@@ -59,18 +68,46 @@ export default function PortalPage() {
               {overview.online}/{overview.subscription.deviceLimitSnapshot} devices
             </span>
           </>
+        ) : emptyState ? (
+          <span className="badge warn">尚未开通套餐</span>
         ) : null
       }
-      toolbarActions={<button className="toolbar-button" type="button" onClick={() => void load()}>刷新</button>}
+      toolbarActions={
+        <div className="toolbar-actions">
+          <Link className="toolbar-button" href="/portal/plans">
+            套餐列表
+          </Link>
+          <button className="toolbar-button" type="button" onClick={() => void load()}>
+            刷新
+          </button>
+        </div>
+      }
     >
       {error ? <div className="feedback error">{error}</div> : null}
+
       {overview ? (
         <>
           <section className="metric-grid">
-            <MetricCard label="剩余总流量" value={formatBytes(overview.remainingBytes)} footnote="含基础套餐和流量包叠加" />
-            <MetricCard label="在线设备" value={`${overview.online}/${overview.subscription.deviceLimitSnapshot}`} footnote="按并发 Hysteria 客户端数统计" />
-            <MetricCard label="套餐到期" value={formatDateTime(overview.subscription.endsAt)} footnote="到期后将停止新的鉴权接入" />
-            <MetricCard label="推荐节点" value={overview.nodeLabel ?? "-"} footnote="来自当前订阅绑定的默认节点" />
+            <MetricCard
+              label="剩余总流量"
+              value={formatBytes(overview.remainingBytes)}
+              footnote="含基础套餐和流量包叠加"
+            />
+            <MetricCard
+              label="在线设备"
+              value={`${overview.online}/${overview.subscription.deviceLimitSnapshot}`}
+              footnote="按并发 Hysteria 客户端数统计"
+            />
+            <MetricCard
+              label="套餐到期"
+              value={formatDateTime(overview.subscription.endsAt)}
+              footnote="到期后将停止新的鉴权接入"
+            />
+            <MetricCard
+              label="推荐节点"
+              value={overview.nodeLabel ?? "-"}
+              footnote="来自当前订阅绑定的默认节点"
+            />
           </section>
 
           <section className="workspace-grid">
@@ -99,7 +136,7 @@ export default function PortalPage() {
               </div>
             </Panel>
 
-            <Panel title="流量包与权益" copy="可以清楚看到当前叠加包的剩余量和失效时间。">
+            <Panel title="流量包与权益" copy="叠加包会独立列出，方便你区分基础套餐和增量包。">
               <div className="kpi-list">
                 {overview.packs.length ? (
                   overview.packs.map((pack) => (
@@ -123,6 +160,23 @@ export default function PortalPage() {
             </Panel>
           </section>
         </>
+      ) : emptyState ? (
+        <Panel
+          title="还没有生效中的套餐"
+          copy="当前账号已经可以登录会员中心，但还没有可用订阅。你可以直接选套餐提交人工订单，或者使用 CDK 立即开通。"
+        >
+          <div className="toolbar-actions">
+            <Link className="action-button" href="/portal/plans">
+              去选套餐
+            </Link>
+            <Link className="ghost-button" href="/portal/redeem">
+              去兑换中心
+            </Link>
+            <Link className="ghost-button" href="/portal/orders">
+              查看订单记录
+            </Link>
+          </div>
+        </Panel>
       ) : null}
     </ConsoleShell>
   );

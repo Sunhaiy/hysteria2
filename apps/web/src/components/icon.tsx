@@ -13,6 +13,7 @@ type IconName =
   | "qr_code_2"
   | "network_node"
   | "payments"
+  | "redeem"
   | "menu"
   | "logout"
   | "login"
@@ -136,6 +137,12 @@ const icons: Record<IconName, ReactElement> = {
       <path d="M3 10h18" />
       <path d="M8 14h3" />
       <path d="M16 14h2" />
+    </BaseIcon>
+  ),
+  redeem: (
+    <BaseIcon>
+      <path d="M12 6.5 14 10l4 .6-2.9 2.8.7 4-3.8-2-3.8 2 .7-4L6 10.6l4-.6 2-3.5Z" />
+      <path d="M6 20h12" />
     </BaseIcon>
   ),
   menu: (

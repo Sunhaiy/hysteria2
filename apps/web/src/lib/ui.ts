@@ -2,6 +2,7 @@ export function statusTone(status: string) {
   switch (status) {
     case "active":
     case "applied":
+    case "redeemed":
     case "success":
       return "success";
     case "paused":
@@ -21,13 +22,39 @@ export function statusTone(status: string) {
 export function humanizeOrderKind(kind: string) {
   switch (kind) {
     case "renewal":
-      return "续期";
+      return "套餐 / 续期";
     case "traffic_pack":
       return "流量包";
     case "manual_credit":
       return "人工入账";
     default:
       return kind;
+  }
+}
+
+export function humanizeRedemptionKind(kind: string) {
+  switch (kind) {
+    case "plan":
+      return "套餐开通";
+    case "traffic_pack":
+      return "流量包";
+    default:
+      return kind;
+  }
+}
+
+export function humanizeRedemptionStatus(status: string) {
+  switch (status) {
+    case "active":
+      return "可兑换";
+    case "redeemed":
+      return "已兑换";
+    case "void":
+      return "已作废";
+    case "expired":
+      return "已过期";
+    default:
+      return status;
   }
 }
 

@@ -136,6 +136,8 @@ export interface ManualOrderRecord {
   userDisplayName: string;
   processedById?: string | null;
   processedByEmail?: string | null;
+  planId?: string | null;
+  planName?: string | null;
   status: "pending" | "applied" | "void";
   kind: "renewal" | "traffic_pack" | "manual_credit";
   amountCents: number;
@@ -144,6 +146,27 @@ export interface ManualOrderRecord {
   note?: string | null;
   createdAt: string;
   processedAt?: string | null;
+}
+
+export interface RedemptionCodeRecord {
+  id: string;
+  code: string;
+  label: string;
+  kind: "plan" | "traffic_pack";
+  status: "active" | "redeemed" | "void" | "expired";
+  planId?: string | null;
+  planName?: string | null;
+  trafficBytes?: number | null;
+  amountCents: number;
+  note?: string | null;
+  expiresAt?: string | null;
+  createdById?: string | null;
+  createdByEmail?: string | null;
+  redeemedById?: string | null;
+  redeemedByEmail?: string | null;
+  redeemedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface UsageRollupRecord {
@@ -232,4 +255,11 @@ export interface PortalAccessResponse {
   nodeLabel: string;
   expiresAt: string;
   trafficRemaining: number;
+}
+
+export interface PortalRedeemResponse {
+  code: RedemptionCodeRecord;
+  order: ManualOrderRecord;
+  overview: PortalOverviewResponse;
+  access: PortalAccessResponse;
 }
