@@ -62,6 +62,19 @@ export class PortalService {
       margin: 1,
       width: 256,
     });
+    const bandwidthLines =
+      bundle.subscription.speedUpMbpsSnapshot > 0 ||
+      bundle.subscription.speedDownMbpsSnapshot > 0
+        ? [
+            'bandwidth:',
+            bundle.subscription.speedUpMbpsSnapshot > 0
+              ? `  up: ${bundle.subscription.speedUpMbpsSnapshot} mbps`
+              : null,
+            bundle.subscription.speedDownMbpsSnapshot > 0
+              ? `  down: ${bundle.subscription.speedDownMbpsSnapshot} mbps`
+              : null,
+          ]
+        : [];
     const configSnippet = [
       `server: ${bundle.node.hostname}:${bundle.node.port}`,
       `auth: ${bundle.token.token}`,
@@ -75,9 +88,7 @@ export class PortalService {
       bundle.node.obfsPassword
         ? `  salamander:\n    password: ${bundle.node.obfsPassword}`
         : null,
-      'bandwidth:',
-      `  up: ${bundle.subscription.speedUpMbpsSnapshot} mbps`,
-      `  down: ${bundle.subscription.speedDownMbpsSnapshot} mbps`,
+      ...bandwidthLines,
       'socks5:',
       '  listen: 127.0.0.1:1080',
       'http:',
