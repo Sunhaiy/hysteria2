@@ -542,9 +542,6 @@ export class ControlPlaneStoreService {
   }
 
   async getSubscriptions() {
-    await this.expireOverdueSubscriptions();
-    await this.expireTrafficPacks();
-
     const subscriptions = await this.prisma.subscription.findMany({
       include: {
         user: true,
@@ -555,10 +552,8 @@ export class ControlPlaneStoreService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return Promise.all(
-      subscriptions.map((subscription) =>
-        this.presentSubscription(subscription),
-      ),
+    return subscriptions.map((subscription) =>
+      this.presentSubscription(subscription),
     );
   }
 
@@ -716,21 +711,37 @@ export class ControlPlaneStoreService {
 
   async getNodes() {
     const nodes = await this.prisma.node.findMany({
-      include: {
-        nodeGroup: true,
-      },
+      include: { nodeGroup: true },
       orderBy: { createdAt: 'desc' },
     });
 
-    return Promise.all(nodes.map((node) => this.presentNode(node)));
+    if (nodes.length === 0) {
+      return [];
+    }
+
+    const nodeIds = nodes.map((n) => n.id);
+    const allSnapshots = await this.prisma.onlineSnapshot.findMany({
+      where: { nodeId: { in: nodeIds } },
+      orderBy: { capturedAt: 'desc' },
+      take: 200 * nodes.length,
+    });
+
+    const snapshotsByNode = new Map<string, typeof allSnapshots>();
+    for (const snap of allSnapshots) {
+      const list = snapshotsByNode.get(snap.nodeId) ?? [];
+      list.push(snap);
+      snapshotsByNode.set(snap.nodeId, list);
+    }
+
+    return nodes.map((node) =>
+      this.buildNodeView(node, snapshotsByNode.get(node.id) ?? []),
+    );
   }
 
   async getNodeById(nodeId: string) {
     const node = await this.prisma.node.findUnique({
       where: { id: nodeId },
-      include: {
-        nodeGroup: true,
-      },
+      include: { nodeGroup: true },
     });
 
     return node ? this.presentNode(node) : undefined;
@@ -908,7 +919,7 @@ export class ControlPlaneStoreService {
           orderBy: { createdAt: 'asc' },
         }),
       }),
-      subscription: await this.presentSubscription({
+      subscription: this.presentSubscription({
         ...subscription,
         user,
         plan,
@@ -936,7 +947,7 @@ export class ControlPlaneStoreService {
         ...user,
         accessTokens: [token],
       }),
-      subscription: await this.presentSubscription({
+      subscription: this.presentSubscription({
         ...subscription,
         user,
         plan: await this.mustGetPlanRecord(subscription.planId),
@@ -1330,93 +1341,111 @@ export class ControlPlaneStoreService {
     await this.expireOverdueSubscriptions();
     await this.expireTrafficPacks();
 
-    const impactedUsers = new Set<string>();
+    const settled = await Promise.allSettled(
+      Object.entries(trafficMap).map(([userId, counters]) =>
+        this.applyUserTraffic(nodeId, userId, counters),
+      ),
+    );
+
+    const impactedUsers: string[] = [];
+    for (const result of settled) {
+      if (result.status === 'fulfilled' && result.value !== null) {
+        impactedUsers.push(result.value);
+      }
+    }
+    return impactedUsers;
+  }
+
+  private async applyUserTraffic(
+    nodeId: string,
+    userId: string,
+    counters: { tx: number; rx: number },
+  ): Promise<string | null> {
+    let impacted = false;
 
     await this.prisma.$transaction(async (tx) => {
-      for (const [userId, counters] of Object.entries(trafficMap)) {
-        const subscription = await tx.subscription.findFirst({
-          where: {
-            userId,
-            status: SubscriptionStatus.ACTIVE,
-            endsAt: { gt: new Date() },
-          },
-          orderBy: { endsAt: 'desc' },
-        });
+      const subscription = await tx.subscription.findFirst({
+        where: {
+          userId,
+          status: SubscriptionStatus.ACTIVE,
+          endsAt: { gt: new Date() },
+        },
+        orderBy: { endsAt: 'desc' },
+      });
 
-        if (!subscription) {
-          continue;
-        }
-
-        impactedUsers.add(userId);
-        let remaining = counters.tx + counters.rx;
-        const baseRemaining = Math.max(
-          Number(
-            subscription.includedTrafficBytes +
-              subscription.bonusTrafficBytes -
-              subscription.consumedTrafficBytes,
-          ),
-          0,
-        );
-
-        if (baseRemaining > 0) {
-          const consumeBase = Math.min(baseRemaining, remaining);
-          await tx.subscription.update({
-            where: { id: subscription.id },
-            data: {
-              consumedTrafficBytes:
-                subscription.consumedTrafficBytes + BigInt(consumeBase),
-            },
-          });
-          remaining -= consumeBase;
-        }
-
-        if (remaining > 0) {
-          const packs = await tx.trafficPack.findMany({
-            where: {
-              subscriptionId: subscription.id,
-              status: TrafficPackStatus.ACTIVE,
-            },
-            orderBy: { createdAt: 'asc' },
-          });
-
-          for (const pack of packs) {
-            if (remaining <= 0) {
-              break;
-            }
-
-            const consume = Math.min(Number(pack.remainingBytes), remaining);
-            const nextRemaining = Number(pack.remainingBytes) - consume;
-
-            await tx.trafficPack.update({
-              where: { id: pack.id },
-              data: {
-                remainingBytes: BigInt(nextRemaining),
-                status:
-                  nextRemaining <= 0
-                    ? TrafficPackStatus.EXHAUSTED
-                    : TrafficPackStatus.ACTIVE,
-              },
-            });
-
-            remaining -= consume;
-          }
-        }
-
-        await tx.usageRollup.create({
-          data: {
-            userId,
-            subscriptionId: subscription.id,
-            nodeId,
-            bucketStart: new Date(),
-            txBytes: BigInt(counters.tx),
-            rxBytes: BigInt(counters.rx),
-            source: 'sync',
-          },
-        });
+      if (!subscription) {
+        return;
       }
+
+      impacted = true;
+      let remaining = counters.tx + counters.rx;
+      const baseRemaining = Math.max(
+        Number(
+          subscription.includedTrafficBytes +
+            subscription.bonusTrafficBytes -
+            subscription.consumedTrafficBytes,
+        ),
+        0,
+      );
+
+      if (baseRemaining > 0) {
+        const consumeBase = Math.min(baseRemaining, remaining);
+        await tx.subscription.update({
+          where: { id: subscription.id },
+          data: {
+            consumedTrafficBytes:
+              subscription.consumedTrafficBytes + BigInt(consumeBase),
+          },
+        });
+        remaining -= consumeBase;
+      }
+
+      if (remaining > 0) {
+        const packs = await tx.trafficPack.findMany({
+          where: {
+            subscriptionId: subscription.id,
+            status: TrafficPackStatus.ACTIVE,
+          },
+          orderBy: { createdAt: 'asc' },
+        });
+
+        for (const pack of packs) {
+          if (remaining <= 0) {
+            break;
+          }
+
+          const consume = Math.min(Number(pack.remainingBytes), remaining);
+          const nextRemaining = Number(pack.remainingBytes) - consume;
+
+          await tx.trafficPack.update({
+            where: { id: pack.id },
+            data: {
+              remainingBytes: BigInt(nextRemaining),
+              status:
+                nextRemaining <= 0
+                  ? TrafficPackStatus.EXHAUSTED
+                  : TrafficPackStatus.ACTIVE,
+            },
+          });
+
+          remaining -= consume;
+        }
+      }
+
+      await tx.usageRollup.create({
+        data: {
+          userId,
+          subscriptionId: subscription.id,
+          nodeId,
+          bucketStart: new Date(),
+          txBytes: BigInt(counters.tx),
+          rxBytes: BigInt(counters.rx),
+          source: 'sync',
+        },
+      });
     });
 
-    return [...impactedUsers];
+    return impacted ? userId : null;
   }
 
   async applyOnlineSnapshot(nodeId: string, onlineMap: Record<string, number>) {
@@ -2250,12 +2279,12 @@ export class ControlPlaneStoreService {
     };
   }
 
-  private async presentSubscription(subscription: SubscriptionWithRelations) {
-    const remaining = await this.getRemainingTrafficForSubscription(
-      subscription.id,
+  private presentSubscription(subscription: SubscriptionWithRelations) {
+    const remaining = this.getRemainingTrafficForSubscription(
       subscription.includedTrafficBytes,
       subscription.bonusTrafficBytes,
       subscription.consumedTrafficBytes,
+      subscription.trafficPacks,
     );
 
     return {
@@ -2290,6 +2319,13 @@ export class ControlPlaneStoreService {
       orderBy: { capturedAt: 'desc' },
       take: 200,
     });
+    return this.buildNodeView(node, snapshots);
+  }
+
+  private buildNodeView(
+    node: Prisma.NodeGetPayload<{ include: { nodeGroup: true } }>,
+    snapshots: { userId: string; concurrentClients: number }[],
+  ) {
     const latestUsers = new Map<string, number>();
     for (const snapshot of snapshots) {
       if (!latestUsers.has(snapshot.userId)) {
@@ -2385,27 +2421,19 @@ export class ControlPlaneStoreService {
     };
   }
 
-  private async getRemainingTrafficForSubscription(
-    subscriptionId: string,
+  private getRemainingTrafficForSubscription(
     includedTrafficBytes: bigint,
     bonusTrafficBytes: bigint,
     consumedTrafficBytes: bigint,
+    packs: { remainingBytes: bigint; status: TrafficPackStatus }[],
   ) {
-    const packs = await this.prisma.trafficPack.findMany({
-      where: {
-        subscriptionId,
-        status: TrafficPackStatus.ACTIVE,
-      },
-    });
-
     const baseRemaining = Math.max(
       Number(includedTrafficBytes + bonusTrafficBytes - consumedTrafficBytes),
       0,
     );
-    const packRemaining = packs.reduce(
-      (sum, pack) => sum + Number(pack.remainingBytes),
-      0,
-    );
+    const packRemaining = packs
+      .filter((p) => p.status === TrafficPackStatus.ACTIVE)
+      .reduce((sum, pack) => sum + Number(pack.remainingBytes), 0);
 
     return baseRemaining + packRemaining;
   }
@@ -2820,5 +2848,25 @@ export class ControlPlaneStoreService {
     return Object.fromEntries(
       Object.entries(value).filter(([, entry]) => entry !== undefined),
     ) as Partial<T>;
+  }
+
+  async cleanupOldData(retentionDays: number) {
+    const cutoff = new Date(
+      Date.now() - retentionDays * 24 * 60 * 60 * 1000,
+    );
+
+    const [snapshots, events] = await Promise.all([
+      this.prisma.onlineSnapshot.deleteMany({
+        where: { capturedAt: { lt: cutoff } },
+      }),
+      this.prisma.authEvent.deleteMany({
+        where: { createdAt: { lt: cutoff } },
+      }),
+    ]);
+
+    return {
+      deletedSnapshots: snapshots.count,
+      deletedAuthEvents: events.count,
+    };
   }
 }

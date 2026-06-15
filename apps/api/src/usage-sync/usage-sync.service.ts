@@ -14,7 +14,7 @@ export class UsageSyncService {
     private readonly kickService: KickService,
   ) {}
 
-  @Interval(60000)
+  @Interval(60_000)
   async scheduledSync() {
     if (process.env.HYSTERIA_SYNC_ENABLED !== 'true') {
       return;
@@ -22,11 +22,23 @@ export class UsageSyncService {
     await this.syncAllNodes();
   }
 
+  @Interval(24 * 60 * 60 * 1000)
+  async scheduledCleanup() {
+    const retentionDays = parseInt(
+      process.env.DATA_RETENTION_DAYS ?? '30',
+      10,
+    );
+    const result = await this.store.cleanupOldData(retentionDays);
+    this.logger.log(
+      `Cleanup: removed ${result.deletedSnapshots} snapshots, ${result.deletedAuthEvents} auth events older than ${retentionDays} days`,
+    );
+  }
+
   async syncAllNodes() {
     const nodes = (await this.store.getNodes()).filter((node) => node.active);
-    const results = [];
-    for (const node of nodes) {
-      try {
+
+    const settled = await Promise.allSettled(
+      nodes.map(async (node) => {
         const traffic = await this.nodeClient.fetchTraffic(node);
         const impactedUsers = await this.store.applyTrafficSnapshot(
           node.id,
@@ -51,19 +63,22 @@ export class UsageSyncService {
             ),
         );
 
-        results.push({
+        return {
           nodeId: node.id,
           impactedUsers: impactedUsers.length,
           onlineUsers: Object.keys(online).length,
-        });
-      } catch (error) {
-        this.logger.warn(`Failed to sync node ${node.id}: ${String(error)}`);
-        results.push({
-          nodeId: node.id,
-          error: String(error),
-        });
+        };
+      }),
+    );
+
+    return settled.map((result, i) => {
+      if (result.status === 'fulfilled') {
+        return result.value;
       }
-    }
-    return results;
+      this.logger.warn(
+        `Failed to sync node ${nodes[i].id}: ${String(result.reason)}`,
+      );
+      return { nodeId: nodes[i].id, error: String(result.reason) };
+    });
   }
 }

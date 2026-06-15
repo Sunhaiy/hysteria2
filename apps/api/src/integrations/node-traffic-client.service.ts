@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 
+const REQUEST_TIMEOUT_MS = 10_000;
+
 interface TrafficNode {
   id: string;
   trafficApiBaseUrl: string;
@@ -25,6 +27,7 @@ export class NodeTrafficClientService {
         `${node.trafficApiBaseUrl}/traffic`,
         {
           headers: { Authorization: node.trafficApiSecret },
+          timeout: REQUEST_TIMEOUT_MS,
         },
       ),
     );
@@ -41,6 +44,7 @@ export class NodeTrafficClientService {
         `${node.trafficApiBaseUrl}/traffic?clear=1`,
         {
           headers: { Authorization: node.trafficApiSecret },
+          timeout: REQUEST_TIMEOUT_MS,
         },
       ),
     );
@@ -63,6 +67,7 @@ export class NodeTrafficClientService {
         `${node.trafficApiBaseUrl}/online`,
         {
           headers: { Authorization: node.trafficApiSecret },
+          timeout: REQUEST_TIMEOUT_MS,
         },
       ),
     );
@@ -80,6 +85,7 @@ export class NodeTrafficClientService {
         userIds,
         {
           headers: { Authorization: node.trafficApiSecret },
+          timeout: REQUEST_TIMEOUT_MS,
         },
       ),
     );

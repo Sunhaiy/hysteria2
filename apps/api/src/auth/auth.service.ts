@@ -33,7 +33,7 @@ export class AuthService {
     };
 
     const accessToken = await this.jwtService.signAsync(principal, {
-      secret: process.env.JWT_SECRET ?? 'local-dev-secret',
+      secret: process.env.JWT_SECRET,
       expiresIn: '12h',
     });
 
@@ -43,12 +43,11 @@ export class AuthService {
       12 * 60 * 60,
     );
 
+    const { passwordHash: _pw, ...safeUser } = user;
     return {
       accessToken,
       principal,
-      user: (await this.store.getUsers()).find(
-        (candidate) => candidate.id === user.id,
-      ),
+      user: safeUser,
     };
   }
 
@@ -58,10 +57,9 @@ export class AuthService {
       throw new UnauthorizedException('Unknown session subject');
     }
 
+    const { passwordHash: _pw, ...safeUser } = user;
     return {
-      user: (await this.store.getUsers()).find(
-        (candidate) => candidate.id === user.id,
-      ),
+      user: safeUser,
       role: user.role,
       scope: user.role === 'admin' ? 'admin' : 'portal',
     };
