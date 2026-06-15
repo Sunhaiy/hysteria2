@@ -378,6 +378,13 @@ export default function AdminNodesPage() {
             </div>
           }
         >
+          {loading && nodes.length === 0 ? (
+            <div className="skeleton-rows">
+              {Array.from({ length: 4 }, (_, i) => (
+                <div key={i} className="skeleton skeleton-row" />
+              ))}
+            </div>
+          ) : null}
           <DataTable
             headers={["节点", "节点组", "带宽", "并发", "Traffic API"]}
             rows={nodes.map((node) => [
@@ -678,107 +685,119 @@ export default function AdminNodesPage() {
                 </label>
               </div>
 
-              <label className="field">
-                <div className="field-inline-actions">
-                  <span className="fine-print">SNI</span>
-                  <button
-                    className="ghost-button compact"
-                    type="button"
-                    onClick={() =>
-                      setNodeForm((current) => ({
-                        ...current,
-                        sni: current.hostname,
-                      }))
-                    }
-                    disabled={!nodeForm.hostname}
-                  >
-                    用主机名填充
-                  </button>
+              <details className="field-section" open={!!nodeForm.sni || !!nodeForm.obfsPassword || !!nodeForm.pinSHA256 || nodeForm.allowInsecureTls}>
+                <summary>TLS / Obfs 进阶配置（可选）</summary>
+                <div className="field-section-body">
+                  <label className="field">
+                    <div className="field-inline-actions">
+                      <span className="fine-print">SNI</span>
+                      <button
+                        className="ghost-button compact"
+                        type="button"
+                        onClick={() =>
+                          setNodeForm((current) => ({
+                            ...current,
+                            sni: current.hostname,
+                          }))
+                        }
+                        disabled={!nodeForm.hostname}
+                      >
+                        用主机名填充
+                      </button>
+                    </div>
+                    <input
+                      className="control"
+                      placeholder="留空则不验证 SNI"
+                      value={nodeForm.sni}
+                      onChange={(event) =>
+                        setNodeForm((current) => ({ ...current, sni: event.target.value }))
+                      }
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span className="fine-print">Obfs Password</span>
+                    <input
+                      className="control"
+                      placeholder="salamander 混淆密码，留空则不开启"
+                      value={nodeForm.obfsPassword}
+                      onChange={(event) =>
+                        setNodeForm((current) => ({ ...current, obfsPassword: event.target.value }))
+                      }
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span className="fine-print">Pin SHA256</span>
+                    <input
+                      className="control mono"
+                      placeholder="TLS 证书指纹，留空则不固定"
+                      value={nodeForm.pinSHA256}
+                      onChange={(event) =>
+                        setNodeForm((current) => ({ ...current, pinSHA256: event.target.value }))
+                      }
+                    />
+                  </label>
+
+                  <label className="field checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={nodeForm.allowInsecureTls}
+                      onChange={(event) =>
+                        setNodeForm((current) => ({
+                          ...current,
+                          allowInsecureTls: event.target.checked,
+                        }))
+                      }
+                    />
+                    <span>允许不安全 TLS（跳过证书验证）</span>
+                  </label>
                 </div>
-                <input
-                  className="control"
-                  value={nodeForm.sni}
-                  onChange={(event) =>
-                    setNodeForm((current) => ({ ...current, sni: event.target.value }))
-                  }
-                />
-              </label>
+              </details>
 
-              <label className="field">
-                <span className="fine-print">Obfs Password</span>
-                <input
-                  className="control"
-                  value={nodeForm.obfsPassword}
-                  onChange={(event) =>
-                    setNodeForm((current) => ({ ...current, obfsPassword: event.target.value }))
-                  }
-                />
-              </label>
+              <div>
+                <div className="field-section-label">Traffic API 接入</div>
+                <div className="form-grid" style={{ marginTop: 10 }}>
+                  <label className="field">
+                    <span className="fine-print">Base URL</span>
+                    <input
+                      className="control mono"
+                      value={nodeForm.trafficApiBaseUrl}
+                      onChange={(event) =>
+                        setNodeForm((current) => ({
+                          ...current,
+                          trafficApiBaseUrl: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
 
-              <label className="field">
-                <span className="fine-print">Pin SHA256</span>
-                <input
-                  className="control"
-                  value={nodeForm.pinSHA256}
-                  onChange={(event) =>
-                    setNodeForm((current) => ({ ...current, pinSHA256: event.target.value }))
-                  }
-                />
-              </label>
-
-              <label className="field">
-                <span className="fine-print">Traffic API Base URL</span>
-                <input
-                  className="control mono"
-                  value={nodeForm.trafficApiBaseUrl}
-                  onChange={(event) =>
-                    setNodeForm((current) => ({
-                      ...current,
-                      trafficApiBaseUrl: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-
-              <label className="field">
-                <span className="fine-print">Traffic API Secret</span>
-                <input
-                  className="control mono"
-                  value={nodeForm.trafficApiSecret}
-                  onChange={(event) =>
-                    setNodeForm((current) => ({
-                      ...current,
-                      trafficApiSecret: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-
-              <div className="two-col">
-                <label className="field checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={nodeForm.active}
-                    onChange={(event) =>
-                      setNodeForm((current) => ({ ...current, active: event.target.checked }))
-                    }
-                  />
-                  <span>启用节点</span>
-                </label>
-                <label className="field checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={nodeForm.allowInsecureTls}
-                    onChange={(event) =>
-                      setNodeForm((current) => ({
-                        ...current,
-                        allowInsecureTls: event.target.checked,
-                      }))
-                    }
-                  />
-                  <span>允许不安全 TLS</span>
-                </label>
+                  <label className="field">
+                    <span className="fine-print">Secret</span>
+                    <input
+                      className="control mono"
+                      value={nodeForm.trafficApiSecret}
+                      onChange={(event) =>
+                        setNodeForm((current) => ({
+                          ...current,
+                          trafficApiSecret: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
               </div>
+
+              <label className="field checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={nodeForm.active}
+                  onChange={(event) =>
+                    setNodeForm((current) => ({ ...current, active: event.target.checked }))
+                  }
+                />
+                <span>启用节点</span>
+              </label>
 
               <div className="toolbar-actions">
                 <button className="action-button" type="submit" disabled={nodeSubmitDisabled}>

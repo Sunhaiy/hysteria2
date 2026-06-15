@@ -76,27 +76,11 @@ export function ConsoleShell({
           </button>
           <div className="brand-lockup">
             <span className="scope-chip">{scope}</span>
-            <h1 className="brand-title">Hysteria 2 Control Plane</h1>
-            <span className="brand-subtitle">
-              单节点多套餐映射、多用户流量治理、会员订阅与 Hysteria 2 接入面板
-            </span>
+            <h1 className="brand-title">Hysteria 2</h1>
           </div>
-        </div>
-
-        <div className="panel sidebar-meta">
-          <div className="panel-body">
-            <div className="list-row">
-              <span className="fine-print">Theme</span>
-              <span className="badge success">dark / green</span>
-            </div>
-            <div className="list-row">
-              <span className="fine-print">Density</span>
-              <span className="badge info">12px / 16px rhythm</span>
-            </div>
-            <div className="list-row">
-              <span className="fine-print">当前身份</span>
-              <span className="badge">{session.user.displayName}</span>
-            </div>
+          <div className="sidebar-user">
+            <span className="fine-print">当前账号</span>
+            <span className="sidebar-user-name">{session.user.displayName}</span>
           </div>
         </div>
 

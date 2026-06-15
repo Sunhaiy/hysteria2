@@ -1,6 +1,8 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+const GB = 1024 * 1024 * 1024;
 import { ConsoleShell } from "@/components/console-shell";
 import { DataTable } from "@/components/data-table";
 import { Panel } from "@/components/panel";
@@ -642,6 +644,13 @@ export default function AdminPlansPage() {
             </div>
           }
         >
+          {loading && plans.length === 0 ? (
+            <div className="skeleton-rows">
+              {Array.from({ length: 4 }, (_, i) => (
+                <div key={i} className="skeleton skeleton-row" />
+              ))}
+            </div>
+          ) : null}
           <DataTable
             headers={["套餐", "配额", "速率", "设备数", "价格", "节点组"]}
             rows={plans.map((plan) => [
@@ -738,10 +747,11 @@ export default function AdminPlansPage() {
               </div>
 
               <label className="field">
-                <span className="fine-print">描述</span>
+                <span className="fine-print">描述 <span className="muted">（可选）</span></span>
                 <textarea
                   className="control textarea"
                   value={planForm.description}
+                  placeholder="套餐简介，展示给订阅用户"
                   onChange={(event) =>
                     setPlanForm((current) => ({ ...current, description: event.target.value }))
                   }
@@ -750,19 +760,21 @@ export default function AdminPlansPage() {
 
               <div className="tri-grid">
                 <label className="field">
-                  <span className="fine-print">流量字节数</span>
+                  <span className="fine-print">流量配额（GB）</span>
                   <input
                     className="control"
                     type="number"
-                    value={planForm.trafficBytes}
+                    min="0.1"
+                    step="1"
+                    value={Math.round((planForm.trafficBytes / GB) * 100) / 100}
                     onChange={(event) =>
                       setPlanForm((current) => ({
                         ...current,
-                        trafficBytes: Number(event.target.value),
+                        trafficBytes: Math.round(Number(event.target.value) * GB),
                       }))
                     }
                   />
-                  <span className="field-hint">约 {formatBytes(planForm.trafficBytes || 0)}</span>
+                  <span className="field-hint">精确值 {formatBytes(planForm.trafficBytes || 0)}</span>
                 </label>
                 <label className="field">
                   <span className="fine-print">上行 Mbps</span>
@@ -821,15 +833,17 @@ export default function AdminPlansPage() {
                   />
                 </label>
                 <label className="field">
-                  <span className="fine-print">价格（分）</span>
+                  <span className="fine-print">价格（元）</span>
                   <input
                     className="control"
                     type="number"
-                    value={planForm.priceCents}
+                    min="0"
+                    step="0.01"
+                    value={planForm.priceCents / 100}
                     onChange={(event) =>
                       setPlanForm((current) => ({
                         ...current,
-                        priceCents: Number(event.target.value),
+                        priceCents: Math.round(Number(event.target.value) * 100),
                       }))
                     }
                   />
@@ -839,17 +853,18 @@ export default function AdminPlansPage() {
 
               <div className="two-col">
                 <label className="field">
-                  <span className="fine-print">Accent</span>
+                  <span className="fine-print">Accent <span className="muted">（可选）</span></span>
                   <input
                     className="control"
                     value={planForm.accent}
+                    placeholder="green"
                     onChange={(event) =>
                       setPlanForm((current) => ({ ...current, accent: event.target.value }))
                     }
                   />
-                  <span className="field-hint">例如 green、teal、orange，用于界面语义点缀。</span>
+                  <span className="field-hint">green / teal / orange，用于卡片点缀色。</span>
                 </label>
-                <label className="field checkbox-row">
+                <label className="field checkbox-row" style={{ alignSelf: "end", paddingBottom: "2px" }}>
                   <input
                     type="checkbox"
                     checked={planForm.active}

@@ -253,7 +253,115 @@ img {
 
 .sidebar-header {
   display: grid;
+  gap: 10px;
+}
+
+.sidebar-user {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border-default);
+  background: color-mix(in srgb, var(--bg-panel-alt) 70%, transparent);
+}
+
+.sidebar-user-name {
+  color: var(--text-secondary);
+  font-size: var(--text-tiny);
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeleton {
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    var(--bg-panel-alt) 25%,
+    color-mix(in srgb, var(--border-strong) 60%, var(--bg-panel-alt)) 50%,
+    var(--bg-panel-alt) 75%
+  );
+  background-size: 400% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton-rows {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.skeleton-row {
+  height: 36px;
+  border-radius: 8px;
+}
+
+.skeleton-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+}
+
+.skeleton-metric {
+  height: 72px;
+  border-radius: var(--radius-md);
+}
+
+details.field-section {
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+details.field-section summary {
+  padding: 10px 12px;
+  cursor: pointer;
+  color: var(--text-subtle);
+  font-size: var(--text-tiny);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+details.field-section summary::before {
+  content: "›";
+  display: inline-block;
+  transition: transform 120ms ease;
+  font-size: 16px;
+  line-height: 1;
+}
+
+details.field-section[open] summary::before {
+  transform: rotate(90deg);
+}
+
+details.field-section summary:hover {
+  background: color-mix(in srgb, var(--bg-panel-alt) 60%, transparent);
+}
+
+details.field-section .field-section-body {
+  padding: 12px;
+  border-top: 1px solid var(--border-default);
+  display: grid;
+  gap: 10px;
+  background: color-mix(in srgb, var(--bg-panel-alt) 30%, transparent);
+}
+
+.field-section-label {
+  font-size: var(--text-tiny);
+  color: var(--text-subtle);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-default);
 }
 
 .mobile-nav-toggle {
