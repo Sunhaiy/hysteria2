@@ -1,10 +1,9 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-
-const GB = 1024 * 1024 * 1024;
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { DataTable } from "@/components/data-table";
+import { Drawer } from "@/components/drawer";
 import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
@@ -13,7 +12,9 @@ import { formatBytes, formatMoney } from "@/lib/format";
 import type { NodeGroupRecord, PlanBindingRecord, PlanRecord } from "@/lib/types";
 import { slugifyValue } from "@/lib/ui";
 
-type PlanFormState = {
+const GB = 1024 * 1024 * 1024;
+
+type PlanForm = {
   slug: string;
   name: string;
   description: string;
@@ -27,26 +28,13 @@ type PlanFormState = {
   accent: string;
 };
 
-type BindingFormState = {
-  planId: string;
-  nodeGroupId: string;
-  priority: number;
-};
-
-type PendingActionState = {
-  message: string;
-  actionLabel: string;
-  affectsPlan: boolean;
-  affectsBinding: boolean;
-};
-
-function createEmptyPlan(): PlanFormState {
+function emptyForm(): PlanForm {
   return {
     slug: "",
     name: "",
     description: "",
     active: true,
-    trafficBytes: 200 * 1024 * 1024 * 1024,
+    trafficBytes: 200 * GB,
     durationDays: 30,
     speedUpMbps: 20,
     speedDownMbps: 120,
@@ -56,7 +44,7 @@ function createEmptyPlan(): PlanFormState {
   };
 }
 
-function createPlanForm(plan: PlanRecord): PlanFormState {
+function fromRecord(plan: PlanRecord): PlanForm {
   return {
     slug: plan.slug,
     name: plan.name,
@@ -72,541 +60,173 @@ function createPlanForm(plan: PlanRecord): PlanFormState {
   };
 }
 
-function createBindingForm(planId = "", priority = 0): BindingFormState {
-  return {
-    planId,
-    nodeGroupId: "",
-    priority,
-  };
-}
-
-function createBindingEditForm(binding: PlanBindingRecord): BindingFormState {
-  return {
-    planId: binding.planId,
-    nodeGroupId: binding.nodeGroupId,
-    priority: binding.priority,
-  };
-}
-
-function getNextBindingPriority(bindings: PlanBindingRecord[], planId: string) {
-  if (!planId) {
-    return 0;
-  }
-  return (
-    bindings
-      .filter((binding) => binding.planId === planId)
-      .reduce((highest, binding) => Math.max(highest, binding.priority), -1) + 1
-  );
-}
-
-function formsMatch<T>(left: T, right: T) {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function describeDirtyScope(affectsPlan: boolean, affectsBinding: boolean) {
-  if (affectsPlan && affectsBinding) {
-    return "当前套餐和绑定草稿";
-  }
-  if (affectsPlan) {
-    return "当前套餐草稿";
-  }
-  return "当前绑定草稿";
-}
-
 export default function AdminPlansPage() {
   const { token } = useAuth();
   const [plans, setPlans] = useState<PlanRecord[]>([]);
-  const [nodeGroups, setNodeGroups] = useState<NodeGroupRecord[]>([]);
   const [bindings, setBindings] = useState<PlanBindingRecord[]>([]);
-  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
-  const [selectedBindingId, setSelectedBindingId] = useState<string | null>(null);
-  const [planForm, setPlanForm] = useState<PlanFormState>(createEmptyPlan);
-  const [bindingForm, setBindingForm] = useState<BindingFormState>(() => createBindingForm());
-  const [pendingAction, setPendingAction] = useState<PendingActionState | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [nodeGroups, setNodeGroups] = useState<NodeGroupRecord[]>([]);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editingPlan, setEditingPlan] = useState<PlanRecord | null>(null);
+  const [form, setForm] = useState<PlanForm>(emptyForm);
+  const [drawerError, setDrawerError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [planSaving, setPlanSaving] = useState(false);
-  const [bindingSaving, setBindingSaving] = useState(false);
-  const [formVisible, setFormVisible] = useState(false);
-  const pendingActionRef = useRef<(() => void) | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [addingBinding, setAddingBinding] = useState(false);
+  const [newBindingGroupId, setNewBindingGroupId] = useState("");
 
   const load = useCallback(async () => {
-    if (!token) {
-      return null;
-    }
-
+    if (!token) return;
     setLoading(true);
-    setError(null);
-
     try {
-      const [nextPlans, nextNodeGroups, nextBindings] = await Promise.all([
+      const [nextPlans, nextBindings, nextGroups] = await Promise.all([
         apiRequest<PlanRecord[]>("/api/admin/plans", { token }),
-        apiRequest<NodeGroupRecord[]>("/api/admin/node-groups", { token }),
         apiRequest<PlanBindingRecord[]>("/api/admin/plan-bindings", { token }),
+        apiRequest<NodeGroupRecord[]>("/api/admin/node-groups", { token }),
       ]);
-
       setPlans(nextPlans);
-      setNodeGroups(nextNodeGroups);
       setBindings(nextBindings);
-
-      if (selectedPlanId && !nextPlans.some((plan) => plan.id === selectedPlanId)) {
-        setSelectedPlanId(null);
-        setPlanForm(createEmptyPlan());
-      }
-
-      if (selectedBindingId && !nextBindings.some((binding) => binding.id === selectedBindingId)) {
-        setSelectedBindingId(null);
-        setBindingForm(createBindingForm(selectedPlanId ?? ""));
-      }
-
-      return { nextPlans, nextNodeGroups, nextBindings };
-    } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "套餐数据加载失败。");
-      return null;
+      setNodeGroups(nextGroups);
+    } catch {
+      // keep stale
     } finally {
       setLoading(false);
     }
-  }, [selectedBindingId, selectedPlanId, token]);
+  }, [token]);
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      void load();
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
+    const id = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(id);
   }, [load]);
 
-  const selectedPlan = useMemo(
-    () => plans.find((plan) => plan.id === selectedPlanId) ?? null,
-    [plans, selectedPlanId],
-  );
+  function openCreate() {
+    setEditingPlan(null);
+    setForm(emptyForm());
+    setDrawerError(null);
+    setDrawerOpen(true);
+  }
 
-  const selectedBinding = useMemo(
-    () => bindings.find((binding) => binding.id === selectedBindingId) ?? null,
-    [bindings, selectedBindingId],
-  );
+  function openEdit(plan: PlanRecord) {
+    setEditingPlan(plan);
+    setForm(fromRecord(plan));
+    setDrawerError(null);
+    setDrawerOpen(true);
+  }
 
-  const visibleBindings = useMemo(() => {
-    if (!selectedPlanId) {
-      return bindings;
+  function closeDrawer() {
+    setDrawerOpen(false);
+    setEditingPlan(null);
+    setDrawerError(null);
+    setAddingBinding(false);
+    setNewBindingGroupId("");
+  }
+
+  const set = <K extends keyof PlanForm>(key: K, value: PlanForm[K]) =>
+    setForm((f) => ({ ...f, [key]: value }));
+
+  async function handlePlanSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!token) return;
+    setSaving(true);
+    setDrawerError(null);
+    try {
+      const payload = {
+        ...form,
+        slug: form.slug.trim(),
+        name: form.name.trim(),
+        description: form.description.trim(),
+        accent: form.accent.trim() || "green",
+      };
+
+      let savedPlan: PlanRecord;
+      if (editingPlan) {
+        savedPlan = await apiRequest<PlanRecord>(`/api/admin/plans/${editingPlan.id}`, {
+          method: "PATCH",
+          token,
+          body: payload,
+        });
+      } else {
+        savedPlan = await apiRequest<PlanRecord>("/api/admin/plans", {
+          method: "POST",
+          token,
+          body: payload,
+        });
+        // Auto-bind to first node group when creating a new plan
+        const currentBindings = await apiRequest<PlanBindingRecord[]>("/api/admin/plan-bindings", { token });
+        const planBindings = currentBindings.filter((b) => b.planId === savedPlan.id);
+        if (planBindings.length === 0 && nodeGroups.length > 0) {
+          await apiRequest("/api/admin/plan-bindings", {
+            method: "POST",
+            token,
+            body: { planId: savedPlan.id, nodeGroupId: nodeGroups[0].id, priority: 0 },
+          });
+        }
+      }
+
+      setEditingPlan(savedPlan);
+      setForm(fromRecord(savedPlan));
+      setFeedback(editingPlan ? "套餐已更新。" : "套餐已创建并绑定节点组。");
+      await load();
+    } catch (cause) {
+      setDrawerError(cause instanceof ApiError ? cause.message : "保存失败，请重试。");
+    } finally {
+      setSaving(false);
     }
-    return bindings.filter((binding) => binding.planId === selectedPlanId);
-  }, [bindings, selectedPlanId]);
+  }
 
-  const activeBindingPlanId = bindingForm.planId || selectedPlanId || "";
-  const bindingDraftPlanId = selectedPlanId || "";
+  async function handleAddBinding() {
+    if (!token || !editingPlan || !newBindingGroupId) return;
+    setAddingBinding(true);
+    setDrawerError(null);
+    try {
+      const planBindings = bindings.filter((b) => b.planId === editingPlan.id);
+      const nextPriority = planBindings.reduce((m, b) => Math.max(m, b.priority), -1) + 1;
+      await apiRequest("/api/admin/plan-bindings", {
+        method: "POST",
+        token,
+        body: { planId: editingPlan.id, nodeGroupId: newBindingGroupId, priority: nextPriority },
+      });
+      setNewBindingGroupId("");
+      await load();
+    } catch (cause) {
+      setDrawerError(cause instanceof ApiError ? cause.message : "绑定失败。");
+    } finally {
+      setAddingBinding(false);
+    }
+  }
 
-  const bindingDraftDefault = useMemo(
-    () => createBindingForm(bindingDraftPlanId, getNextBindingPriority(bindings, bindingDraftPlanId)),
-    [bindingDraftPlanId, bindings],
+  const drawerBindings = useMemo(
+    () => (editingPlan ? bindings.filter((b) => b.planId === editingPlan.id) : []),
+    [bindings, editingPlan],
   );
 
-  const originalPlanForm = useMemo(
-    () => (selectedPlan ? createPlanForm(selectedPlan) : createEmptyPlan()),
-    [selectedPlan],
-  );
-
-  const originalBindingForm = useMemo(
-    () => (selectedBinding ? createBindingEditForm(selectedBinding) : bindingDraftDefault),
-    [bindingDraftDefault, selectedBinding],
-  );
-
-  const planDirty = !formsMatch(planForm, originalPlanForm);
-  const bindingDirty = !formsMatch(bindingForm, originalBindingForm);
-  const dirtyDraftCount = Number(planDirty) + Number(bindingDirty);
-  const hasDirtyChanges = dirtyDraftCount > 0;
-
-  const duplicateBinding = useMemo(
-    () =>
-      bindings.some(
-        (binding) =>
-          binding.planId === bindingForm.planId &&
-          binding.nodeGroupId === bindingForm.nodeGroupId &&
-          binding.id !== selectedBindingId,
-      ),
-    [bindingForm.nodeGroupId, bindingForm.planId, bindings, selectedBindingId],
+  const unboundGroups = useMemo(
+    () => nodeGroups.filter((g) => !drawerBindings.some((b) => b.nodeGroupId === g.id)),
+    [drawerBindings, nodeGroups],
   );
 
   const planSubmitDisabled =
-    planSaving ||
-    !planForm.slug.trim() ||
-    !planForm.name.trim() ||
-    planForm.trafficBytes < 1 ||
-    planForm.durationDays < 1 ||
-    planForm.speedUpMbps < 1 ||
-    planForm.speedDownMbps < 1 ||
-    planForm.deviceLimit < 1 ||
-    planForm.priceCents < 0 ||
-    (selectedPlan ? !planDirty : false);
-
-  const bindingSubmitDisabled =
-    bindingSaving ||
-    !bindingForm.planId ||
-    !bindingForm.nodeGroupId ||
-    duplicateBinding ||
-    (selectedBinding ? !bindingDirty : false);
-
-  const clearPendingAction = useCallback(() => {
-    pendingActionRef.current = null;
-    setPendingAction(null);
-  }, []);
-
-  const requestGuardedAction = useCallback(
-    (
-      input: {
-        actionLabel: string;
-        affectsPlan?: boolean;
-        affectsBinding?: boolean;
-        message?: string;
-      },
-      action: () => void,
-    ) => {
-      const affectsPlan = input.affectsPlan ?? false;
-      const affectsBinding = input.affectsBinding ?? false;
-      const shouldGuard = (affectsPlan && planDirty) || (affectsBinding && bindingDirty);
-
-      if (!shouldGuard) {
-        clearPendingAction();
-        action();
-        return;
-      }
-
-      pendingActionRef.current = action;
-      setPendingAction({
-        actionLabel: input.actionLabel,
-        affectsPlan,
-        affectsBinding,
-        message:
-          input.message ??
-          `${input.actionLabel}会丢弃${describeDirtyScope(affectsPlan, affectsBinding)}。确认继续吗？`,
-      });
-      setFeedback(null);
-    },
-    [bindingDirty, clearPendingAction, planDirty],
-  );
-
-  const applyBeginCreatePlan = useCallback(() => {
-    setSelectedPlanId(null);
-    setSelectedBindingId(null);
-    setPlanForm(createEmptyPlan());
-    setBindingForm(createBindingForm());
-    setFeedback(null);
-    setFormVisible(true);
-  }, []);
-
-  const applyBeginCreateBinding = useCallback(
-    (planId = activeBindingPlanId) => {
-      setSelectedBindingId(null);
-      setBindingForm(createBindingForm(planId, getNextBindingPriority(bindings, planId)));
-      setFeedback(null);
-    },
-    [activeBindingPlanId, bindings],
-  );
-
-  const applySelectPlan = useCallback(
-    (plan: PlanRecord | null) => {
-      if (!plan) {
-        applyBeginCreatePlan();
-        return;
-      }
-
-      setSelectedPlanId(plan.id);
-      setPlanForm(createPlanForm(plan));
-
-      if (!selectedBinding || selectedBinding.planId !== plan.id) {
-        setSelectedBindingId(null);
-        setBindingForm(createBindingForm(plan.id, getNextBindingPriority(bindings, plan.id)));
-      }
-
-      setFeedback(null);
-      setFormVisible(true);
-    },
-    [applyBeginCreatePlan, bindings, selectedBinding],
-  );
-
-  const applySelectBinding = useCallback(
-    (binding: PlanBindingRecord | null) => {
-      if (!binding) {
-        applyBeginCreateBinding();
-        return;
-      }
-
-      const plan = plans.find((item) => item.id === binding.planId) ?? null;
-      if (plan) {
-        setSelectedPlanId(plan.id);
-        setPlanForm(createPlanForm(plan));
-      }
-      setSelectedBindingId(binding.id);
-      setBindingForm(createBindingEditForm(binding));
-      setFeedback(null);
-    },
-    [applyBeginCreateBinding, plans],
-  );
-
-  useEffect(() => {
-    if (!hasDirtyChanges) {
-      return;
-    }
-
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-
-    const handleDocumentClick = (event: MouseEvent) => {
-      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
-        return;
-      }
-
-      const target = event.target;
-      if (!(target instanceof HTMLElement)) {
-        return;
-      }
-
-      const anchor = target.closest("a[href]");
-      if (!(anchor instanceof HTMLAnchorElement) || anchor.target === "_blank") {
-        return;
-      }
-
-      const currentUrl = new URL(window.location.href);
-      const nextUrl = new URL(anchor.href, window.location.href);
-
-      if (
-        currentUrl.pathname === nextUrl.pathname &&
-        currentUrl.search === nextUrl.search &&
-        currentUrl.hash === nextUrl.hash
-      ) {
-        return;
-      }
-
-      event.preventDefault();
-      requestGuardedAction(
-        {
-          actionLabel: "离开套餐页",
-          affectsPlan: true,
-          affectsBinding: true,
-          message: "离开套餐页会丢弃当前未保存的套餐或绑定草稿。确认继续吗？",
-        },
-        () => {
-          window.location.assign(nextUrl.toString());
-        },
-      );
-    };
-
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    document.addEventListener("click", handleDocumentClick, true);
-
-    return () => {
-      window.removeEventListener("beforeunload", handleBeforeUnload);
-      document.removeEventListener("click", handleDocumentClick, true);
-    };
-  }, [clearPendingAction, hasDirtyChanges, requestGuardedAction]);
-
-  function beginCreatePlan() {
-    requestGuardedAction(
-      {
-        actionLabel: "切到新建套餐",
-        affectsPlan: true,
-        affectsBinding: true,
-      },
-      () => applyBeginCreatePlan(),
-    );
-  }
-
-  function beginCreateBinding(planId = activeBindingPlanId) {
-    requestGuardedAction(
-      {
-        actionLabel: "切到新建绑定",
-        affectsBinding: true,
-      },
-      () => applyBeginCreateBinding(planId),
-    );
-  }
-
-  function restoreCurrentPlan() {
-    setPlanForm(originalPlanForm);
-    clearPendingAction();
-    setFeedback(selectedPlan ? "已恢复当前套餐记录。" : "已清空套餐草稿。");
-  }
-
-  function restoreCurrentBinding() {
-    setBindingForm(originalBindingForm);
-    clearPendingAction();
-    setFeedback(selectedBinding ? "已恢复当前绑定记录。" : "已清空绑定草稿。");
-  }
-
-  function confirmPendingAction() {
-    const action = pendingActionRef.current;
-    clearPendingAction();
-    action?.();
-  }
-
-  function keepEditing() {
-    clearPendingAction();
-  }
-
-  function restorePendingDrafts() {
-    if (pendingAction?.affectsPlan) {
-      setPlanForm(originalPlanForm);
-    }
-    if (pendingAction?.affectsBinding) {
-      setBindingForm(originalBindingForm);
-    }
-    clearPendingAction();
-    setFeedback("已恢复当前记录，可以继续编辑。");
-  }
-
-  function selectPlan(plan: PlanRecord | null) {
-    if (!plan) {
-      beginCreatePlan();
-      return;
-    }
-
-    requestGuardedAction(
-      {
-        actionLabel: `切换到套餐「${plan.name}」`,
-        affectsPlan: true,
-        affectsBinding: true,
-      },
-      () => applySelectPlan(plan),
-    );
-  }
-
-  function selectBinding(binding: PlanBindingRecord | null) {
-    if (!binding) {
-      beginCreateBinding();
-      return;
-    }
-
-    requestGuardedAction(
-      {
-        actionLabel: `切换到绑定「${binding.planName} / ${binding.nodeGroupName}」`,
-        affectsPlan: true,
-        affectsBinding: true,
-      },
-      () => applySelectBinding(binding),
-    );
-  }
-
-  function changeBindingPlan(nextPlanId: string) {
-    requestGuardedAction(
-      {
-        actionLabel: "切换绑定目标套餐",
-        affectsBinding: true,
-      },
-      () => {
-        setSelectedBindingId(null);
-        setBindingForm(createBindingForm(nextPlanId, getNextBindingPriority(bindings, nextPlanId)));
-        setFeedback(null);
-      },
-    );
-  }
-
-  async function handlePlanSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!token) {
-      return;
-    }
-
-    clearPendingAction();
-    setPlanSaving(true);
-    setError(null);
-    setFeedback(null);
-
-    try {
-      const payload = {
-        ...planForm,
-        slug: planForm.slug.trim(),
-        name: planForm.name.trim(),
-        description: planForm.description.trim(),
-        accent: planForm.accent.trim() || "green",
-      };
-
-      const savedPlan = selectedPlan
-        ? await apiRequest<PlanRecord>(`/api/admin/plans/${selectedPlan.id}`, {
-            method: "PATCH",
-            token,
-            body: payload,
-          })
-        : await apiRequest<PlanRecord>("/api/admin/plans", {
-            method: "POST",
-            token,
-            body: payload,
-          });
-
-      setSelectedPlanId(savedPlan.id);
-      setPlanForm(createPlanForm(savedPlan));
-      setFeedback(selectedPlan ? "套餐已更新。" : "套餐已创建。");
-
-      if (!selectedBinding || selectedBinding.planId !== savedPlan.id) {
-        applyBeginCreateBinding(savedPlan.id);
-      }
-
-      await load();
-    } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "保存套餐失败。");
-    } finally {
-      setPlanSaving(false);
-    }
-  }
-
-  async function handleBindingSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!token) {
-      return;
-    }
-
-    clearPendingAction();
-    setBindingSaving(true);
-    setError(null);
-    setFeedback(null);
-
-    try {
-      const savedBinding = selectedBinding
-        ? await apiRequest<PlanBindingRecord>(`/api/admin/plan-bindings/${selectedBinding.id}`, {
-            method: "PATCH",
-            token,
-            body: {
-              nodeGroupId: bindingForm.nodeGroupId,
-              priority: bindingForm.priority,
-            },
-          })
-        : await apiRequest<PlanBindingRecord>("/api/admin/plan-bindings", {
-            method: "POST",
-            token,
-            body: bindingForm,
-          });
-
-      setSelectedPlanId(savedBinding.planId);
-      setSelectedBindingId(savedBinding.id);
-      setBindingForm(createBindingEditForm(savedBinding));
-      setFeedback(selectedBinding ? "套餐绑定已更新。" : "套餐绑定已创建。");
-      await load();
-    } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "保存套餐绑定失败。");
-    } finally {
-      setBindingSaving(false);
-    }
-  }
+    saving ||
+    !form.slug.trim() ||
+    !form.name.trim() ||
+    form.trafficBytes < 1 ||
+    form.durationDays < 1;
 
   return (
     <ConsoleShell
       title="套餐管理"
-      subtitle="控制套餐配额、速率、设备数，并把节点组绑定关系也整理清楚。"
+      subtitle="配置流量、速率和周期，创建后自动绑定到节点组。"
       scope="Operations"
       navItems={adminNav}
       requireRole="admin"
       toolbarMeta={
-        <>
-          <span className="badge info">
-            {loading ? "加载中..." : `${plans.length} 个套餐 / ${bindings.length} 条绑定`}
-          </span>
-          {hasDirtyChanges ? <span className="badge warn">{dirtyDraftCount} 处未保存改动</span> : null}
-        </>
+        <span className="badge info">
+          {loading ? "加载中..." : `${plans.length} 个套餐`}
+        </span>
       }
       toolbarActions={
         <>
-          <button className="action-button" type="button" onClick={beginCreatePlan}>
+          <button className="action-button" type="button" onClick={openCreate}>
             新建套餐
           </button>
           <button className="toolbar-button" type="button" onClick={() => void load()}>
@@ -615,58 +235,29 @@ export default function AdminPlansPage() {
         </>
       }
     >
-      {error ? <div className="feedback error">{error}</div> : null}
       {feedback ? <div className="feedback success">{feedback}</div> : null}
-      {hasDirtyChanges && !pendingAction ? (
-        <div className="feedback info">当前有未保存改动，切换套餐、切换绑定或离开页面前会先要求确认。</div>
-      ) : null}
-      {pendingAction ? (
-        <div className="feedback warn">
-          <div>{pendingAction.message}</div>
-          <div className="panel-actions">
-            <button className="action-button" type="button" onClick={confirmPendingAction}>
-              {pendingAction.actionLabel}
-            </button>
-            <button className="ghost-button" type="button" onClick={keepEditing}>
-              继续编辑
-            </button>
-            <button className="ghost-button" type="button" onClick={restorePendingDrafts}>
-              先恢复当前记录
-            </button>
-          </div>
-        </div>
-      ) : null}
 
-      <section className="workspace-grid">
-        <Panel
-          title="套餐列表"
-          copy="点一行进入编辑态；切换记录前若有草稿，会先要求确认而不是直接冲掉。"
-          action={
-            <div className="panel-actions">
-              {selectedPlan ? (
-                <button className="ghost-button compact" type="button" onClick={beginCreatePlan}>
-                  新建套餐
-                </button>
-              ) : null}
-              <span className="fine-print">{loading ? "同步中..." : `${plans.length} 条`}</span>
-            </div>
-          }
-        >
-          {loading && plans.length === 0 ? (
-            <div className="skeleton-rows">
-              {Array.from({ length: 4 }, (_, i) => (
-                <div key={i} className="skeleton skeleton-row" />
-              ))}
-            </div>
-          ) : null}
+      <Panel
+        title="套餐列表"
+        copy="点击套餐行编辑详情和节点组绑定；「新建套餐」创建后自动绑定到默认节点组。"
+      >
+        {loading && plans.length === 0 ? (
+          <div className="skeleton-rows">
+            {Array.from({ length: 4 }, (_, i) => (
+              <div key={i} className="skeleton skeleton-row" />
+            ))}
+          </div>
+        ) : null}
+
+        {plans.length > 0 ? (
           <DataTable
-            headers={["套餐", "配额", "速率", "设备数", "价格", "节点组"]}
+            headers={["套餐", "流量", "速率", "周期", "价格", "节点组"]}
             rows={plans.map((plan) => [
               <button
                 key={plan.id}
                 type="button"
-                className={`link-button${selectedPlanId === plan.id ? " active" : ""}`}
-                onClick={() => selectPlan(plan)}
+                className="link-button"
+                onClick={() => openEdit(plan)}
               >
                 <span>{plan.name}</span>
                 <span className="muted">
@@ -675,371 +266,240 @@ export default function AdminPlansPage() {
               </button>,
               formatBytes(plan.trafficBytes),
               `${plan.speedUpMbps} / ${plan.speedDownMbps} Mbps`,
-              `${plan.deviceLimit} 台`,
+              `${plan.durationDays} 天`,
               formatMoney(plan.priceCents),
-              plan.boundNodeGroups.join(" / ") || "未绑定",
+              plan.boundNodeGroups.join(" / ") || (
+                <span key={`${plan.id}-ng`} className="badge warn">
+                  未绑定
+                </span>
+              ),
             ])}
           />
-        </Panel>
+        ) : !loading ? (
+          <div className="empty-state">
+            <div className="empty-state-icon">📋</div>
+            <div className="empty-state-title">还没有套餐</div>
+            <button className="action-button" type="button" onClick={openCreate}>
+              新建第一个套餐
+            </button>
+          </div>
+        ) : null}
+      </Panel>
 
-        <div className="split">
-          {!formVisible ? (
-            <div className="panel">
-              <div className="empty-state">
-                <div className="empty-state-icon">📋</div>
-                <div className="empty-state-title">从列表选择套餐编辑，或新建一个</div>
-                <button className="action-button" type="button" onClick={beginCreatePlan}>
-                  新建套餐
-                </button>
-              </div>
-            </div>
-          ) : (
-          <>
-          <Panel
-            title={selectedPlan ? "编辑套餐" : "新建套餐"}
-            copy="套餐本身决定订阅创建时继承的流量、速率、周期和设备上限。"
-            action={
-              selectedPlan ? (
-                <span className={`badge ${planDirty ? "warn" : "success"}`}>
-                  {planDirty ? "有未保存改动" : "已同步"}
-                </span>
-              ) : planDirty ? (
-                <span className="badge warn">新建草稿未保存</span>
-              ) : (
-                <span className="badge info">新建草稿</span>
-              )
-            }
-          >
-            <div className="usage-grid">
-              <article className="metric-card">
-                <span className="metric-label">套餐配额</span>
-                <strong>{formatBytes(planForm.trafficBytes)}</strong>
-                <span className="metric-footnote">订阅创建后会复制到快照里</span>
-              </article>
-              <article className="metric-card">
-                <span className="metric-label">速率快照</span>
-                <strong>
-                  {planForm.speedUpMbps} / {planForm.speedDownMbps} Mbps
-                </strong>
-                <span className="metric-footnote">{planForm.deviceLimit} 台并发设备</span>
-              </article>
-              <article className="metric-card">
-                <span className="metric-label">账单节奏</span>
-                <strong>{formatMoney(planForm.priceCents)}</strong>
-                <span className="metric-footnote">{planForm.durationDays} 天一个周期</span>
-              </article>
-            </div>
+      <Drawer
+        open={drawerOpen}
+        onClose={closeDrawer}
+        title={editingPlan ? `编辑套餐：${editingPlan.name}` : "新建套餐"}
+        footer={
+          <div className="toolbar-actions">
+            <button
+              className="action-button"
+              type="submit"
+              form="plan-form"
+              disabled={planSubmitDisabled}
+            >
+              {saving ? "保存中..." : editingPlan ? "保存套餐" : "创建套餐"}
+            </button>
+            <button className="ghost-button" type="button" onClick={closeDrawer}>
+              取消
+            </button>
+          </div>
+        }
+      >
+        {drawerError ? <div className="feedback error">{drawerError}</div> : null}
 
-            <form className="form-grid" onSubmit={handlePlanSubmit}>
-              <div className="two-col">
-                <label className="field">
-                  <span className="fine-print">Slug</span>
-                  <input
-                    className="control"
-                    value={planForm.slug}
-                    onChange={(event) =>
-                      setPlanForm((current) => ({ ...current, slug: slugifyValue(event.target.value) }))
-                    }
-                  />
-                  <span className="field-hint">建议使用小写短横线，如 `core-200`。</span>
-                </label>
-                <label className="field">
-                  <span className="fine-print">套餐名</span>
-                  <input
-                    className="control"
-                    value={planForm.name}
-                    onChange={(event) =>
-                      setPlanForm((current) => {
-                        const nextName = event.target.value;
-                        const derivedSlug = slugifyValue(current.name);
-                        const shouldSyncSlug =
-                          !selectedPlan && (!current.slug || current.slug === derivedSlug);
+        <form id="plan-form" className="form-grid" onSubmit={handlePlanSubmit}>
+          <div className="two-col">
+            <label className="field">
+              <span className="fine-print">套餐名</span>
+              <input
+                className="control"
+                placeholder="如：标准 200G"
+                value={form.name}
+                onChange={(e) => {
+                  const nextName = e.target.value;
+                  setForm((f) => ({
+                    ...f,
+                    name: nextName,
+                    slug:
+                      !editingPlan && (!f.slug || f.slug === slugifyValue(f.name))
+                        ? slugifyValue(nextName)
+                        : f.slug,
+                  }));
+                }}
+                required
+              />
+            </label>
+            <label className="field">
+              <span className="fine-print">Slug</span>
+              <input
+                className="control"
+                placeholder="standard-200g"
+                value={form.slug}
+                onChange={(e) => set("slug", slugifyValue(e.target.value))}
+                required
+              />
+            </label>
+          </div>
 
-                        return {
-                          ...current,
-                          name: nextName,
-                          slug: shouldSyncSlug ? slugifyValue(nextName) : current.slug,
-                        };
-                      })
-                    }
-                  />
-                </label>
-              </div>
+          <div className="two-col">
+            <label className="field">
+              <span className="fine-print">流量配额（GB）</span>
+              <input
+                className="control"
+                type="number"
+                min="1"
+                step="1"
+                value={Math.round((form.trafficBytes / GB) * 100) / 100}
+                onChange={(e) => set("trafficBytes", Math.round(Number(e.target.value) * GB))}
+              />
+              <span className="field-hint">{formatBytes(form.trafficBytes)}</span>
+            </label>
+            <label className="field">
+              <span className="fine-print">周期天数</span>
+              <input
+                className="control"
+                type="number"
+                min="1"
+                value={form.durationDays}
+                onChange={(e) => set("durationDays", Number(e.target.value))}
+              />
+            </label>
+          </div>
 
+          <div className="two-col">
+            <label className="field">
+              <span className="fine-print">上行限速 Mbps</span>
+              <input
+                className="control"
+                type="number"
+                min="1"
+                value={form.speedUpMbps}
+                onChange={(e) => set("speedUpMbps", Number(e.target.value))}
+              />
+            </label>
+            <label className="field">
+              <span className="fine-print">下行限速 Mbps</span>
+              <input
+                className="control"
+                type="number"
+                min="1"
+                value={form.speedDownMbps}
+                onChange={(e) => set("speedDownMbps", Number(e.target.value))}
+              />
+            </label>
+          </div>
+
+          <div className="two-col">
+            <label className="field">
+              <span className="fine-print">价格（元）</span>
+              <input
+                className="control"
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.priceCents / 100}
+                onChange={(e) => set("priceCents", Math.round(Number(e.target.value) * 100))}
+              />
+              <span className="field-hint">{formatMoney(form.priceCents)}</span>
+            </label>
+            <label className="field">
+              <span className="fine-print">设备数上限</span>
+              <input
+                className="control"
+                type="number"
+                min="1"
+                value={form.deviceLimit}
+                onChange={(e) => set("deviceLimit", Number(e.target.value))}
+              />
+            </label>
+          </div>
+
+          <details className="field-section">
+            <summary>其他配置（可选）</summary>
+            <div className="field-section-body">
               <label className="field">
-                <span className="fine-print">描述 <span className="muted">（可选）</span></span>
+                <span className="fine-print">描述</span>
                 <textarea
                   className="control textarea"
-                  value={planForm.description}
-                  placeholder="套餐简介，展示给订阅用户"
-                  onChange={(event) =>
-                    setPlanForm((current) => ({ ...current, description: event.target.value }))
-                  }
+                  placeholder="套餐简介，展示给用户"
+                  value={form.description}
+                  onChange={(e) => set("description", e.target.value)}
                 />
               </label>
-
-              <div className="tri-grid">
-                <label className="field">
-                  <span className="fine-print">流量配额（GB）</span>
-                  <input
-                    className="control"
-                    type="number"
-                    min="0.1"
-                    step="1"
-                    value={Math.round((planForm.trafficBytes / GB) * 100) / 100}
-                    onChange={(event) =>
-                      setPlanForm((current) => ({
-                        ...current,
-                        trafficBytes: Math.round(Number(event.target.value) * GB),
-                      }))
-                    }
-                  />
-                  <span className="field-hint">精确值 {formatBytes(planForm.trafficBytes || 0)}</span>
-                </label>
-                <label className="field">
-                  <span className="fine-print">上行 Mbps</span>
-                  <input
-                    className="control"
-                    type="number"
-                    value={planForm.speedUpMbps}
-                    onChange={(event) =>
-                      setPlanForm((current) => ({
-                        ...current,
-                        speedUpMbps: Number(event.target.value),
-                      }))
-                    }
-                  />
-                </label>
-                <label className="field">
-                  <span className="fine-print">下行 Mbps</span>
-                  <input
-                    className="control"
-                    type="number"
-                    value={planForm.speedDownMbps}
-                    onChange={(event) =>
-                      setPlanForm((current) => ({
-                        ...current,
-                        speedDownMbps: Number(event.target.value),
-                      }))
-                    }
-                  />
-                </label>
-                <label className="field">
-                  <span className="fine-print">设备数</span>
-                  <input
-                    className="control"
-                    type="number"
-                    value={planForm.deviceLimit}
-                    onChange={(event) =>
-                      setPlanForm((current) => ({
-                        ...current,
-                        deviceLimit: Number(event.target.value),
-                      }))
-                    }
-                  />
-                </label>
-                <label className="field">
-                  <span className="fine-print">周期天数</span>
-                  <input
-                    className="control"
-                    type="number"
-                    value={planForm.durationDays}
-                    onChange={(event) =>
-                      setPlanForm((current) => ({
-                        ...current,
-                        durationDays: Number(event.target.value),
-                      }))
-                    }
-                  />
-                </label>
-                <label className="field">
-                  <span className="fine-print">价格（元）</span>
-                  <input
-                    className="control"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={planForm.priceCents / 100}
-                    onChange={(event) =>
-                      setPlanForm((current) => ({
-                        ...current,
-                        priceCents: Math.round(Number(event.target.value) * 100),
-                      }))
-                    }
-                  />
-                  <span className="field-hint">{formatMoney(planForm.priceCents || 0)}</span>
-                </label>
-              </div>
-
-              <div className="two-col">
-                <label className="field">
-                  <span className="fine-print">Accent <span className="muted">（可选）</span></span>
-                  <input
-                    className="control"
-                    value={planForm.accent}
-                    placeholder="green"
-                    onChange={(event) =>
-                      setPlanForm((current) => ({ ...current, accent: event.target.value }))
-                    }
-                  />
-                  <span className="field-hint">green / teal / orange，用于卡片点缀色。</span>
-                </label>
-                <label className="field checkbox-row" style={{ alignSelf: "end", paddingBottom: "2px" }}>
-                  <input
-                    type="checkbox"
-                    checked={planForm.active}
-                    onChange={(event) =>
-                      setPlanForm((current) => ({ ...current, active: event.target.checked }))
-                    }
-                  />
-                  <span>启用该套餐</span>
-                </label>
-              </div>
-
-              <div className="toolbar-actions">
-                <button className="action-button" type="submit" disabled={planSubmitDisabled}>
-                  {planSaving ? "保存中..." : selectedPlan ? "保存套餐" : "创建套餐"}
-                </button>
-                <button className="ghost-button" type="button" onClick={restoreCurrentPlan} disabled={!planDirty}>
-                  {selectedPlan ? "恢复当前记录" : "清空草稿"}
-                </button>
-                {selectedPlan ? (
-                  <button className="ghost-button" type="button" onClick={beginCreatePlan}>
-                    切到新建
-                  </button>
-                ) : null}
-              </div>
-            </form>
-          </Panel>
-
-          <Panel
-            title={selectedBinding ? "编辑套餐绑定" : "套餐节点组绑定"}
-            copy="绑定优先级越小，订阅创建时越容易被自动选作默认节点组。"
-            action={
-              <div className="panel-actions">
-                {selectedBinding ? (
-                  <button className="ghost-button compact" type="button" onClick={() => beginCreateBinding()}>
-                    新建绑定
-                  </button>
-                ) : null}
-                {selectedBinding ? (
-                  <span className={`badge ${bindingDirty ? "warn" : "success"}`}>
-                    {bindingDirty ? "有未保存改动" : "已同步"}
-                  </span>
-                ) : bindingDirty ? (
-                  <span className="badge warn">绑定草稿未保存</span>
-                ) : activeBindingPlanId ? (
-                  <span className="badge info">
-                    当前套餐：{plans.find((plan) => plan.id === activeBindingPlanId)?.name ?? "未选择"}
-                  </span>
-                ) : (
-                  <span className="badge">先选一个套餐</span>
-                )}
-              </div>
-            }
-          >
-            <form className="form-grid" onSubmit={handleBindingSubmit}>
               <label className="field">
-                <span className="fine-print">套餐</span>
-                <select
-                  className="control"
-                  value={bindingForm.planId}
-                  onChange={(event) => changeBindingPlan(event.target.value)}
-                >
-                  <option value="">请选择套餐</option>
-                  {plans.map((plan) => (
-                    <option key={plan.id} value={plan.id}>
-                      {plan.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="field">
-                <span className="fine-print">节点组</span>
-                <select
-                  className="control"
-                  value={bindingForm.nodeGroupId}
-                  onChange={(event) =>
-                    setBindingForm((current) => ({ ...current, nodeGroupId: event.target.value }))
-                  }
-                >
-                  <option value="">请选择节点组</option>
-                  {nodeGroups.map((group) => (
-                    <option key={group.id} value={group.id}>
-                      {group.name}
-                    </option>
-                  ))}
-                </select>
-                {duplicateBinding ? (
-                  <span className="field-hint">同一套餐不能重复绑定同一节点组。</span>
-                ) : (
-                  <span className="field-hint">
-                    新绑定默认排在 {bindingDraftDefault.priority} 优先级，可再微调。
-                  </span>
-                )}
-              </label>
-
-              <label className="field">
-                <span className="fine-print">优先级</span>
+                <span className="fine-print">Accent 颜色</span>
                 <input
                   className="control"
-                  type="number"
-                  value={bindingForm.priority}
-                  onChange={(event) =>
-                    setBindingForm((current) => ({
-                      ...current,
-                      priority: Number(event.target.value),
-                    }))
-                  }
+                  placeholder="green / teal / orange"
+                  value={form.accent}
+                  onChange={(e) => set("accent", e.target.value)}
                 />
               </label>
+            </div>
+          </details>
 
-              <div className="toolbar-actions">
-                <button className="action-button" type="submit" disabled={bindingSubmitDisabled}>
-                  {bindingSaving ? "保存中..." : selectedBinding ? "保存绑定" : "添加绑定"}
-                </button>
+          <label className="field checkbox-row">
+            <input
+              type="checkbox"
+              checked={form.active}
+              onChange={(e) => set("active", e.target.checked)}
+            />
+            <span>启用该套餐</span>
+          </label>
+        </form>
+
+        {editingPlan ? (
+          <div className="form-grid">
+            <div className="field-section-label">节点组绑定</div>
+            <span className="fine-print muted">
+              套餐绑定的节点组决定用户订阅后可以使用哪些节点。
+            </span>
+
+            {drawerBindings.length > 0 ? (
+              <div className="inline-stack" style={{ flexWrap: "wrap" }}>
+                {drawerBindings.map((b) => (
+                  <span key={b.id} className="badge success">
+                    {b.nodeGroupName}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <div className="feedback warn">该套餐尚未绑定节点组，订阅用户将无法连接。</div>
+            )}
+
+            {unboundGroups.length > 0 ? (
+              <div className="inline-stack">
+                <select
+                  className="control"
+                  style={{ flex: 1 }}
+                  value={newBindingGroupId}
+                  onChange={(e) => setNewBindingGroupId(e.target.value)}
+                >
+                  <option value="">选择节点组...</option>
+                  {unboundGroups.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.name}
+                    </option>
+                  ))}
+                </select>
                 <button
                   className="ghost-button"
                   type="button"
-                  onClick={restoreCurrentBinding}
-                  disabled={!bindingDirty}
+                  onClick={() => void handleAddBinding()}
+                  disabled={addingBinding || !newBindingGroupId}
                 >
-                  {selectedBinding ? "恢复当前记录" : "清空草稿"}
+                  {addingBinding ? "绑定中..." : "添加绑定"}
                 </button>
-                {selectedBinding ? (
-                  <button className="ghost-button" type="button" onClick={() => beginCreateBinding()}>
-                    切到新建
-                  </button>
-                ) : null}
               </div>
-            </form>
-
-            {visibleBindings.length === 0 ? (
-              <div className="feedback info">当前套餐还没有绑定任何节点组，订阅创建时将无法自动分配入口。</div>
             ) : null}
-
-            <DataTable
-              headers={["套餐 / 节点组", "优先级", "创建时间"]}
-              rows={visibleBindings.map((binding) => [
-                <button
-                  key={binding.id}
-                  type="button"
-                  className={`link-button${selectedBindingId === binding.id ? " active" : ""}`}
-                  onClick={() => selectBinding(binding)}
-                >
-                  <span>{binding.planName}</span>
-                  <span className="muted">{binding.nodeGroupName}</span>
-                </button>,
-                String(binding.priority),
-                binding.createdAt.slice(0, 10),
-              ])}
-            />
-          </Panel>
-          </>
-          )}
-        </div>
-      </section>
+          </div>
+        ) : nodeGroups.length > 0 ? (
+          <div className="feedback info">
+            创建后将自动绑定到「{nodeGroups[0]?.name}」节点组。
+          </div>
+        ) : null}
+      </Drawer>
     </ConsoleShell>
   );
 }
