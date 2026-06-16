@@ -3,43 +3,49 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { DataTable } from "@/components/data-table";
+import { Drawer } from "@/components/drawer";
 import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
 import { formatBytes, formatDateTime, formatMoney } from "@/lib/format";
 import type { PlanRecord, RedemptionCodeRecord } from "@/lib/types";
-import { fromDateTimeLocal, humanizeRedemptionKind, humanizeRedemptionStatus, statusTone } from "@/lib/ui";
+import {
+  fromDateTimeLocal,
+  humanizeRedemptionKind,
+  humanizeRedemptionStatus,
+  statusTone,
+} from "@/lib/ui";
 
-const emptyForm = {
-  label: "",
-  kind: "plan" as "plan" | "traffic_pack",
-  planId: "",
-  trafficBytes: 50 * 1024 * 1024 * 1024,
-  amountCents: 1800,
-  expiresAt: "",
-  note: "",
-};
+const GB = 1024 * 1024 * 1024;
+
+function emptyForm(planId = "") {
+  return {
+    label: "",
+    kind: "plan" as "plan" | "traffic_pack",
+    planId,
+    trafficBytes: 50 * GB,
+    amountCents: 1800,
+    expiresAt: "",
+    note: "",
+  };
+}
 
 export default function AdminRedemptionCodesPage() {
   const { token } = useAuth();
   const [codes, setCodes] = useState<RedemptionCodeRecord[]>([]);
   const [plans, setPlans] = useState<PlanRecord[]>([]);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState(() => emptyForm());
   const [latestCode, setLatestCode] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [drawerError, setDrawerError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!token) {
-      return;
-    }
-
+    if (!token) return;
     setLoading(true);
-    setError(null);
-
     try {
       const [nextCodes, nextPlans] = await Promise.all([
         apiRequest<RedemptionCodeRecord[]>("/api/admin/redemption-codes", { token }),
@@ -47,27 +53,17 @@ export default function AdminRedemptionCodesPage() {
       ]);
       setCodes(nextCodes);
       setPlans(nextPlans);
-      setForm((current) => {
-        if (current.planId || !nextPlans.length) {
-          return current;
-        }
-        return {
-          ...current,
-          planId: nextPlans[0].id,
-        };
-      });
-    } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "兑换码数据加载失败。");
+      setForm((f) => (!f.planId && nextPlans.length ? { ...f, planId: nextPlans[0].id } : f));
+    } catch {
+      // keep stale
     } finally {
       setLoading(false);
     }
   }, [token]);
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      void load();
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
+    const id = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(id);
   }, [load]);
 
   async function copyText(value: string) {
@@ -79,16 +75,23 @@ export default function AdminRedemptionCodesPage() {
     }
   }
 
+  function openCreate() {
+    setForm(emptyForm(plans[0]?.id ?? ""));
+    setDrawerError(null);
+    setDrawerOpen(true);
+  }
+
+  function closeDrawer() {
+    setDrawerOpen(false);
+    setDrawerError(null);
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!token) {
-      return;
-    }
-
+    if (!token) return;
     setSubmitting(true);
-    setError(null);
+    setDrawerError(null);
     setFeedback(null);
-
     try {
       const created = await apiRequest<RedemptionCodeRecord>("/api/admin/redemption-codes", {
         method: "POST",
@@ -103,41 +106,31 @@ export default function AdminRedemptionCodesPage() {
           note: form.note || undefined,
         },
       });
-
       setLatestCode(created.code);
       setFeedback(`兑换码已生成：${created.code}`);
-      setForm({
-        ...emptyForm,
-        planId: plans[0]?.id ?? "",
-      });
+      setForm(emptyForm(plans[0]?.id ?? ""));
+      closeDrawer();
       await load();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "生成兑换码失败。");
+      setDrawerError(cause instanceof ApiError ? cause.message : "生成兑换码失败。");
     } finally {
       setSubmitting(false);
     }
   }
 
   async function handleVoid(codeId: string) {
-    if (!token) {
-      return;
-    }
-
-    setError(null);
+    if (!token) return;
     setFeedback(null);
-
     try {
       await apiRequest(`/api/admin/redemption-codes/${codeId}`, {
         method: "PATCH",
         token,
-        body: {
-          status: "void",
-        },
+        body: { status: "void" },
       });
       setFeedback("兑换码已作废。");
       await load();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "作废兑换码失败。");
+      setFeedback(cause instanceof ApiError ? cause.message : "作废兑换码失败。");
     }
   }
 
@@ -148,14 +141,45 @@ export default function AdminRedemptionCodesPage() {
       scope="Operations"
       navItems={adminNav}
       requireRole="admin"
-      toolbarMeta={<span className="badge info">{loading ? "加载中..." : `${codes.length} 张兑换码`}</span>}
-      toolbarActions={<button className="toolbar-button" type="button" onClick={() => void load()}>刷新</button>}
+      toolbarMeta={
+        <span className="badge info">
+          {loading ? "加载中..." : `${codes.length} 张兑换码`}
+        </span>
+      }
+      toolbarActions={
+        <>
+          <button className="action-button" type="button" onClick={openCreate}>
+            生成兑换码
+          </button>
+          {latestCode ? (
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => void copyText(latestCode)}
+            >
+              复制最新 CDK
+            </button>
+          ) : null}
+          <button className="toolbar-button" type="button" onClick={() => void load()}>
+            刷新
+          </button>
+        </>
+      }
     >
-      {error ? <div className="feedback error">{error}</div> : null}
       {feedback ? <div className="feedback success">{feedback}</div> : null}
 
-      <section className="workspace-grid">
-        <Panel title="兑换码列表" copy="会员兑换后会自动生成订单记录，这里可以看到发放、兑换和作废状态。">
+      <Panel
+        title="兑换码列表"
+        copy="会员兑换后会自动生成订单记录，这里可以看到发放、兑换和作废状态。"
+      >
+        {loading && codes.length === 0 ? (
+          <div className="skeleton-rows">
+            {Array.from({ length: 4 }, (_, i) => (
+              <div key={i} className="skeleton skeleton-row" />
+            ))}
+          </div>
+        ) : null}
+        {codes.length > 0 ? (
           <DataTable
             headers={["标签 / CDK", "权益", "状态", "价值", "到期 / 兑换", "操作"]}
             rows={codes.map((item) => [
@@ -168,11 +192,11 @@ export default function AdminRedemptionCodesPage() {
                 : item.trafficBytes
                   ? formatBytes(item.trafficBytes)
                   : humanizeRedemptionKind(item.kind),
-              <span key={`${item.id}-status`} className={`badge ${statusTone(item.status)}`}>
+              <span key={`${item.id}-st`} className={`badge ${statusTone(item.status)}`}>
                 {humanizeRedemptionStatus(item.status)}
               </span>,
               formatMoney(item.amountCents),
-              <div key={`${item.id}-timeline`} className="split">
+              <div key={`${item.id}-tl`} className="split">
                 <span>{item.expiresAt ? formatDateTime(item.expiresAt) : "不限时"}</span>
                 <span className="fine-print">
                   {item.redeemedAt
@@ -180,7 +204,7 @@ export default function AdminRedemptionCodesPage() {
                     : "未兑换"}
                 </span>
               </div>,
-              <div key={`${item.id}-action`} className="table-actions">
+              <div key={`${item.id}-act`} className="table-actions">
                 <button
                   className="ghost-button compact"
                   type="button"
@@ -200,116 +224,27 @@ export default function AdminRedemptionCodesPage() {
               </div>,
             ])}
           />
-        </Panel>
+        ) : !loading ? (
+          <div className="empty-state">
+            <div className="empty-state-icon">🎟️</div>
+            <div className="empty-state-title">还没有兑换码</div>
+            <button className="action-button" type="button" onClick={openCreate}>
+              生成第一张兑换码
+            </button>
+          </div>
+        ) : null}
+      </Panel>
 
-        <Panel
-          title="生成兑换码"
-          copy="套餐码会开通或续加套餐权益，流量包码会叠加到当前生效订阅。"
-          action={
-            latestCode ? (
-              <button className="ghost-button compact" type="button" onClick={() => void copyText(latestCode)}>
-                复制最新 CDK
-              </button>
-            ) : null
-          }
-        >
-          <form className="form-grid" onSubmit={handleSubmit}>
-            <label className="field">
-              <span className="fine-print">标签</span>
-              <input
-                className="control"
-                value={form.label}
-                onChange={(event) => setForm((current) => ({ ...current, label: event.target.value }))}
-                placeholder="例如：Core 200 月卡 / 50GB 补量包"
-              />
-            </label>
-
-            <div className="two-col">
-              <label className="field">
-                <span className="fine-print">类型</span>
-                <select
-                  className="control"
-                  value={form.kind}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      kind: event.target.value as "plan" | "traffic_pack",
-                    }))
-                  }
-                >
-                  <option value="plan">套餐开通码</option>
-                  <option value="traffic_pack">流量包兑换码</option>
-                </select>
-              </label>
-
-              <label className="field">
-                <span className="fine-print">价值（分）</span>
-                <input
-                  className="control"
-                  type="number"
-                  value={form.amountCents}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, amountCents: Number(event.target.value) }))
-                  }
-                />
-              </label>
-            </div>
-
-            {form.kind === "plan" ? (
-              <label className="field">
-                <span className="fine-print">绑定套餐</span>
-                <select
-                  className="control"
-                  value={form.planId}
-                  onChange={(event) => setForm((current) => ({ ...current, planId: event.target.value }))}
-                >
-                  <option value="">请选择套餐</option>
-                  {plans.map((plan) => (
-                    <option key={plan.id} value={plan.id}>
-                      {plan.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : (
-              <label className="field">
-                <span className="fine-print">流量字节数</span>
-                <input
-                  className="control"
-                  type="number"
-                  value={form.trafficBytes}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, trafficBytes: Number(event.target.value) }))
-                  }
-                />
-              </label>
-            )}
-
-            <div className="two-col">
-              <label className="field">
-                <span className="fine-print">失效时间</span>
-                <input
-                  className="control"
-                  type="datetime-local"
-                  value={form.expiresAt}
-                  onChange={(event) => setForm((current) => ({ ...current, expiresAt: event.target.value }))}
-                />
-              </label>
-
-              <label className="field">
-                <span className="fine-print">备注</span>
-                <input
-                  className="control"
-                  value={form.note}
-                  onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))}
-                  placeholder="可选，兑换后会写进订单备注"
-                />
-              </label>
-            </div>
-
+      <Drawer
+        open={drawerOpen}
+        onClose={closeDrawer}
+        title="生成兑换码"
+        footer={
+          <div className="toolbar-actions">
             <button
               className="action-button"
               type="submit"
+              form="code-form"
               disabled={
                 submitting ||
                 !form.label.trim() ||
@@ -319,9 +254,114 @@ export default function AdminRedemptionCodesPage() {
             >
               {submitting ? "生成中..." : "生成兑换码"}
             </button>
-          </form>
-        </Panel>
-      </section>
+            <button className="ghost-button" type="button" onClick={closeDrawer}>
+              取消
+            </button>
+          </div>
+        }
+      >
+        {drawerError ? <div className="feedback error">{drawerError}</div> : null}
+
+        <form id="code-form" className="form-grid" onSubmit={handleSubmit}>
+          <label className="field">
+            <span className="fine-print">标签</span>
+            <input
+              className="control"
+              value={form.label}
+              onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
+              placeholder="例如：Core 200 月卡 / 50GB 补量包"
+              required
+            />
+          </label>
+
+          <div className="two-col">
+            <label className="field">
+              <span className="fine-print">类型</span>
+              <select
+                className="control"
+                value={form.kind}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    kind: e.target.value as "plan" | "traffic_pack",
+                  }))
+                }
+              >
+                <option value="plan">套餐开通码</option>
+                <option value="traffic_pack">流量包兑换码</option>
+              </select>
+            </label>
+
+            <label className="field">
+              <span className="fine-print">价值（元）</span>
+              <input
+                className="control"
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.amountCents / 100}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, amountCents: Math.round(Number(e.target.value) * 100) }))
+                }
+              />
+            </label>
+          </div>
+
+          {form.kind === "plan" ? (
+            <label className="field">
+              <span className="fine-print">绑定套餐</span>
+              <select
+                className="control"
+                value={form.planId}
+                onChange={(e) => setForm((f) => ({ ...f, planId: e.target.value }))}
+              >
+                <option value="">请选择套餐</option>
+                {plans.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <label className="field">
+              <span className="fine-print">流量（GB）</span>
+              <input
+                className="control"
+                type="number"
+                min="1"
+                value={Math.round((form.trafficBytes / GB) * 100) / 100}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, trafficBytes: Math.round(Number(e.target.value) * GB) }))
+                }
+              />
+              <span className="field-hint">{formatBytes(form.trafficBytes)}</span>
+            </label>
+          )}
+
+          <div className="two-col">
+            <label className="field">
+              <span className="fine-print">失效时间（可选）</span>
+              <input
+                className="control"
+                type="datetime-local"
+                value={form.expiresAt}
+                onChange={(e) => setForm((f) => ({ ...f, expiresAt: e.target.value }))}
+              />
+            </label>
+
+            <label className="field">
+              <span className="fine-print">备注（可选）</span>
+              <input
+                className="control"
+                value={form.note}
+                onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
+                placeholder="兑换后写进订单备注"
+              />
+            </label>
+          </div>
+        </form>
+      </Drawer>
     </ConsoleShell>
   );
 }

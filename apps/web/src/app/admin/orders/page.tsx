@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { DataTable } from "@/components/data-table";
+import { Drawer } from "@/components/drawer";
 import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
@@ -33,15 +34,8 @@ function renderRights(order: ManualOrderRecord) {
       </div>
     );
   }
-
-  if (order.trafficBytes) {
-    return formatBytes(order.trafficBytes);
-  }
-
-  if (order.durationDays) {
-    return `${order.durationDays} 天`;
-  }
-
+  if (order.trafficBytes) return formatBytes(order.trafficBytes);
+  if (order.durationDays) return `${order.durationDays} 天`;
   return "-";
 }
 
@@ -51,22 +45,19 @@ export default function AdminOrdersPage() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [plans, setPlans] = useState<PlanRecord[]>([]);
   const [form, setForm] = useState(emptyForm);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [actingOrderId, setActingOrderId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [drawerError, setDrawerError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  const pendingCount = orders.filter((order) => order.status === "pending").length;
-  const selectedPlan = plans.find((plan) => plan.id === form.planId) ?? null;
+  const pendingCount = orders.filter((o) => o.status === "pending").length;
+  const selectedPlan = plans.find((p) => p.id === form.planId) ?? null;
 
   const load = useCallback(async () => {
-    if (!token) {
-      return;
-    }
-
+    if (!token) return;
     setLoading(true);
-    setError(null);
     try {
       const [nextOrders, nextUsers, nextPlans] = await Promise.all([
         apiRequest<ManualOrderRecord[]>("/api/admin/orders", { token }),
@@ -74,32 +65,37 @@ export default function AdminOrdersPage() {
         apiRequest<PlanRecord[]>("/api/admin/plans", { token }),
       ]);
       setOrders(nextOrders);
-      setUsers(nextUsers.filter((user) => user.role === "member"));
-      setPlans(nextPlans.filter((plan) => plan.active));
-    } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "订单数据加载失败。");
+      setUsers(nextUsers.filter((u) => u.role === "member"));
+      setPlans(nextPlans.filter((p) => p.active));
+    } catch {
+      // keep stale
     } finally {
       setLoading(false);
     }
   }, [token]);
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      void load();
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
+    const id = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(id);
   }, [load]);
+
+  function openCreate() {
+    setForm(emptyForm);
+    setDrawerError(null);
+    setDrawerOpen(true);
+  }
+
+  function closeDrawer() {
+    setDrawerOpen(false);
+    setDrawerError(null);
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!token) {
-      return;
-    }
-
+    if (!token) return;
     setSubmitting(true);
-    setError(null);
+    setDrawerError(null);
     setFeedback(null);
-
     try {
       await apiRequest("/api/admin/orders/manual-credit", {
         method: "POST",
@@ -127,21 +123,18 @@ export default function AdminOrdersPage() {
           : "订单已立即入账并同步到会员权益。",
       );
       setForm(emptyForm);
+      closeDrawer();
       await load();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "订单创建失败。");
+      setDrawerError(cause instanceof ApiError ? cause.message : "订单创建失败。");
     } finally {
       setSubmitting(false);
     }
   }
 
   async function handleOrderAction(orderId: string, status: "applied" | "void") {
-    if (!token) {
-      return;
-    }
-
+    if (!token) return;
     setActingOrderId(orderId);
-    setError(null);
     setFeedback(null);
     try {
       await apiRequest(`/api/admin/orders/${orderId}`, {
@@ -152,7 +145,7 @@ export default function AdminOrdersPage() {
       setFeedback(status === "applied" ? "订单已确认到账并生效。" : "订单已作废。");
       await load();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "订单处理失败。");
+      setFeedback(cause instanceof ApiError ? cause.message : "订单处理失败。");
     } finally {
       setActingOrderId(null);
     }
@@ -167,24 +160,39 @@ export default function AdminOrdersPage() {
       requireRole="admin"
       toolbarMeta={
         <>
-          <span className="badge info">{loading ? "加载中..." : `${orders.length} 笔订单`}</span>
-          <span className="badge warn">{pendingCount} 笔待处理</span>
+          <span className="badge info">
+            {loading ? "加载中..." : `${orders.length} 笔订单`}
+          </span>
+          {pendingCount > 0 ? (
+            <span className="badge warn">{pendingCount} 笔待处理</span>
+          ) : null}
         </>
       }
       toolbarActions={
-        <button className="toolbar-button" type="button" onClick={() => void load()}>
-          刷新
-        </button>
+        <>
+          <button className="action-button" type="button" onClick={openCreate}>
+            创建订单
+          </button>
+          <button className="toolbar-button" type="button" onClick={() => void load()}>
+            刷新
+          </button>
+        </>
       }
     >
-      {error ? <div className="feedback error">{error}</div> : null}
       {feedback ? <div className="feedback success">{feedback}</div> : null}
 
-      <section className="workspace-grid">
-        <Panel
-          title="订单工作台"
-          copy="待支付订单会停留在 pending，确认到账后再应用到订阅；已经 applied 的订单则表示权益已经入账。"
-        >
+      <Panel
+        title="订单工作台"
+        copy="待支付订单会停留在 pending，确认到账后再应用到订阅；applied 表示权益已经入账。"
+      >
+        {loading && orders.length === 0 ? (
+          <div className="skeleton-rows">
+            {Array.from({ length: 4 }, (_, i) => (
+              <div key={i} className="skeleton skeleton-row" />
+            ))}
+          </div>
+        ) : null}
+        {orders.length > 0 ? (
           <DataTable
             headers={["用户", "套餐 / 权益", "类型", "状态", "金额", "处理时间", "操作"]}
             rows={orders.map((order) => [
@@ -194,13 +202,15 @@ export default function AdminOrdersPage() {
               </div>,
               renderRights(order),
               humanizeOrderKind(order.kind),
-              <span key={`${order.id}-status`} className={`badge ${statusTone(order.status)}`}>
+              <span key={`${order.id}-st`} className={`badge ${statusTone(order.status)}`}>
                 {order.status}
               </span>,
               formatMoney(order.amountCents),
-              order.processedAt ? formatDateTime(order.processedAt) : formatDateTime(order.createdAt),
+              order.processedAt
+                ? formatDateTime(order.processedAt)
+                : formatDateTime(order.createdAt),
               order.status === "pending" ? (
-                <div className="table-actions" key={`${order.id}-actions`}>
+                <div className="table-actions" key={`${order.id}-act`}>
                   <button
                     className="action-button compact"
                     type="button"
@@ -219,170 +229,33 @@ export default function AdminOrdersPage() {
                   </button>
                 </div>
               ) : (
-                <span className="fine-print">{order.note ?? "已处理"}</span>
+                <span className="fine-print" key={`${order.id}-note`}>
+                  {order.note ?? "已处理"}
+                </span>
               ),
             ])}
           />
-        </Panel>
+        ) : !loading ? (
+          <div className="empty-state">
+            <div className="empty-state-icon">🧾</div>
+            <div className="empty-state-title">还没有订单</div>
+            <button className="action-button" type="button" onClick={openCreate}>
+              创建第一笔订单
+            </button>
+          </div>
+        ) : null}
+      </Panel>
 
-        <Panel
-          title="创建订单"
-          copy="可创建待支付的套餐订单，也可以直接补录已到账的续期、流量包或人工入账。"
-        >
-          <form className="form-grid" onSubmit={handleSubmit}>
-            <label className="field">
-              <span className="fine-print">会员</span>
-              <select
-                className="control"
-                value={form.userId}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, userId: event.target.value }))
-                }
-              >
-                <option value="">请选择会员</option>
-                {users.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.displayName} / {user.email}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className="two-col">
-              <label className="field">
-                <span className="fine-print">订单类型</span>
-                <select
-                  className="control"
-                  value={form.kind}
-                  onChange={(event) => {
-                    const nextKind = event.target.value as typeof form.kind;
-                    setForm((current) => ({
-                      ...current,
-                      kind: nextKind,
-                      planId: nextKind === "renewal" ? current.planId : "",
-                    }));
-                  }}
-                >
-                  <option value="renewal">套餐 / 续期</option>
-                  <option value="traffic_pack">流量包</option>
-                  <option value="manual_credit">人工入账</option>
-                </select>
-              </label>
-
-              <label className="field">
-                <span className="fine-print">创建方式</span>
-                <select
-                  className="control"
-                  value={form.status}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      status: event.target.value as typeof current.status,
-                    }))
-                  }
-                >
-                  <option value="pending">待支付订单</option>
-                  <option value="applied">立即入账</option>
-                </select>
-              </label>
-            </div>
-
-            {form.kind === "renewal" ? (
-              <label className="field">
-                <span className="fine-print">套餐</span>
-                <select
-                  className="control"
-                  value={form.planId}
-                  onChange={(event) => {
-                    const nextPlanId = event.target.value;
-                    const nextPlan = plans.find((plan) => plan.id === nextPlanId) ?? null;
-                    setForm((current) => ({
-                      ...current,
-                      planId: nextPlanId,
-                      amountCents: nextPlan ? nextPlan.priceCents : current.amountCents,
-                      durationDays: nextPlan ? nextPlan.durationDays : current.durationDays,
-                    }));
-                  }}
-                >
-                  <option value="">选择套餐或只录入续期天数</option>
-                  {plans.map((plan) => (
-                    <option key={plan.id} value={plan.id}>
-                      {plan.name} / {formatMoney(plan.priceCents)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-
-            <div className="two-col">
-              <label className="field">
-                <span className="fine-print">金额（分）</span>
-                <input
-                  className="control"
-                  type="number"
-                  value={form.amountCents}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      amountCents: Number(event.target.value),
-                    }))
-                  }
-                />
-              </label>
-
-              <label className="field">
-                <span className="fine-print">续期天数</span>
-                <input
-                  className="control"
-                  type="number"
-                  value={form.durationDays}
-                  disabled={Boolean(selectedPlan) && form.kind === "renewal"}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      durationDays: Number(event.target.value),
-                    }))
-                  }
-                />
-              </label>
-            </div>
-
-            <label className="field">
-              <span className="fine-print">流量字节数</span>
-              <input
-                className="control"
-                type="number"
-                value={form.trafficBytes}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    trafficBytes: Number(event.target.value),
-                  }))
-                }
-              />
-            </label>
-
-            {selectedPlan ? (
-              <div className="feedback info">
-                当前套餐会在到账时同步 {selectedPlan.name} 的流量、带宽、设备数和节点组绑定。
-              </div>
-            ) : null}
-
-            <label className="field">
-              <span className="fine-print">备注</span>
-              <textarea
-                className="control textarea"
-                value={form.note}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, note: event.target.value }))
-                }
-                placeholder="可填写付款渠道、客服备注或会员需求"
-              />
-            </label>
-
+      <Drawer
+        open={drawerOpen}
+        onClose={closeDrawer}
+        title="创建订单"
+        footer={
+          <div className="toolbar-actions">
             <button
               className="action-button"
               type="submit"
+              form="order-form"
               disabled={
                 submitting ||
                 !form.userId ||
@@ -395,9 +268,152 @@ export default function AdminOrdersPage() {
                   ? "创建待支付订单"
                   : "立即入账"}
             </button>
-          </form>
-        </Panel>
-      </section>
+            <button className="ghost-button" type="button" onClick={closeDrawer}>
+              取消
+            </button>
+          </div>
+        }
+      >
+        {drawerError ? <div className="feedback error">{drawerError}</div> : null}
+
+        <form id="order-form" className="form-grid" onSubmit={handleSubmit}>
+          <label className="field">
+            <span className="fine-print">会员</span>
+            <select
+              className="control"
+              value={form.userId}
+              onChange={(e) => setForm((f) => ({ ...f, userId: e.target.value }))}
+            >
+              <option value="">请选择会员</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.displayName} / {u.email}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="two-col">
+            <label className="field">
+              <span className="fine-print">订单类型</span>
+              <select
+                className="control"
+                value={form.kind}
+                onChange={(e) => {
+                  const nextKind = e.target.value as typeof form.kind;
+                  setForm((f) => ({ ...f, kind: nextKind, planId: nextKind === "renewal" ? f.planId : "" }));
+                }}
+              >
+                <option value="renewal">套餐 / 续期</option>
+                <option value="traffic_pack">流量包</option>
+                <option value="manual_credit">人工入账</option>
+              </select>
+            </label>
+
+            <label className="field">
+              <span className="fine-print">创建方式</span>
+              <select
+                className="control"
+                value={form.status}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, status: e.target.value as typeof f.status }))
+                }
+              >
+                <option value="pending">待支付订单</option>
+                <option value="applied">立即入账</option>
+              </select>
+            </label>
+          </div>
+
+          {form.kind === "renewal" ? (
+            <label className="field">
+              <span className="fine-print">套餐</span>
+              <select
+                className="control"
+                value={form.planId}
+                onChange={(e) => {
+                  const nextPlan = plans.find((p) => p.id === e.target.value) ?? null;
+                  setForm((f) => ({
+                    ...f,
+                    planId: e.target.value,
+                    amountCents: nextPlan ? nextPlan.priceCents : f.amountCents,
+                    durationDays: nextPlan ? nextPlan.durationDays : f.durationDays,
+                  }));
+                }}
+              >
+                <option value="">选择套餐或只录入续期天数</option>
+                {plans.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} / {formatMoney(p.priceCents)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
+          <div className="two-col">
+            <label className="field">
+              <span className="fine-print">金额（元）</span>
+              <input
+                className="control"
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.amountCents / 100}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, amountCents: Math.round(Number(e.target.value) * 100) }))
+                }
+              />
+            </label>
+
+            <label className="field">
+              <span className="fine-print">续期天数</span>
+              <input
+                className="control"
+                type="number"
+                min="0"
+                value={form.durationDays}
+                disabled={Boolean(selectedPlan) && form.kind === "renewal"}
+                onChange={(e) => setForm((f) => ({ ...f, durationDays: Number(e.target.value) }))}
+              />
+            </label>
+          </div>
+
+          {form.kind !== "renewal" ? (
+            <label className="field">
+              <span className="fine-print">流量（GB）</span>
+              <input
+                className="control"
+                type="number"
+                min="0"
+                value={Math.round((form.trafficBytes / (1024 * 1024 * 1024)) * 100) / 100}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    trafficBytes: Math.round(Number(e.target.value) * 1024 * 1024 * 1024),
+                  }))
+                }
+              />
+            </label>
+          ) : null}
+
+          {selectedPlan ? (
+            <div className="feedback info">
+              到账时同步 {selectedPlan.name} 的流量、带宽、设备数和节点组绑定。
+            </div>
+          ) : null}
+
+          <label className="field">
+            <span className="fine-print">备注（可选）</span>
+            <textarea
+              className="control textarea"
+              value={form.note}
+              onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
+              placeholder="可填写付款渠道、客服备注或会员需求"
+            />
+          </label>
+        </form>
+      </Drawer>
     </ConsoleShell>
   );
 }

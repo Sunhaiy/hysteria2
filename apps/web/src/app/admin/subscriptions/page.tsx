@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { DataTable } from "@/components/data-table";
+import { Drawer } from "@/components/drawer";
 import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
@@ -32,10 +33,7 @@ type SubscriptionFormState = {
   endsAt: string;
 };
 
-const subscriptionStatusOptions: Array<{
-  value: SubscriptionRecord["status"];
-  label: string;
-}> = [
+const subscriptionStatusOptions: Array<{ value: SubscriptionRecord["status"]; label: string }> = [
   { value: "active", label: "active / 生效" },
   { value: "paused", label: "paused / 暂停" },
   { value: "canceled", label: "canceled / 已取消" },
@@ -43,29 +41,18 @@ const subscriptionStatusOptions: Array<{
 ];
 
 function createEmptySubscription(): SubscriptionFormState {
-  return {
-    userId: "",
-    planId: "",
-    nodeGroupId: "",
-    status: "active",
-    startsAt: "",
-    endsAt: "",
-  };
+  return { userId: "", planId: "", nodeGroupId: "", status: "active", startsAt: "", endsAt: "" };
 }
 
-function createSubscriptionForm(subscription: SubscriptionRecord): SubscriptionFormState {
+function createSubscriptionForm(sub: SubscriptionRecord): SubscriptionFormState {
   return {
-    userId: subscription.userId,
-    planId: subscription.planId,
-    nodeGroupId: subscription.nodeGroupId,
-    status: subscription.status,
-    startsAt: toDateTimeLocal(subscription.startsAt),
-    endsAt: toDateTimeLocal(subscription.endsAt),
+    userId: sub.userId,
+    planId: sub.planId,
+    nodeGroupId: sub.nodeGroupId,
+    status: sub.status,
+    startsAt: toDateTimeLocal(sub.startsAt),
+    endsAt: toDateTimeLocal(sub.endsAt),
   };
-}
-
-function formsMatch<T>(left: T, right: T) {
-  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 export default function AdminSubscriptionsPage() {
@@ -75,21 +62,17 @@ export default function AdminSubscriptionsPage() {
   const [plans, setPlans] = useState<PlanRecord[]>([]);
   const [nodeGroups, setNodeGroups] = useState<NodeGroupRecord[]>([]);
   const [bindings, setBindings] = useState<PlanBindingRecord[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editingSub, setEditingSub] = useState<SubscriptionRecord | null>(null);
   const [form, setForm] = useState<SubscriptionFormState>(createEmptySubscription);
-  const [error, setError] = useState<string | null>(null);
+  const [drawerError, setDrawerError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   const load = useCallback(async () => {
-    if (!token) {
-      return null;
-    }
-
+    if (!token) return;
     setLoading(true);
-    setError(null);
-
     try {
       const [nextSubscriptions, nextUsers, nextPlans, nextNodeGroups, nextBindings] =
         await Promise.all([
@@ -99,169 +82,132 @@ export default function AdminSubscriptionsPage() {
           apiRequest<NodeGroupRecord[]>("/api/admin/node-groups", { token }),
           apiRequest<PlanBindingRecord[]>("/api/admin/plan-bindings", { token }),
         ]);
-
       setSubscriptions(nextSubscriptions);
-      setUsers(nextUsers.filter((user) => user.role === "member"));
+      setUsers(nextUsers.filter((u) => u.role === "member"));
       setPlans(nextPlans);
       setNodeGroups(nextNodeGroups);
       setBindings(nextBindings);
-
-      if (selectedId && !nextSubscriptions.some((item) => item.id === selectedId)) {
-        setSelectedId(null);
-        setForm(createEmptySubscription());
-      }
-
-      return {
-        nextSubscriptions,
-        nextUsers,
-        nextPlans,
-        nextNodeGroups,
-        nextBindings,
-      };
-    } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "订阅数据加载失败。");
-      return null;
+    } catch {
+      // keep stale
     } finally {
       setLoading(false);
     }
-  }, [selectedId, token]);
+  }, [token]);
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      void load();
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
+    const id = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(id);
   }, [load]);
 
-  const selectedSubscription = useMemo(
-    () => subscriptions.find((subscription) => subscription.id === selectedId) ?? null,
-    [selectedId, subscriptions],
-  );
-
   const originalForm = useMemo(
-    () => (selectedSubscription ? createSubscriptionForm(selectedSubscription) : createEmptySubscription()),
-    [selectedSubscription],
+    () => (editingSub ? createSubscriptionForm(editingSub) : createEmptySubscription()),
+    [editingSub],
   );
 
   const selectedPlan = useMemo(
-    () => plans.find((plan) => plan.id === form.planId) ?? null,
+    () => plans.find((p) => p.id === form.planId) ?? null,
     [form.planId, plans],
   );
 
   const selectedUser = useMemo(
-    () => users.find((user) => user.id === form.userId) ?? null,
+    () => users.find((u) => u.id === form.userId) ?? null,
     [form.userId, users],
   );
 
   const availableBindings = useMemo(
     () =>
       bindings
-        .filter((binding) => binding.planId === form.planId)
-        .sort((left, right) => left.priority - right.priority),
+        .filter((b) => b.planId === form.planId)
+        .sort((a, b) => a.priority - b.priority),
     [bindings, form.planId],
   );
 
   const availableNodeGroups = useMemo(
     () =>
       availableBindings
-        .map((binding) => nodeGroups.find((group) => group.id === binding.nodeGroupId))
-        .filter((group): group is NodeGroupRecord => Boolean(group)),
+        .map((b) => nodeGroups.find((g) => g.id === b.nodeGroupId))
+        .filter((g): g is NodeGroupRecord => Boolean(g)),
     [availableBindings, nodeGroups],
   );
 
   const defaultNodeGroupId = availableBindings[0]?.nodeGroupId ?? "";
   const defaultNodeGroupName =
-    availableNodeGroups.find((group) => group.id === defaultNodeGroupId)?.name ?? "未指定";
+    availableNodeGroups.find((g) => g.id === defaultNodeGroupId)?.name ?? "未指定";
   const effectiveNodeGroupId = form.nodeGroupId || defaultNodeGroupId;
   const effectiveNodeGroupName =
-    availableNodeGroups.find((group) => group.id === effectiveNodeGroupId)?.name ?? "未指定";
+    availableNodeGroups.find((g) => g.id === effectiveNodeGroupId)?.name ?? "未指定";
   const canResetToDefaultNodeGroup = Boolean(
-    selectedSubscription && defaultNodeGroupId && form.nodeGroupId !== defaultNodeGroupId,
+    editingSub && defaultNodeGroupId && form.nodeGroupId !== defaultNodeGroupId,
   );
 
-  const subscriptionDirty = !formsMatch(form, originalForm);
+  const subDirty = JSON.stringify(form) !== JSON.stringify(originalForm);
 
   const submitDisabled =
     submitting ||
     !form.userId ||
     !form.planId ||
     (Boolean(form.planId) && availableBindings.length === 0) ||
-    (selectedSubscription ? !subscriptionDirty : false);
+    (editingSub ? !subDirty : false);
 
-  function beginCreateSubscription() {
-    setSelectedId(null);
+  function openCreate() {
+    setEditingSub(null);
     setForm(createEmptySubscription());
-    setFeedback(null);
+    setDrawerError(null);
+    setDrawerOpen(true);
   }
 
-  function resetSelectedSubscription() {
-    setForm(originalForm);
-    setFeedback(null);
+  function openEdit(sub: SubscriptionRecord) {
+    setEditingSub(sub);
+    setForm(createSubscriptionForm(sub));
+    setDrawerError(null);
+    setDrawerOpen(true);
   }
 
-  function selectSubscription(subscription: SubscriptionRecord | null) {
-    if (!subscription) {
-      beginCreateSubscription();
-      return;
-    }
-
-    setSelectedId(subscription.id);
-    setForm(createSubscriptionForm(subscription));
+  function closeDrawer() {
+    setDrawerOpen(false);
+    setEditingSub(null);
+    setDrawerError(null);
   }
 
   function handlePlanChange(nextPlanId: string) {
     const nextBindings = bindings
-      .filter((binding) => binding.planId === nextPlanId)
-      .sort((left, right) => left.priority - right.priority);
+      .filter((b) => b.planId === nextPlanId)
+      .sort((a, b) => a.priority - b.priority);
     const nextDefaultGroupId = nextBindings[0]?.nodeGroupId ?? "";
-
-    setForm((current) => ({
-      ...current,
+    setForm((f) => ({
+      ...f,
       planId: nextPlanId,
       nodeGroupId:
-        current.nodeGroupId && nextBindings.some((binding) => binding.nodeGroupId === current.nodeGroupId)
-          ? current.nodeGroupId
+        f.nodeGroupId && nextBindings.some((b) => b.nodeGroupId === f.nodeGroupId)
+          ? f.nodeGroupId
           : nextDefaultGroupId,
     }));
   }
 
-  function resetNodeGroupToDefault() {
-    if (!defaultNodeGroupId) {
-      return;
-    }
-
-    setForm((current) => ({
-      ...current,
-      nodeGroupId: defaultNodeGroupId,
-    }));
-  }
-
   function extendEndsAt(days: number) {
-    setForm((current) => ({
-      ...current,
-      endsAt: shiftDateTimeLocal(current.endsAt || originalForm.endsAt, days),
+    setForm((f) => ({
+      ...f,
+      endsAt: shiftDateTimeLocal(f.endsAt || originalForm.endsAt, days),
     }));
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!token) {
-      return;
-    }
-
+    if (!token) return;
     setSubmitting(true);
-    setError(null);
+    setDrawerError(null);
     setFeedback(null);
-
     try {
-      const savedSubscription = selectedSubscription
-        ? await apiRequest<SubscriptionRecord>(`/api/admin/subscriptions/${selectedSubscription.id}`, {
+      const saved = editingSub
+        ? await apiRequest<SubscriptionRecord>(`/api/admin/subscriptions/${editingSub.id}`, {
             method: "PATCH",
             token,
             body: {
               status: form.status !== originalForm.status ? form.status : undefined,
-              nodeGroupId: form.nodeGroupId !== originalForm.nodeGroupId ? form.nodeGroupId : undefined,
-              endsAt: form.endsAt !== originalForm.endsAt ? fromDateTimeLocal(form.endsAt) : undefined,
+              nodeGroupId:
+                form.nodeGroupId !== originalForm.nodeGroupId ? form.nodeGroupId : undefined,
+              endsAt:
+                form.endsAt !== originalForm.endsAt ? fromDateTimeLocal(form.endsAt) : undefined,
             },
           })
         : await apiRequest<SubscriptionRecord>("/api/admin/subscriptions", {
@@ -275,13 +221,12 @@ export default function AdminSubscriptionsPage() {
               startsAt: fromDateTimeLocal(form.startsAt),
             },
           });
-
-      setSelectedId(savedSubscription.id);
-      setForm(createSubscriptionForm(savedSubscription));
-      setFeedback(selectedSubscription ? "订阅已更新。" : "订阅已创建。");
+      setEditingSub(saved);
+      setForm(createSubscriptionForm(saved));
+      setFeedback(editingSub ? "订阅已更新。" : "订阅已创建。");
       await load();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "保存订阅失败。");
+      setDrawerError(cause instanceof ApiError ? cause.message : "保存订阅失败。");
     } finally {
       setSubmitting(false);
     }
@@ -296,307 +241,260 @@ export default function AdminSubscriptionsPage() {
       requireRole="admin"
       toolbarMeta={
         <span className="badge info">
-          {loading ? "加载中..." : `${subscriptions.length} 条订阅 / ${plans.length} 个套餐`}
+          {loading ? "加载中..." : `${subscriptions.length} 条订阅`}
         </span>
       }
       toolbarActions={
-        <button className="toolbar-button" type="button" onClick={() => void load()}>
-          刷新
-        </button>
+        <>
+          <button className="action-button" type="button" onClick={openCreate}>
+            新建订阅
+          </button>
+          <button className="toolbar-button" type="button" onClick={() => void load()}>
+            刷新
+          </button>
+        </>
       }
     >
-      {error ? <div className="feedback error">{error}</div> : null}
       {feedback ? <div className="feedback success">{feedback}</div> : null}
 
-      <section className="workspace-grid">
-        <Panel
-          title="订阅列表"
-          copy="保存后会停留在当前订阅，适合继续调状态、到期时间和默认节点组。"
-          action={
-            <div className="panel-actions">
-              {selectedSubscription ? (
-                <button className="ghost-button compact" type="button" onClick={beginCreateSubscription}>
-                  新建订阅
-                </button>
-              ) : null}
-              <span className="fine-print">{loading ? "同步中..." : `${subscriptions.length} 条`}</span>
-            </div>
-          }
-        >
+      <Panel
+        title="订阅列表"
+        copy="点击订阅行编辑状态、到期时间和节点组；「新建订阅」为会员开通一条新订阅。"
+      >
+        {loading && subscriptions.length === 0 ? (
+          <div className="skeleton-rows">
+            {Array.from({ length: 5 }, (_, i) => (
+              <div key={i} className="skeleton skeleton-row" />
+            ))}
+          </div>
+        ) : null}
+
+        {subscriptions.length > 0 ? (
           <DataTable
             headers={["用户", "套餐", "节点组", "状态", "剩余流量", "到期时间"]}
-            rows={subscriptions.map((subscription) => [
+            rows={subscriptions.map((sub) => [
               <button
-                key={subscription.id}
+                key={sub.id}
                 type="button"
-                className={`link-button${selectedId === subscription.id ? " active" : ""}`}
-                onClick={() => selectSubscription(subscription)}
+                className="link-button"
+                onClick={() => openEdit(sub)}
               >
-                <span>{subscription.userDisplayName}</span>
-                <span className="muted">{subscription.userEmail}</span>
+                <span>{sub.userDisplayName}</span>
+                <span className="muted">{sub.userEmail}</span>
               </button>,
-              subscription.planName,
-              subscription.nodeGroupName,
-              <span key={`${subscription.id}-status`} className={`badge ${statusTone(subscription.status)}`}>
-                {subscription.status}
+              sub.planName,
+              sub.nodeGroupName,
+              <span key={`${sub.id}-st`} className={`badge ${statusTone(sub.status)}`}>
+                {sub.status}
               </span>,
-              formatBytes(subscription.trafficRemainingBytes),
-              formatDateTime(subscription.endsAt),
+              formatBytes(sub.trafficRemainingBytes),
+              formatDateTime(sub.endsAt),
             ])}
           />
-        </Panel>
+        ) : !loading ? (
+          <div className="empty-state">
+            <div className="empty-state-icon">📅</div>
+            <div className="empty-state-title">还没有订阅</div>
+            <button className="action-button" type="button" onClick={openCreate}>
+              新建第一条订阅
+            </button>
+          </div>
+        ) : null}
+      </Panel>
 
-        <Panel
-          title={selectedSubscription ? "编辑订阅" : "新建订阅"}
-          copy="套餐一旦选定，节点组只能来自该套餐的绑定列表；新建时留空会按优先级自动挑默认组。"
-          action={
-            selectedSubscription ? (
-              <span className={`badge ${subscriptionDirty ? "warn" : "success"}`}>
-                {subscriptionDirty ? "有未保存改动" : "已同步"}
-              </span>
-            ) : availableBindings.length > 0 ? (
-              <span className="badge info">默认节点组：{defaultNodeGroupName}</span>
-            ) : (
-              <span className="badge">先选套餐</span>
-            )
-          }
-        >
-          <div className="metric-grid">
+      <Drawer
+        open={drawerOpen}
+        onClose={closeDrawer}
+        title={editingSub ? `编辑订阅：${editingSub.userDisplayName}` : "新建订阅"}
+        subtitle={editingSub ? `${editingSub.planName} · ${editingSub.nodeGroupName}` : undefined}
+        footer={
+          <div className="toolbar-actions">
+            <button
+              className="action-button"
+              type="submit"
+              form="sub-form"
+              disabled={submitDisabled}
+            >
+              {submitting ? "保存中..." : editingSub ? "保存订阅" : "创建订阅"}
+            </button>
+            <button className="ghost-button" type="button" onClick={closeDrawer}>
+              取消
+            </button>
+          </div>
+        }
+      >
+        {drawerError ? <div className="feedback error">{drawerError}</div> : null}
+
+        {selectedPlan || selectedUser ? (
+          <div className="metric-grid" style={{ marginBottom: 16 }}>
             <article className="metric-card">
-              <span className="metric-label">当前套餐</span>
+              <span className="metric-label">套餐</span>
               <strong>{selectedPlan?.name ?? "未选择"}</strong>
               <span className="metric-footnote">
                 {selectedPlan
                   ? `${formatBytes(selectedPlan.trafficBytes)} / ${selectedPlan.durationDays} 天`
-                  : "选择后可预览配额与周期"}
+                  : "选择后可预览配额"}
               </span>
             </article>
             <article className="metric-card">
-              <span className="metric-label">{selectedSubscription ? "当前节点组" : "默认节点组"}</span>
+              <span className="metric-label">{editingSub ? "当前节点组" : "默认节点组"}</span>
               <strong>{effectiveNodeGroupName}</strong>
               <span className="metric-footnote">
                 {availableBindings.length === 0
                   ? "当前套餐还没有绑定节点组"
-                  : canResetToDefaultNodeGroup
-                    ? `当前默认绑定为 ${defaultNodeGroupName}`
-                    : `${availableBindings.length} 条可选绑定`}
-              </span>
-            </article>
-            <article className="metric-card">
-              <span className="metric-label">成员</span>
-              <strong>{selectedUser?.displayName ?? "未选择"}</strong>
-              <span className="metric-footnote">{selectedUser?.email ?? "先选一个会员账号"}</span>
-            </article>
-            <article className="metric-card">
-              <span className="metric-label">当前快照</span>
-              <strong>
-                {selectedSubscription
-                  ? `${selectedSubscription.speedUpMbpsSnapshot} / ${selectedSubscription.speedDownMbpsSnapshot} Mbps`
-                  : selectedPlan
-                    ? `${selectedPlan.speedUpMbps} / ${selectedPlan.speedDownMbps} Mbps`
-                    : "等待套餐选择"}
-              </strong>
-              <span className="metric-footnote">
-                {selectedSubscription
-                  ? `设备上限 ${selectedSubscription.deviceLimitSnapshot} 台`
-                  : selectedPlan
-                    ? `设备上限 ${selectedPlan.deviceLimit} 台`
-                    : "订阅创建时自动复制"}
+                  : `${availableBindings.length} 条可选绑定`}
               </span>
             </article>
           </div>
+        ) : null}
+
+        <form id="sub-form" className="form-grid" onSubmit={handleSubmit}>
+          <label className="field">
+            <span className="fine-print">用户</span>
+            <select
+              className="control"
+              disabled={Boolean(editingSub)}
+              value={form.userId}
+              onChange={(e) => setForm((f) => ({ ...f, userId: e.target.value }))}
+            >
+              <option value="">请选择用户</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.displayName} / {u.email}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="field">
+            <span className="fine-print">套餐</span>
+            <select
+              className="control"
+              disabled={Boolean(editingSub)}
+              value={form.planId}
+              onChange={(e) => handlePlanChange(e.target.value)}
+            >
+              <option value="">请选择套餐</option>
+              {plans.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
 
           {form.planId && availableBindings.length === 0 ? (
-            <div className="feedback info">当前套餐还没有节点组绑定，订阅无法创建，请先去套餐页补绑定。</div>
+            <div className="feedback info">
+              当前套餐还没有节点组绑定，请先去套餐页补绑定。
+            </div>
           ) : null}
 
-          <form className="form-grid" onSubmit={handleSubmit}>
-            <label className="field">
-              <span className="fine-print">用户</span>
-              <select
-                className="control"
-                disabled={Boolean(selectedSubscription)}
-                value={form.userId}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, userId: event.target.value }))
-                }
-              >
-                <option value="">请选择用户</option>
-                {users.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.displayName} / {user.email}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="field">
-              <span className="fine-print">套餐</span>
-              <select
-                className="control"
-                disabled={Boolean(selectedSubscription)}
-                value={form.planId}
-                onChange={(event) => handlePlanChange(event.target.value)}
-              >
-                <option value="">请选择套餐</option>
-                {plans.map((plan) => (
-                  <option key={plan.id} value={plan.id}>
-                    {plan.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="field">
-              <div className="field-inline-actions">
-                <span className="fine-print">节点组</span>
-                {selectedSubscription ? (
-                  <div className="inline-stack">
-                    <button
-                      className="ghost-button compact"
-                      type="button"
-                      onClick={resetNodeGroupToDefault}
-                      disabled={!canResetToDefaultNodeGroup}
-                    >
-                      切回默认组
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-              <select
-                className="control"
-                value={form.nodeGroupId}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, nodeGroupId: event.target.value }))
-                }
-              >
-                {selectedSubscription ? null : <option value="">自动选择默认节点组</option>}
-                {availableNodeGroups.map((group) => (
-                  <option key={group.id} value={group.id}>
-                    {group.name}
-                  </option>
-                ))}
-              </select>
-              <span className="field-hint">
-                {selectedSubscription
-                  ? `编辑时会直接写入具体节点组；如需跟随当前套餐默认绑定，可切回 ${defaultNodeGroupName}。`
-                  : `留空时默认使用优先级最高的节点组，当前将落到 ${defaultNodeGroupName}。`}
-              </span>
-            </label>
-
-            <div className="two-col">
-              <label className="field">
-                <span className="fine-print">状态</span>
-                <select
-                  className="control"
-                  value={form.status}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      status: event.target.value as SubscriptionRecord["status"],
-                    }))
-                  }
+          <label className="field">
+            <div className="field-inline-actions">
+              <span className="fine-print">节点组</span>
+              {editingSub && canResetToDefaultNodeGroup ? (
+                <button
+                  className="ghost-button compact"
+                  type="button"
+                  onClick={() => setForm((f) => ({ ...f, nodeGroupId: defaultNodeGroupId }))}
                 >
-                  {subscriptionStatusOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <span className="field-hint">当前状态：{humanizeSubscriptionStatus(form.status)}</span>
-              </label>
-
-              <label className="field">
-                <span className="fine-print">开始时间</span>
-                <input
-                  className="control"
-                  type="datetime-local"
-                  disabled={Boolean(selectedSubscription)}
-                  value={form.startsAt}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, startsAt: event.target.value }))
-                  }
-                />
-                <span className="field-hint">
-                  创建时留空默认使用当前时间；编辑阶段开始时间保持只读。
-                </span>
-              </label>
-            </div>
-
-            {selectedSubscription ? (
-              <div className="two-col">
-                <label className="field">
-                  <div className="field-inline-actions">
-                    <span className="fine-print">到期时间</span>
-                    <div className="inline-stack">
-                      <button
-                        className="ghost-button compact"
-                        type="button"
-                        onClick={() => extendEndsAt(7)}
-                        disabled={!form.endsAt}
-                      >
-                        +7 天
-                      </button>
-                      <button
-                        className="ghost-button compact"
-                        type="button"
-                        onClick={() => extendEndsAt(30)}
-                        disabled={!form.endsAt}
-                      >
-                        +30 天
-                      </button>
-                      <button
-                        className="ghost-button compact"
-                        type="button"
-                        onClick={resetSelectedSubscription}
-                        disabled={!subscriptionDirty}
-                      >
-                        恢复原值
-                      </button>
-                    </div>
-                  </div>
-                  <input
-                    className="control"
-                    type="datetime-local"
-                    value={form.endsAt}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, endsAt: event.target.value }))
-                    }
-                  />
-                  <span className="field-hint">常用续期可以直接顺延，到期时间不会再因为时区被静默平移。</span>
-                </label>
-                <div className="list">
-                  <span className="fine-print">
-                    已用流量：{formatBytes(selectedSubscription.consumedTrafficBytes)}
-                  </span>
-                  <span className="fine-print">
-                    剩余流量：{formatBytes(selectedSubscription.trafficRemainingBytes)}
-                  </span>
-                  <span className="fine-print">
-                    当前节点组：{selectedSubscription.nodeGroupName}
-                  </span>
-                </div>
-              </div>
-            ) : null}
-
-            <div className="toolbar-actions">
-              <button className="action-button" type="submit" disabled={submitDisabled}>
-                {submitting ? "保存中..." : selectedSubscription ? "保存订阅" : "创建订阅"}
-              </button>
-              {selectedSubscription ? (
-                <>
-                  <button className="ghost-button" type="button" onClick={resetSelectedSubscription}>
-                    恢复当前记录
-                  </button>
-                  <button className="ghost-button" type="button" onClick={beginCreateSubscription}>
-                    切到新建
-                  </button>
-                </>
+                  切回默认组 ({defaultNodeGroupName})
+                </button>
               ) : null}
             </div>
-          </form>
-        </Panel>
-      </section>
+            <select
+              className="control"
+              value={form.nodeGroupId}
+              onChange={(e) => setForm((f) => ({ ...f, nodeGroupId: e.target.value }))}
+            >
+              {editingSub ? null : <option value="">自动选择默认节点组</option>}
+              {availableNodeGroups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+            <span className="field-hint">
+              {editingSub
+                ? `留空则用当前套餐默认绑定（${defaultNodeGroupName}）。`
+                : `留空时默认落到 ${defaultNodeGroupName}。`}
+            </span>
+          </label>
+
+          <div className="two-col">
+            <label className="field">
+              <span className="fine-print">状态</span>
+              <select
+                className="control"
+                value={form.status}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, status: e.target.value as SubscriptionRecord["status"] }))
+                }
+              >
+                {subscriptionStatusOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <span className="field-hint">{humanizeSubscriptionStatus(form.status)}</span>
+            </label>
+
+            <label className="field">
+              <span className="fine-print">开始时间</span>
+              <input
+                className="control"
+                type="datetime-local"
+                disabled={Boolean(editingSub)}
+                value={form.startsAt}
+                onChange={(e) => setForm((f) => ({ ...f, startsAt: e.target.value }))}
+              />
+            </label>
+          </div>
+
+          {editingSub ? (
+            <label className="field">
+              <div className="field-inline-actions">
+                <span className="fine-print">到期时间</span>
+                <div className="inline-stack">
+                  <button
+                    className="ghost-button compact"
+                    type="button"
+                    onClick={() => extendEndsAt(7)}
+                  >
+                    +7 天
+                  </button>
+                  <button
+                    className="ghost-button compact"
+                    type="button"
+                    onClick={() => extendEndsAt(30)}
+                  >
+                    +30 天
+                  </button>
+                  <button
+                    className="ghost-button compact"
+                    type="button"
+                    onClick={() => setForm(originalForm)}
+                    disabled={!subDirty}
+                  >
+                    恢复
+                  </button>
+                </div>
+              </div>
+              <input
+                className="control"
+                type="datetime-local"
+                value={form.endsAt}
+                onChange={(e) => setForm((f) => ({ ...f, endsAt: e.target.value }))}
+              />
+              <span className="field-hint">
+                已用：{formatBytes(editingSub.consumedTrafficBytes)} ·
+                剩余：{formatBytes(editingSub.trafficRemainingBytes)}
+              </span>
+            </label>
+          ) : null}
+        </form>
+      </Drawer>
     </ConsoleShell>
   );
 }

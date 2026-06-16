@@ -945,3 +945,38 @@ details.field-section .field-section-body {
   gap: 8px;
   align-items: center;
 }
+
+.drawer-footer-split {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+
+.danger-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--control-height);
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--red-500, #ef4444) 36%, transparent);
+  background: color-mix(in srgb, var(--red-500, #ef4444) 14%, transparent);
+  color: var(--red-500, #ef4444);
+  font-weight: 600;
+  transition: 160ms ease;
+  cursor: pointer;
+}
+
+.danger-button:hover {
+  background: color-mix(in srgb, var(--red-500, #ef4444) 22%, transparent);
+  transform: translateY(-1px);
+}
+
+.danger-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}

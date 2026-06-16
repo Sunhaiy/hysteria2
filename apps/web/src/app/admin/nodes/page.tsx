@@ -161,6 +161,23 @@ export default function AdminNodesPage() {
     }
   }
 
+  async function handleDelete() {
+    if (!token || !editingNode) return;
+    if (!window.confirm(`确定要删除节点「${editingNode.label}」吗？此操作不可撤销。`)) return;
+    setSaving(true);
+    setDrawerError(null);
+    try {
+      await apiRequest(`/api/admin/nodes/${editingNode.id}`, { method: "DELETE", token });
+      setFeedback(`节点「${editingNode.label}」已删除。`);
+      closeDrawer();
+      await load();
+    } catch (cause) {
+      setDrawerError(cause instanceof ApiError ? cause.message : "删除失败，请重试。");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const multiGroup = nodeGroups.length > 1;
 
   return (
@@ -246,18 +263,30 @@ export default function AdminNodesPage() {
         title={editingNode ? `编辑：${editingNode.label}` : "添加节点"}
         subtitle={editingNode ? `${editingNode.hostname}:${editingNode.port}` : undefined}
         footer={
-          <div className="toolbar-actions">
-            <button
-              className="action-button"
-              type="submit"
-              form="node-form"
-              disabled={saving || !form.label.trim() || !form.hostname.trim() || !form.trafficApiBaseUrl.trim()}
-            >
-              {saving ? "保存中..." : editingNode ? "保存" : "添加节点"}
-            </button>
-            <button className="ghost-button" type="button" onClick={closeDrawer}>
-              取消
-            </button>
+          <div className="drawer-footer-split">
+            <div className="toolbar-actions">
+              <button
+                className="action-button"
+                type="submit"
+                form="node-form"
+                disabled={saving || !form.label.trim() || !form.hostname.trim() || !form.trafficApiBaseUrl.trim()}
+              >
+                {saving ? "保存中..." : editingNode ? "保存" : "添加节点"}
+              </button>
+              <button className="ghost-button" type="button" onClick={closeDrawer}>
+                取消
+              </button>
+            </div>
+            {editingNode ? (
+              <button
+                className="danger-button"
+                type="button"
+                onClick={() => void handleDelete()}
+                disabled={saving}
+              >
+                删除节点
+              </button>
+            ) : null}
           </div>
         }
       >

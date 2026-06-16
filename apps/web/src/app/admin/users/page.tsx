@@ -4,6 +4,7 @@ import Image from "next/image";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { DataTable } from "@/components/data-table";
+import { Drawer } from "@/components/drawer";
 import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
@@ -100,7 +101,8 @@ export default function AdminUsersPage() {
   const { token } = useAuth();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [plans, setPlans] = useState<PlanRecord[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [form, setForm] = useState<UserFormState>(emptyForm);
   const [provision, setProvision] = useState<ProvisionState>(() =>
     createProvisionState([], "member"),
@@ -109,101 +111,73 @@ export default function AdminUsersPage() {
   const [loadingDelivery, setLoadingDelivery] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [drawerError, setDrawerError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [deliveryError, setDeliveryError] = useState<string | null>(null);
 
-  const syncProvisionForDraft = useCallback((
-    nextRole: UserFormState["role"],
-    nextPlans: PlanRecord[],
-  ) => {
-    setProvision((current) => {
-      const next = normalizeProvisionState(current, nextPlans, nextRole);
-      return JSON.stringify(next) === JSON.stringify(current) ? current : next;
-    });
-  }, []);
+  const syncProvisionForDraft = useCallback(
+    (nextRole: UserFormState["role"], nextPlans: PlanRecord[]) => {
+      setProvision((current) => {
+        const next = normalizeProvisionState(current, nextPlans, nextRole);
+        return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+      });
+    },
+    [],
+  );
 
   const load = useCallback(async () => {
-    if (!token) {
-      return null;
-    }
-
+    if (!token) return null;
     setLoading(true);
-    setError(null);
-
     try {
       const [nextUsers, nextPlans] = await Promise.all([
         apiRequest<AdminUser[]>("/api/admin/users", { token }),
         apiRequest<PlanRecord[]>("/api/admin/plans", { token }),
       ]);
-
       setUsers(nextUsers);
       setPlans(nextPlans);
-      if (!selectedId) {
+      if (!editingUser) {
         syncProvisionForDraft(form.role, nextPlans);
       }
-
-      if (selectedId && !nextUsers.some((user) => user.id === selectedId)) {
-        setSelectedId(null);
-        setForm(emptyForm);
-        setProvision(createProvisionState(nextPlans, "member"));
-        setDelivery(null);
-        setDeliveryError(null);
-      }
-
-      return {
-        nextUsers,
-        nextPlans,
-      };
-    } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "用户列表加载失败。");
+      return { nextUsers, nextPlans };
+    } catch {
       return null;
     } finally {
       setLoading(false);
     }
-  }, [form.role, selectedId, syncProvisionForDraft, token]);
+  }, [editingUser, form.role, syncProvisionForDraft, token]);
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      void load();
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
+    const id = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(id);
   }, [load]);
 
-  const selectedUser = users.find((user) => user.id === selectedId) ?? null;
   const selectedPlan = useMemo(
     () => plans.find((plan) => plan.id === provision.planId) ?? null,
     [plans, provision.planId],
   );
   const availableBindings = selectedPlan?.bindings ?? [];
-  const provisioningEnabled = !selectedUser && form.role === "member" && provision.enabled;
+  const provisioningEnabled = !editingUser && form.role === "member" && provision.enabled;
   const provisioningBlocked = provisioningEnabled && availableBindings.length === 0;
   const submitDisabled =
     submitting ||
     !form.email.trim() ||
     !form.displayName.trim() ||
-    (!selectedUser && !form.password.trim()) ||
+    (!editingUser && !form.password.trim()) ||
     provisioningBlocked ||
     (provisioningEnabled && !provision.planId);
 
-  function applySelection(
-    user: AdminUser | null,
-    options?: {
-      preserveDelivery?: boolean;
-    },
-  ) {
-    if (!user) {
-      setSelectedId(null);
-      setForm(emptyForm);
-      setProvision(createProvisionState(plans, "member"));
-      if (!options?.preserveDelivery) {
-        setDelivery(null);
-        setDeliveryError(null);
-      }
-      return;
-    }
+  function openCreate() {
+    setEditingUser(null);
+    setForm(emptyForm);
+    setProvision(createProvisionState(plans, "member"));
+    setDelivery(null);
+    setDeliveryError(null);
+    setDrawerError(null);
+    setDrawerOpen(true);
+  }
 
-    setSelectedId(user.id);
+  function openEdit(user: AdminUser) {
+    setEditingUser(user);
     setForm({
       email: user.email,
       displayName: user.displayName,
@@ -212,10 +186,16 @@ export default function AdminUsersPage() {
       status: user.status,
       notes: user.notes ?? "",
     });
-    if (!options?.preserveDelivery) {
-      setDelivery(null);
-      setDeliveryError(null);
-    }
+    setDelivery(null);
+    setDeliveryError(null);
+    setDrawerError(null);
+    setDrawerOpen(true);
+  }
+
+  function closeDrawer() {
+    setDrawerOpen(false);
+    setEditingUser(null);
+    setDrawerError(null);
   }
 
   function handleProvisionPlanChange(nextPlanId: string) {
@@ -237,33 +217,19 @@ export default function AdminUsersPage() {
   }
 
   async function loadAccess(user: AdminUser) {
-    if (!token || user.role !== "member") {
-      return;
-    }
-
+    if (!token || user.role !== "member") return;
     setLoadingDelivery(true);
     setDeliveryError(null);
     setFeedback(null);
-
     try {
       const access = await apiRequest<AdminUserAccessResponse>(
         `/api/admin/users/${user.id}/access`,
         { token },
       );
-      setDelivery({
-        userId: user.id,
-        displayName: user.displayName,
-        email: user.email,
-        access,
-      });
+      setDelivery({ userId: user.id, displayName: user.displayName, email: user.email, access });
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 404) {
-        setDelivery({
-          userId: user.id,
-          displayName: user.displayName,
-          email: user.email,
-          access: null,
-        });
+        setDelivery({ userId: user.id, displayName: user.displayName, email: user.email, access: null });
         setDeliveryError("当前用户还没有生效中的订阅，开通套餐后这里会生成专属链接。");
       } else {
         setDeliveryError(cause instanceof ApiError ? cause.message : "接入信息加载失败。");
@@ -275,18 +241,13 @@ export default function AdminUsersPage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!token) {
-      return;
-    }
-
+    if (!token) return;
     setSubmitting(true);
-    setError(null);
+    setDrawerError(null);
     setFeedback(null);
-    setDeliveryError(null);
-
     try {
-      if (selectedUser) {
-        const updated = await apiRequest<AdminUser>(`/api/admin/users/${selectedUser.id}`, {
+      if (editingUser) {
+        const updated = await apiRequest<AdminUser>(`/api/admin/users/${editingUser.id}`, {
           method: "PATCH",
           token,
           body: {
@@ -297,8 +258,8 @@ export default function AdminUsersPage() {
             notes: form.notes || undefined,
           },
         });
+        setEditingUser(updated);
         setFeedback("用户信息已更新。");
-        applySelection(updated, { preserveDelivery: true });
         await load();
       } else {
         const created = await apiRequest<AdminCreateUserResponse>("/api/admin/users", {
@@ -311,7 +272,6 @@ export default function AdminUsersPage() {
               provisioningEnabled && provision.nodeGroupId ? provision.nodeGroupId : undefined,
           },
         });
-
         setDelivery({
           userId: created.id,
           displayName: created.displayName,
@@ -319,7 +279,9 @@ export default function AdminUsersPage() {
           primaryAccessToken: created.primaryAccessToken ?? null,
           access: created.provisionedAccess ?? null,
         });
-
+        if (!created.provisionedAccess) {
+          setDeliveryError("当前仅完成账号签发。开通有效订阅后，这里会自动生成专属链接和二维码。");
+        }
         setFeedback(
           created.provisionedAccess
             ? "用户已创建，套餐已开通，专属接入信息已生成。"
@@ -327,38 +289,36 @@ export default function AdminUsersPage() {
               ? "用户已创建，主访问令牌已签发。"
               : "用户已创建。",
         );
-
-        if (!created.provisionedAccess) {
-          setDeliveryError("当前仅完成账号签发。开通有效订阅后，这里会自动生成专属链接和二维码。");
-        }
-
         const refreshed = await load();
         const createdUser =
-          refreshed?.nextUsers.find((candidate) => candidate.id === created.id) ?? created;
-        applySelection(createdUser, { preserveDelivery: true });
+          refreshed?.nextUsers.find((u) => u.id === created.id) ?? null;
+        if (createdUser) {
+          setEditingUser(createdUser);
+          setForm({
+            email: createdUser.email,
+            displayName: createdUser.displayName,
+            password: "",
+            role: createdUser.role,
+            status: createdUser.status,
+            notes: createdUser.notes ?? "",
+          });
+        }
       }
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "保存用户失败。");
+      setDrawerError(cause instanceof ApiError ? cause.message : "保存用户失败。");
     } finally {
       setSubmitting(false);
     }
   }
 
   async function handleKick(userId: string) {
-    if (!token) {
-      return;
-    }
-
+    if (!token) return;
     setFeedback(null);
-    setError(null);
     try {
-      await apiRequest(`/api/admin/users/${userId}/kick`, {
-        method: "POST",
-        token,
-      });
+      await apiRequest(`/api/admin/users/${userId}/kick`, { method: "POST", token });
       setFeedback("踢线请求已发送。");
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "踢线失败。");
+      setFeedback(cause instanceof ApiError ? cause.message : "踢线失败。");
     }
   }
 
@@ -369,35 +329,43 @@ export default function AdminUsersPage() {
       scope="Operations"
       navItems={adminNav}
       requireRole="admin"
-      toolbarMeta={<span className="badge info">{loading ? "加载中..." : `${users.length} 个用户`}</span>}
+      toolbarMeta={
+        <span className="badge info">{loading ? "加载中..." : `${users.length} 个用户`}</span>
+      }
       toolbarActions={
         <>
+          <button className="action-button" type="button" onClick={openCreate}>
+            新建用户
+          </button>
           <button className="toolbar-button" type="button" onClick={() => void load()}>
             刷新
-          </button>
-          <button className="action-button" type="button" onClick={() => applySelection(null)}>
-            新建用户
           </button>
         </>
       }
     >
-      {error ? <div className="feedback error">{error}</div> : null}
       {feedback ? <div className="feedback success">{feedback}</div> : null}
 
-      <section className="workspace-grid">
-        <Panel
-          title="账号列表"
-          copy="创建会员后可直接在右侧开通初始套餐并交付专属 URI。"
-          action={<span className="fine-print">{loading ? "同步中..." : `${users.length} 条`}</span>}
-        >
+      <Panel
+        title="账号列表"
+        copy="点击行编辑用户；创建会员时可顺手开通首个套餐并交付专属 URI。"
+        action={<span className="fine-print">{loading ? "同步中..." : `${users.length} 条`}</span>}
+      >
+        {loading && users.length === 0 ? (
+          <div className="skeleton-rows">
+            {Array.from({ length: 5 }, (_, i) => (
+              <div key={i} className="skeleton skeleton-row" />
+            ))}
+          </div>
+        ) : null}
+        {users.length > 0 ? (
           <DataTable
             headers={["用户", "角色", "状态", "访问令牌", "最近使用", "操作"]}
             rows={users.map((user) => [
               <button
                 key={`${user.id}-select`}
                 type="button"
-                className={`link-button${selectedId === user.id ? " active" : ""}`}
-                onClick={() => applySelection(user)}
+                className="link-button"
+                onClick={() => openEdit(user)}
               >
                 <span>{user.displayName}</span>
                 <span className="muted">{user.email}</span>
@@ -423,312 +391,300 @@ export default function AdminUsersPage() {
               </div>,
             ])}
           />
-        </Panel>
+        ) : !loading ? (
+          <div className="empty-state">
+            <div className="empty-state-icon">👤</div>
+            <div className="empty-state-title">还没有用户</div>
+            <button className="action-button" type="button" onClick={openCreate}>
+              新建第一个用户
+            </button>
+          </div>
+        ) : null}
+      </Panel>
 
-        <div className="page-stack">
-          <Panel
-            title={selectedUser ? "编辑用户" : "新建用户"}
-            copy="创建会员时可顺手开通首个套餐，保存成功后右侧会直接给出交付信息。"
-          >
-            <form className="form-grid" onSubmit={handleSubmit}>
-              <label className="field">
-                <span className="fine-print">邮箱</span>
-                <input
-                  className="control"
-                  value={form.email}
-                  disabled={Boolean(selectedUser)}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, email: event.target.value }))
-                  }
-                />
-              </label>
-
-              <label className="field">
-                <span className="fine-print">显示名</span>
-                <input
-                  className="control"
-                  value={form.displayName}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, displayName: event.target.value }))
-                  }
-                />
-              </label>
-
-              <div className="two-col">
-                <label className="field">
-                  <span className="fine-print">角色</span>
-                  <select
-                    className="control"
-                    value={form.role}
-                    onChange={(event) => {
-                      const nextRole = event.target.value as "admin" | "member";
-                      setForm((current) => ({
-                        ...current,
-                        role: nextRole,
-                      }));
-                      if (!selectedUser) {
-                        syncProvisionForDraft(nextRole, plans);
-                      }
-                    }}
-                  >
-                    <option value="member">member</option>
-                    <option value="admin">admin</option>
-                  </select>
-                </label>
-
-                <label className="field">
-                  <span className="fine-print">状态</span>
-                  <select
-                    className="control"
-                    value={form.status}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        status: event.target.value as "active" | "suspended" | "banned",
-                      }))
-                    }
-                  >
-                    <option value="active">active</option>
-                    <option value="suspended">suspended</option>
-                    <option value="banned">banned</option>
-                  </select>
-                </label>
+      {delivery?.access ? (
+        <Panel
+          title="接入交付"
+          copy="专属链接和二维码，直接复制给会员。"
+          action={
+            editingUser && editingUser.role === "member" ? (
+              <button
+                className="ghost-button compact"
+                type="button"
+                onClick={() => void loadAccess(editingUser)}
+                disabled={loadingDelivery}
+              >
+                {loadingDelivery ? "读取中..." : "刷新接入信息"}
+              </button>
+            ) : null
+          }
+        >
+          {deliveryError ? <div className="feedback warn">{deliveryError}</div> : null}
+          <div className="page-stack">
+            <div className="split">
+              <div>
+                <strong>{delivery.displayName}</strong>
+                <div className="fine-print">{delivery.email}</div>
               </div>
-
-              <label className="field">
-                <span className="fine-print">密码</span>
-                <input
-                  className="control"
-                  type="password"
-                  value={form.password}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, password: event.target.value }))
-                  }
-                  placeholder={selectedUser ? "留空则不修改" : "首次登录密码"}
+              <span className="badge success">{delivery.access.nodeLabel}</span>
+            </div>
+            <div className="two-col">
+              <div className="qr-card">
+                <Image
+                  src={delivery.access.qrCode}
+                  alt={`${delivery.displayName} access qr`}
+                  className="qr-image"
+                  width={240}
+                  height={240}
+                  unoptimized
                 />
-              </label>
-
-              <label className="field">
-                <span className="fine-print">备注</span>
-                <textarea
-                  className="control textarea"
-                  value={form.notes}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, notes: event.target.value }))
-                  }
-                />
-              </label>
-
-              {!selectedUser ? (
-                <div className="page-stack">
-                  <label className="checkbox-row">
-                    <input
-                      type="checkbox"
-                      checked={provision.enabled && form.role === "member"}
-                      disabled={form.role !== "member" || !plans.some((plan) => plan.bindings.length > 0)}
-                      onChange={(event) =>
-                        setProvision((current) => ({
-                          ...current,
-                          enabled: event.target.checked,
-                        }))
-                      }
-                    />
-                    <span>创建后立即开通套餐并生成专属接入信息</span>
-                  </label>
-
-                  {form.role !== "member" ? (
-                    <div className="feedback info">
-                      管理员账号默认不做会员接入开通，只签发后台登录凭据。
-                    </div>
-                  ) : null}
-
-                  {provision.enabled && form.role === "member" ? (
-                    <div className="tri-grid">
-                      <label className="field">
-                        <span className="fine-print">初始套餐</span>
-                        <select
-                          className="control"
-                          value={provision.planId}
-                          onChange={(event) => handleProvisionPlanChange(event.target.value)}
-                        >
-                          {plans
-                            .filter((plan) => plan.bindings.length > 0)
-                            .map((plan) => (
-                              <option key={plan.id} value={plan.id}>
-                                {plan.name}
-                              </option>
-                            ))}
-                        </select>
-                      </label>
-
-                      <label className="field">
-                        <span className="fine-print">节点组</span>
-                        <select
-                          className="control"
-                          value={provision.nodeGroupId}
-                          onChange={(event) =>
-                            setProvision((current) => ({
-                              ...current,
-                              nodeGroupId: event.target.value,
-                            }))
-                          }
-                        >
-                          {availableBindings.map((binding) => (
-                            <option key={binding.id} value={binding.nodeGroupId}>
-                              {binding.nodeGroupName}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <div className="field">
-                        <span className="fine-print">交付说明</span>
-                        <div className="feedback info">
-                          保存后会自动生成 token、URI、二维码和 YAML 配置片段。
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-
-              <div className="toolbar-actions">
-                <button className="action-button" type="submit" disabled={submitDisabled}>
-                  {submitting ? "保存中..." : selectedUser ? "保存修改" : "创建用户"}
-                </button>
-                {selectedUser ? (
-                  <button className="ghost-button" type="button" onClick={() => applySelection(null)}>
-                    结束编辑
-                  </button>
-                ) : null}
               </div>
-            </form>
-          </Panel>
-
-          <Panel
-            title="接入交付"
-            copy="创建会员后专属链接会直接落在这里；选中已有会员时也可以随时重新读取。"
-            action={
-              selectedUser && selectedUser.role === "member" ? (
-                <button
-                  className="ghost-button compact"
-                  type="button"
-                  onClick={() => void loadAccess(selectedUser)}
-                  disabled={loadingDelivery}
-                >
-                  {loadingDelivery ? "读取中..." : "读取当前接入信息"}
-                </button>
-              ) : null
-            }
-          >
-            {deliveryError ? <div className="feedback warn">{deliveryError}</div> : null}
-
-            {delivery?.access ? (
               <div className="page-stack">
-                <div className="split">
-                  <div>
-                    <strong>{delivery.displayName}</strong>
-                    <div className="fine-print">{delivery.email}</div>
-                  </div>
-                  <span className="badge success">{delivery.access.nodeLabel}</span>
-                </div>
-
-                <div className="two-col">
-                  <div className="qr-card">
-                    <Image
-                      src={delivery.access.qrCode}
-                      alt={`${delivery.displayName} access qr`}
-                      className="qr-image"
-                      width={240}
-                      height={240}
-                      unoptimized
-                    />
-                  </div>
-
-                  <div className="page-stack">
-                    <label className="field">
-                      <span className="fine-print">访问令牌</span>
-                      <input className="control mono" value={delivery.access.token} readOnly />
-                    </label>
-
-                    <label className="field">
-                      <span className="fine-print">连接 URI</span>
-                      <textarea className="control textarea mono" value={delivery.access.uri} readOnly />
-                    </label>
-
-                    <div className="toolbar-actions">
-                      <button
-                        className="action-button"
-                        type="button"
-                        onClick={() => void copyText(delivery.access!.uri)}
-                      >
-                        复制 URI
-                      </button>
-                      <button
-                        className="ghost-button"
-                        type="button"
-                        onClick={() => void copyText(delivery.access!.configSnippet)}
-                      >
-                        复制配置片段
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="two-col">
-                  <div className="kpi-list">
-                    <div className="list-row">
-                      <span className="muted">到期时间</span>
-                      <strong>{formatDateTime(delivery.access.expiresAt)}</strong>
-                    </div>
-                    <div className="list-row">
-                      <span className="muted">剩余流量</span>
-                      <strong>{formatBytes(delivery.access.trafficRemaining)}</strong>
-                    </div>
-                    <div className="list-row">
-                      <span className="muted">推荐节点</span>
-                      <strong>{delivery.access.nodeLabel}</strong>
-                    </div>
-                  </div>
-
-                  <div className="code-card">
-                    <pre>{delivery.access.configSnippet}</pre>
-                  </div>
-                </div>
-              </div>
-            ) : delivery?.primaryAccessToken ? (
-              <div className="page-stack">
-                <div className="split">
-                  <div>
-                    <strong>{delivery.displayName}</strong>
-                    <div className="fine-print">{delivery.email}</div>
-                  </div>
-                  <span className="badge info">token only</span>
-                </div>
-
                 <label className="field">
-                  <span className="fine-print">主访问令牌</span>
-                  <input className="control mono" value={delivery.primaryAccessToken} readOnly />
+                  <span className="fine-print">访问令牌</span>
+                  <input className="control mono" value={delivery.access.token} readOnly />
                 </label>
-
+                <label className="field">
+                  <span className="fine-print">连接 URI</span>
+                  <textarea className="control textarea mono" value={delivery.access.uri} readOnly />
+                </label>
                 <div className="toolbar-actions">
                   <button
                     className="action-button"
                     type="button"
-                    onClick={() => void copyText(delivery.primaryAccessToken ?? "")}
+                    onClick={() => void copyText(delivery.access!.uri)}
                   >
-                    复制令牌
+                    复制 URI
+                  </button>
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={() => void copyText(delivery.access!.configSnippet)}
+                  >
+                    复制配置片段
                   </button>
                 </div>
               </div>
-            ) : (
-              <div className="feedback info">
-                新建会员并开通初始套餐后，这里会自动生成专属链接、二维码和推荐 YAML 配置。
+            </div>
+            <div className="two-col">
+              <div className="kpi-list">
+                <div className="list-row">
+                  <span className="muted">到期时间</span>
+                  <strong>{formatDateTime(delivery.access.expiresAt)}</strong>
+                </div>
+                <div className="list-row">
+                  <span className="muted">剩余流量</span>
+                  <strong>{formatBytes(delivery.access.trafficRemaining)}</strong>
+                </div>
+                <div className="list-row">
+                  <span className="muted">推荐节点</span>
+                  <strong>{delivery.access.nodeLabel}</strong>
+                </div>
               </div>
-            )}
-          </Panel>
-        </div>
-      </section>
+              <div className="code-card">
+                <pre>{delivery.access.configSnippet}</pre>
+              </div>
+            </div>
+          </div>
+        </Panel>
+      ) : delivery?.primaryAccessToken ? (
+        <Panel title="接入交付" copy="主访问令牌，转交给会员。">
+          {deliveryError ? <div className="feedback warn">{deliveryError}</div> : null}
+          <div className="page-stack">
+            <div className="split">
+              <div>
+                <strong>{delivery.displayName}</strong>
+                <div className="fine-print">{delivery.email}</div>
+              </div>
+              <span className="badge info">token only</span>
+            </div>
+            <label className="field">
+              <span className="fine-print">主访问令牌</span>
+              <input className="control mono" value={delivery.primaryAccessToken} readOnly />
+            </label>
+            <div className="toolbar-actions">
+              <button
+                className="action-button"
+                type="button"
+                onClick={() => void copyText(delivery.primaryAccessToken ?? "")}
+              >
+                复制令牌
+              </button>
+            </div>
+          </div>
+        </Panel>
+      ) : null}
+
+      <Drawer
+        open={drawerOpen}
+        onClose={closeDrawer}
+        title={editingUser ? `编辑用户：${editingUser.displayName}` : "新建用户"}
+        subtitle={editingUser?.email}
+        footer={
+          <div className="toolbar-actions">
+            <button className="action-button" type="submit" form="user-form" disabled={submitDisabled}>
+              {submitting ? "保存中..." : editingUser ? "保存修改" : "创建用户"}
+            </button>
+            <button className="ghost-button" type="button" onClick={closeDrawer}>
+              取消
+            </button>
+          </div>
+        }
+      >
+        {drawerError ? <div className="feedback error">{drawerError}</div> : null}
+
+        <form id="user-form" className="form-grid" onSubmit={handleSubmit}>
+          <label className="field">
+            <span className="fine-print">邮箱</span>
+            <input
+              className="control"
+              value={form.email}
+              disabled={Boolean(editingUser)}
+              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+              required
+            />
+          </label>
+
+          <label className="field">
+            <span className="fine-print">显示名</span>
+            <input
+              className="control"
+              value={form.displayName}
+              onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))}
+              required
+            />
+          </label>
+
+          <div className="two-col">
+            <label className="field">
+              <span className="fine-print">角色</span>
+              <select
+                className="control"
+                value={form.role}
+                onChange={(e) => {
+                  const nextRole = e.target.value as "admin" | "member";
+                  setForm((f) => ({ ...f, role: nextRole }));
+                  if (!editingUser) syncProvisionForDraft(nextRole, plans);
+                }}
+              >
+                <option value="member">member</option>
+                <option value="admin">admin</option>
+              </select>
+            </label>
+
+            <label className="field">
+              <span className="fine-print">状态</span>
+              <select
+                className="control"
+                value={form.status}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, status: e.target.value as UserFormState["status"] }))
+                }
+              >
+                <option value="active">active</option>
+                <option value="suspended">suspended</option>
+                <option value="banned">banned</option>
+              </select>
+            </label>
+          </div>
+
+          <label className="field">
+            <span className="fine-print">密码</span>
+            <input
+              className="control"
+              type="password"
+              value={form.password}
+              onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+              placeholder={editingUser ? "留空则不修改" : "首次登录密码"}
+            />
+          </label>
+
+          <label className="field">
+            <span className="fine-print">备注</span>
+            <textarea
+              className="control textarea"
+              value={form.notes}
+              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+            />
+          </label>
+
+          {!editingUser ? (
+            <div className="page-stack">
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={provision.enabled && form.role === "member"}
+                  disabled={
+                    form.role !== "member" ||
+                    !plans.some((plan) => plan.bindings.length > 0)
+                  }
+                  onChange={(e) =>
+                    setProvision((current) => ({ ...current, enabled: e.target.checked }))
+                  }
+                />
+                <span>创建后立即开通套餐并生成专属接入信息</span>
+              </label>
+
+              {form.role !== "member" ? (
+                <div className="feedback info">管理员账号默认不做会员接入开通。</div>
+              ) : null}
+
+              {provision.enabled && form.role === "member" ? (
+                <div className="two-col">
+                  <label className="field">
+                    <span className="fine-print">初始套餐</span>
+                    <select
+                      className="control"
+                      value={provision.planId}
+                      onChange={(e) => handleProvisionPlanChange(e.target.value)}
+                    >
+                      {plans
+                        .filter((plan) => plan.bindings.length > 0)
+                        .map((plan) => (
+                          <option key={plan.id} value={plan.id}>
+                            {plan.name}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+
+                  <label className="field">
+                    <span className="fine-print">节点组</span>
+                    <select
+                      className="control"
+                      value={provision.nodeGroupId}
+                      onChange={(e) =>
+                        setProvision((current) => ({ ...current, nodeGroupId: e.target.value }))
+                      }
+                    >
+                      {availableBindings.map((binding) => (
+                        <option key={binding.id} value={binding.nodeGroupId}>
+                          {binding.nodeGroupName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </form>
+
+        {editingUser && editingUser.role === "member" ? (
+          <div className="form-grid">
+            <div className="field-section-label">接入信息</div>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => void loadAccess(editingUser)}
+              disabled={loadingDelivery}
+            >
+              {loadingDelivery ? "读取中..." : "读取当前接入信息"}
+            </button>
+            {deliveryError ? <div className="feedback warn">{deliveryError}</div> : null}
+          </div>
+        ) : null}
+      </Drawer>
     </ConsoleShell>
   );
 }
