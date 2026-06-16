@@ -104,6 +104,7 @@ export default function AdminNodesPage() {
   const [loading, setLoading] = useState(true);
   const [groupSaving, setGroupSaving] = useState(false);
   const [nodeSaving, setNodeSaving] = useState(false);
+  const [formVisible, setFormVisible] = useState(false);
 
   const load = useCallback(async () => {
     if (!token) {
@@ -220,6 +221,7 @@ export default function AdminNodesPage() {
     setSelectedNodeId(null);
     setNodeForm(createEmptyNode(prefillGroupId));
     setFeedback(null);
+    setFormVisible(true);
   }
 
   function selectNode(node: NodeRecord | null) {
@@ -230,6 +232,7 @@ export default function AdminNodesPage() {
 
     setSelectedNodeId(node.id);
     setNodeForm(createNodeForm(node));
+    setFormVisible(true);
 
     const group = nodeGroups.find((item) => item.id === node.nodeGroupId) ?? null;
     if (group) {
@@ -355,9 +358,14 @@ export default function AdminNodesPage() {
         </span>
       }
       toolbarActions={
-        <button className="toolbar-button" type="button" onClick={() => void load()}>
-          刷新
-        </button>
+        <>
+          <button className="action-button" type="button" onClick={() => beginCreateNode()}>
+            新建节点
+          </button>
+          <button className="toolbar-button" type="button" onClick={() => void load()}>
+            刷新
+          </button>
+        </>
       }
     >
       {error ? <div className="feedback error">{error}</div> : null}
@@ -410,6 +418,22 @@ export default function AdminNodesPage() {
         </Panel>
 
         <div className="split">
+          {!formVisible ? (
+            <div className="panel">
+              <div className="empty-state">
+                <div className="empty-state-icon">🖥️</div>
+                <div className="empty-state-title">从列表选择节点编辑，或新建一个</div>
+                <div className="inline-stack" style={{ justifyContent: "center" }}>
+                  <button className="action-button" type="button" onClick={() => beginCreateNode()}>
+                    新建节点
+                  </button>
+                  <button className="ghost-button" type="button" onClick={() => { beginCreateNodeGroup(); setFormVisible(true); }}>
+                    新建节点组
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
           <Panel
             title={selectedGroup ? "编辑节点组" : "新建节点组"}
             copy="节点组保存后会继续停留在当前记录，适合先调组，再连着补节点。"
@@ -816,6 +840,7 @@ export default function AdminNodesPage() {
               </div>
             </form>
           </Panel>
+          )}
         </div>
       </section>
     </ConsoleShell>

@@ -128,6 +128,7 @@ export default function AdminPlansPage() {
   const [loading, setLoading] = useState(true);
   const [planSaving, setPlanSaving] = useState(false);
   const [bindingSaving, setBindingSaving] = useState(false);
+  const [formVisible, setFormVisible] = useState(false);
   const pendingActionRef = useRef<(() => void) | null>(null);
 
   const load = useCallback(async () => {
@@ -290,6 +291,7 @@ export default function AdminPlansPage() {
     setPlanForm(createEmptyPlan());
     setBindingForm(createBindingForm());
     setFeedback(null);
+    setFormVisible(true);
   }, []);
 
   const applyBeginCreateBinding = useCallback(
@@ -317,6 +319,7 @@ export default function AdminPlansPage() {
       }
 
       setFeedback(null);
+      setFormVisible(true);
     },
     [applyBeginCreatePlan, bindings, selectedBinding],
   );
@@ -602,9 +605,14 @@ export default function AdminPlansPage() {
         </>
       }
       toolbarActions={
-        <button className="toolbar-button" type="button" onClick={() => void load()}>
-          刷新
-        </button>
+        <>
+          <button className="action-button" type="button" onClick={beginCreatePlan}>
+            新建套餐
+          </button>
+          <button className="toolbar-button" type="button" onClick={() => void load()}>
+            刷新
+          </button>
+        </>
       }
     >
       {error ? <div className="feedback error">{error}</div> : null}
@@ -675,6 +683,17 @@ export default function AdminPlansPage() {
         </Panel>
 
         <div className="split">
+          {!formVisible ? (
+            <div className="panel">
+              <div className="empty-state">
+                <div className="empty-state-icon">📋</div>
+                <div className="empty-state-title">从列表选择套餐编辑，或新建一个</div>
+                <button className="action-button" type="button" onClick={beginCreatePlan}>
+                  新建套餐
+                </button>
+              </div>
+            </div>
+          ) : (
           <Panel
             title={selectedPlan ? "编辑套餐" : "新建套餐"}
             copy="套餐本身决定订阅创建时继承的流量、速率、周期和设备上限。"
@@ -1016,6 +1035,7 @@ export default function AdminPlansPage() {
               ])}
             />
           </Panel>
+          )}
         </div>
       </section>
     </ConsoleShell>

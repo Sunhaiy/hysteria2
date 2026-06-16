@@ -247,7 +247,7 @@ img {
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--bg-panel-alt) 94%, transparent), var(--bg-panel));
   display: grid;
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto 1fr auto;
   gap: 16px;
 }
 
@@ -574,6 +574,26 @@ details.field-section .field-section-body {
   border: 1px solid var(--border-default);
   border-radius: 12px;
   background: color-mix(in srgb, var(--bg-panel-alt) 88%, transparent);
+}
+
+.empty-state {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-subtle);
+  font-size: var(--text-tiny);
+}
+
+.empty-state-icon {
+  font-size: 28px;
+  opacity: 0.4;
+}
+
+.empty-state-title {
+  color: var(--text-secondary);
+  font-size: 14px;
 }
 
 .panel-header,
