@@ -694,6 +694,7 @@ export default function AdminPlansPage() {
               </div>
             </div>
           ) : (
+          <>
           <Panel
             title={selectedPlan ? "编辑套餐" : "新建套餐"}
             copy="套餐本身决定订阅创建时继承的流量、速率、周期和设备上限。"
@@ -1035,6 +1036,7 @@ export default function AdminPlansPage() {
               ])}
             />
           </Panel>
+          </>
           )}
         </div>
       </section>

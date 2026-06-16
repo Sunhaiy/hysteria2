@@ -434,6 +434,7 @@ export default function AdminNodesPage() {
               </div>
             </div>
           ) : (
+          <>
           <Panel
             title={selectedGroup ? "编辑节点组" : "新建节点组"}
             copy="节点组保存后会继续停留在当前记录，适合先调组，再连着补节点。"
@@ -840,6 +841,7 @@ export default function AdminNodesPage() {
               </div>
             </form>
           </Panel>
+          </>
           )}
         </div>
       </section>
