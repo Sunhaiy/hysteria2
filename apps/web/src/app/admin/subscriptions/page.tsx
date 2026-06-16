@@ -8,6 +8,7 @@ import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
+import { clearDraft, getDraft, saveDraft } from "@/lib/draft";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import type {
   AdminUser,
@@ -40,6 +41,9 @@ const subscriptionStatusOptions: Array<{ value: SubscriptionRecord["status"]; la
   { value: "expired", label: "expired / 已过期" },
 ];
 
+const DRAFT_KEY = "subscription";
+type Feedback = { msg: string; kind: "success" | "error" };
+
 function createEmptySubscription(): SubscriptionFormState {
   return { userId: "", planId: "", nodeGroupId: "", status: "active", startsAt: "", endsAt: "" };
 }
@@ -65,8 +69,9 @@ export default function AdminSubscriptionsPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingSub, setEditingSub] = useState<SubscriptionRecord | null>(null);
   const [form, setForm] = useState<SubscriptionFormState>(createEmptySubscription);
+  const [hasDraftBanner, setHasDraftBanner] = useState(false);
   const [drawerError, setDrawerError] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
@@ -140,7 +145,21 @@ export default function AdminSubscriptionsPage() {
     editingSub && defaultNodeGroupId && form.nodeGroupId !== defaultNodeGroupId,
   );
 
-  const subDirty = JSON.stringify(form) !== JSON.stringify(originalForm);
+  const subDirty = drawerOpen && JSON.stringify(form) !== JSON.stringify(originalForm);
+  const isDirty = subDirty;
+
+  function requestClose() {
+    if (isDirty && !window.confirm("有未保存的改动，关闭后将丢失。确定关闭？")) return;
+    forceClose();
+  }
+
+  function forceClose() {
+    setDrawerOpen(false);
+    setEditingSub(null);
+    setDrawerError(null);
+    setHasDraftBanner(false);
+    clearDraft(DRAFT_KEY);
+  }
 
   const submitDisabled =
     submitting ||
@@ -150,8 +169,15 @@ export default function AdminSubscriptionsPage() {
     (editingSub ? !subDirty : false);
 
   function openCreate() {
+    const draft = getDraft<SubscriptionFormState>(DRAFT_KEY);
+    if (draft) {
+      setForm(draft);
+      setHasDraftBanner(true);
+    } else {
+      setForm(createEmptySubscription());
+      setHasDraftBanner(false);
+    }
     setEditingSub(null);
-    setForm(createEmptySubscription());
     setDrawerError(null);
     setDrawerOpen(true);
   }
@@ -159,14 +185,15 @@ export default function AdminSubscriptionsPage() {
   function openEdit(sub: SubscriptionRecord) {
     setEditingSub(sub);
     setForm(createSubscriptionForm(sub));
+    setHasDraftBanner(false);
     setDrawerError(null);
     setDrawerOpen(true);
   }
 
-  function closeDrawer() {
-    setDrawerOpen(false);
-    setEditingSub(null);
-    setDrawerError(null);
+  function discardDraft() {
+    clearDraft(DRAFT_KEY);
+    setForm(createEmptySubscription());
+    setHasDraftBanner(false);
   }
 
   function handlePlanChange(nextPlanId: string) {
@@ -174,14 +201,18 @@ export default function AdminSubscriptionsPage() {
       .filter((b) => b.planId === nextPlanId)
       .sort((a, b) => a.priority - b.priority);
     const nextDefaultGroupId = nextBindings[0]?.nodeGroupId ?? "";
-    setForm((f) => ({
-      ...f,
-      planId: nextPlanId,
-      nodeGroupId:
-        f.nodeGroupId && nextBindings.some((b) => b.nodeGroupId === f.nodeGroupId)
-          ? f.nodeGroupId
-          : nextDefaultGroupId,
-    }));
+    setForm((f) => {
+      const n = {
+        ...f,
+        planId: nextPlanId,
+        nodeGroupId:
+          f.nodeGroupId && nextBindings.some((b) => b.nodeGroupId === f.nodeGroupId)
+            ? f.nodeGroupId
+            : nextDefaultGroupId,
+      };
+      if (!editingSub) saveDraft(DRAFT_KEY, n);
+      return n;
+    });
   }
 
   function extendEndsAt(days: number) {
@@ -223,7 +254,9 @@ export default function AdminSubscriptionsPage() {
           });
       setEditingSub(saved);
       setForm(createSubscriptionForm(saved));
-      setFeedback(editingSub ? "订阅已更新。" : "订阅已创建。");
+      if (!editingSub) clearDraft(DRAFT_KEY);
+      setFeedback({ msg: editingSub ? "订阅已更新。" : "订阅已创建。", kind: "success" });
+      forceClose();
       await load();
     } catch (cause) {
       setDrawerError(cause instanceof ApiError ? cause.message : "保存订阅失败。");
@@ -255,7 +288,7 @@ export default function AdminSubscriptionsPage() {
         </>
       }
     >
-      {feedback ? <div className="feedback success">{feedback}</div> : null}
+      {feedback ? <div className={`feedback ${feedback.kind}`}>{feedback.msg}</div> : null}
 
       <Panel
         title="订阅列表"
@@ -304,9 +337,10 @@ export default function AdminSubscriptionsPage() {
 
       <Drawer
         open={drawerOpen}
-        onClose={closeDrawer}
+        onClose={requestClose}
         title={editingSub ? `编辑订阅：${editingSub.userDisplayName}` : "新建订阅"}
         subtitle={editingSub ? `${editingSub.planName} · ${editingSub.nodeGroupName}` : undefined}
+        isDirty={isDirty}
         footer={
           <div className="toolbar-actions">
             <button
@@ -317,13 +351,22 @@ export default function AdminSubscriptionsPage() {
             >
               {submitting ? "保存中..." : editingSub ? "保存订阅" : "创建订阅"}
             </button>
-            <button className="ghost-button" type="button" onClick={closeDrawer}>
+            <button className="ghost-button" type="button" onClick={requestClose}>
               取消
             </button>
           </div>
         }
       >
         {drawerError ? <div className="feedback error">{drawerError}</div> : null}
+
+        {hasDraftBanner ? (
+          <div className="feedback info" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>已恢复上次未保存的草稿。</span>
+            <button className="ghost-button compact" type="button" onClick={discardDraft}>
+              丢弃草稿
+            </button>
+          </div>
+        ) : null}
 
         {selectedPlan || selectedUser ? (
           <div className="metric-grid" style={{ marginBottom: 16 }}>

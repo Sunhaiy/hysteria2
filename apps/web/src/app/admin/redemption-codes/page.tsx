@@ -8,6 +8,7 @@ import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
+import { clearDraft, getDraft } from "@/lib/draft";
 import { formatBytes, formatDateTime, formatMoney } from "@/lib/format";
 import type { PlanRecord, RedemptionCodeRecord } from "@/lib/types";
 import {
@@ -38,10 +39,11 @@ export default function AdminRedemptionCodesPage() {
   const [form, setForm] = useState(() => emptyForm());
   const [latestCode, setLatestCode] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [hasDraftBanner, setHasDraftBanner] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [drawerError, setDrawerError] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{ msg: string; kind: "success" | "error" } | null>(null);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -69,21 +71,42 @@ export default function AdminRedemptionCodesPage() {
   async function copyText(value: string) {
     try {
       await navigator.clipboard.writeText(value);
-      setFeedback("已复制到剪贴板。");
+      setFeedback({ msg: "已复制到剪贴板。", kind: "success" });
     } catch {
-      setFeedback("复制失败，请手动复制。");
+      setFeedback({ msg: "复制失败，请手动复制。", kind: "error" });
     }
   }
 
+  const isDirty = drawerOpen && (form.label.trim() !== "" || form.note !== "");
+
+  function requestClose() {
+    if (isDirty && !window.confirm("有未保存的改动，关闭后将丢失。确定关闭？")) return;
+    forceClose();
+  }
+
+  function forceClose() {
+    setDrawerOpen(false);
+    setDrawerError(null);
+    setHasDraftBanner(false);
+  }
+
   function openCreate() {
-    setForm(emptyForm(plans[0]?.id ?? ""));
+    const draft = getDraft<ReturnType<typeof emptyForm>>("code");
+    if (draft) {
+      setForm(draft);
+      setHasDraftBanner(true);
+    } else {
+      setForm(emptyForm(plans[0]?.id ?? ""));
+      setHasDraftBanner(false);
+    }
     setDrawerError(null);
     setDrawerOpen(true);
   }
 
-  function closeDrawer() {
-    setDrawerOpen(false);
-    setDrawerError(null);
+  function discardDraft() {
+    clearDraft("code");
+    setForm(emptyForm(plans[0]?.id ?? ""));
+    setHasDraftBanner(false);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -107,9 +130,10 @@ export default function AdminRedemptionCodesPage() {
         },
       });
       setLatestCode(created.code);
-      setFeedback(`兑换码已生成：${created.code}`);
+      clearDraft("code");
+      setFeedback({ msg: `兑换码已生成：${created.code}`, kind: "success" });
       setForm(emptyForm(plans[0]?.id ?? ""));
-      closeDrawer();
+      forceClose();
       await load();
     } catch (cause) {
       setDrawerError(cause instanceof ApiError ? cause.message : "生成兑换码失败。");
@@ -127,10 +151,10 @@ export default function AdminRedemptionCodesPage() {
         token,
         body: { status: "void" },
       });
-      setFeedback("兑换码已作废。");
+      setFeedback({ msg: "兑换码已作废。", kind: "success" });
       await load();
     } catch (cause) {
-      setFeedback(cause instanceof ApiError ? cause.message : "作废兑换码失败。");
+      setFeedback({ msg: cause instanceof ApiError ? cause.message : "作废兑换码失败。", kind: "error" });
     }
   }
 
@@ -166,7 +190,7 @@ export default function AdminRedemptionCodesPage() {
         </>
       }
     >
-      {feedback ? <div className="feedback success">{feedback}</div> : null}
+      {feedback ? <div className={`feedback ${feedback.kind}`}>{feedback.msg}</div> : null}
 
       <Panel
         title="兑换码列表"
@@ -237,8 +261,9 @@ export default function AdminRedemptionCodesPage() {
 
       <Drawer
         open={drawerOpen}
-        onClose={closeDrawer}
+        onClose={requestClose}
         title="生成兑换码"
+        isDirty={isDirty}
         footer={
           <div className="toolbar-actions">
             <button
@@ -254,13 +279,22 @@ export default function AdminRedemptionCodesPage() {
             >
               {submitting ? "生成中..." : "生成兑换码"}
             </button>
-            <button className="ghost-button" type="button" onClick={closeDrawer}>
+            <button className="ghost-button" type="button" onClick={requestClose}>
               取消
             </button>
           </div>
         }
       >
         {drawerError ? <div className="feedback error">{drawerError}</div> : null}
+
+        {hasDraftBanner ? (
+          <div className="feedback info" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>已恢复上次未保存的草稿。</span>
+            <button className="ghost-button compact" type="button" onClick={discardDraft}>
+              丢弃草稿
+            </button>
+          </div>
+        ) : null}
 
         <form id="code-form" className="form-grid" onSubmit={handleSubmit}>
           <label className="field">

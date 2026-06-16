@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { DataTable } from "@/components/data-table";
 import { Drawer } from "@/components/drawer";
@@ -8,7 +8,10 @@ import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
+import { clearDraft, getDraft, saveDraft } from "@/lib/draft";
 import type { NodeGroupRecord, NodeRecord } from "@/lib/types";
+
+const DRAFT_KEY = "node";
 
 type NodeForm = {
   nodeGroupId: string;
@@ -25,6 +28,8 @@ type NodeForm = {
   pinSHA256: string;
   allowInsecureTls: boolean;
 };
+
+type Feedback = { msg: string; kind: "success" | "error" };
 
 function emptyForm(nodeGroupId = ""): NodeForm {
   return {
@@ -69,8 +74,9 @@ export default function AdminNodesPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingNode, setEditingNode] = useState<NodeRecord | null>(null);
   const [form, setForm] = useState<NodeForm>(() => emptyForm());
+  const [hasDraftBanner, setHasDraftBanner] = useState(false);
   const [drawerError, setDrawerError] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -82,7 +88,6 @@ export default function AdminNodesPage() {
         apiRequest<NodeGroupRecord[]>("/api/admin/node-groups", { token }),
         apiRequest<NodeRecord[]>("/api/admin/nodes", { token }),
       ]);
-
       if (nextGroups.length === 0) {
         const defaultGroup = await apiRequest<NodeGroupRecord>("/api/admin/node-groups", {
           method: "POST",
@@ -91,11 +96,10 @@ export default function AdminNodesPage() {
         });
         nextGroups = [defaultGroup];
       }
-
       setNodeGroups(nextGroups);
       setNodes(nextNodes);
     } catch {
-      // keep stale data on refresh failure
+      // keep stale
     } finally {
       setLoading(false);
     }
@@ -106,9 +110,47 @@ export default function AdminNodesPage() {
     return () => window.clearTimeout(id);
   }, [load]);
 
-  function openCreate() {
+  const baseForm = useMemo(
+    () => (editingNode ? fromRecord(editingNode) : emptyForm(nodeGroups[0]?.id ?? "")),
+    [editingNode, nodeGroups],
+  );
+
+  const isDirty = useMemo(
+    () => drawerOpen && JSON.stringify(form) !== JSON.stringify(baseForm),
+    [drawerOpen, form, baseForm],
+  );
+
+  function requestClose() {
+    if (isDirty && !window.confirm("有未保存的改动，关闭后将丢失。确定关闭？")) return;
+    forceClose();
+  }
+
+  function forceClose() {
+    setDrawerOpen(false);
     setEditingNode(null);
-    setForm(emptyForm(nodeGroups[0]?.id ?? ""));
+    setDrawerError(null);
+    setHasDraftBanner(false);
+  }
+
+  function set<K extends keyof NodeForm>(key: K, value: NodeForm[K]) {
+    setForm((f) => {
+      const next = { ...f, [key]: value };
+      if (!editingNode) saveDraft(DRAFT_KEY, next);
+      return next;
+    });
+  }
+
+  function openCreate() {
+    const draft = getDraft<NodeForm>(DRAFT_KEY);
+    const base = emptyForm(nodeGroups[0]?.id ?? "");
+    if (draft) {
+      setForm({ ...base, ...draft, nodeGroupId: draft.nodeGroupId || base.nodeGroupId });
+      setHasDraftBanner(true);
+    } else {
+      setForm(base);
+      setHasDraftBanner(false);
+    }
+    setEditingNode(null);
     setDrawerError(null);
     setDrawerOpen(true);
   }
@@ -116,18 +158,16 @@ export default function AdminNodesPage() {
   function openEdit(node: NodeRecord) {
     setEditingNode(node);
     setForm(fromRecord(node));
+    setHasDraftBanner(false);
     setDrawerError(null);
     setDrawerOpen(true);
   }
 
-  function closeDrawer() {
-    setDrawerOpen(false);
-    setEditingNode(null);
-    setDrawerError(null);
+  function discardDraft() {
+    clearDraft(DRAFT_KEY);
+    setForm(emptyForm(nodeGroups[0]?.id ?? ""));
+    setHasDraftBanner(false);
   }
-
-  const set = <K extends keyof NodeForm>(key: K, value: NodeForm[K]) =>
-    setForm((f) => ({ ...f, [key]: value }));
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -147,12 +187,13 @@ export default function AdminNodesPage() {
       };
       if (editingNode) {
         await apiRequest(`/api/admin/nodes/${editingNode.id}`, { method: "PATCH", token, body: payload });
-        setFeedback("节点已更新。");
+        setFeedback({ msg: "节点已更新。", kind: "success" });
       } else {
         await apiRequest("/api/admin/nodes", { method: "POST", token, body: payload });
-        setFeedback("节点已添加。");
+        clearDraft(DRAFT_KEY);
+        setFeedback({ msg: "节点已添加。", kind: "success" });
       }
-      closeDrawer();
+      forceClose();
       await load();
     } catch (cause) {
       setDrawerError(cause instanceof ApiError ? cause.message : "保存失败，请重试。");
@@ -168,8 +209,8 @@ export default function AdminNodesPage() {
     setDrawerError(null);
     try {
       await apiRequest(`/api/admin/nodes/${editingNode.id}`, { method: "DELETE", token });
-      setFeedback(`节点「${editingNode.label}」已删除。`);
-      closeDrawer();
+      setFeedback({ msg: `节点「${editingNode.label}」已删除。`, kind: "success" });
+      forceClose();
       await load();
     } catch (cause) {
       setDrawerError(cause instanceof ApiError ? cause.message : "删除失败，请重试。");
@@ -203,12 +244,9 @@ export default function AdminNodesPage() {
         </>
       }
     >
-      {feedback ? <div className="feedback success">{feedback}</div> : null}
+      {feedback ? <div className={`feedback ${feedback.kind}`}>{feedback.msg}</div> : null}
 
-      <Panel
-        title="节点列表"
-        copy="点击任意节点行进行编辑；「添加节点」在右侧弹出配置面板。"
-      >
+      <Panel title="节点列表" copy="点击任意节点行进行编辑；「添加节点」在右侧弹出配置面板。">
         {loading && nodes.length === 0 ? (
           <div className="skeleton-rows">
             {Array.from({ length: 4 }, (_, i) => (
@@ -238,10 +276,7 @@ export default function AdminNodesPage() {
               <span className="mono" key={`${node.id}-api`}>
                 {node.trafficApiBaseUrl}
               </span>,
-              <span
-                key={`${node.id}-st`}
-                className={`badge ${node.active ? "success" : "danger"}`}
-              >
+              <span key={`${node.id}-st`} className={`badge ${node.active ? "success" : "danger"}`}>
                 {node.active ? "启用" : "停用"}
               </span>,
             ])}
@@ -259,9 +294,10 @@ export default function AdminNodesPage() {
 
       <Drawer
         open={drawerOpen}
-        onClose={closeDrawer}
+        onClose={requestClose}
         title={editingNode ? `编辑：${editingNode.label}` : "添加节点"}
         subtitle={editingNode ? `${editingNode.hostname}:${editingNode.port}` : undefined}
+        isDirty={isDirty}
         footer={
           <div className="drawer-footer-split">
             <div className="toolbar-actions">
@@ -273,7 +309,7 @@ export default function AdminNodesPage() {
               >
                 {saving ? "保存中..." : editingNode ? "保存" : "添加节点"}
               </button>
-              <button className="ghost-button" type="button" onClick={closeDrawer}>
+              <button className="ghost-button" type="button" onClick={requestClose}>
                 取消
               </button>
             </div>
@@ -291,6 +327,15 @@ export default function AdminNodesPage() {
         }
       >
         {drawerError ? <div className="feedback error">{drawerError}</div> : null}
+
+        {hasDraftBanner ? (
+          <div className="feedback info" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>已恢复上次未保存的草稿。</span>
+            <button className="ghost-button compact" type="button" onClick={discardDraft}>
+              丢弃草稿
+            </button>
+          </div>
+        ) : null}
 
         <form id="node-form" className="form-grid" onSubmit={handleSubmit}>
           <label className="field">
@@ -377,9 +422,7 @@ export default function AdminNodesPage() {
 
           <details
             className="field-section"
-            open={
-              !!(form.sni || form.obfsPassword || form.pinSHA256 || form.allowInsecureTls)
-            }
+            open={!!(form.sni || form.obfsPassword || form.pinSHA256 || form.allowInsecureTls)}
           >
             <summary>TLS / Obfs 进阶配置（可选）</summary>
             <div className="field-section-body">

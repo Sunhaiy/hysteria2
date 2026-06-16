@@ -9,6 +9,7 @@ import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
+import { clearDraft, getDraft, saveDraft } from "@/lib/draft";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import type {
   AdminCreateUserResponse,
@@ -17,6 +18,9 @@ import type {
   PlanRecord,
 } from "@/lib/types";
 import { statusTone } from "@/lib/ui";
+
+const DRAFT_KEY = "user";
+type Feedback = { msg: string; kind: "success" | "error" };
 
 type UserFormState = {
   email: string;
@@ -104,6 +108,7 @@ export default function AdminUsersPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [form, setForm] = useState<UserFormState>(emptyForm);
+  const [hasDraftBanner, setHasDraftBanner] = useState(false);
   const [provision, setProvision] = useState<ProvisionState>(() =>
     createProvisionState([], "member"),
   );
@@ -112,7 +117,7 @@ export default function AdminUsersPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [drawerError, setDrawerError] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [deliveryError, setDeliveryError] = useState<string | null>(null);
 
   const syncProvisionForDraft = useCallback(
@@ -166,9 +171,44 @@ export default function AdminUsersPage() {
     provisioningBlocked ||
     (provisioningEnabled && !provision.planId);
 
-  function openCreate() {
+  const isDirty = useMemo(() => {
+    if (!drawerOpen) return false;
+    if (editingUser) {
+      const orig: UserFormState = {
+        email: editingUser.email,
+        displayName: editingUser.displayName,
+        password: "",
+        role: editingUser.role,
+        status: editingUser.status,
+        notes: editingUser.notes ?? "",
+      };
+      return JSON.stringify(form) !== JSON.stringify(orig);
+    }
+    return JSON.stringify(form) !== JSON.stringify(emptyForm);
+  }, [drawerOpen, editingUser, form]);
+
+  function requestClose() {
+    if (isDirty && !window.confirm("有未保存的改动，关闭后将丢失。确定关闭？")) return;
+    forceClose();
+  }
+
+  function forceClose() {
+    setDrawerOpen(false);
     setEditingUser(null);
-    setForm(emptyForm);
+    setDrawerError(null);
+    setHasDraftBanner(false);
+  }
+
+  function openCreate() {
+    const draft = getDraft<UserFormState>(DRAFT_KEY);
+    if (draft) {
+      setForm(draft);
+      setHasDraftBanner(true);
+    } else {
+      setForm(emptyForm);
+      setHasDraftBanner(false);
+    }
+    setEditingUser(null);
     setProvision(createProvisionState(plans, "member"));
     setDelivery(null);
     setDeliveryError(null);
@@ -186,16 +226,17 @@ export default function AdminUsersPage() {
       status: user.status,
       notes: user.notes ?? "",
     });
+    setHasDraftBanner(false);
     setDelivery(null);
     setDeliveryError(null);
     setDrawerError(null);
     setDrawerOpen(true);
   }
 
-  function closeDrawer() {
-    setDrawerOpen(false);
-    setEditingUser(null);
-    setDrawerError(null);
+  function discardDraft() {
+    clearDraft(DRAFT_KEY);
+    setForm(emptyForm);
+    setHasDraftBanner(false);
   }
 
   function handleProvisionPlanChange(nextPlanId: string) {
@@ -210,9 +251,9 @@ export default function AdminUsersPage() {
   async function copyText(value: string) {
     try {
       await navigator.clipboard.writeText(value);
-      setFeedback("已复制到剪贴板。");
+      setFeedback({ msg: "已复制到剪贴板。", kind: "success" });
     } catch {
-      setFeedback("复制失败，请手动复制。");
+      setFeedback({ msg: "复制失败，请手动复制。", kind: "error" });
     }
   }
 
@@ -259,7 +300,7 @@ export default function AdminUsersPage() {
           },
         });
         setEditingUser(updated);
-        setFeedback("用户信息已更新。");
+        setFeedback({ msg: "用户信息已更新。", kind: "success" });
         await load();
       } else {
         const created = await apiRequest<AdminCreateUserResponse>("/api/admin/users", {
@@ -282,13 +323,15 @@ export default function AdminUsersPage() {
         if (!created.provisionedAccess) {
           setDeliveryError("当前仅完成账号签发。开通有效订阅后，这里会自动生成专属链接和二维码。");
         }
-        setFeedback(
-          created.provisionedAccess
+        clearDraft(DRAFT_KEY);
+        setFeedback({
+          msg: created.provisionedAccess
             ? "用户已创建，套餐已开通，专属接入信息已生成。"
             : created.primaryAccessToken
               ? "用户已创建，主访问令牌已签发。"
               : "用户已创建。",
-        );
+          kind: "success",
+        });
         const refreshed = await load();
         const createdUser =
           refreshed?.nextUsers.find((u) => u.id === created.id) ?? null;
@@ -316,9 +359,9 @@ export default function AdminUsersPage() {
     setFeedback(null);
     try {
       await apiRequest(`/api/admin/users/${userId}/kick`, { method: "POST", token });
-      setFeedback("踢线请求已发送。");
+      setFeedback({ msg: "踢线请求已发送。", kind: "success" });
     } catch (cause) {
-      setFeedback(cause instanceof ApiError ? cause.message : "踢线失败。");
+      setFeedback({ msg: cause instanceof ApiError ? cause.message : "踢线失败。", kind: "error" });
     }
   }
 
@@ -343,7 +386,7 @@ export default function AdminUsersPage() {
         </>
       }
     >
-      {feedback ? <div className="feedback success">{feedback}</div> : null}
+      {feedback ? <div className={`feedback ${feedback.kind}`}>{feedback.msg}</div> : null}
 
       <Panel
         title="账号列表"
@@ -517,21 +560,31 @@ export default function AdminUsersPage() {
 
       <Drawer
         open={drawerOpen}
-        onClose={closeDrawer}
+        onClose={requestClose}
         title={editingUser ? `编辑用户：${editingUser.displayName}` : "新建用户"}
         subtitle={editingUser?.email}
+        isDirty={isDirty}
         footer={
           <div className="toolbar-actions">
             <button className="action-button" type="submit" form="user-form" disabled={submitDisabled}>
               {submitting ? "保存中..." : editingUser ? "保存修改" : "创建用户"}
             </button>
-            <button className="ghost-button" type="button" onClick={closeDrawer}>
+            <button className="ghost-button" type="button" onClick={requestClose}>
               取消
             </button>
           </div>
         }
       >
         {drawerError ? <div className="feedback error">{drawerError}</div> : null}
+
+        {hasDraftBanner ? (
+          <div className="feedback info" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>已恢复上次未保存的草稿。</span>
+            <button className="ghost-button compact" type="button" onClick={discardDraft}>
+              丢弃草稿
+            </button>
+          </div>
+        ) : null}
 
         <form id="user-form" className="form-grid" onSubmit={handleSubmit}>
           <label className="field">
@@ -540,7 +593,7 @@ export default function AdminUsersPage() {
               className="control"
               value={form.email}
               disabled={Boolean(editingUser)}
-              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+              onChange={(e) => setForm((f) => { const n = { ...f, email: e.target.value }; if (!editingUser) saveDraft(DRAFT_KEY, n); return n; })}
               required
             />
           </label>
@@ -550,7 +603,7 @@ export default function AdminUsersPage() {
             <input
               className="control"
               value={form.displayName}
-              onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))}
+              onChange={(e) => setForm((f) => { const n = { ...f, displayName: e.target.value }; if (!editingUser) saveDraft(DRAFT_KEY, n); return n; })}
               required
             />
           </label>

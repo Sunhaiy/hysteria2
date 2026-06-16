@@ -10,13 +10,17 @@ export function Drawer({
   subtitle,
   footer,
   children,
+  isDirty,
 }: {
   open: boolean;
+  /** Page-owned close handler — include dirty-check logic here */
   onClose: () => void;
   title: string;
   subtitle?: string;
   footer?: ReactNode;
   children: ReactNode;
+  /** Shows an "未保存" badge next to the title */
+  isDirty?: boolean;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -32,8 +36,15 @@ export function Drawer({
       {open ? <div className="drawer-backdrop" onClick={onClose} /> : null}
       <div className={`drawer${open ? " open" : ""}`} role="dialog" aria-modal="true">
         <div className="drawer-header">
-          <div className="split" style={{ gap: 4 }}>
-            <span className="drawer-title">{title}</span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span className="drawer-title">{title}</span>
+              {isDirty ? (
+                <span className="badge warn" style={{ fontSize: 11, flexShrink: 0 }}>
+                  未保存
+                </span>
+              ) : null}
+            </div>
             {subtitle ? <span className="fine-print muted">{subtitle}</span> : null}
           </div>
           <button type="button" className="ghost-button compact" onClick={onClose}>

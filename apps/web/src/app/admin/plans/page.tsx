@@ -8,11 +8,13 @@ import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
+import { clearDraft, getDraft, saveDraft } from "@/lib/draft";
 import { formatBytes, formatMoney } from "@/lib/format";
 import type { NodeGroupRecord, PlanBindingRecord, PlanRecord } from "@/lib/types";
 import { slugifyValue } from "@/lib/ui";
 
 const GB = 1024 * 1024 * 1024;
+const DRAFT_KEY = "plan";
 
 type PlanForm = {
   slug: string;
@@ -27,6 +29,8 @@ type PlanForm = {
   priceCents: number;
   accent: string;
 };
+
+type Feedback = { msg: string; kind: "success" | "error" };
 
 function emptyForm(): PlanForm {
   return {
@@ -68,8 +72,9 @@ export default function AdminPlansPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingPlan, setEditingPlan] = useState<PlanRecord | null>(null);
   const [form, setForm] = useState<PlanForm>(emptyForm);
+  const [hasDraftBanner, setHasDraftBanner] = useState(false);
   const [drawerError, setDrawerError] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [addingBinding, setAddingBinding] = useState(false);
@@ -99,9 +104,47 @@ export default function AdminPlansPage() {
     return () => window.clearTimeout(id);
   }, [load]);
 
-  function openCreate() {
+  const baseForm = useMemo(
+    () => (editingPlan ? fromRecord(editingPlan) : emptyForm()),
+    [editingPlan],
+  );
+
+  const isDirty = useMemo(
+    () => drawerOpen && JSON.stringify(form) !== JSON.stringify(baseForm),
+    [drawerOpen, form, baseForm],
+  );
+
+  function set<K extends keyof PlanForm>(key: K, value: PlanForm[K]) {
+    setForm((f) => {
+      const next = { ...f, [key]: value };
+      if (!editingPlan) saveDraft(DRAFT_KEY, next);
+      return next;
+    });
+  }
+
+  function requestClose() {
+    if (isDirty && !window.confirm("有未保存的改动，关闭后将丢失。确定关闭？")) return;
+    forceClose();
+  }
+
+  function forceClose() {
+    setDrawerOpen(false);
     setEditingPlan(null);
-    setForm(emptyForm());
+    setDrawerError(null);
+    setHasDraftBanner(false);
+    setNewBindingGroupId("");
+  }
+
+  function openCreate() {
+    const draft = getDraft<PlanForm>(DRAFT_KEY);
+    if (draft) {
+      setForm(draft);
+      setHasDraftBanner(true);
+    } else {
+      setForm(emptyForm());
+      setHasDraftBanner(false);
+    }
+    setEditingPlan(null);
     setDrawerError(null);
     setDrawerOpen(true);
   }
@@ -109,20 +152,16 @@ export default function AdminPlansPage() {
   function openEdit(plan: PlanRecord) {
     setEditingPlan(plan);
     setForm(fromRecord(plan));
+    setHasDraftBanner(false);
     setDrawerError(null);
     setDrawerOpen(true);
   }
 
-  function closeDrawer() {
-    setDrawerOpen(false);
-    setEditingPlan(null);
-    setDrawerError(null);
-    setAddingBinding(false);
-    setNewBindingGroupId("");
+  function discardDraft() {
+    clearDraft(DRAFT_KEY);
+    setForm(emptyForm());
+    setHasDraftBanner(false);
   }
-
-  const set = <K extends keyof PlanForm>(key: K, value: PlanForm[K]) =>
-    setForm((f) => ({ ...f, [key]: value }));
 
   async function handlePlanSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -151,7 +190,6 @@ export default function AdminPlansPage() {
           token,
           body: payload,
         });
-        // Auto-bind to first node group when creating a new plan
         const currentBindings = await apiRequest<PlanBindingRecord[]>("/api/admin/plan-bindings", { token });
         const planBindings = currentBindings.filter((b) => b.planId === savedPlan.id);
         if (planBindings.length === 0 && nodeGroups.length > 0) {
@@ -161,11 +199,11 @@ export default function AdminPlansPage() {
             body: { planId: savedPlan.id, nodeGroupId: nodeGroups[0].id, priority: 0 },
           });
         }
+        clearDraft(DRAFT_KEY);
       }
 
-      setEditingPlan(savedPlan);
-      setForm(fromRecord(savedPlan));
-      setFeedback(editingPlan ? "套餐已更新。" : "套餐已创建并绑定节点组。");
+      setFeedback({ msg: editingPlan ? "套餐已更新。" : "套餐已创建并绑定节点组。", kind: "success" });
+      forceClose();
       await load();
     } catch (cause) {
       setDrawerError(cause instanceof ApiError ? cause.message : "保存失败，请重试。");
@@ -235,7 +273,7 @@ export default function AdminPlansPage() {
         </>
       }
     >
-      {feedback ? <div className="feedback success">{feedback}</div> : null}
+      {feedback ? <div className={`feedback ${feedback.kind}`}>{feedback.msg}</div> : null}
 
       <Panel
         title="套餐列表"
@@ -288,8 +326,9 @@ export default function AdminPlansPage() {
 
       <Drawer
         open={drawerOpen}
-        onClose={closeDrawer}
+        onClose={requestClose}
         title={editingPlan ? `编辑套餐：${editingPlan.name}` : "新建套餐"}
+        isDirty={isDirty}
         footer={
           <div className="toolbar-actions">
             <button
@@ -300,13 +339,22 @@ export default function AdminPlansPage() {
             >
               {saving ? "保存中..." : editingPlan ? "保存套餐" : "创建套餐"}
             </button>
-            <button className="ghost-button" type="button" onClick={closeDrawer}>
+            <button className="ghost-button" type="button" onClick={requestClose}>
               取消
             </button>
           </div>
         }
       >
         {drawerError ? <div className="feedback error">{drawerError}</div> : null}
+
+        {hasDraftBanner ? (
+          <div className="feedback info" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>已恢复上次未保存的草稿。</span>
+            <button className="ghost-button compact" type="button" onClick={discardDraft}>
+              丢弃草稿
+            </button>
+          </div>
+        ) : null}
 
         <form id="plan-form" className="form-grid" onSubmit={handlePlanSubmit}>
           <div className="two-col">
@@ -318,14 +366,18 @@ export default function AdminPlansPage() {
                 value={form.name}
                 onChange={(e) => {
                   const nextName = e.target.value;
-                  setForm((f) => ({
-                    ...f,
-                    name: nextName,
-                    slug:
-                      !editingPlan && (!f.slug || f.slug === slugifyValue(f.name))
-                        ? slugifyValue(nextName)
-                        : f.slug,
-                  }));
+                  setForm((f) => {
+                    const next = {
+                      ...f,
+                      name: nextName,
+                      slug:
+                        !editingPlan && (!f.slug || f.slug === slugifyValue(f.name))
+                          ? slugifyValue(nextName)
+                          : f.slug,
+                    };
+                    if (!editingPlan) saveDraft(DRAFT_KEY, next);
+                    return next;
+                  });
                 }}
                 required
               />

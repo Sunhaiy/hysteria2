@@ -8,6 +8,7 @@ import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
+import { clearDraft, getDraft } from "@/lib/draft";
 import { formatBytes, formatDateTime, formatMoney } from "@/lib/format";
 import type { AdminUser, ManualOrderRecord, PlanRecord } from "@/lib/types";
 import { humanizeOrderKind, statusTone } from "@/lib/ui";
@@ -46,11 +47,12 @@ export default function AdminOrdersPage() {
   const [plans, setPlans] = useState<PlanRecord[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [hasDraftBanner, setHasDraftBanner] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [actingOrderId, setActingOrderId] = useState<string | null>(null);
   const [drawerError, setDrawerError] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{ msg: string; kind: "success" | "error" } | null>(null);
 
   const pendingCount = orders.filter((o) => o.status === "pending").length;
   const selectedPlan = plans.find((p) => p.id === form.planId) ?? null;
@@ -79,15 +81,37 @@ export default function AdminOrdersPage() {
     return () => window.clearTimeout(id);
   }, [load]);
 
+  const isDirty = drawerOpen && form.userId !== "";
+
+  function requestClose() {
+    if (isDirty && !window.confirm("有未保存的改动，关闭后将丢失。确定关闭？")) return;
+    forceClose();
+  }
+
+  function forceClose() {
+    setDrawerOpen(false);
+    setDrawerError(null);
+    setHasDraftBanner(false);
+    clearDraft("order");
+  }
+
   function openCreate() {
-    setForm(emptyForm);
+    const draft = getDraft<typeof emptyForm>("order");
+    if (draft) {
+      setForm(draft);
+      setHasDraftBanner(true);
+    } else {
+      setForm(emptyForm);
+      setHasDraftBanner(false);
+    }
     setDrawerError(null);
     setDrawerOpen(true);
   }
 
-  function closeDrawer() {
-    setDrawerOpen(false);
-    setDrawerError(null);
+  function discardDraft() {
+    clearDraft("order");
+    setForm(emptyForm);
+    setHasDraftBanner(false);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -117,13 +141,15 @@ export default function AdminOrdersPage() {
           note: form.note || undefined,
         },
       });
-      setFeedback(
-        form.status === "pending"
+      clearDraft("order");
+      setFeedback({
+        msg: form.status === "pending"
           ? "待支付订单已创建，等待后台确认到账。"
           : "订单已立即入账并同步到会员权益。",
-      );
+        kind: "success",
+      });
       setForm(emptyForm);
-      closeDrawer();
+      forceClose();
       await load();
     } catch (cause) {
       setDrawerError(cause instanceof ApiError ? cause.message : "订单创建失败。");
@@ -142,10 +168,10 @@ export default function AdminOrdersPage() {
         token,
         body: { status },
       });
-      setFeedback(status === "applied" ? "订单已确认到账并生效。" : "订单已作废。");
+      setFeedback({ msg: status === "applied" ? "订单已确认到账并生效。" : "订单已作废。", kind: "success" });
       await load();
     } catch (cause) {
-      setFeedback(cause instanceof ApiError ? cause.message : "订单处理失败。");
+      setFeedback({ msg: cause instanceof ApiError ? cause.message : "订单处理失败。", kind: "error" });
     } finally {
       setActingOrderId(null);
     }
@@ -179,7 +205,7 @@ export default function AdminOrdersPage() {
         </>
       }
     >
-      {feedback ? <div className="feedback success">{feedback}</div> : null}
+      {feedback ? <div className={`feedback ${feedback.kind}`}>{feedback.msg}</div> : null}
 
       <Panel
         title="订单工作台"
@@ -248,8 +274,9 @@ export default function AdminOrdersPage() {
 
       <Drawer
         open={drawerOpen}
-        onClose={closeDrawer}
+        onClose={requestClose}
         title="创建订单"
+        isDirty={isDirty}
         footer={
           <div className="toolbar-actions">
             <button
@@ -268,13 +295,22 @@ export default function AdminOrdersPage() {
                   ? "创建待支付订单"
                   : "立即入账"}
             </button>
-            <button className="ghost-button" type="button" onClick={closeDrawer}>
+            <button className="ghost-button" type="button" onClick={requestClose}>
               取消
             </button>
           </div>
         }
       >
         {drawerError ? <div className="feedback error">{drawerError}</div> : null}
+
+        {hasDraftBanner ? (
+          <div className="feedback info" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>已恢复上次未保存的草稿。</span>
+            <button className="ghost-button compact" type="button" onClick={discardDraft}>
+              丢弃草稿
+            </button>
+          </div>
+        ) : null}
 
         <form id="order-form" className="form-grid" onSubmit={handleSubmit}>
           <label className="field">
