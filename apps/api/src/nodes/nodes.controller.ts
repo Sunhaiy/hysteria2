@@ -1,7 +1,9 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
   Param,
   Patch,
   Post,
@@ -30,5 +32,11 @@ export class NodesController {
   @Patch(':id')
   updateNode(@Param('id') id: string, @Body() body: UpdateNodeDto) {
     return this.store.patchNode(id, body);
+  }
+
+  @Delete(':id')
+  @HttpCode(204)
+  deleteNode(@Param('id') id: string) {
+    return this.store.deleteNode(id);
   }
 }

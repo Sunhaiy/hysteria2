@@ -50,7 +50,7 @@ export class CreateUserDto {
 
   @IsOptional()
   @IsString()
-  initialNodeGroupId?: string;
+  initialNodeId?: string;
 }
 
 export class UpdateUserDto {
@@ -177,7 +177,7 @@ export class CreateSubscriptionDto {
 
   @IsOptional()
   @IsString()
-  nodeGroupId?: string;
+  nodeId?: string;
 
   @IsOptional()
   @IsIn(['active', 'expired', 'paused', 'canceled'])
@@ -199,7 +199,7 @@ export class UpdateSubscriptionDto {
 
   @IsOptional()
   @IsString()
-  nodeGroupId?: string;
+  nodeId?: string;
 
   @IsOptional()
   @IsNumber()
@@ -233,9 +233,6 @@ export class UpdateSubscriptionDto {
 }
 
 export class CreateNodeDto {
-  @IsString()
-  nodeGroupId!: string;
-
   @IsString()
   label!: string;
 
@@ -280,10 +277,6 @@ export class CreateNodeDto {
 }
 
 export class UpdateNodeDto {
-  @IsOptional()
-  @IsString()
-  nodeGroupId?: string;
-
   @IsOptional()
   @IsString()
   label?: string;
@@ -376,46 +369,12 @@ export class UpdateManualOrderDto {
   status?: 'applied' | 'void';
 }
 
-export class CreateNodeGroupDto {
-  @IsString()
-  slug!: string;
-
-  @IsString()
-  name!: string;
-
-  @IsOptional()
-  @IsString()
-  description?: string;
-
-  @IsOptional()
-  @IsBoolean()
-  active?: boolean;
-}
-
-export class UpdateNodeGroupDto {
-  @IsOptional()
-  @IsString()
-  slug?: string;
-
-  @IsOptional()
-  @IsString()
-  name?: string;
-
-  @IsOptional()
-  @IsString()
-  description?: string;
-
-  @IsOptional()
-  @IsBoolean()
-  active?: boolean;
-}
-
 export class CreatePlanBindingDto {
   @IsString()
   planId!: string;
 
   @IsString()
-  nodeGroupId!: string;
+  nodeId!: string;
 
   @IsOptional()
   @IsInt()
@@ -426,7 +385,7 @@ export class CreatePlanBindingDto {
 export class UpdatePlanBindingDto {
   @IsOptional()
   @IsString()
-  nodeGroupId?: string;
+  nodeId?: string;
 
   @IsOptional()
   @IsInt()

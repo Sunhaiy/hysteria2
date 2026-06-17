@@ -9,12 +9,11 @@ import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
 import { clearDraft, getDraft, saveDraft } from "@/lib/draft";
-import type { NodeGroupRecord, NodeRecord } from "@/lib/types";
+import type { NodeRecord } from "@/lib/types";
 
 const DRAFT_KEY = "node";
 
 type NodeForm = {
-  nodeGroupId: string;
   label: string;
   hostname: string;
   port: number;
@@ -31,9 +30,8 @@ type NodeForm = {
 
 type Feedback = { msg: string; kind: "success" | "error" };
 
-function emptyForm(nodeGroupId = ""): NodeForm {
+function emptyForm(): NodeForm {
   return {
-    nodeGroupId,
     label: "",
     hostname: "",
     port: 443,
@@ -51,7 +49,6 @@ function emptyForm(nodeGroupId = ""): NodeForm {
 
 function fromRecord(node: NodeRecord): NodeForm {
   return {
-    nodeGroupId: node.nodeGroupId,
     label: node.label,
     hostname: node.hostname,
     port: node.port,
@@ -69,7 +66,6 @@ function fromRecord(node: NodeRecord): NodeForm {
 
 export default function AdminNodesPage() {
   const { token } = useAuth();
-  const [nodeGroups, setNodeGroups] = useState<NodeGroupRecord[]>([]);
   const [nodes, setNodes] = useState<NodeRecord[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingNode, setEditingNode] = useState<NodeRecord | null>(null);
@@ -84,19 +80,7 @@ export default function AdminNodesPage() {
     if (!token) return;
     setLoading(true);
     try {
-      let [nextGroups, nextNodes] = await Promise.all([
-        apiRequest<NodeGroupRecord[]>("/api/admin/node-groups", { token }),
-        apiRequest<NodeRecord[]>("/api/admin/nodes", { token }),
-      ]);
-      if (nextGroups.length === 0) {
-        const defaultGroup = await apiRequest<NodeGroupRecord>("/api/admin/node-groups", {
-          method: "POST",
-          token,
-          body: { slug: "default", name: "默认节点组", description: "", active: true },
-        });
-        nextGroups = [defaultGroup];
-      }
-      setNodeGroups(nextGroups);
+      const nextNodes = await apiRequest<NodeRecord[]>("/api/admin/nodes", { token });
       setNodes(nextNodes);
     } catch {
       // keep stale
@@ -111,8 +95,8 @@ export default function AdminNodesPage() {
   }, [load]);
 
   const baseForm = useMemo(
-    () => (editingNode ? fromRecord(editingNode) : emptyForm(nodeGroups[0]?.id ?? "")),
-    [editingNode, nodeGroups],
+    () => (editingNode ? fromRecord(editingNode) : emptyForm()),
+    [editingNode],
   );
 
   const isDirty = useMemo(
@@ -142,12 +126,11 @@ export default function AdminNodesPage() {
 
   function openCreate() {
     const draft = getDraft<NodeForm>(DRAFT_KEY);
-    const base = emptyForm(nodeGroups[0]?.id ?? "");
     if (draft) {
-      setForm({ ...base, ...draft, nodeGroupId: draft.nodeGroupId || base.nodeGroupId });
+      setForm({ ...emptyForm(), ...draft });
       setHasDraftBanner(true);
     } else {
-      setForm(base);
+      setForm(emptyForm());
       setHasDraftBanner(false);
     }
     setEditingNode(null);
@@ -165,7 +148,7 @@ export default function AdminNodesPage() {
 
   function discardDraft() {
     clearDraft(DRAFT_KEY);
-    setForm(emptyForm(nodeGroups[0]?.id ?? ""));
+    setForm(emptyForm());
     setHasDraftBanner(false);
   }
 
@@ -219,8 +202,6 @@ export default function AdminNodesPage() {
     }
   }
 
-  const multiGroup = nodeGroups.length > 1;
-
   return (
     <ConsoleShell
       title="节点管理"
@@ -268,7 +249,6 @@ export default function AdminNodesPage() {
                 <span>{node.label}</span>
                 <span className="muted">
                   {node.hostname}:{node.port}
-                  {multiGroup ? ` · ${node.groupName}` : ""}
                 </span>
               </button>,
               `${node.speedUpMbps} / ${node.speedDownMbps} Mbps`,
@@ -426,23 +406,6 @@ export default function AdminNodesPage() {
           >
             <summary>TLS / Obfs 进阶配置（可选）</summary>
             <div className="field-section-body">
-              {multiGroup ? (
-                <label className="field">
-                  <span className="fine-print">节点组</span>
-                  <select
-                    className="control"
-                    value={form.nodeGroupId}
-                    onChange={(e) => set("nodeGroupId", e.target.value)}
-                  >
-                    {nodeGroups.map((g) => (
-                      <option key={g.id} value={g.id}>
-                        {g.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-
               <label className="field">
                 <div className="field-inline-actions">
                   <span className="fine-print">SNI</span>

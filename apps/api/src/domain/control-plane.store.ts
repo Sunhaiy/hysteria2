@@ -34,16 +34,10 @@ type PlanWithBindings = Prisma.PlanGetPayload<{
   include: {
     bindings: {
       include: {
-        nodeGroup: true;
+        node: true;
       };
       orderBy: { priority: 'asc' };
     };
-  };
-}>;
-
-type NodeGroupWithNodes = Prisma.NodeGroupGetPayload<{
-  include: {
-    nodes: true;
   };
 }>;
 
@@ -51,7 +45,7 @@ type SubscriptionWithRelations = Prisma.SubscriptionGetPayload<{
   include: {
     user: true;
     plan: true;
-    nodeGroup: true;
+    node: true;
     trafficPacks: true;
   };
 }>;
@@ -77,22 +71,15 @@ export class ControlPlaneStoreService {
   constructor(private readonly prisma: PrismaService) {}
 
   async health() {
-    const [users, plans, subscriptions, nodes, nodeGroups] =
+    const [users, plans, subscriptions, nodes] =
       await this.prisma.$transaction([
         this.prisma.user.count(),
         this.prisma.plan.count(),
         this.prisma.subscription.count(),
         this.prisma.node.count(),
-        this.prisma.nodeGroup.count(),
       ]);
 
-    return {
-      users,
-      plans,
-      subscriptions,
-      nodes,
-      nodeGroups,
-    };
+    return { users, plans, subscriptions, nodes };
   }
 
   async getUsers() {
@@ -145,7 +132,7 @@ export class ControlPlaneStoreService {
     status: 'active' | 'suspended' | 'banned';
     notes?: string;
     initialPlanId?: string;
-    initialNodeGroupId?: string;
+    initialNodeId?: string;
   }) {
     try {
       const token = this.generateAccessToken();
@@ -172,22 +159,19 @@ export class ControlPlaneStoreService {
         let createdSubscriptionId: string | null = null;
         if (input.initialPlanId) {
           const startsAt = new Date();
-          const { plan, nodeGroupId } = await this.resolvePlanProvisioning(tx, {
+          const { plan, nodeId } = await this.resolvePlanNode(tx, {
             planId: input.initialPlanId,
-            requestedNodeGroupId: input.initialNodeGroupId,
+            requestedNodeId: input.initialNodeId,
           });
 
           const subscription = await tx.subscription.create({
             data: {
               userId: createdUser.id,
               planId: plan.id,
-              nodeGroupId,
+              nodeId,
               status: SubscriptionStatus.ACTIVE,
               startsAt,
-              endsAt: this.buildSubscriptionEndDate(
-                startsAt,
-                plan.durationDays,
-              ),
+              endsAt: this.buildSubscriptionEndDate(startsAt, plan.durationDays),
               includedTrafficBytes: plan.trafficBytes,
               bonusTrafficBytes: BigInt(0),
               consumedTrafficBytes: BigInt(0),
@@ -200,11 +184,7 @@ export class ControlPlaneStoreService {
           createdSubscriptionId = subscription.id;
         }
 
-        return {
-          createdUser,
-          accessToken,
-          createdSubscriptionId,
-        };
+        return { createdUser, accessToken, createdSubscriptionId };
       });
 
       return {
@@ -258,7 +238,7 @@ export class ControlPlaneStoreService {
     const plans = await this.prisma.plan.findMany({
       include: {
         bindings: {
-          include: { nodeGroup: true },
+          include: { node: true },
           orderBy: { priority: 'asc' },
         },
       },
@@ -274,20 +254,14 @@ export class ControlPlaneStoreService {
         active: true,
         bindings: {
           some: {
-            nodeGroup: {
-              active: true,
-            },
+            node: { active: true },
           },
         },
       },
       include: {
         bindings: {
-          where: {
-            nodeGroup: {
-              active: true,
-            },
-          },
-          include: { nodeGroup: true },
+          where: { node: { active: true } },
+          include: { node: true },
           orderBy: { priority: 'asc' },
         },
       },
@@ -327,7 +301,7 @@ export class ControlPlaneStoreService {
         },
         include: {
           bindings: {
-            include: { nodeGroup: true },
+            include: { node: true },
             orderBy: { priority: 'asc' },
           },
         },
@@ -376,7 +350,7 @@ export class ControlPlaneStoreService {
         }),
         include: {
           bindings: {
-            include: { nodeGroup: true },
+            include: { node: true },
             orderBy: { priority: 'asc' },
           },
         },
@@ -388,78 +362,11 @@ export class ControlPlaneStoreService {
     }
   }
 
-  async getNodeGroups() {
-    const groups = await this.prisma.nodeGroup.findMany({
-      include: {
-        nodes: {
-          orderBy: { label: 'asc' },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    return groups.map((group) => this.presentNodeGroup(group));
-  }
-
-  async createNodeGroup(input: {
-    slug: string;
-    name: string;
-    description?: string;
-    active?: boolean;
-  }) {
-    try {
-      const group = await this.prisma.nodeGroup.create({
-        data: {
-          slug: input.slug,
-          name: input.name,
-          description: input.description,
-          active: input.active ?? true,
-        },
-        include: {
-          nodes: true,
-        },
-      });
-
-      return this.presentNodeGroup(group);
-    } catch (error) {
-      this.handlePrismaError(error);
-    }
-  }
-
-  async patchNodeGroup(
-    nodeGroupId: string,
-    input: {
-      slug?: string;
-      name?: string;
-      description?: string;
-      active?: boolean;
-    },
-  ) {
-    try {
-      const group = await this.prisma.nodeGroup.update({
-        where: { id: nodeGroupId },
-        data: this.withDefinedValues({
-          slug: input.slug,
-          name: input.name,
-          description: input.description,
-          active: input.active,
-        }),
-        include: {
-          nodes: true,
-        },
-      });
-
-      return this.presentNodeGroup(group);
-    } catch (error) {
-      this.handlePrismaError(error);
-    }
-  }
-
   async getPlanBindings() {
     const bindings = await this.prisma.planBinding.findMany({
       include: {
         plan: true,
-        nodeGroup: true,
+        node: true,
       },
       orderBy: [{ planId: 'asc' }, { priority: 'asc' }, { createdAt: 'asc' }],
     });
@@ -468,8 +375,8 @@ export class ControlPlaneStoreService {
       id: binding.id,
       planId: binding.planId,
       planName: binding.plan.name,
-      nodeGroupId: binding.nodeGroupId,
-      nodeGroupName: binding.nodeGroup.name,
+      nodeId: binding.nodeId,
+      nodeLabel: binding.node.label,
       priority: binding.priority,
       createdAt: binding.createdAt.toISOString(),
     }));
@@ -477,19 +384,19 @@ export class ControlPlaneStoreService {
 
   async createPlanBinding(input: {
     planId: string;
-    nodeGroupId: string;
+    nodeId: string;
     priority?: number;
   }) {
     try {
       const binding = await this.prisma.planBinding.create({
         data: {
           planId: input.planId,
-          nodeGroupId: input.nodeGroupId,
+          nodeId: input.nodeId,
           priority: input.priority ?? 0,
         },
         include: {
           plan: true,
-          nodeGroup: true,
+          node: true,
         },
       });
 
@@ -497,8 +404,8 @@ export class ControlPlaneStoreService {
         id: binding.id,
         planId: binding.planId,
         planName: binding.plan.name,
-        nodeGroupId: binding.nodeGroupId,
-        nodeGroupName: binding.nodeGroup.name,
+        nodeId: binding.nodeId,
+        nodeLabel: binding.node.label,
         priority: binding.priority,
         createdAt: binding.createdAt.toISOString(),
       };
@@ -507,32 +414,31 @@ export class ControlPlaneStoreService {
     }
   }
 
+  async deletePlanBinding(bindingId: string) {
+    try {
+      await this.prisma.planBinding.delete({ where: { id: bindingId } });
+    } catch (error) {
+      this.handlePrismaError(error);
+    }
+  }
+
   async patchPlanBinding(
     bindingId: string,
-    input: {
-      nodeGroupId?: string;
-      priority?: number;
-    },
+    input: { nodeId?: string; priority?: number },
   ) {
     try {
       const binding = await this.prisma.planBinding.update({
         where: { id: bindingId },
-        data: this.withDefinedValues({
-          nodeGroupId: input.nodeGroupId,
-          priority: input.priority,
-        }),
-        include: {
-          plan: true,
-          nodeGroup: true,
-        },
+        data: this.withDefinedValues({ nodeId: input.nodeId, priority: input.priority }),
+        include: { plan: true, node: true },
       });
 
       return {
         id: binding.id,
         planId: binding.planId,
         planName: binding.plan.name,
-        nodeGroupId: binding.nodeGroupId,
-        nodeGroupName: binding.nodeGroup.name,
+        nodeId: binding.nodeId,
+        nodeLabel: binding.node.label,
         priority: binding.priority,
         createdAt: binding.createdAt.toISOString(),
       };
@@ -543,18 +449,11 @@ export class ControlPlaneStoreService {
 
   async getSubscriptions() {
     const subscriptions = await this.prisma.subscription.findMany({
-      include: {
-        user: true,
-        plan: true,
-        nodeGroup: true,
-        trafficPacks: true,
-      },
+      include: { user: true, plan: true, node: true, trafficPacks: true },
       orderBy: { createdAt: 'desc' },
     });
 
-    return subscriptions.map((subscription) =>
-      this.presentSubscription(subscription),
-    );
+    return subscriptions.map((s) => this.presentSubscription(s));
   }
 
   async getActiveSubscriptionForUser(userId: string) {
@@ -572,7 +471,7 @@ export class ControlPlaneStoreService {
   async createSubscription(input: {
     userId: string;
     planId: string;
-    nodeGroupId?: string;
+    nodeId?: string;
     status?: 'active' | 'expired' | 'paused' | 'canceled';
     startsAt?: string;
   }) {
@@ -587,24 +486,17 @@ export class ControlPlaneStoreService {
     const openSubscription = await this.prisma.subscription.findFirst({
       where: {
         userId: input.userId,
-        status: {
-          in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED],
-        },
+        status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED] },
       },
     });
     if (openSubscription) {
-      throw new ConflictException(
-        'User already has an active or paused subscription',
-      );
+      throw new ConflictException('User already has an active or paused subscription');
     }
 
-    const { plan, nodeGroupId } = await this.resolvePlanProvisioning(
-      this.prisma,
-      {
-        planId: input.planId,
-        requestedNodeGroupId: input.nodeGroupId,
-      },
-    );
+    const { plan, nodeId } = await this.resolvePlanNode(this.prisma, {
+      planId: input.planId,
+      requestedNodeId: input.nodeId,
+    });
 
     const endsAt = this.buildSubscriptionEndDate(startsAt, plan.durationDays);
 
@@ -613,7 +505,7 @@ export class ControlPlaneStoreService {
         data: {
           userId: input.userId,
           planId: input.planId,
-          nodeGroupId,
+          nodeId,
           status: input.status
             ? this.toDbSubscriptionStatus(input.status)
             : SubscriptionStatus.ACTIVE,
@@ -626,12 +518,7 @@ export class ControlPlaneStoreService {
           speedDownMbpsSnapshot: plan.speedDownMbps,
           deviceLimitSnapshot: plan.deviceLimit,
         },
-        include: {
-          user: true,
-          plan: true,
-          nodeGroup: true,
-          trafficPacks: true,
-        },
+        include: { user: true, plan: true, node: true, trafficPacks: true },
       });
 
       return this.presentSubscription(subscription);
@@ -645,7 +532,7 @@ export class ControlPlaneStoreService {
     input: {
       status?: 'active' | 'expired' | 'paused' | 'canceled';
       endsAt?: string;
-      nodeGroupId?: string;
+      nodeId?: string;
       includedTrafficBytes?: number;
       bonusTrafficBytes?: number;
       consumedTrafficBytes?: number;
@@ -656,17 +543,12 @@ export class ControlPlaneStoreService {
   ) {
     const subscription = await this.mustGetSubscriptionRecord(subscriptionId);
 
-    if (input.nodeGroupId) {
+    if (input.nodeId) {
       const allowed = await this.prisma.planBinding.findFirst({
-        where: {
-          planId: subscription.planId,
-          nodeGroupId: input.nodeGroupId,
-        },
+        where: { planId: subscription.planId, nodeId: input.nodeId },
       });
       if (!allowed) {
-        throw new BadRequestException(
-          'Selected node group is not allowed for this subscription plan',
-        );
+        throw new BadRequestException('Selected node is not bound to this subscription plan');
       }
     }
 
@@ -674,11 +556,9 @@ export class ControlPlaneStoreService {
       const updated = await this.prisma.subscription.update({
         where: { id: subscriptionId },
         data: this.withDefinedValues({
-          status: input.status
-            ? this.toDbSubscriptionStatus(input.status)
-            : undefined,
+          status: input.status ? this.toDbSubscriptionStatus(input.status) : undefined,
           endsAt: input.endsAt ? new Date(input.endsAt) : undefined,
-          nodeGroupId: input.nodeGroupId,
+          nodeId: input.nodeId,
           includedTrafficBytes:
             input.includedTrafficBytes !== undefined
               ? BigInt(input.includedTrafficBytes)
@@ -695,12 +575,7 @@ export class ControlPlaneStoreService {
           speedDownMbpsSnapshot: input.speedDownMbpsSnapshot,
           deviceLimitSnapshot: input.deviceLimitSnapshot,
         }),
-        include: {
-          user: true,
-          plan: true,
-          nodeGroup: true,
-          trafficPacks: true,
-        },
+        include: { user: true, plan: true, node: true, trafficPacks: true },
       });
 
       return this.presentSubscription(updated);
@@ -711,13 +586,10 @@ export class ControlPlaneStoreService {
 
   async getNodes() {
     const nodes = await this.prisma.node.findMany({
-      include: { nodeGroup: true },
       orderBy: { createdAt: 'desc' },
     });
 
-    if (nodes.length === 0) {
-      return [];
-    }
+    if (nodes.length === 0) return [];
 
     const nodeIds = nodes.map((n) => n.id);
     const allSnapshots = await this.prisma.onlineSnapshot.findMany({
@@ -739,16 +611,11 @@ export class ControlPlaneStoreService {
   }
 
   async getNodeById(nodeId: string) {
-    const node = await this.prisma.node.findUnique({
-      where: { id: nodeId },
-      include: { nodeGroup: true },
-    });
-
+    const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
     return node ? this.presentNode(node) : undefined;
   }
 
   async createNode(input: {
-    nodeGroupId: string;
     label: string;
     hostname: string;
     port: number;
@@ -762,11 +629,9 @@ export class ControlPlaneStoreService {
     speedUpMbps: number;
     speedDownMbps: number;
   }) {
-    await this.mustGetNodeGroupRecord(input.nodeGroupId);
     try {
       const node = await this.prisma.node.create({
         data: {
-          nodeGroupId: input.nodeGroupId,
           label: input.label,
           hostname: input.hostname,
           port: input.port,
@@ -780,9 +645,6 @@ export class ControlPlaneStoreService {
           speedUpMbps: input.speedUpMbps,
           speedDownMbps: input.speedDownMbps,
         },
-        include: {
-          nodeGroup: true,
-        },
       });
 
       return this.presentNode(node);
@@ -794,7 +656,6 @@ export class ControlPlaneStoreService {
   async patchNode(
     nodeId: string,
     input: {
-      nodeGroupId?: string;
       label?: string;
       hostname?: string;
       port?: number;
@@ -809,15 +670,10 @@ export class ControlPlaneStoreService {
       speedDownMbps?: number;
     },
   ) {
-    if (input.nodeGroupId) {
-      await this.mustGetNodeGroupRecord(input.nodeGroupId);
-    }
-
     try {
       const node = await this.prisma.node.update({
         where: { id: nodeId },
         data: this.withDefinedValues({
-          nodeGroupId: input.nodeGroupId,
           label: input.label,
           hostname: input.hostname,
           port: input.port,
@@ -831,12 +687,17 @@ export class ControlPlaneStoreService {
           speedUpMbps: input.speedUpMbps,
           speedDownMbps: input.speedDownMbps,
         }),
-        include: {
-          nodeGroup: true,
-        },
       });
 
       return this.presentNode(node);
+    } catch (error) {
+      this.handlePrismaError(error);
+    }
+  }
+
+  async deleteNode(nodeId: string) {
+    try {
+      await this.prisma.node.delete({ where: { id: nodeId } });
     } catch (error) {
       this.handlePrismaError(error);
     }
@@ -846,13 +707,9 @@ export class ControlPlaneStoreService {
     await this.expireOverdueSubscriptions();
     await this.expireTrafficPacks();
 
-    const subscription =
-      await this.mustGetActiveSubscriptionRecordForUser(userId);
+    const subscription = await this.mustGetActiveSubscriptionRecordForUser(userId);
     const packs = await this.prisma.trafficPack.findMany({
-      where: {
-        subscriptionId: subscription.id,
-        status: TrafficPackStatus.ACTIVE,
-      },
+      where: { subscriptionId: subscription.id, status: TrafficPackStatus.ACTIVE },
       orderBy: { createdAt: 'asc' },
     });
 
@@ -864,17 +721,12 @@ export class ControlPlaneStoreService {
       ),
       0,
     );
-    const packRemaining = packs.reduce(
-      (sum, pack) => sum + Number(pack.remainingBytes),
-      0,
-    );
+    const packRemaining = packs.reduce((sum, pack) => sum + Number(pack.remainingBytes), 0);
     const recent = await this.prisma.usageRollup.findMany({
       where: { userId },
       orderBy: { bucketStart: 'desc' },
       take: 12,
-      include: {
-        node: true,
-      },
+      include: { node: true },
     });
 
     return {
@@ -900,10 +752,9 @@ export class ControlPlaneStoreService {
 
   async getPortalOverview(userId: string) {
     const user = await this.mustGetUserRecord(userId);
-    const subscription =
-      await this.mustGetActiveSubscriptionRecordForUser(userId);
+    const subscription = await this.mustGetActiveSubscriptionRecordForUser(userId);
     const plan = await this.mustGetPlanRecord(subscription.planId);
-    const node = await this.mustGetPreferredNodeForSubscription(subscription);
+    const node = await this.mustGetNodeRecord(subscription.nodeId);
     const usage = await this.getUsageForUser(userId);
     const online = await this.getCurrentOnlineCount(userId);
     const packs = await this.prisma.trafficPack.findMany({
@@ -923,7 +774,7 @@ export class ControlPlaneStoreService {
         ...subscription,
         user,
         plan,
-        nodeGroup: await this.mustGetNodeGroupRecord(subscription.nodeGroupId),
+        node,
         trafficPacks: packs,
       }),
       plan: this.presentPlanShallow(plan),
@@ -936,22 +787,18 @@ export class ControlPlaneStoreService {
 
   async getAccessBundle(userId: string) {
     const user = await this.mustGetUserRecord(userId);
-    const subscription =
-      await this.mustGetActiveSubscriptionRecordForUser(userId);
+    const subscription = await this.mustGetActiveSubscriptionRecordForUser(userId);
     const token = await this.mustGetAccessTokenByUser(userId);
-    const node = await this.mustGetPreferredNodeForSubscription(subscription);
+    const node = await this.mustGetNodeRecord(subscription.nodeId);
     const usage = await this.getUsageForUser(userId);
 
     return {
-      user: this.presentUser({
-        ...user,
-        accessTokens: [token],
-      }),
+      user: this.presentUser({ ...user, accessTokens: [token] }),
       subscription: this.presentSubscription({
         ...subscription,
         user,
         plan: await this.mustGetPlanRecord(subscription.planId),
-        nodeGroup: await this.mustGetNodeGroupRecord(subscription.nodeGroupId),
+        node,
         trafficPacks: await this.prisma.trafficPack.findMany({
           where: { subscriptionId: subscription.id },
         }),
@@ -987,18 +834,14 @@ export class ControlPlaneStoreService {
     const timestamp = new Date();
 
     if (input.kind === 'renewal' && !input.planId && !input.durationDays) {
-      throw new BadRequestException(
-        'Renewal order requires a plan or duration days',
-      );
+      throw new BadRequestException('Renewal order requires a plan or duration days');
     }
 
     if (
       input.kind === 'traffic_pack' &&
       (input.trafficBytes === undefined || input.trafficBytes <= 0)
     ) {
-      throw new BadRequestException(
-        'Traffic pack order requires traffic bytes',
-      );
+      throw new BadRequestException('Traffic pack order requires traffic bytes');
     }
 
     if (requestedStatus === 'applied' && !input.processedById) {
@@ -1008,37 +851,24 @@ export class ControlPlaneStoreService {
     try {
       const order = await this.prisma.$transaction(async (tx) => {
         const plan = input.planId
-          ? await tx.plan.findUnique({
-              where: { id: input.planId },
-            })
+          ? await tx.plan.findUnique({ where: { id: input.planId } })
           : null;
 
         const createdOrder = await tx.manualOrder.create({
           data: {
             userId: input.userId,
-            processedById:
-              requestedStatus === 'applied' ? input.processedById : undefined,
+            processedById: requestedStatus === 'applied' ? input.processedById : undefined,
             planId: input.planId,
-            status:
-              requestedStatus === 'applied'
-                ? OrderStatus.APPLIED
-                : OrderStatus.PENDING,
+            status: requestedStatus === 'applied' ? OrderStatus.APPLIED : OrderStatus.PENDING,
             kind: this.toDbOrderKind(input.kind),
             amountCents: input.amountCents,
-            durationDays:
-              input.durationDays ?? (plan ? plan.durationDays : undefined),
+            durationDays: input.durationDays ?? (plan ? plan.durationDays : undefined),
             trafficBytes:
-              input.trafficBytes !== undefined
-                ? BigInt(input.trafficBytes)
-                : undefined,
+              input.trafficBytes !== undefined ? BigInt(input.trafficBytes) : undefined,
             note: input.note,
             processedAt: requestedStatus === 'applied' ? timestamp : undefined,
           },
-          include: {
-            user: true,
-            processedBy: true,
-            plan: true,
-          },
+          include: { user: true, processedBy: true, plan: true },
         });
 
         if (requestedStatus === 'applied') {
@@ -1066,9 +896,7 @@ export class ControlPlaneStoreService {
       throw new BadRequestException('Selected plan is not active');
     }
 
-    await this.resolvePlanProvisioning(this.prisma, {
-      planId: input.planId,
-    });
+    await this.resolvePlanNode(this.prisma, { planId: input.planId });
 
     const existingPending = await this.prisma.manualOrder.findFirst({
       where: {
@@ -1079,9 +907,7 @@ export class ControlPlaneStoreService {
     });
 
     if (existingPending) {
-      throw new ConflictException(
-        'User already has a pending plan order awaiting processing',
-      );
+      throw new ConflictException('User already has a pending plan order awaiting processing');
     }
 
     try {
@@ -1093,15 +919,9 @@ export class ControlPlaneStoreService {
           kind: OrderKind.RENEWAL,
           amountCents: plan.priceCents,
           durationDays: plan.durationDays,
-          note:
-            input.note?.trim() ||
-            `Plan request for ${plan.name} by ${user.email}`,
+          note: input.note?.trim() || `Plan request for ${plan.name} by ${user.email}`,
         },
-        include: {
-          user: true,
-          processedBy: true,
-          plan: true,
-        },
+        include: { user: true, processedBy: true, plan: true },
       });
 
       return this.presentManualOrder(order);
@@ -1112,20 +932,13 @@ export class ControlPlaneStoreService {
 
   async patchManualOrder(
     orderId: string,
-    input: {
-      status?: 'applied' | 'void';
-      processedById: string;
-    },
+    input: { status?: 'applied' | 'void'; processedById: string },
   ) {
     await this.mustGetUserRecord(input.processedById);
 
     const current = await this.prisma.manualOrder.findUnique({
       where: { id: orderId },
-      include: {
-        user: true,
-        processedBy: true,
-        plan: true,
-      },
+      include: { user: true, processedBy: true, plan: true },
     });
 
     if (!current) {
@@ -1148,15 +961,10 @@ export class ControlPlaneStoreService {
           where: { id: orderId },
           data: {
             processedById: input.processedById,
-            status:
-              input.status === 'void' ? OrderStatus.VOID : OrderStatus.APPLIED,
+            status: input.status === 'void' ? OrderStatus.VOID : OrderStatus.APPLIED,
             processedAt,
           },
-          include: {
-            user: true,
-            processedBy: true,
-            plan: true,
-          },
+          include: { user: true, processedBy: true, plan: true },
         });
 
         if (input.status === 'applied') {
@@ -1182,26 +990,19 @@ export class ControlPlaneStoreService {
     requestedTxBps?: number;
     submittedTokenPreview?: string;
   }) {
-    return this.prisma.authEvent.create({
-      data: event,
-    });
+    return this.prisma.authEvent.create({ data: event });
   }
 
   async markTokenUsed(accessTokenId: string) {
     await this.prisma.accessToken.update({
       where: { id: accessTokenId },
-      data: {
-        lastUsedAt: new Date(),
-      },
+      data: { lastUsedAt: new Date() },
     });
   }
 
   async findAccessToken(tokenValue: string) {
     return this.prisma.accessToken.findFirst({
-      where: {
-        token: tokenValue,
-        revokedAt: null,
-      },
+      where: { token: tokenValue, revokedAt: null },
     });
   }
 
@@ -1215,59 +1016,30 @@ export class ControlPlaneStoreService {
     await this.expireTrafficPacks();
 
     const token = await this.prisma.accessToken.findFirst({
-      where: {
-        token: input.tokenValue,
-        revokedAt: null,
-      },
+      where: { token: input.tokenValue, revokedAt: null },
     });
     if (!token) {
       return this.rejectAuth('token_not_found', input);
     }
 
     const user = await this.mustGetUserRecord(token.userId);
-    const node = await this.prisma.node.findUnique({
-      where: { id: input.nodeId },
-    });
+    const node = await this.prisma.node.findUnique({ where: { id: input.nodeId } });
 
     if (!node || !node.active) {
-      return this.rejectAuth(
-        'node_unavailable',
-        input,
-        token.id,
-        user.id,
-        node?.id,
-      );
+      return this.rejectAuth('node_unavailable', input, token.id, user.id, node?.id);
     }
 
     if (user.status !== UserStatus.ACTIVE) {
-      return this.rejectAuth(
-        'user_not_active',
-        input,
-        token.id,
-        user.id,
-        node.id,
-      );
+      return this.rejectAuth('user_not_active', input, token.id, user.id, node.id);
     }
 
     const subscription = await this.getActiveSubscriptionForUser(user.id);
     if (!subscription) {
-      return this.rejectAuth(
-        'subscription_missing',
-        input,
-        token.id,
-        user.id,
-        node.id,
-      );
+      return this.rejectAuth('subscription_missing', input, token.id, user.id, node.id);
     }
 
     if (subscription.status !== SubscriptionStatus.ACTIVE) {
-      return this.rejectAuth(
-        'subscription_not_active',
-        input,
-        token.id,
-        user.id,
-        node.id,
-      );
+      return this.rejectAuth('subscription_not_active', input, token.id, user.id, node.id);
     }
 
     if (subscription.endsAt.getTime() <= Date.now()) {
@@ -1275,45 +1047,25 @@ export class ControlPlaneStoreService {
         where: { id: subscription.id },
         data: { status: SubscriptionStatus.EXPIRED },
       });
-      return this.rejectAuth(
-        'subscription_expired',
-        input,
-        token.id,
-        user.id,
-        node.id,
-      );
+      return this.rejectAuth('subscription_expired', input, token.id, user.id, node.id);
     }
 
-    if (subscription.nodeGroupId !== node.nodeGroupId) {
-      return this.rejectAuth(
-        'node_group_forbidden',
-        input,
-        token.id,
-        user.id,
-        node.id,
-      );
+    // Check node is bound to this subscription's plan
+    const bindingAllowed = await this.prisma.planBinding.findFirst({
+      where: { planId: subscription.planId, nodeId: node.id },
+    });
+    if (!bindingAllowed) {
+      return this.rejectAuth('node_forbidden', input, token.id, user.id, node.id);
     }
 
     const usage = await this.getUsageForUser(user.id);
     if (usage.totalRemainingBytes <= 0) {
-      return this.rejectAuth(
-        'traffic_exhausted',
-        input,
-        token.id,
-        user.id,
-        node.id,
-      );
+      return this.rejectAuth('traffic_exhausted', input, token.id, user.id, node.id);
     }
 
     const onlineCount = await this.getCurrentOnlineCount(user.id);
     if (onlineCount >= subscription.deviceLimitSnapshot) {
-      return this.rejectAuth(
-        'device_limit_exceeded',
-        input,
-        token.id,
-        user.id,
-        node.id,
-      );
+      return this.rejectAuth('device_limit_exceeded', input, token.id, user.id, node.id);
     }
 
     await this.markTokenUsed(token.id);
@@ -1328,10 +1080,7 @@ export class ControlPlaneStoreService {
       submittedTokenPreview: this.previewToken(input.tokenValue),
     });
 
-    return {
-      ok: true as const,
-      id: user.id,
-    };
+    return { ok: true as const, id: user.id };
   }
 
   async applyTrafficSnapshot(
@@ -1373,9 +1122,7 @@ export class ControlPlaneStoreService {
         orderBy: { endsAt: 'desc' },
       });
 
-      if (!subscription) {
-        return;
-      }
+      if (!subscription) return;
 
       impacted = true;
       let remaining = counters.tx + counters.rx;
@@ -1402,17 +1149,12 @@ export class ControlPlaneStoreService {
 
       if (remaining > 0) {
         const packs = await tx.trafficPack.findMany({
-          where: {
-            subscriptionId: subscription.id,
-            status: TrafficPackStatus.ACTIVE,
-          },
+          where: { subscriptionId: subscription.id, status: TrafficPackStatus.ACTIVE },
           orderBy: { createdAt: 'asc' },
         });
 
         for (const pack of packs) {
-          if (remaining <= 0) {
-            break;
-          }
+          if (remaining <= 0) break;
 
           const consume = Math.min(Number(pack.remainingBytes), remaining);
           const nextRemaining = Number(pack.remainingBytes) - consume;
@@ -1422,9 +1164,7 @@ export class ControlPlaneStoreService {
             data: {
               remainingBytes: BigInt(nextRemaining),
               status:
-                nextRemaining <= 0
-                  ? TrafficPackStatus.EXHAUSTED
-                  : TrafficPackStatus.ACTIVE,
+                nextRemaining <= 0 ? TrafficPackStatus.EXHAUSTED : TrafficPackStatus.ACTIVE,
             },
           });
 
@@ -1452,9 +1192,7 @@ export class ControlPlaneStoreService {
     const previous = await this.prisma.onlineSnapshot.findMany({
       where: { nodeId },
       orderBy: { capturedAt: 'desc' },
-      include: {
-        user: true,
-      },
+      include: { user: true },
     });
 
     const latestUsers = new Set<string>();
@@ -1466,13 +1204,8 @@ export class ControlPlaneStoreService {
       }
     }
 
-    const mergedUsers = new Set([
-      ...Object.keys(onlineMap),
-      ...latestByUser.keys(),
-    ]);
-    if (mergedUsers.size === 0) {
-      return;
-    }
+    const mergedUsers = new Set([...Object.keys(onlineMap), ...latestByUser.keys()]);
+    if (mergedUsers.size === 0) return;
 
     await this.prisma.onlineSnapshot.createMany({
       data: [...mergedUsers].map((userId) => ({
@@ -1502,18 +1235,12 @@ export class ControlPlaneStoreService {
 
   async validateUserIsRestricted(userId: string) {
     const user = await this.mustGetUserRecord(userId);
-    if (user.status !== UserStatus.ACTIVE) {
-      return true;
-    }
+    if (user.status !== UserStatus.ACTIVE) return true;
 
     const subscription = await this.getActiveSubscriptionForUser(userId);
-    if (!subscription) {
-      return true;
-    }
+    if (!subscription) return true;
 
-    if (subscription.status !== SubscriptionStatus.ACTIVE) {
-      return true;
-    }
+    if (subscription.status !== SubscriptionStatus.ACTIVE) return true;
 
     if (subscription.endsAt.getTime() <= Date.now()) {
       await this.prisma.subscription.update({
@@ -1528,28 +1255,22 @@ export class ControlPlaneStoreService {
 
   async getNodeIdsForUser(userId: string) {
     const subscription = await this.getActiveSubscriptionForUser(userId);
-    if (!subscription) {
-      return [];
-    }
+    if (!subscription) return [];
 
-    const nodes = await this.prisma.node.findMany({
-      where: {
-        nodeGroupId: subscription.nodeGroupId,
-        active: true,
-      },
-      select: { id: true },
+    // Return all nodes bound to the subscription's plan that are active
+    const bindings = await this.prisma.planBinding.findMany({
+      where: { planId: subscription.planId },
+      include: { node: { select: { id: true, active: true } } },
     });
 
-    return nodes.map((node) => node.id);
+    return bindings
+      .filter((b) => b.node.active)
+      .map((b) => b.node.id);
   }
 
   async getManualOrders() {
     const orders = await this.prisma.manualOrder.findMany({
-      include: {
-        user: true,
-        processedBy: true,
-        plan: true,
-      },
+      include: { user: true, processedBy: true, plan: true },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -1559,11 +1280,7 @@ export class ControlPlaneStoreService {
   async getManualOrdersForUser(userId: string) {
     const orders = await this.prisma.manualOrder.findMany({
       where: { userId },
-      include: {
-        user: true,
-        processedBy: true,
-        plan: true,
-      },
+      include: { user: true, processedBy: true, plan: true },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -1574,11 +1291,7 @@ export class ControlPlaneStoreService {
     await this.expireRedemptionCodes();
 
     const codes = await this.prisma.redemptionCode.findMany({
-      include: {
-        plan: true,
-        createdBy: true,
-        redeemedBy: true,
-      },
+      include: { plan: true, createdBy: true, redeemedBy: true },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -1600,9 +1313,7 @@ export class ControlPlaneStoreService {
     }
 
     if (input.kind === 'traffic_pack' && !input.trafficBytes) {
-      throw new BadRequestException(
-        'Traffic pack redemption code requires traffic bytes',
-      );
+      throw new BadRequestException('Traffic pack redemption code requires traffic bytes');
     }
 
     if (input.planId) {
@@ -1626,19 +1337,13 @@ export class ControlPlaneStoreService {
           kind: this.toDbRedemptionCodeKind(input.kind),
           planId: input.planId,
           trafficBytes:
-            input.trafficBytes !== undefined
-              ? BigInt(input.trafficBytes)
-              : undefined,
+            input.trafficBytes !== undefined ? BigInt(input.trafficBytes) : undefined,
           amountCents: input.amountCents ?? 0,
           note: input.note,
           expiresAt,
           createdById: input.createdById,
         },
-        include: {
-          plan: true,
-          createdBy: true,
-          redeemedBy: true,
-        },
+        include: { plan: true, createdBy: true, redeemedBy: true },
       });
 
       return this.presentRedemptionCode(code);
@@ -1647,19 +1352,10 @@ export class ControlPlaneStoreService {
     }
   }
 
-  async patchRedemptionCode(
-    codeId: string,
-    input: {
-      status?: 'active' | 'void';
-    },
-  ) {
+  async patchRedemptionCode(codeId: string, input: { status?: 'active' | 'void' }) {
     const current = await this.prisma.redemptionCode.findUnique({
       where: { id: codeId },
-      include: {
-        plan: true,
-        createdBy: true,
-        redeemedBy: true,
-      },
+      include: { plan: true, createdBy: true, redeemedBy: true },
     });
 
     if (!current) {
@@ -1686,15 +1382,9 @@ export class ControlPlaneStoreService {
       const updated = await this.prisma.redemptionCode.update({
         where: { id: codeId },
         data: this.withDefinedValues({
-          status: input.status
-            ? this.toDbRedemptionCodeStatus(input.status)
-            : undefined,
+          status: input.status ? this.toDbRedemptionCodeStatus(input.status) : undefined,
         }),
-        include: {
-          plan: true,
-          createdBy: true,
-          redeemedBy: true,
-        },
+        include: { plan: true, createdBy: true, redeemedBy: true },
       });
 
       return this.presentRedemptionCode(updated);
@@ -1712,28 +1402,13 @@ export class ControlPlaneStoreService {
     const codeValue = this.normalizeRedemptionCode(rawCode);
     const existing = await this.prisma.redemptionCode.findUnique({
       where: { code: codeValue },
-      include: {
-        plan: true,
-        createdBy: true,
-        redeemedBy: true,
-      },
+      include: { plan: true, createdBy: true, redeemedBy: true },
     });
 
-    if (!existing) {
-      throw new NotFoundException('兑换码不存在');
-    }
-
-    if (existing.status === RedemptionCodeStatus.REDEEMED) {
-      throw new BadRequestException('兑换码已被使用');
-    }
-
-    if (existing.status === RedemptionCodeStatus.VOID) {
-      throw new BadRequestException('兑换码已作废');
-    }
-
-    if (existing.status === RedemptionCodeStatus.EXPIRED) {
-      throw new BadRequestException('兑换码已过期');
-    }
+    if (!existing) throw new NotFoundException('兑换码不存在');
+    if (existing.status === RedemptionCodeStatus.REDEEMED) throw new BadRequestException('兑换码已被使用');
+    if (existing.status === RedemptionCodeStatus.VOID) throw new BadRequestException('兑换码已作废');
+    if (existing.status === RedemptionCodeStatus.EXPIRED) throw new BadRequestException('兑换码已过期');
 
     if (existing.expiresAt && existing.expiresAt.getTime() <= Date.now()) {
       await this.prisma.redemptionCode.update({
@@ -1749,25 +1424,13 @@ export class ControlPlaneStoreService {
       const result = await this.prisma.$transaction(async (tx) => {
         const code = await tx.redemptionCode.findUnique({
           where: { id: existing.id },
-          include: {
-            plan: true,
-            createdBy: true,
-            redeemedBy: true,
-          },
+          include: { plan: true, createdBy: true, redeemedBy: true },
         });
 
-        if (!code) {
-          throw new NotFoundException('兑换码不存在');
-        }
+        if (!code) throw new NotFoundException('兑换码不存在');
+        if (code.status !== RedemptionCodeStatus.ACTIVE) throw new BadRequestException('兑换码当前不可使用');
 
-        if (code.status !== RedemptionCodeStatus.ACTIVE) {
-          throw new BadRequestException('兑换码当前不可使用');
-        }
-
-        const openSubscription = await this.findOpenSubscriptionForUser(
-          tx,
-          userId,
-        );
+        const openSubscription = await this.findOpenSubscriptionForUser(tx, userId);
 
         const order =
           code.kind === RedemptionCodeKind.PLAN
@@ -1791,17 +1454,10 @@ export class ControlPlaneStoreService {
             redeemedById: userId,
             redeemedAt: timestamp,
           },
-          include: {
-            plan: true,
-            createdBy: true,
-            redeemedBy: true,
-          },
+          include: { plan: true, createdBy: true, redeemedBy: true },
         });
 
-        return {
-          code: redeemedCode,
-          order,
-        };
+        return { code: redeemedCode, order };
       });
 
       return {
@@ -1815,11 +1471,7 @@ export class ControlPlaneStoreService {
 
   async getAuthEvents(limit = 20) {
     const events = await this.prisma.authEvent.findMany({
-      include: {
-        user: true,
-        accessToken: true,
-        node: true,
-      },
+      include: { user: true, accessToken: true, node: true },
       orderBy: { createdAt: 'desc' },
       take: limit,
     });
@@ -1844,10 +1496,7 @@ export class ControlPlaneStoreService {
 
   async getUsageRollups(limit = 30) {
     const rollups = await this.prisma.usageRollup.findMany({
-      include: {
-        user: true,
-        node: true,
-      },
+      include: { user: true, node: true },
       orderBy: { bucketStart: 'desc' },
       take: limit,
     });
@@ -1869,10 +1518,7 @@ export class ControlPlaneStoreService {
 
   async getCurrentSessions(limit = 50) {
     const snapshots = await this.prisma.onlineSnapshot.findMany({
-      include: {
-        user: true,
-        node: true,
-      },
+      include: { user: true, node: true },
       orderBy: { capturedAt: 'desc' },
       take: 500,
     });
@@ -1880,9 +1526,7 @@ export class ControlPlaneStoreService {
     const latest = new Map<string, (typeof snapshots)[number]>();
     for (const snapshot of snapshots) {
       const key = `${snapshot.userId}:${snapshot.nodeId}`;
-      if (!latest.has(key)) {
-        latest.set(key, snapshot);
-      }
+      if (!latest.has(key)) latest.set(key, snapshot);
     }
 
     return [...latest.values()]
@@ -1932,11 +1576,7 @@ export class ControlPlaneStoreService {
         note: input.code.note || `Redeemed ${input.code.code}`,
         processedAt: input.redeemedAt,
       },
-      include: {
-        user: true,
-        processedBy: true,
-        plan: true,
-      },
+      include: { user: true, processedBy: true, plan: true },
     });
 
     await this.grantPlanEntitlement(tx, {
@@ -1951,9 +1591,7 @@ export class ControlPlaneStoreService {
 
   private async applyManualOrderEffects(
     tx: Prisma.TransactionClient,
-    order: Prisma.ManualOrderGetPayload<{
-      include: { plan: true };
-    }>,
+    order: Prisma.ManualOrderGetPayload<{ include: { plan: true } }>,
     processedAt: Date,
   ) {
     if (order.kind === OrderKind.RENEWAL) {
@@ -1967,9 +1605,7 @@ export class ControlPlaneStoreService {
       }
 
       if (!order.durationDays || order.durationDays <= 0) {
-        throw new BadRequestException(
-          'Renewal order is missing duration or plan information',
-        );
+        throw new BadRequestException('Renewal order is missing duration or plan information');
       }
 
       const subscription = await this.requireOpenSubscription(tx, order.userId);
@@ -1981,19 +1617,14 @@ export class ControlPlaneStoreService {
 
       await tx.subscription.update({
         where: { id: subscription.id },
-        data: {
-          status: SubscriptionStatus.ACTIVE,
-          endsAt: extensionBase,
-        },
+        data: { status: SubscriptionStatus.ACTIVE, endsAt: extensionBase },
       });
       return;
     }
 
     if (order.kind === OrderKind.TRAFFIC_PACK) {
       if (!order.trafficBytes || order.trafficBytes <= BigInt(0)) {
-        throw new BadRequestException(
-          'Traffic pack order is missing traffic bytes',
-        );
+        throw new BadRequestException('Traffic pack order is missing traffic bytes');
       }
     }
 
@@ -2002,9 +1633,7 @@ export class ControlPlaneStoreService {
       (!order.durationDays || order.durationDays <= 0) &&
       (!order.trafficBytes || order.trafficBytes <= BigInt(0))
     ) {
-      throw new BadRequestException(
-        'Manual credit order must grant duration days or traffic bytes',
-      );
+      throw new BadRequestException('Manual credit order must grant duration days or traffic bytes');
     }
 
     const subscription = await this.requireOpenSubscription(tx, order.userId);
@@ -2019,10 +1648,7 @@ export class ControlPlaneStoreService {
 
       await tx.subscription.update({
         where: { id: subscription.id },
-        data: {
-          status: SubscriptionStatus.ACTIVE,
-          endsAt: extensionBase,
-        },
+        data: { status: SubscriptionStatus.ACTIVE, endsAt: extensionBase },
       });
       effectiveEndsAt = extensionBase;
     }
@@ -2034,9 +1660,7 @@ export class ControlPlaneStoreService {
           subscriptionId: subscription.id,
           label:
             order.note ||
-            (order.kind === OrderKind.TRAFFIC_PACK
-              ? 'Manual traffic pack'
-              : 'Manual top-up'),
+            (order.kind === OrderKind.TRAFFIC_PACK ? 'Manual traffic pack' : 'Manual top-up'),
           totalBytes: order.trafficBytes,
           remainingBytes: order.trafficBytes,
           status: TrafficPackStatus.ACTIVE,
@@ -2061,16 +1685,12 @@ export class ControlPlaneStoreService {
         : await tx.subscription.findFirst({
             where: {
               userId: input.userId,
-              status: {
-                in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED],
-              },
+              status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED] },
             },
             orderBy: { endsAt: 'desc' },
           });
 
-    const { plan, nodeGroupId } = await this.resolvePlanProvisioning(tx, {
-      planId: input.planId,
-    });
+    const { plan, nodeId } = await this.resolvePlanNode(tx, { planId: input.planId });
 
     if (existingSubscription) {
       const extensionBase =
@@ -2083,7 +1703,7 @@ export class ControlPlaneStoreService {
         where: { id: existingSubscription.id },
         data: {
           planId: plan.id,
-          nodeGroupId,
+          nodeId,
           status: SubscriptionStatus.ACTIVE,
           endsAt: extensionBase,
           includedTrafficBytes:
@@ -2100,13 +1720,10 @@ export class ControlPlaneStoreService {
       data: {
         userId: input.userId,
         planId: plan.id,
-        nodeGroupId,
+        nodeId,
         status: SubscriptionStatus.ACTIVE,
         startsAt: input.grantedAt,
-        endsAt: this.buildSubscriptionEndDate(
-          input.grantedAt,
-          plan.durationDays,
-        ),
+        endsAt: this.buildSubscriptionEndDate(input.grantedAt, plan.durationDays),
         includedTrafficBytes: plan.trafficBytes,
         bonusTrafficBytes: BigInt(0),
         consumedTrafficBytes: BigInt(0),
@@ -2131,9 +1748,7 @@ export class ControlPlaneStoreService {
     }
 
     if (!input.code.trafficBytes || input.code.trafficBytes <= BigInt(0)) {
-      throw new BadRequestException(
-        'Traffic pack redemption code is missing traffic bytes',
-      );
+      throw new BadRequestException('Traffic pack redemption code is missing traffic bytes');
     }
 
     const order = await tx.manualOrder.create({
@@ -2146,11 +1761,7 @@ export class ControlPlaneStoreService {
         note: input.code.note || `Redeemed ${input.code.code}`,
         processedAt: input.redeemedAt,
       },
-      include: {
-        user: true,
-        processedBy: true,
-        plan: true,
-      },
+      include: { user: true, processedBy: true, plan: true },
     });
 
     await tx.trafficPack.create({
@@ -2215,10 +1826,7 @@ export class ControlPlaneStoreService {
   }
 
   private presentUserPrivate(user: UserWithTokens) {
-    return {
-      ...this.presentUser(user),
-      passwordHash: user.passwordHash,
-    };
+    return { ...this.presentUser(user), passwordHash: user.passwordHash };
   }
 
   private presentPlan(plan: PlanWithBindings) {
@@ -2237,12 +1845,12 @@ export class ControlPlaneStoreService {
       accent: plan.accent,
       createdAt: plan.createdAt.toISOString(),
       updatedAt: plan.updatedAt.toISOString(),
-      boundNodeGroups: plan.bindings.map((binding) => binding.nodeGroup.name),
-      bindings: plan.bindings.map((binding) => ({
-        id: binding.id,
-        nodeGroupId: binding.nodeGroupId,
-        nodeGroupName: binding.nodeGroup.name,
-        priority: binding.priority,
+      boundNodes: plan.bindings.map((b) => b.node.label),
+      bindings: plan.bindings.map((b) => ({
+        id: b.id,
+        nodeId: b.nodeId,
+        nodeLabel: b.node.label,
+        priority: b.priority,
       })),
     };
   }
@@ -2266,19 +1874,6 @@ export class ControlPlaneStoreService {
     };
   }
 
-  private presentNodeGroup(group: NodeGroupWithNodes) {
-    return {
-      id: group.id,
-      slug: group.slug,
-      name: group.name,
-      description: group.description,
-      active: group.active,
-      nodeCount: group.nodes.length,
-      createdAt: group.createdAt.toISOString(),
-      updatedAt: group.updatedAt.toISOString(),
-    };
-  }
-
   private presentSubscription(subscription: SubscriptionWithRelations) {
     const remaining = this.getRemainingTrafficForSubscription(
       subscription.includedTrafficBytes,
@@ -2294,8 +1889,8 @@ export class ControlPlaneStoreService {
       userDisplayName: subscription.user.displayName,
       planId: subscription.planId,
       planName: subscription.plan.name,
-      nodeGroupId: subscription.nodeGroupId,
-      nodeGroupName: subscription.nodeGroup.name,
+      nodeId: subscription.nodeId,
+      nodeLabel: subscription.node.label,
       status: this.fromDbSubscriptionStatus(subscription.status),
       startsAt: subscription.startsAt.toISOString(),
       endsAt: subscription.endsAt.toISOString(),
@@ -2311,9 +1906,7 @@ export class ControlPlaneStoreService {
     };
   }
 
-  private async presentNode(
-    node: Prisma.NodeGetPayload<{ include: { nodeGroup: true } }>,
-  ) {
+  private async presentNode(node: Prisma.NodeGetPayload<object>) {
     const snapshots = await this.prisma.onlineSnapshot.findMany({
       where: { nodeId: node.id },
       orderBy: { capturedAt: 'desc' },
@@ -2323,7 +1916,7 @@ export class ControlPlaneStoreService {
   }
 
   private buildNodeView(
-    node: Prisma.NodeGetPayload<{ include: { nodeGroup: true } }>,
+    node: Prisma.NodeGetPayload<object>,
     snapshots: { userId: string; concurrentClients: number }[],
   ) {
     const latestUsers = new Map<string, number>();
@@ -2335,8 +1928,6 @@ export class ControlPlaneStoreService {
 
     return {
       id: node.id,
-      nodeGroupId: node.nodeGroupId,
-      groupName: node.nodeGroup.name,
       label: node.label,
       hostname: node.hostname,
       port: node.port,
@@ -2349,8 +1940,7 @@ export class ControlPlaneStoreService {
       active: node.active,
       speedUpMbps: node.speedUpMbps,
       speedDownMbps: node.speedDownMbps,
-      concurrentUsers: [...latestUsers.values()].filter((value) => value > 0)
-        .length,
+      concurrentUsers: [...latestUsers.values()].filter((value) => value > 0).length,
       createdAt: node.createdAt.toISOString(),
       updatedAt: node.updatedAt.toISOString(),
     };
@@ -2439,42 +2029,28 @@ export class ControlPlaneStoreService {
   }
 
   private async mustGetUserRecord(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-    });
-    if (!user) {
-      throw new NotFoundException(`Unknown user: ${userId}`);
-    }
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException(`Unknown user: ${userId}`);
     return user;
   }
 
   private async mustGetPlanRecord(planId: string) {
-    const plan = await this.prisma.plan.findUnique({
-      where: { id: planId },
-    });
-    if (!plan) {
-      throw new NotFoundException(`Unknown plan: ${planId}`);
-    }
+    const plan = await this.prisma.plan.findUnique({ where: { id: planId } });
+    if (!plan) throw new NotFoundException(`Unknown plan: ${planId}`);
     return plan;
   }
 
-  private async mustGetNodeGroupRecord(nodeGroupId: string) {
-    const nodeGroup = await this.prisma.nodeGroup.findUnique({
-      where: { id: nodeGroupId },
-    });
-    if (!nodeGroup) {
-      throw new NotFoundException(`Unknown node group: ${nodeGroupId}`);
-    }
-    return nodeGroup;
+  private async mustGetNodeRecord(nodeId: string) {
+    const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
+    if (!node) throw new NotFoundException(`Unknown node: ${nodeId}`);
+    return node;
   }
 
   private async mustGetSubscriptionRecord(subscriptionId: string) {
     const subscription = await this.prisma.subscription.findUnique({
       where: { id: subscriptionId },
     });
-    if (!subscription) {
-      throw new NotFoundException(`Unknown subscription: ${subscriptionId}`);
-    }
+    if (!subscription) throw new NotFoundException(`Unknown subscription: ${subscriptionId}`);
     return subscription;
   }
 
@@ -2485,9 +2061,7 @@ export class ControlPlaneStoreService {
     return tx.subscription.findFirst({
       where: {
         userId,
-        status: {
-          in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED],
-        },
+        status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED] },
       },
       orderBy: { endsAt: 'desc' },
     });
@@ -2498,93 +2072,47 @@ export class ControlPlaneStoreService {
     userId: string,
   ) {
     const subscription = await this.findOpenSubscriptionForUser(tx, userId);
-
     if (!subscription) {
       throw new BadRequestException(
         'This order requires an existing active or paused subscription',
       );
     }
-
     return subscription;
   }
 
   private async mustGetActiveSubscriptionRecordForUser(userId: string) {
     const subscription = await this.getActiveSubscriptionForUser(userId);
-    if (!subscription) {
-      throw new NotFoundException(`No active subscription for user: ${userId}`);
-    }
+    if (!subscription) throw new NotFoundException(`No active subscription for user: ${userId}`);
     return subscription;
   }
 
   private async mustGetAccessTokenByUser(userId: string) {
     const token = await this.prisma.accessToken.findFirst({
-      where: {
-        userId,
-        revokedAt: null,
-      },
+      where: { userId, revokedAt: null },
       orderBy: { createdAt: 'asc' },
     });
-    if (!token) {
-      throw new NotFoundException(`No access token for user: ${userId}`);
-    }
+    if (!token) throw new NotFoundException(`No access token for user: ${userId}`);
     return token;
-  }
-
-  private async mustGetPreferredNodeForSubscription(
-    subscription: Prisma.SubscriptionGetPayload<object>,
-  ) {
-    const node = await this.prisma.node.findFirst({
-      where: {
-        nodeGroupId: subscription.nodeGroupId,
-        active: true,
-      },
-      orderBy: { createdAt: 'asc' },
-    });
-    if (!node) {
-      throw new NotFoundException(
-        `No active node for subscription: ${subscription.id}`,
-      );
-    }
-    return node;
   }
 
   private async expireOverdueSubscriptions() {
     await this.prisma.subscription.updateMany({
-      where: {
-        status: SubscriptionStatus.ACTIVE,
-        endsAt: { lte: new Date() },
-      },
-      data: {
-        status: SubscriptionStatus.EXPIRED,
-      },
+      where: { status: SubscriptionStatus.ACTIVE, endsAt: { lte: new Date() } },
+      data: { status: SubscriptionStatus.EXPIRED },
     });
   }
 
   private async expireTrafficPacks() {
     await this.prisma.trafficPack.updateMany({
-      where: {
-        status: TrafficPackStatus.ACTIVE,
-        expiresAt: {
-          lte: new Date(),
-        },
-      },
-      data: {
-        status: TrafficPackStatus.EXPIRED,
-      },
+      where: { status: TrafficPackStatus.ACTIVE, expiresAt: { lte: new Date() } },
+      data: { status: TrafficPackStatus.EXPIRED },
     });
   }
 
   private async expireRedemptionCodes() {
     await this.prisma.redemptionCode.updateMany({
-      where: {
-        status: RedemptionCodeStatus.ACTIVE,
-        expiresAt: {
-          lte: new Date(),
-        },
-      },
-      data: {
-        status: RedemptionCodeStatus.EXPIRED,
-      },
+      where: { status: RedemptionCodeStatus.ACTIVE, expiresAt: { lte: new Date() } },
+      data: { status: RedemptionCodeStatus.EXPIRED },
     });
   }
 
@@ -2599,9 +2127,7 @@ export class ControlPlaneStoreService {
         where: { code },
         select: { id: true },
       });
-      if (!exists) {
-        return code;
-      }
+      if (!exists) return code;
     }
 
     throw new ConflictException('Failed to generate a unique redemption code');
@@ -2610,13 +2136,8 @@ export class ControlPlaneStoreService {
   private generateRedemptionCode() {
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     const bytes = randomBytes(12);
-    const chars = Array.from(
-      bytes,
-      (value) => alphabet[value % alphabet.length],
-    );
-    return `HY2-${chars.slice(0, 4).join('')}-${chars
-      .slice(4, 8)
-      .join('')}-${chars.slice(8, 12).join('')}`;
+    const chars = Array.from(bytes, (value) => alphabet[value % alphabet.length]);
+    return `HY2-${chars.slice(0, 4).join('')}-${chars.slice(4, 8).join('')}-${chars.slice(8, 12).join('')}`;
   }
 
   private normalizeRedemptionCode(value: string) {
@@ -2629,54 +2150,32 @@ export class ControlPlaneStoreService {
     return endsAt;
   }
 
-  private async resolvePlanProvisioning(
+  private async resolvePlanNode(
     tx: Prisma.TransactionClient | PrismaService,
-    input: {
-      planId: string;
-      requestedNodeGroupId?: string;
-    },
+    input: { planId: string; requestedNodeId?: string },
   ) {
-    const plan = await tx.plan.findUnique({
-      where: { id: input.planId },
-    });
-    if (!plan) {
-      throw new NotFoundException(`Unknown plan: ${input.planId}`);
-    }
+    const plan = await tx.plan.findUnique({ where: { id: input.planId } });
+    if (!plan) throw new NotFoundException(`Unknown plan: ${input.planId}`);
 
     const bindings = await tx.planBinding.findMany({
       where: { planId: input.planId },
       orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
     });
 
-    const nodeGroupId =
-      input.requestedNodeGroupId ?? bindings[0]?.nodeGroupId ?? null;
-    if (!nodeGroupId) {
-      throw new BadRequestException(
-        'Plan has no bound node group; create a plan binding first',
-      );
+    const nodeId = input.requestedNodeId ?? bindings[0]?.nodeId ?? null;
+    if (!nodeId) {
+      throw new BadRequestException('Plan has no bound nodes; add a node binding to this plan first');
     }
 
-    const bindingAllowed = bindings.some(
-      (binding) => binding.nodeGroupId === nodeGroupId,
-    );
+    const bindingAllowed = bindings.some((b) => b.nodeId === nodeId);
     if (!bindingAllowed) {
-      throw new BadRequestException(
-        'Selected node group is not allowed for this plan',
-      );
+      throw new BadRequestException('Selected node is not bound to this plan');
     }
 
-    const nodeGroup = await tx.nodeGroup.findUnique({
-      where: { id: nodeGroupId },
-    });
-    if (!nodeGroup) {
-      throw new NotFoundException(`Unknown node group: ${nodeGroupId}`);
-    }
+    const node = await tx.node.findUnique({ where: { id: nodeId } });
+    if (!node) throw new NotFoundException(`Unknown node: ${nodeId}`);
 
-    return {
-      plan,
-      nodeGroupId,
-      nodeGroup,
-    };
+    return { plan, nodeId, node };
   }
 
   private handlePrismaError(error: unknown): never {
@@ -2707,27 +2206,19 @@ export class ControlPlaneStoreService {
     return role === 'admin' ? UserRole.ADMIN : UserRole.MEMBER;
   }
 
-  private fromDbUserStatus(
-    status: UserStatus,
-  ): 'active' | 'suspended' | 'banned' {
+  private fromDbUserStatus(status: UserStatus): 'active' | 'suspended' | 'banned' {
     switch (status) {
-      case UserStatus.SUSPENDED:
-        return 'suspended';
-      case UserStatus.BANNED:
-        return 'banned';
-      default:
-        return 'active';
+      case UserStatus.SUSPENDED: return 'suspended';
+      case UserStatus.BANNED: return 'banned';
+      default: return 'active';
     }
   }
 
   private toDbUserStatus(status: 'active' | 'suspended' | 'banned') {
     switch (status) {
-      case 'suspended':
-        return UserStatus.SUSPENDED;
-      case 'banned':
-        return UserStatus.BANNED;
-      default:
-        return UserStatus.ACTIVE;
+      case 'suspended': return UserStatus.SUSPENDED;
+      case 'banned': return UserStatus.BANNED;
+      default: return UserStatus.ACTIVE;
     }
   }
 
@@ -2735,113 +2226,75 @@ export class ControlPlaneStoreService {
     status: SubscriptionStatus,
   ): 'active' | 'expired' | 'paused' | 'canceled' {
     switch (status) {
-      case SubscriptionStatus.EXPIRED:
-        return 'expired';
-      case SubscriptionStatus.PAUSED:
-        return 'paused';
-      case SubscriptionStatus.CANCELED:
-        return 'canceled';
-      default:
-        return 'active';
+      case SubscriptionStatus.EXPIRED: return 'expired';
+      case SubscriptionStatus.PAUSED: return 'paused';
+      case SubscriptionStatus.CANCELED: return 'canceled';
+      default: return 'active';
     }
   }
 
-  private toDbSubscriptionStatus(
-    status: 'active' | 'expired' | 'paused' | 'canceled',
-  ) {
+  private toDbSubscriptionStatus(status: 'active' | 'expired' | 'paused' | 'canceled') {
     switch (status) {
-      case 'expired':
-        return SubscriptionStatus.EXPIRED;
-      case 'paused':
-        return SubscriptionStatus.PAUSED;
-      case 'canceled':
-        return SubscriptionStatus.CANCELED;
-      default:
-        return SubscriptionStatus.ACTIVE;
+      case 'expired': return SubscriptionStatus.EXPIRED;
+      case 'paused': return SubscriptionStatus.PAUSED;
+      case 'canceled': return SubscriptionStatus.CANCELED;
+      default: return SubscriptionStatus.ACTIVE;
     }
   }
 
-  private fromDbTrafficPackStatus(
-    status: TrafficPackStatus,
-  ): 'active' | 'exhausted' | 'expired' {
+  private fromDbTrafficPackStatus(status: TrafficPackStatus): 'active' | 'exhausted' | 'expired' {
     switch (status) {
-      case TrafficPackStatus.EXHAUSTED:
-        return 'exhausted';
-      case TrafficPackStatus.EXPIRED:
-        return 'expired';
-      default:
-        return 'active';
+      case TrafficPackStatus.EXHAUSTED: return 'exhausted';
+      case TrafficPackStatus.EXPIRED: return 'expired';
+      default: return 'active';
     }
   }
 
-  private fromDbOrderStatus(
-    status: OrderStatus,
-  ): 'pending' | 'applied' | 'void' {
+  private fromDbOrderStatus(status: OrderStatus): 'pending' | 'applied' | 'void' {
     switch (status) {
-      case OrderStatus.VOID:
-        return 'void';
-      case OrderStatus.APPLIED:
-        return 'applied';
-      default:
-        return 'pending';
+      case OrderStatus.VOID: return 'void';
+      case OrderStatus.APPLIED: return 'applied';
+      default: return 'pending';
     }
   }
 
-  private fromDbOrderKind(
-    kind: OrderKind,
-  ): 'renewal' | 'traffic_pack' | 'manual_credit' {
+  private fromDbOrderKind(kind: OrderKind): 'renewal' | 'traffic_pack' | 'manual_credit' {
     switch (kind) {
-      case OrderKind.TRAFFIC_PACK:
-        return 'traffic_pack';
-      case OrderKind.MANUAL_CREDIT:
-        return 'manual_credit';
-      default:
-        return 'renewal';
+      case OrderKind.TRAFFIC_PACK: return 'traffic_pack';
+      case OrderKind.MANUAL_CREDIT: return 'manual_credit';
+      default: return 'renewal';
     }
   }
 
   private toDbOrderKind(kind: 'renewal' | 'traffic_pack' | 'manual_credit') {
     switch (kind) {
-      case 'traffic_pack':
-        return OrderKind.TRAFFIC_PACK;
-      case 'manual_credit':
-        return OrderKind.MANUAL_CREDIT;
-      default:
-        return OrderKind.RENEWAL;
+      case 'traffic_pack': return OrderKind.TRAFFIC_PACK;
+      case 'manual_credit': return OrderKind.MANUAL_CREDIT;
+      default: return OrderKind.RENEWAL;
     }
   }
 
-  private fromDbRedemptionCodeKind(
-    kind: RedemptionCodeKind,
-  ): 'plan' | 'traffic_pack' {
+  private fromDbRedemptionCodeKind(kind: RedemptionCodeKind): 'plan' | 'traffic_pack' {
     return kind === RedemptionCodeKind.TRAFFIC_PACK ? 'traffic_pack' : 'plan';
   }
 
   private toDbRedemptionCodeKind(kind: 'plan' | 'traffic_pack') {
-    return kind === 'traffic_pack'
-      ? RedemptionCodeKind.TRAFFIC_PACK
-      : RedemptionCodeKind.PLAN;
+    return kind === 'traffic_pack' ? RedemptionCodeKind.TRAFFIC_PACK : RedemptionCodeKind.PLAN;
   }
 
   private fromDbRedemptionCodeStatus(
     status: RedemptionCodeStatus,
   ): 'active' | 'redeemed' | 'void' | 'expired' {
     switch (status) {
-      case RedemptionCodeStatus.REDEEMED:
-        return 'redeemed';
-      case RedemptionCodeStatus.VOID:
-        return 'void';
-      case RedemptionCodeStatus.EXPIRED:
-        return 'expired';
-      default:
-        return 'active';
+      case RedemptionCodeStatus.REDEEMED: return 'redeemed';
+      case RedemptionCodeStatus.VOID: return 'void';
+      case RedemptionCodeStatus.EXPIRED: return 'expired';
+      default: return 'active';
     }
   }
 
   private toDbRedemptionCodeStatus(status: 'active' | 'void') {
-    return status === 'void'
-      ? RedemptionCodeStatus.VOID
-      : RedemptionCodeStatus.ACTIVE;
+    return status === 'void' ? RedemptionCodeStatus.VOID : RedemptionCodeStatus.ACTIVE;
   }
 
   private withDefinedValues<T extends object>(value: T): Partial<T> {
@@ -2851,22 +2304,13 @@ export class ControlPlaneStoreService {
   }
 
   async cleanupOldData(retentionDays: number) {
-    const cutoff = new Date(
-      Date.now() - retentionDays * 24 * 60 * 60 * 1000,
-    );
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
 
     const [snapshots, events] = await Promise.all([
-      this.prisma.onlineSnapshot.deleteMany({
-        where: { capturedAt: { lt: cutoff } },
-      }),
-      this.prisma.authEvent.deleteMany({
-        where: { createdAt: { lt: cutoff } },
-      }),
+      this.prisma.onlineSnapshot.deleteMany({ where: { capturedAt: { lt: cutoff } } }),
+      this.prisma.authEvent.deleteMany({ where: { createdAt: { lt: cutoff } } }),
     ]);
 
-    return {
-      deletedSnapshots: snapshots.count,
-      deletedAuthEvents: events.count,
-    };
+    return { deletedSnapshots: snapshots.count, deletedAuthEvents: events.count };
   }
 }

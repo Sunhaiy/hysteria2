@@ -11,7 +11,6 @@ import { IntegrationsModule } from './integrations/integrations.module';
 import { KickServiceModule } from './kick-service/kick-service.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
 import { NodesModule } from './nodes/nodes.module';
-import { NodeGroupsModule } from './node-groups/node-groups.module';
 import { OrdersModule } from './orders/orders.module';
 import { PlanBindingsModule } from './plan-bindings/plan-bindings.module';
 import { PlansModule } from './plans/plans.module';
@@ -42,7 +41,6 @@ import { AdminUsersModule } from './users/admin-users.module';
     MonitoringModule,
     AdminUsersModule,
     PlansModule,
-    NodeGroupsModule,
     PlanBindingsModule,
     SubscriptionsModule,
     NodesModule,

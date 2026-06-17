@@ -107,14 +107,14 @@ export default function AdminDashboardPage() {
           action={<span className="fine-print">{loading ? "加载中..." : `${subscriptions.length} 条记录`}</span>}
         >
           <DataTable
-            headers={["用户", "套餐", "节点组", "状态", "剩余流量", "到期时间"]}
+            headers={["用户", "套餐", "节点", "状态", "剩余流量", "到期时间"]}
             rows={subscriptions.slice(0, 8).map((subscription) => [
               <div key={`${subscription.id}-user`} className="split">
                 <strong>{subscription.userDisplayName}</strong>
                 <span className="muted">{subscription.userEmail}</span>
               </div>,
               subscription.planName,
-              subscription.nodeGroupName,
+              subscription.nodeLabel,
               <span key={`${subscription.id}-status`} className={`badge ${statusTone(subscription.status)}`}>
                 {subscription.status}
               </span>,
@@ -131,7 +131,7 @@ export default function AdminDashboardPage() {
                 <div key={node.id} className="list-row">
                   <div className="split">
                     <strong>{node.label}</strong>
-                    <span className="muted">{node.groupName}</span>
+                    <span className="muted">{node.hostname}:{node.port}</span>
                   </div>
                   <div className="split align-end">
                     <span>{node.speedUpMbps} / {node.speedDownMbps} Mbps</span>

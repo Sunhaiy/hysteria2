@@ -90,42 +90,28 @@ model AccessToken {
 }
 
 model Plan {
-  id            String         @id @default(cuid())
-  slug          String         @unique
-  name          String
-  description   String?
-  active        Boolean        @default(true)
-  trafficBytes  BigInt
-  durationDays  Int
-  speedUpMbps   Int
-  speedDownMbps Int
-  deviceLimit   Int
-  priceCents    Int
-  accent        String         @default("green")
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  subscriptions Subscription[]
-  bindings      PlanBinding[]
-  manualOrders  ManualOrder[]
+  id              String           @id @default(cuid())
+  slug            String           @unique
+  name            String
+  description     String?
+  active          Boolean          @default(true)
+  trafficBytes    BigInt
+  durationDays    Int
+  speedUpMbps     Int
+  speedDownMbps   Int
+  deviceLimit     Int
+  priceCents      Int
+  accent          String           @default("green")
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  subscriptions   Subscription[]
+  bindings        PlanBinding[]
+  manualOrders    ManualOrder[]
   redemptionCodes RedemptionCode[]
-}
-
-model NodeGroup {
-  id            String         @id @default(cuid())
-  slug          String         @unique
-  name          String
-  description   String?
-  active        Boolean        @default(true)
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  nodes         Node[]
-  planBindings  PlanBinding[]
-  subscriptions Subscription[]
 }
 
 model Node {
   id                String           @id @default(cuid())
-  nodeGroupId       String
   label             String           @unique
   hostname          String
   port              Int
@@ -140,7 +126,8 @@ model Node {
   speedDownMbps     Int
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
-  nodeGroup         NodeGroup        @relation(fields: [nodeGroupId], references: [id], onDelete: Cascade)
+  planBindings      PlanBinding[]
+  subscriptions     Subscription[]
   authEvents        AuthEvent[]
   usageRollups      UsageRollup[]
   onlineSnapshots   OnlineSnapshot[]
@@ -149,22 +136,22 @@ model Node {
 }
 
 model PlanBinding {
-  id          String    @id @default(cuid())
-  planId      String
-  nodeGroupId String
-  priority    Int       @default(0)
-  createdAt   DateTime  @default(now())
-  plan        Plan      @relation(fields: [planId], references: [id], onDelete: Cascade)
-  nodeGroup   NodeGroup @relation(fields: [nodeGroupId], references: [id], onDelete: Cascade)
+  id        String   @id @default(cuid())
+  planId    String
+  nodeId    String
+  priority  Int      @default(0)
+  createdAt DateTime @default(now())
+  plan      Plan     @relation(fields: [planId], references: [id], onDelete: Cascade)
+  node      Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
 
-  @@unique([planId, nodeGroupId])
+  @@unique([planId, nodeId])
 }
 
 model Subscription {
   id                    String             @id @default(cuid())
   userId                String
   planId                String
-  nodeGroupId           String
+  nodeId                String
   status                SubscriptionStatus @default(ACTIVE)
   startsAt              DateTime
   endsAt                DateTime
@@ -178,7 +165,7 @@ model Subscription {
   updatedAt             DateTime           @updatedAt
   user                  User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   plan                  Plan               @relation(fields: [planId], references: [id], onDelete: Restrict)
-  nodeGroup             NodeGroup          @relation(fields: [nodeGroupId], references: [id], onDelete: Restrict)
+  node                  Node               @relation(fields: [nodeId], references: [id], onDelete: Restrict)
   trafficPacks          TrafficPack[]
   usageRollups          UsageRollup[]
 }

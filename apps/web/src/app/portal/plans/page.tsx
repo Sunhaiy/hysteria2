@@ -190,8 +190,8 @@ export default function PortalPlansPage() {
 
                 <div className="feature-list">
                   <div className="list-row">
-                    <span className="muted">节点组</span>
-                    <strong>{plan.boundNodeGroups.join(" / ") || "未绑定"}</strong>
+                    <span className="muted">节点</span>
+                    <strong>{plan.boundNodes.join(" / ") || "未绑定"}</strong>
                   </div>
                   <div className="list-row">
                     <span className="muted">周期流量</span>

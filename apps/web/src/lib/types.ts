@@ -40,17 +40,6 @@ export interface AdminCreateUserResponse extends AdminUser {
   provisionedAccess?: PortalAccessResponse | null;
 }
 
-export interface NodeGroupRecord {
-  id: string;
-  slug: string;
-  name: string;
-  description?: string | null;
-  active: boolean;
-  nodeCount: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface PlanRecord {
   id: string;
   slug: string;
@@ -66,11 +55,11 @@ export interface PlanRecord {
   accent: string;
   createdAt: string;
   updatedAt: string;
-  boundNodeGroups: string[];
+  boundNodes: string[];
   bindings: Array<{
     id: string;
-    nodeGroupId: string;
-    nodeGroupName: string;
+    nodeId: string;
+    nodeLabel: string;
     priority: number;
   }>;
 }
@@ -79,16 +68,14 @@ export interface PlanBindingRecord {
   id: string;
   planId: string;
   planName: string;
-  nodeGroupId: string;
-  nodeGroupName: string;
+  nodeId: string;
+  nodeLabel: string;
   priority: number;
   createdAt: string;
 }
 
 export interface NodeRecord {
   id: string;
-  nodeGroupId: string;
-  groupName: string;
   label: string;
   hostname: string;
   port: number;
@@ -113,8 +100,8 @@ export interface SubscriptionRecord {
   userDisplayName: string;
   planId: string;
   planName: string;
-  nodeGroupId: string;
-  nodeGroupName: string;
+  nodeId: string;
+  nodeLabel: string;
   status: "active" | "expired" | "paused" | "canceled";
   startsAt: string;
   endsAt: string;
@@ -211,7 +198,7 @@ export interface AuthEventRecord {
 export interface PortalOverviewResponse {
   user: SessionUser;
   subscription: SubscriptionRecord;
-  plan: Omit<PlanRecord, "boundNodeGroups" | "bindings">;
+  plan: Omit<PlanRecord, "boundNodes" | "bindings">;
   nodeLabel?: string | null;
   remainingBytes: number;
   online: number;

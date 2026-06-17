@@ -34,7 +34,7 @@ type UserFormState = {
 type ProvisionState = {
   enabled: boolean;
   planId: string;
-  nodeGroupId: string;
+  nodeId: string;
 };
 
 type DeliveryState = {
@@ -63,7 +63,7 @@ function createProvisionState(plans: PlanRecord[], role: UserFormState["role"]):
   return {
     enabled: role === "member" && Boolean(fallbackPlan),
     planId: fallbackPlan?.id ?? "",
-    nodeGroupId: fallbackPlan?.bindings[0]?.nodeGroupId ?? "",
+    nodeId: fallbackPlan?.bindings[0]?.nodeId ?? "",
   };
 }
 
@@ -90,14 +90,14 @@ function normalizeProvisionState(
     return defaults;
   }
 
-  const allowedGroupIds = selectedPlan.bindings.map((binding) => binding.nodeGroupId);
+  const allowedNodeIds = selectedPlan.bindings.map((binding) => binding.nodeId);
 
   return {
     enabled: current.enabled,
     planId: selectedPlan.id,
-    nodeGroupId: allowedGroupIds.includes(current.nodeGroupId)
-      ? current.nodeGroupId
-      : allowedGroupIds[0] ?? "",
+    nodeId: allowedNodeIds.includes(current.nodeId)
+      ? current.nodeId
+      : allowedNodeIds[0] ?? "",
   };
 }
 
@@ -244,7 +244,7 @@ export default function AdminUsersPage() {
     setProvision((current) => ({
       ...current,
       planId: nextPlanId,
-      nodeGroupId: nextPlan?.bindings[0]?.nodeGroupId ?? "",
+      nodeId: nextPlan?.bindings[0]?.nodeId ?? "",
     }));
   }
 
@@ -309,8 +309,8 @@ export default function AdminUsersPage() {
           body: {
             ...form,
             initialPlanId: provisioningEnabled ? provision.planId : undefined,
-            initialNodeGroupId:
-              provisioningEnabled && provision.nodeGroupId ? provision.nodeGroupId : undefined,
+            initialNodeId:
+              provisioningEnabled && provision.nodeId ? provision.nodeId : undefined,
           },
         });
         setDelivery({
@@ -702,17 +702,17 @@ export default function AdminUsersPage() {
                   </label>
 
                   <label className="field">
-                    <span className="fine-print">节点组</span>
+                    <span className="fine-print">节点</span>
                     <select
                       className="control"
-                      value={provision.nodeGroupId}
+                      value={provision.nodeId}
                       onChange={(e) =>
-                        setProvision((current) => ({ ...current, nodeGroupId: e.target.value }))
+                        setProvision((current) => ({ ...current, nodeId: e.target.value }))
                       }
                     >
                       {availableBindings.map((binding) => (
-                        <option key={binding.id} value={binding.nodeGroupId}>
-                          {binding.nodeGroupName}
+                        <option key={binding.id} value={binding.nodeId}>
+                          {binding.nodeLabel}
                         </option>
                       ))}
                     </select>

@@ -12,7 +12,7 @@ import { clearDraft, getDraft, saveDraft } from "@/lib/draft";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import type {
   AdminUser,
-  NodeGroupRecord,
+  NodeRecord,
   PlanBindingRecord,
   PlanRecord,
   SubscriptionRecord,
@@ -28,7 +28,7 @@ import {
 type SubscriptionFormState = {
   userId: string;
   planId: string;
-  nodeGroupId: string;
+  nodeId: string;
   status: SubscriptionRecord["status"];
   startsAt: string;
   endsAt: string;
@@ -45,14 +45,14 @@ const DRAFT_KEY = "subscription";
 type Feedback = { msg: string; kind: "success" | "error" };
 
 function createEmptySubscription(): SubscriptionFormState {
-  return { userId: "", planId: "", nodeGroupId: "", status: "active", startsAt: "", endsAt: "" };
+  return { userId: "", planId: "", nodeId: "", status: "active", startsAt: "", endsAt: "" };
 }
 
 function createSubscriptionForm(sub: SubscriptionRecord): SubscriptionFormState {
   return {
     userId: sub.userId,
     planId: sub.planId,
-    nodeGroupId: sub.nodeGroupId,
+    nodeId: sub.nodeId,
     status: sub.status,
     startsAt: toDateTimeLocal(sub.startsAt),
     endsAt: toDateTimeLocal(sub.endsAt),
@@ -64,7 +64,7 @@ export default function AdminSubscriptionsPage() {
   const [subscriptions, setSubscriptions] = useState<SubscriptionRecord[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [plans, setPlans] = useState<PlanRecord[]>([]);
-  const [nodeGroups, setNodeGroups] = useState<NodeGroupRecord[]>([]);
+  const [nodes, setNodes] = useState<NodeRecord[]>([]);
   const [bindings, setBindings] = useState<PlanBindingRecord[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingSub, setEditingSub] = useState<SubscriptionRecord | null>(null);
@@ -79,18 +79,18 @@ export default function AdminSubscriptionsPage() {
     if (!token) return;
     setLoading(true);
     try {
-      const [nextSubscriptions, nextUsers, nextPlans, nextNodeGroups, nextBindings] =
+      const [nextSubscriptions, nextUsers, nextPlans, nextNodes, nextBindings] =
         await Promise.all([
           apiRequest<SubscriptionRecord[]>("/api/admin/subscriptions", { token }),
           apiRequest<AdminUser[]>("/api/admin/users", { token }),
           apiRequest<PlanRecord[]>("/api/admin/plans", { token }),
-          apiRequest<NodeGroupRecord[]>("/api/admin/node-groups", { token }),
+          apiRequest<NodeRecord[]>("/api/admin/nodes", { token }),
           apiRequest<PlanBindingRecord[]>("/api/admin/plan-bindings", { token }),
         ]);
       setSubscriptions(nextSubscriptions);
       setUsers(nextUsers.filter((u) => u.role === "member"));
       setPlans(nextPlans);
-      setNodeGroups(nextNodeGroups);
+      setNodes(nextNodes);
       setBindings(nextBindings);
     } catch {
       // keep stale
@@ -114,11 +114,6 @@ export default function AdminSubscriptionsPage() {
     [form.planId, plans],
   );
 
-  const selectedUser = useMemo(
-    () => users.find((u) => u.id === form.userId) ?? null,
-    [form.userId, users],
-  );
-
   const availableBindings = useMemo(
     () =>
       bindings
@@ -127,22 +122,22 @@ export default function AdminSubscriptionsPage() {
     [bindings, form.planId],
   );
 
-  const availableNodeGroups = useMemo(
+  const availableNodes = useMemo(
     () =>
       availableBindings
-        .map((b) => nodeGroups.find((g) => g.id === b.nodeGroupId))
-        .filter((g): g is NodeGroupRecord => Boolean(g)),
-    [availableBindings, nodeGroups],
+        .map((b) => nodes.find((n) => n.id === b.nodeId))
+        .filter((n): n is NodeRecord => Boolean(n)),
+    [availableBindings, nodes],
   );
 
-  const defaultNodeGroupId = availableBindings[0]?.nodeGroupId ?? "";
-  const defaultNodeGroupName =
-    availableNodeGroups.find((g) => g.id === defaultNodeGroupId)?.name ?? "未指定";
-  const effectiveNodeGroupId = form.nodeGroupId || defaultNodeGroupId;
-  const effectiveNodeGroupName =
-    availableNodeGroups.find((g) => g.id === effectiveNodeGroupId)?.name ?? "未指定";
-  const canResetToDefaultNodeGroup = Boolean(
-    editingSub && defaultNodeGroupId && form.nodeGroupId !== defaultNodeGroupId,
+  const defaultNodeId = availableBindings[0]?.nodeId ?? "";
+  const defaultNodeLabel =
+    availableNodes.find((n) => n.id === defaultNodeId)?.label ?? "未指定";
+  const effectiveNodeId = form.nodeId || defaultNodeId;
+  const effectiveNodeLabel =
+    availableNodes.find((n) => n.id === effectiveNodeId)?.label ?? "未指定";
+  const canResetToDefaultNode = Boolean(
+    editingSub && defaultNodeId && form.nodeId !== defaultNodeId,
   );
 
   const subDirty = drawerOpen && JSON.stringify(form) !== JSON.stringify(originalForm);
@@ -200,15 +195,15 @@ export default function AdminSubscriptionsPage() {
     const nextBindings = bindings
       .filter((b) => b.planId === nextPlanId)
       .sort((a, b) => a.priority - b.priority);
-    const nextDefaultGroupId = nextBindings[0]?.nodeGroupId ?? "";
+    const nextDefaultNodeId = nextBindings[0]?.nodeId ?? "";
     setForm((f) => {
       const n = {
         ...f,
         planId: nextPlanId,
-        nodeGroupId:
-          f.nodeGroupId && nextBindings.some((b) => b.nodeGroupId === f.nodeGroupId)
-            ? f.nodeGroupId
-            : nextDefaultGroupId,
+        nodeId:
+          f.nodeId && nextBindings.some((b) => b.nodeId === f.nodeId)
+            ? f.nodeId
+            : nextDefaultNodeId,
       };
       if (!editingSub) saveDraft(DRAFT_KEY, n);
       return n;
@@ -235,8 +230,8 @@ export default function AdminSubscriptionsPage() {
             token,
             body: {
               status: form.status !== originalForm.status ? form.status : undefined,
-              nodeGroupId:
-                form.nodeGroupId !== originalForm.nodeGroupId ? form.nodeGroupId : undefined,
+              nodeId:
+                form.nodeId !== originalForm.nodeId ? form.nodeId : undefined,
               endsAt:
                 form.endsAt !== originalForm.endsAt ? fromDateTimeLocal(form.endsAt) : undefined,
             },
@@ -247,7 +242,7 @@ export default function AdminSubscriptionsPage() {
             body: {
               userId: form.userId,
               planId: form.planId,
-              nodeGroupId: form.nodeGroupId || undefined,
+              nodeId: form.nodeId || undefined,
               status: form.status,
               startsAt: fromDateTimeLocal(form.startsAt),
             },
@@ -268,7 +263,7 @@ export default function AdminSubscriptionsPage() {
   return (
     <ConsoleShell
       title="订阅管理"
-      subtitle="把用户、套餐、默认节点组和订阅快照放到同一视角里连续调整。"
+      subtitle="把用户、套餐、节点和订阅快照放到同一视角里连续调整。"
       scope="Operations"
       navItems={adminNav}
       requireRole="admin"
@@ -292,7 +287,7 @@ export default function AdminSubscriptionsPage() {
 
       <Panel
         title="订阅列表"
-        copy="点击订阅行编辑状态、到期时间和节点组；「新建订阅」为会员开通一条新订阅。"
+        copy="点击订阅行编辑状态、到期时间和节点；「新建订阅」为会员开通一条新订阅。"
       >
         {loading && subscriptions.length === 0 ? (
           <div className="skeleton-rows">
@@ -304,7 +299,7 @@ export default function AdminSubscriptionsPage() {
 
         {subscriptions.length > 0 ? (
           <DataTable
-            headers={["用户", "套餐", "节点组", "状态", "剩余流量", "到期时间"]}
+            headers={["用户", "套餐", "节点", "状态", "剩余流量", "到期时间"]}
             rows={subscriptions.map((sub) => [
               <button
                 key={sub.id}
@@ -316,7 +311,7 @@ export default function AdminSubscriptionsPage() {
                 <span className="muted">{sub.userEmail}</span>
               </button>,
               sub.planName,
-              sub.nodeGroupName,
+              sub.nodeLabel,
               <span key={`${sub.id}-st`} className={`badge ${statusTone(sub.status)}`}>
                 {sub.status}
               </span>,
@@ -339,7 +334,7 @@ export default function AdminSubscriptionsPage() {
         open={drawerOpen}
         onClose={requestClose}
         title={editingSub ? `编辑订阅：${editingSub.userDisplayName}` : "新建订阅"}
-        subtitle={editingSub ? `${editingSub.planName} · ${editingSub.nodeGroupName}` : undefined}
+        subtitle={editingSub ? `${editingSub.planName} · ${editingSub.nodeLabel}` : undefined}
         isDirty={isDirty}
         footer={
           <div className="toolbar-actions">
@@ -368,24 +363,22 @@ export default function AdminSubscriptionsPage() {
           </div>
         ) : null}
 
-        {selectedPlan || selectedUser ? (
+        {selectedPlan ? (
           <div className="metric-grid" style={{ marginBottom: 16 }}>
             <article className="metric-card">
               <span className="metric-label">套餐</span>
-              <strong>{selectedPlan?.name ?? "未选择"}</strong>
+              <strong>{selectedPlan.name}</strong>
               <span className="metric-footnote">
-                {selectedPlan
-                  ? `${formatBytes(selectedPlan.trafficBytes)} / ${selectedPlan.durationDays} 天`
-                  : "选择后可预览配额"}
+                {`${formatBytes(selectedPlan.trafficBytes)} / ${selectedPlan.durationDays} 天`}
               </span>
             </article>
             <article className="metric-card">
-              <span className="metric-label">{editingSub ? "当前节点组" : "默认节点组"}</span>
-              <strong>{effectiveNodeGroupName}</strong>
+              <span className="metric-label">{editingSub ? "当前节点" : "默认节点"}</span>
+              <strong>{effectiveNodeLabel}</strong>
               <span className="metric-footnote">
                 {availableBindings.length === 0
-                  ? "当前套餐还没有绑定节点组"
-                  : `${availableBindings.length} 条可选绑定`}
+                  ? "当前套餐还没有绑定节点"
+                  : `${availableBindings.length} 个可选节点`}
               </span>
             </article>
           </div>
@@ -428,39 +421,39 @@ export default function AdminSubscriptionsPage() {
 
           {form.planId && availableBindings.length === 0 ? (
             <div className="feedback info">
-              当前套餐还没有节点组绑定，请先去套餐页补绑定。
+              当前套餐还没有绑定节点，请先去套餐页添加节点绑定。
             </div>
           ) : null}
 
           <label className="field">
             <div className="field-inline-actions">
-              <span className="fine-print">节点组</span>
-              {editingSub && canResetToDefaultNodeGroup ? (
+              <span className="fine-print">节点</span>
+              {editingSub && canResetToDefaultNode ? (
                 <button
                   className="ghost-button compact"
                   type="button"
-                  onClick={() => setForm((f) => ({ ...f, nodeGroupId: defaultNodeGroupId }))}
+                  onClick={() => setForm((f) => ({ ...f, nodeId: defaultNodeId }))}
                 >
-                  切回默认组 ({defaultNodeGroupName})
+                  切回默认节点 ({defaultNodeLabel})
                 </button>
               ) : null}
             </div>
             <select
               className="control"
-              value={form.nodeGroupId}
-              onChange={(e) => setForm((f) => ({ ...f, nodeGroupId: e.target.value }))}
+              value={form.nodeId}
+              onChange={(e) => setForm((f) => ({ ...f, nodeId: e.target.value }))}
             >
-              {editingSub ? null : <option value="">自动选择默认节点组</option>}
-              {availableNodeGroups.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name}
+              {editingSub ? null : <option value="">自动选择默认节点</option>}
+              {availableNodes.map((n) => (
+                <option key={n.id} value={n.id}>
+                  {n.label}
                 </option>
               ))}
             </select>
             <span className="field-hint">
               {editingSub
-                ? `留空则用当前套餐默认绑定（${defaultNodeGroupName}）。`
-                : `留空时默认落到 ${defaultNodeGroupName}。`}
+                ? `留空则用当前套餐默认节点（${defaultNodeLabel}）。`
+                : `留空时默认落到 ${defaultNodeLabel}。`}
             </span>
           </label>
 

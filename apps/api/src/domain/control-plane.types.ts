@@ -44,19 +44,8 @@ export interface Plan {
   updatedAt: string;
 }
 
-export interface NodeGroup {
-  id: string;
-  slug: string;
-  name: string;
-  description: string;
-  active: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface Node {
   id: string;
-  nodeGroupId: string;
   label: string;
   hostname: string;
   port: number;
@@ -76,7 +65,7 @@ export interface Node {
 export interface PlanBinding {
   id: string;
   planId: string;
-  nodeGroupId: string;
+  nodeId: string;
   priority: number;
   createdAt: string;
 }
@@ -85,7 +74,7 @@ export interface Subscription {
   id: string;
   userId: string;
   planId: string;
-  nodeGroupId: string;
+  nodeId: string;
   status: SubscriptionStatus;
   startsAt: string;
   endsAt: string;
@@ -163,7 +152,6 @@ export interface ControlPlaneState {
   users: User[];
   accessTokens: AccessToken[];
   plans: Plan[];
-  nodeGroups: NodeGroup[];
   nodes: Node[];
   planBindings: PlanBinding[];
   subscriptions: Subscription[];

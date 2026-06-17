@@ -10,7 +10,7 @@ import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
 import { clearDraft, getDraft, saveDraft } from "@/lib/draft";
 import { formatBytes, formatMoney } from "@/lib/format";
-import type { NodeGroupRecord, PlanBindingRecord, PlanRecord } from "@/lib/types";
+import type { NodeRecord, PlanBindingRecord, PlanRecord } from "@/lib/types";
 import { slugifyValue } from "@/lib/ui";
 
 const GB = 1024 * 1024 * 1024;
@@ -68,7 +68,7 @@ export default function AdminPlansPage() {
   const { token } = useAuth();
   const [plans, setPlans] = useState<PlanRecord[]>([]);
   const [bindings, setBindings] = useState<PlanBindingRecord[]>([]);
-  const [nodeGroups, setNodeGroups] = useState<NodeGroupRecord[]>([]);
+  const [nodes, setNodes] = useState<NodeRecord[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingPlan, setEditingPlan] = useState<PlanRecord | null>(null);
   const [form, setForm] = useState<PlanForm>(emptyForm);
@@ -78,20 +78,20 @@ export default function AdminPlansPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [addingBinding, setAddingBinding] = useState(false);
-  const [newBindingGroupId, setNewBindingGroupId] = useState("");
+  const [newBindingNodeId, setNewBindingNodeId] = useState("");
 
   const load = useCallback(async () => {
     if (!token) return;
     setLoading(true);
     try {
-      const [nextPlans, nextBindings, nextGroups] = await Promise.all([
+      const [nextPlans, nextBindings, nextNodes] = await Promise.all([
         apiRequest<PlanRecord[]>("/api/admin/plans", { token }),
         apiRequest<PlanBindingRecord[]>("/api/admin/plan-bindings", { token }),
-        apiRequest<NodeGroupRecord[]>("/api/admin/node-groups", { token }),
+        apiRequest<NodeRecord[]>("/api/admin/nodes", { token }),
       ]);
       setPlans(nextPlans);
       setBindings(nextBindings);
-      setNodeGroups(nextGroups);
+      setNodes(nextNodes);
     } catch {
       // keep stale
     } finally {
@@ -132,7 +132,7 @@ export default function AdminPlansPage() {
     setEditingPlan(null);
     setDrawerError(null);
     setHasDraftBanner(false);
-    setNewBindingGroupId("");
+    setNewBindingNodeId("");
   }
 
   function openCreate() {
@@ -177,32 +177,22 @@ export default function AdminPlansPage() {
         accent: form.accent.trim() || "green",
       };
 
-      let savedPlan: PlanRecord;
       if (editingPlan) {
-        savedPlan = await apiRequest<PlanRecord>(`/api/admin/plans/${editingPlan.id}`, {
+        await apiRequest<PlanRecord>(`/api/admin/plans/${editingPlan.id}`, {
           method: "PATCH",
           token,
           body: payload,
         });
       } else {
-        savedPlan = await apiRequest<PlanRecord>("/api/admin/plans", {
+        clearDraft(DRAFT_KEY);
+        await apiRequest<PlanRecord>("/api/admin/plans", {
           method: "POST",
           token,
           body: payload,
         });
-        const currentBindings = await apiRequest<PlanBindingRecord[]>("/api/admin/plan-bindings", { token });
-        const planBindings = currentBindings.filter((b) => b.planId === savedPlan.id);
-        if (planBindings.length === 0 && nodeGroups.length > 0) {
-          await apiRequest("/api/admin/plan-bindings", {
-            method: "POST",
-            token,
-            body: { planId: savedPlan.id, nodeGroupId: nodeGroups[0].id, priority: 0 },
-          });
-        }
-        clearDraft(DRAFT_KEY);
       }
 
-      setFeedback({ msg: editingPlan ? "套餐已更新。" : "套餐已创建并绑定节点组。", kind: "success" });
+      setFeedback({ msg: editingPlan ? "套餐已更新。" : "套餐已创建。", kind: "success" });
       forceClose();
       await load();
     } catch (cause) {
@@ -213,7 +203,7 @@ export default function AdminPlansPage() {
   }
 
   async function handleAddBinding() {
-    if (!token || !editingPlan || !newBindingGroupId) return;
+    if (!token || !editingPlan || !newBindingNodeId) return;
     setAddingBinding(true);
     setDrawerError(null);
     try {
@@ -222,9 +212,9 @@ export default function AdminPlansPage() {
       await apiRequest("/api/admin/plan-bindings", {
         method: "POST",
         token,
-        body: { planId: editingPlan.id, nodeGroupId: newBindingGroupId, priority: nextPriority },
+        body: { planId: editingPlan.id, nodeId: newBindingNodeId, priority: nextPriority },
       });
-      setNewBindingGroupId("");
+      setNewBindingNodeId("");
       await load();
     } catch (cause) {
       setDrawerError(cause instanceof ApiError ? cause.message : "绑定失败。");
@@ -233,14 +223,25 @@ export default function AdminPlansPage() {
     }
   }
 
+  async function handleRemoveBinding(bindingId: string) {
+    if (!token) return;
+    setDrawerError(null);
+    try {
+      await apiRequest(`/api/admin/plan-bindings/${bindingId}`, { method: "DELETE", token });
+      await load();
+    } catch (cause) {
+      setDrawerError(cause instanceof ApiError ? cause.message : "移除绑定失败。");
+    }
+  }
+
   const drawerBindings = useMemo(
     () => (editingPlan ? bindings.filter((b) => b.planId === editingPlan.id) : []),
     [bindings, editingPlan],
   );
 
-  const unboundGroups = useMemo(
-    () => nodeGroups.filter((g) => !drawerBindings.some((b) => b.nodeGroupId === g.id)),
-    [drawerBindings, nodeGroups],
+  const unboundNodes = useMemo(
+    () => nodes.filter((n) => !drawerBindings.some((b) => b.nodeId === n.id)),
+    [drawerBindings, nodes],
   );
 
   const planSubmitDisabled =
@@ -253,7 +254,7 @@ export default function AdminPlansPage() {
   return (
     <ConsoleShell
       title="套餐管理"
-      subtitle="配置流量、速率和周期，创建后自动绑定到节点组。"
+      subtitle="配置流量、速率和周期，绑定节点后会员订阅即可接入。"
       scope="Operations"
       navItems={adminNav}
       requireRole="admin"
@@ -277,7 +278,7 @@ export default function AdminPlansPage() {
 
       <Panel
         title="套餐列表"
-        copy="点击套餐行编辑详情和节点组绑定；「新建套餐」创建后自动绑定到默认节点组。"
+        copy="点击套餐行编辑详情和节点绑定；绑定节点后订阅用户才能连接。"
       >
         {loading && plans.length === 0 ? (
           <div className="skeleton-rows">
@@ -289,7 +290,7 @@ export default function AdminPlansPage() {
 
         {plans.length > 0 ? (
           <DataTable
-            headers={["套餐", "流量", "速率", "周期", "价格", "节点组"]}
+            headers={["套餐", "流量", "速率", "周期", "价格", "节点"]}
             rows={plans.map((plan) => [
               <button
                 key={plan.id}
@@ -306,8 +307,8 @@ export default function AdminPlansPage() {
               `${plan.speedUpMbps} / ${plan.speedDownMbps} Mbps`,
               `${plan.durationDays} 天`,
               formatMoney(plan.priceCents),
-              plan.boundNodeGroups.join(" / ") || (
-                <span key={`${plan.id}-ng`} className="badge warn">
+              plan.boundNodes.join(" / ") || (
+                <span key={`${plan.id}-nb`} className="badge warn">
                   未绑定
                 </span>
               ),
@@ -503,35 +504,43 @@ export default function AdminPlansPage() {
 
         {editingPlan ? (
           <div className="form-grid">
-            <div className="field-section-label">节点组绑定</div>
+            <div className="field-section-label">节点绑定</div>
             <span className="fine-print muted">
-              套餐绑定的节点组决定用户订阅后可以使用哪些节点。
+              套餐绑定的节点决定用户订阅后可以使用哪些节点。
             </span>
 
             {drawerBindings.length > 0 ? (
               <div className="inline-stack" style={{ flexWrap: "wrap" }}>
                 {drawerBindings.map((b) => (
-                  <span key={b.id} className="badge success">
-                    {b.nodeGroupName}
+                  <span key={b.id} className="badge success" style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                    {b.nodeLabel}
+                    <button
+                      type="button"
+                      style={{ background: "none", border: "none", cursor: "pointer", padding: 0, lineHeight: 1 }}
+                      onClick={() => void handleRemoveBinding(b.id)}
+                      title="移除绑定"
+                    >
+                      ×
+                    </button>
                   </span>
                 ))}
               </div>
             ) : (
-              <div className="feedback warn">该套餐尚未绑定节点组，订阅用户将无法连接。</div>
+              <div className="feedback warn">该套餐尚未绑定节点，订阅用户将无法连接。</div>
             )}
 
-            {unboundGroups.length > 0 ? (
+            {unboundNodes.length > 0 ? (
               <div className="inline-stack">
                 <select
                   className="control"
                   style={{ flex: 1 }}
-                  value={newBindingGroupId}
-                  onChange={(e) => setNewBindingGroupId(e.target.value)}
+                  value={newBindingNodeId}
+                  onChange={(e) => setNewBindingNodeId(e.target.value)}
                 >
-                  <option value="">选择节点组...</option>
-                  {unboundGroups.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.name}
+                  <option value="">选择节点...</option>
+                  {unboundNodes.map((n) => (
+                    <option key={n.id} value={n.id}>
+                      {n.label} ({n.hostname}:{n.port})
                     </option>
                   ))}
                 </select>
@@ -539,16 +548,16 @@ export default function AdminPlansPage() {
                   className="ghost-button"
                   type="button"
                   onClick={() => void handleAddBinding()}
-                  disabled={addingBinding || !newBindingGroupId}
+                  disabled={addingBinding || !newBindingNodeId}
                 >
-                  {addingBinding ? "绑定中..." : "添加绑定"}
+                  {addingBinding ? "绑定中..." : "添加"}
                 </button>
               </div>
-            ) : null}
-          </div>
-        ) : nodeGroups.length > 0 ? (
-          <div className="feedback info">
-            创建后将自动绑定到「{nodeGroups[0]?.name}」节点组。
+            ) : nodes.length > 0 ? (
+              <div className="feedback info">所有节点均已绑定到此套餐。</div>
+            ) : (
+              <div className="feedback warn">还没有节点，请先在「节点管理」页添加节点。</div>
+            )}
           </div>
         ) : null}
       </Drawer>

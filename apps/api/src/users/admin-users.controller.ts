@@ -42,9 +42,9 @@ export class AdminUsersController {
       notes: body.notes,
       initialPlanId:
         (body.role ?? 'member') === 'member' ? body.initialPlanId : undefined,
-      initialNodeGroupId:
+      initialNodeId:
         (body.role ?? 'member') === 'member'
-          ? body.initialNodeGroupId
+          ? body.initialNodeId
           : undefined,
     });
 
