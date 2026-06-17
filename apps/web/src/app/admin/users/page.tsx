@@ -116,6 +116,7 @@ export default function AdminUsersPage() {
   const [loadingDelivery, setLoadingDelivery] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [drawerError, setDrawerError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [deliveryError, setDeliveryError] = useState<string | null>(null);
@@ -226,6 +227,7 @@ export default function AdminUsersPage() {
       status: user.status,
       notes: user.notes ?? "",
     });
+    setShowPassword(false);
     setHasDraftBanner(false);
     setDelivery(null);
     setDeliveryError(null);
@@ -641,14 +643,36 @@ export default function AdminUsersPage() {
             </label>
           </div>
 
+          {editingUser ? (
+            <div className="field">
+              <span className="fine-print">当前密码</span>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <input
+                  className="control mono"
+                  type={showPassword ? "text" : "password"}
+                  value={editingUser.plainPassword ?? ""}
+                  readOnly
+                  placeholder={editingUser.plainPassword ? undefined : "未记录"}
+                />
+                <button
+                  type="button"
+                  className="ghost-button compact"
+                  onClick={() => setShowPassword((v) => !v)}
+                >
+                  {showPassword ? "隐藏" : "显示"}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           <label className="field">
-            <span className="fine-print">密码</span>
+            <span className="fine-print">{editingUser ? "重置密码" : "密码"}</span>
             <input
               className="control"
               type="password"
               value={form.password}
               onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-              placeholder={editingUser ? "留空则不修改" : "首次登录密码"}
+              placeholder={editingUser ? "输入新密码以重置，留空不改" : "首次登录密码"}
             />
           </label>
 

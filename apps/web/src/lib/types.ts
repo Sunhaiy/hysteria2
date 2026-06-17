@@ -5,6 +5,7 @@ export interface SessionUser {
   role: "admin" | "member";
   status: "active" | "suspended" | "banned";
   notes?: string | null;
+  plainPassword?: string | null;
   createdAt: string;
   updatedAt: string;
   primaryAccessTokenPreview?: string | null;

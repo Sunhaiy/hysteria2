@@ -37,6 +37,7 @@ export class AdminUsersController {
       email: body.email,
       displayName: body.displayName,
       passwordHash: await hash(body.password, 10),
+      plainPassword: body.password,
       role: body.role ?? 'member',
       status: body.status ?? 'active',
       notes: body.notes,
@@ -61,6 +62,7 @@ export class AdminUsersController {
     return this.store.patchUser(id, {
       displayName: body.displayName,
       passwordHash: body.password ? await hash(body.password, 10) : undefined,
+      plainPassword: body.password || undefined,
       role: body.role,
       status: body.status,
       notes: body.notes,

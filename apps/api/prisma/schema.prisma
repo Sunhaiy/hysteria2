@@ -60,6 +60,7 @@ model User {
   email           String           @unique
   displayName     String
   passwordHash    String
+  plainPassword   String?
   role            UserRole         @default(MEMBER)
   status          UserStatus       @default(ACTIVE)
   notes           String?

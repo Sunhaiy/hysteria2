@@ -128,6 +128,7 @@ export class ControlPlaneStoreService {
     email: string;
     displayName: string;
     passwordHash: string;
+    plainPassword?: string;
     role: 'admin' | 'member';
     status: 'active' | 'suspended' | 'banned';
     notes?: string;
@@ -142,6 +143,7 @@ export class ControlPlaneStoreService {
             email: input.email,
             displayName: input.displayName,
             passwordHash: input.passwordHash,
+            plainPassword: input.plainPassword,
             role: this.toDbUserRole(input.role),
             status: this.toDbUserStatus(input.status),
             notes: input.notes,
@@ -205,6 +207,7 @@ export class ControlPlaneStoreService {
     input: {
       displayName?: string;
       passwordHash?: string;
+      plainPassword?: string;
       role?: 'admin' | 'member';
       status?: 'active' | 'suspended' | 'banned';
       notes?: string;
@@ -216,6 +219,7 @@ export class ControlPlaneStoreService {
         data: this.withDefinedValues({
           displayName: input.displayName,
           passwordHash: input.passwordHash,
+          plainPassword: input.plainPassword,
           role: input.role ? this.toDbUserRole(input.role) : undefined,
           status: input.status ? this.toDbUserStatus(input.status) : undefined,
           notes: input.notes,
@@ -1815,6 +1819,7 @@ export class ControlPlaneStoreService {
       role: this.fromDbUserRole(user.role),
       status: this.fromDbUserStatus(user.status),
       notes: user.notes,
+      plainPassword: user.plainPassword ?? null,
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),
       primaryAccessTokenPreview: primaryToken

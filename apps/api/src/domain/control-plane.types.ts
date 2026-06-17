@@ -10,6 +10,7 @@ export interface User {
   email: string;
   displayName: string;
   passwordHash: string;
+  plainPassword?: string;
   role: UserRole;
   status: UserStatus;
   notes?: string;
