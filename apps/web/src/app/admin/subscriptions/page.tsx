@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
+import { CustomSelect } from "@/components/custom-select";
 import { DataTable } from "@/components/data-table";
 import { Drawer } from "@/components/drawer";
 import { Panel } from "@/components/panel";
@@ -387,36 +388,28 @@ export default function AdminSubscriptionsPage() {
         <form id="sub-form" className="form-grid" onSubmit={handleSubmit}>
           <label className="field">
             <span className="fine-print">用户</span>
-            <select
-              className="control"
+            <CustomSelect
               disabled={Boolean(editingSub)}
               value={form.userId}
-              onChange={(e) => setForm((f) => ({ ...f, userId: e.target.value }))}
-            >
-              <option value="">请选择用户</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.displayName} / {u.email}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => setForm((f) => ({ ...f, userId: v }))}
+              options={[
+                { value: "", label: "请选择用户" },
+                ...users.map((u) => ({ value: u.id, label: `${u.displayName} / ${u.email}` })),
+              ]}
+            />
           </label>
 
           <label className="field">
             <span className="fine-print">套餐</span>
-            <select
-              className="control"
+            <CustomSelect
               disabled={Boolean(editingSub)}
               value={form.planId}
-              onChange={(e) => handlePlanChange(e.target.value)}
-            >
-              <option value="">请选择套餐</option>
-              {plans.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+              onChange={handlePlanChange}
+              options={[
+                { value: "", label: "请选择套餐" },
+                ...plans.map((p) => ({ value: p.id, label: p.name })),
+              ]}
+            />
           </label>
 
           {form.planId && availableBindings.length === 0 ? (
@@ -438,18 +431,14 @@ export default function AdminSubscriptionsPage() {
                 </button>
               ) : null}
             </div>
-            <select
-              className="control"
+            <CustomSelect
               value={form.nodeId}
-              onChange={(e) => setForm((f) => ({ ...f, nodeId: e.target.value }))}
-            >
-              {editingSub ? null : <option value="">自动选择默认节点</option>}
-              {availableNodes.map((n) => (
-                <option key={n.id} value={n.id}>
-                  {n.label}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => setForm((f) => ({ ...f, nodeId: v }))}
+              options={[
+                ...(editingSub ? [] : [{ value: "", label: "自动选择默认节点" }]),
+                ...availableNodes.map((n) => ({ value: n.id, label: n.label })),
+              ]}
+            />
             <span className="field-hint">
               {editingSub
                 ? `留空则用当前套餐默认节点（${defaultNodeLabel}）。`
@@ -460,19 +449,11 @@ export default function AdminSubscriptionsPage() {
           <div className="two-col">
             <label className="field">
               <span className="fine-print">状态</span>
-              <select
-                className="control"
+              <CustomSelect
                 value={form.status}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, status: e.target.value as SubscriptionRecord["status"] }))
-                }
-              >
-                {subscriptionStatusOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+                onChange={(v) => setForm((f) => ({ ...f, status: v as SubscriptionRecord["status"] }))}
+                options={subscriptionStatusOptions}
+              />
               <span className="field-hint">{humanizeSubscriptionStatus(form.status)}</span>
             </label>
 

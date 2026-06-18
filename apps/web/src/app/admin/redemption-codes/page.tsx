@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
+import { CustomSelect } from "@/components/custom-select";
 import { DataTable } from "@/components/data-table";
 import { Drawer } from "@/components/drawer";
 import { Panel } from "@/components/panel";
@@ -311,19 +312,14 @@ export default function AdminRedemptionCodesPage() {
           <div className="two-col">
             <label className="field">
               <span className="fine-print">类型</span>
-              <select
-                className="control"
+              <CustomSelect
                 value={form.kind}
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    kind: e.target.value as "plan" | "traffic_pack",
-                  }))
-                }
-              >
-                <option value="plan">套餐开通码</option>
-                <option value="traffic_pack">流量包兑换码</option>
-              </select>
+                onChange={(v) => setForm((f) => ({ ...f, kind: v as "plan" | "traffic_pack" }))}
+                options={[
+                  { value: "plan", label: "套餐开通码" },
+                  { value: "traffic_pack", label: "流量包兑换码" },
+                ]}
+              />
             </label>
 
             <label className="field">
@@ -344,18 +340,14 @@ export default function AdminRedemptionCodesPage() {
           {form.kind === "plan" ? (
             <label className="field">
               <span className="fine-print">绑定套餐</span>
-              <select
-                className="control"
+              <CustomSelect
                 value={form.planId}
-                onChange={(e) => setForm((f) => ({ ...f, planId: e.target.value }))}
-              >
-                <option value="">请选择套餐</option>
-                {plans.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+                onChange={(v) => setForm((f) => ({ ...f, planId: v }))}
+                options={[
+                  { value: "", label: "请选择套餐" },
+                  ...plans.map((p) => ({ value: p.id, label: p.name })),
+                ]}
+              />
             </label>
           ) : (
             <label className="field">

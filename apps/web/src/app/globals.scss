@@ -983,3 +983,70 @@ select.control {
   cursor: not-allowed;
   transform: none;
 }
+
+/* ── Custom Select ───────────────────────────────────────────────── */
+
+.custom-select {
+  position: relative;
+  width: 100%;
+}
+
+.custom-select-trigger {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.custom-select-chevron {
+  flex-shrink: 0;
+  color: var(--text-subtle);
+  transition: transform 160ms ease;
+}
+
+.custom-select.open .custom-select-chevron {
+  transform: rotate(180deg);
+}
+
+.custom-select-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  z-index: 200;
+  overflow: hidden;
+  box-shadow: 0 8px 24px -8px var(--shadow-color);
+}
+
+.custom-select-option {
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--text-body);
+  transition: background 100ms ease;
+
+  &:last-child {
+    border-bottom: 0;
+  }
+
+  &:hover {
+    background: color-mix(in srgb, var(--bg-panel-alt) 80%, transparent);
+    color: var(--text-primary);
+  }
+
+  &.active {
+    color: var(--accent-400);
+    background: var(--accent-ghost);
+  }
+}

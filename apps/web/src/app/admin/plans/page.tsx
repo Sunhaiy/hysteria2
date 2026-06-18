@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
+import { CustomSelect } from "@/components/custom-select";
 import { DataTable } from "@/components/data-table";
 import { Drawer } from "@/components/drawer";
 import { Panel } from "@/components/panel";
@@ -531,19 +532,14 @@ export default function AdminPlansPage() {
 
             {unboundNodes.length > 0 ? (
               <div className="inline-stack">
-                <select
-                  className="control"
-                  style={{ flex: 1 }}
+                <CustomSelect
                   value={newBindingNodeId}
-                  onChange={(e) => setNewBindingNodeId(e.target.value)}
-                >
-                  <option value="">选择节点...</option>
-                  {unboundNodes.map((n) => (
-                    <option key={n.id} value={n.id}>
-                      {n.label} ({n.hostname}:{n.port})
-                    </option>
-                  ))}
-                </select>
+                  onChange={setNewBindingNodeId}
+                  options={[
+                    { value: "", label: "选择节点..." },
+                    ...unboundNodes.map((n) => ({ value: n.id, label: `${n.label} (${n.hostname}:${n.port})` })),
+                  ]}
+                />
                 <button
                   className="ghost-button"
                   type="button"

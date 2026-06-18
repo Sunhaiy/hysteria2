@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
+import { CustomSelect } from "@/components/custom-select";
 import { DataTable } from "@/components/data-table";
 import { Drawer } from "@/components/drawer";
 import { Panel } from "@/components/panel";
@@ -613,33 +614,31 @@ export default function AdminUsersPage() {
           <div className="two-col">
             <label className="field">
               <span className="fine-print">角色</span>
-              <select
-                className="control"
+              <CustomSelect
                 value={form.role}
-                onChange={(e) => {
-                  const nextRole = e.target.value as "admin" | "member";
+                onChange={(v) => {
+                  const nextRole = v as "admin" | "member";
                   setForm((f) => ({ ...f, role: nextRole }));
                   if (!editingUser) syncProvisionForDraft(nextRole, plans);
                 }}
-              >
-                <option value="member">member</option>
-                <option value="admin">admin</option>
-              </select>
+                options={[
+                  { value: "member", label: "member" },
+                  { value: "admin", label: "admin" },
+                ]}
+              />
             </label>
 
             <label className="field">
               <span className="fine-print">状态</span>
-              <select
-                className="control"
+              <CustomSelect
                 value={form.status}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, status: e.target.value as UserFormState["status"] }))
-                }
-              >
-                <option value="active">active</option>
-                <option value="suspended">suspended</option>
-                <option value="banned">banned</option>
-              </select>
+                onChange={(v) => setForm((f) => ({ ...f, status: v as UserFormState["status"] }))}
+                options={[
+                  { value: "active", label: "active" },
+                  { value: "suspended", label: "suspended" },
+                  { value: "banned", label: "banned" },
+                ]}
+              />
             </label>
           </div>
 
@@ -710,36 +709,22 @@ export default function AdminUsersPage() {
                 <div className="two-col">
                   <label className="field">
                     <span className="fine-print">初始套餐</span>
-                    <select
-                      className="control"
+                    <CustomSelect
                       value={provision.planId}
-                      onChange={(e) => handleProvisionPlanChange(e.target.value)}
-                    >
-                      {plans
-                        .filter((plan) => plan.bindings.length > 0)
-                        .map((plan) => (
-                          <option key={plan.id} value={plan.id}>
-                            {plan.name}
-                          </option>
-                        ))}
-                    </select>
+                      onChange={handleProvisionPlanChange}
+                      options={plans
+                        .filter((p) => p.bindings.length > 0)
+                        .map((p) => ({ value: p.id, label: p.name }))}
+                    />
                   </label>
 
                   <label className="field">
                     <span className="fine-print">节点</span>
-                    <select
-                      className="control"
+                    <CustomSelect
                       value={provision.nodeId}
-                      onChange={(e) =>
-                        setProvision((current) => ({ ...current, nodeId: e.target.value }))
-                      }
-                    >
-                      {availableBindings.map((binding) => (
-                        <option key={binding.id} value={binding.nodeId}>
-                          {binding.nodeLabel}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(v) => setProvision((c) => ({ ...c, nodeId: v }))}
+                      options={availableBindings.map((b) => ({ value: b.nodeId, label: b.nodeLabel }))}
+                    />
                   </label>
                 </div>
               ) : null}

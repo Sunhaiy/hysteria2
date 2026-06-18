@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
+import { CustomSelect } from "@/components/custom-select";
 import { DataTable } from "@/components/data-table";
 import { Drawer } from "@/components/drawer";
 import { Panel } from "@/components/panel";
@@ -315,75 +316,65 @@ export default function AdminOrdersPage() {
         <form id="order-form" className="form-grid" onSubmit={handleSubmit}>
           <label className="field">
             <span className="fine-print">会员</span>
-            <select
-              className="control"
+            <CustomSelect
               value={form.userId}
-              onChange={(e) => setForm((f) => ({ ...f, userId: e.target.value }))}
-            >
-              <option value="">请选择会员</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.displayName} / {u.email}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => setForm((f) => ({ ...f, userId: v }))}
+              options={[
+                { value: "", label: "请选择会员" },
+                ...users.map((u) => ({ value: u.id, label: `${u.displayName} / ${u.email}` })),
+              ]}
+            />
           </label>
 
           <div className="two-col">
             <label className="field">
               <span className="fine-print">订单类型</span>
-              <select
-                className="control"
+              <CustomSelect
                 value={form.kind}
-                onChange={(e) => {
-                  const nextKind = e.target.value as typeof form.kind;
+                onChange={(v) => {
+                  const nextKind = v as typeof form.kind;
                   setForm((f) => ({ ...f, kind: nextKind, planId: nextKind === "renewal" ? f.planId : "" }));
                 }}
-              >
-                <option value="renewal">套餐 / 续期</option>
-                <option value="traffic_pack">流量包</option>
-                <option value="manual_credit">人工入账</option>
-              </select>
+                options={[
+                  { value: "renewal", label: "套餐 / 续期" },
+                  { value: "traffic_pack", label: "流量包" },
+                  { value: "manual_credit", label: "人工入账" },
+                ]}
+              />
             </label>
 
             <label className="field">
               <span className="fine-print">创建方式</span>
-              <select
-                className="control"
+              <CustomSelect
                 value={form.status}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, status: e.target.value as typeof f.status }))
-                }
-              >
-                <option value="pending">待支付订单</option>
-                <option value="applied">立即入账</option>
-              </select>
+                onChange={(v) => setForm((f) => ({ ...f, status: v as typeof f.status }))}
+                options={[
+                  { value: "pending", label: "待支付订单" },
+                  { value: "applied", label: "立即入账" },
+                ]}
+              />
             </label>
           </div>
 
           {form.kind === "renewal" ? (
             <label className="field">
               <span className="fine-print">套餐</span>
-              <select
-                className="control"
+              <CustomSelect
                 value={form.planId}
-                onChange={(e) => {
-                  const nextPlan = plans.find((p) => p.id === e.target.value) ?? null;
+                onChange={(v) => {
+                  const nextPlan = plans.find((p) => p.id === v) ?? null;
                   setForm((f) => ({
                     ...f,
-                    planId: e.target.value,
+                    planId: v,
                     amountCents: nextPlan ? nextPlan.priceCents : f.amountCents,
                     durationDays: nextPlan ? nextPlan.durationDays : f.durationDays,
                   }));
                 }}
-              >
-                <option value="">选择套餐或只录入续期天数</option>
-                {plans.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} / {formatMoney(p.priceCents)}
-                  </option>
-                ))}
-              </select>
+                options={[
+                  { value: "", label: "选择套餐或只录入续期天数" },
+                  ...plans.map((p) => ({ value: p.id, label: `${p.name} / ${formatMoney(p.priceCents)}` })),
+                ]}
+              />
             </label>
           ) : null}
 
