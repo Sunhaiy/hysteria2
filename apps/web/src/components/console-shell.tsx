@@ -79,8 +79,10 @@ export function ConsoleShell({
             <h1 className="brand-title">Hysteria 2</h1>
           </div>
           <div className="sidebar-user">
-            <span className="fine-print">当前账号</span>
-            <span className="sidebar-user-name">{session.user.displayName}</span>
+            <div>
+              <div className="sidebar-user-name">{session.user.displayName}</div>
+              <div className="fine-print">{session.user.email}</div>
+            </div>
           </div>
         </div>
 
@@ -110,10 +112,6 @@ export function ConsoleShell({
           <div>
             <h2 className="topbar-title">{title}</h2>
             <div className="topbar-subtitle">{subtitle}</div>
-          </div>
-          <div className="toolbar-actions">
-            <span className="badge success">{session.user.displayName}</span>
-            <span className="badge info mono">{session.user.email}</span>
           </div>
         </header>
         <div className="toolbar">

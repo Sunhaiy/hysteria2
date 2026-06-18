@@ -259,12 +259,10 @@ img {
 .sidebar-user {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  border: 1px solid var(--border-default);
-  background: color-mix(in srgb, var(--bg-panel-alt) 70%, transparent);
+  padding: 4px 2px;
+  border-top: 1px solid var(--border-default);
+  padding-top: 10px;
 }
 
 .sidebar-user-name {
@@ -456,11 +454,7 @@ details.field-section .field-section-body {
   top: 0;
   z-index: 10;
   min-height: var(--header-height);
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 16px;
-  padding: 12px 24px;
+  padding: 14px 24px;
   border-bottom: 1px solid var(--border-default);
   background: color-mix(in srgb, var(--bg-canvas) 92%, transparent);
   backdrop-filter: blur(16px);
@@ -675,6 +669,15 @@ details.field-section .field-section-body {
   width: 100%;
   background: var(--bg-panel-alt);
   color: var(--text-primary);
+}
+
+select.control {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 32px;
+  cursor: pointer;
 }
 
 .control:disabled {
