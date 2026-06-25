@@ -126,7 +126,7 @@ export default function AdminRedemptionCodesPage() {
           planId: form.kind === "plan" ? form.planId : undefined,
           trafficBytes: form.kind === "traffic_pack" ? form.trafficBytes : undefined,
           amountCents: form.amountCents,
-          expiresAt: fromDateTimeLocal(form.expiresAt),
+          expiresAt: form.expiresAt === "permanent" ? undefined : fromDateTimeLocal(form.expiresAt),
           note: form.note || undefined,
         },
       });
@@ -366,15 +366,25 @@ export default function AdminRedemptionCodesPage() {
           )}
 
           <div className="two-col">
-            <label className="field">
-              <span className="fine-print">失效时间（可选）</span>
+            <div className="field">
+              <span className="fine-print">失效时间</span>
               <input
                 className="control"
                 type="datetime-local"
-                value={form.expiresAt}
+                disabled={form.expiresAt === "permanent"}
+                value={form.expiresAt === "permanent" ? "" : form.expiresAt}
+                placeholder={form.expiresAt === "permanent" ? "永久有效" : ""}
                 onChange={(e) => setForm((f) => ({ ...f, expiresAt: e.target.value }))}
               />
-            </label>
+              <label className="checkbox-inline" style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={form.expiresAt === "permanent"}
+                  onChange={(e) => setForm((f) => ({ ...f, expiresAt: e.target.checked ? "permanent" : "" }))}
+                />
+                <span className="fine-print">永久有效</span>
+              </label>
+            </div>
 
             <label className="field">
               <span className="fine-print">备注（可选）</span>
