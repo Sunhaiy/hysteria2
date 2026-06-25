@@ -97,11 +97,11 @@ export class CreatePlanDto {
   durationDays!: number;
 
   @IsInt()
-  @Min(1)
+  @Min(0)
   speedUpMbps!: number;
 
   @IsInt()
-  @Min(1)
+  @Min(0)
   speedDownMbps!: number;
 
   @IsInt()
@@ -145,12 +145,12 @@ export class UpdatePlanDto {
 
   @IsOptional()
   @IsInt()
-  @Min(1)
+  @Min(0)
   speedUpMbps?: number;
 
   @IsOptional()
   @IsInt()
-  @Min(1)
+  @Min(0)
   speedDownMbps?: number;
 
   @IsOptional()
