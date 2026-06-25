@@ -15,6 +15,7 @@ import type { NodeRecord, PlanBindingRecord, PlanRecord } from "@/lib/types";
 import { slugifyValue } from "@/lib/ui";
 
 const GB = 1024 * 1024 * 1024;
+const UNLIMITED_TRAFFIC = Number.MAX_SAFE_INTEGER;
 const DRAFT_KEY = "plan";
 
 type PlanForm = {
@@ -245,6 +246,9 @@ export default function AdminPlansPage() {
     [drawerBindings, nodes],
   );
 
+  const unlimitedTraffic = form.trafficBytes >= UNLIMITED_TRAFFIC;
+  const unlimitedSpeed = form.speedUpMbps === 0 && form.speedDownMbps === 0;
+
   const planSubmitDisabled =
     saving ||
     !form.slug.trim() ||
@@ -304,8 +308,8 @@ export default function AdminPlansPage() {
                   {plan.slug} · {plan.active ? "启用中" : "已停用"}
                 </span>
               </button>,
-              formatBytes(plan.trafficBytes),
-              `${plan.speedUpMbps} / ${plan.speedDownMbps} Mbps`,
+              plan.trafficBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(plan.trafficBytes),
+              plan.speedUpMbps === 0 && plan.speedDownMbps === 0 ? "不限速" : `${plan.speedUpMbps} / ${plan.speedDownMbps} Mbps`,
               `${plan.durationDays} 天`,
               formatMoney(plan.priceCents),
               plan.boundNodes.join(" / ") || (
@@ -404,10 +408,12 @@ export default function AdminPlansPage() {
                 type="number"
                 min="1"
                 step="1"
-                value={Math.round((form.trafficBytes / GB) * 100) / 100}
+                disabled={unlimitedTraffic}
+                value={unlimitedTraffic ? "" : Math.round((form.trafficBytes / GB) * 100) / 100}
+                placeholder={unlimitedTraffic ? "无限流量" : ""}
                 onChange={(e) => set("trafficBytes", Math.round(Number(e.target.value) * GB))}
               />
-              <span className="field-hint">{formatBytes(form.trafficBytes)}</span>
+              {!unlimitedTraffic && <span className="field-hint">{formatBytes(form.trafficBytes)}</span>}
             </label>
             <label className="field">
               <span className="fine-print">周期天数</span>
@@ -420,6 +426,14 @@ export default function AdminPlansPage() {
               />
             </label>
           </div>
+          <label className="field checkbox-row">
+            <input
+              type="checkbox"
+              checked={unlimitedTraffic}
+              onChange={(e) => set("trafficBytes", e.target.checked ? UNLIMITED_TRAFFIC : 200 * GB)}
+            />
+            <span>无限流量</span>
+          </label>
 
           <div className="two-col">
             <label className="field">
@@ -427,8 +441,10 @@ export default function AdminPlansPage() {
               <input
                 className="control"
                 type="number"
-                min="1"
-                value={form.speedUpMbps}
+                min="0"
+                disabled={unlimitedSpeed}
+                value={unlimitedSpeed ? "" : form.speedUpMbps}
+                placeholder={unlimitedSpeed ? "不限速" : ""}
                 onChange={(e) => set("speedUpMbps", Number(e.target.value))}
               />
             </label>
@@ -437,12 +453,36 @@ export default function AdminPlansPage() {
               <input
                 className="control"
                 type="number"
-                min="1"
-                value={form.speedDownMbps}
+                min="0"
+                disabled={unlimitedSpeed}
+                value={unlimitedSpeed ? "" : form.speedDownMbps}
+                placeholder={unlimitedSpeed ? "不限速" : ""}
                 onChange={(e) => set("speedDownMbps", Number(e.target.value))}
               />
             </label>
           </div>
+          <label className="field checkbox-row">
+            <input
+              type="checkbox"
+              checked={unlimitedSpeed}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  setForm((f) => {
+                    const next = { ...f, speedUpMbps: 0, speedDownMbps: 0 };
+                    if (!editingPlan) saveDraft(DRAFT_KEY, next);
+                    return next;
+                  });
+                } else {
+                  setForm((f) => {
+                    const next = { ...f, speedUpMbps: 20, speedDownMbps: 120 };
+                    if (!editingPlan) saveDraft(DRAFT_KEY, next);
+                    return next;
+                  });
+                }
+              }}
+            />
+            <span>不限制速率</span>
+          </label>
 
           <div className="two-col">
             <label className="field">
