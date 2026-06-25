@@ -1018,9 +1018,9 @@ select.control {
     align-content: start;
     grid-template-rows: auto 1fr auto;
     gap: 24px;
-    background: color-mix(in srgb, var(--bg-canvas) 70%, transparent);
-    backdrop-filter: saturate(160%) blur(28px);
-    -webkit-backdrop-filter: saturate(160%) blur(28px);
+    background: color-mix(in srgb, var(--bg-canvas) 62%, transparent);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
     border-right: none;
     border-bottom: none;
     animation: mobile-nav-open 180ms ease-out;
