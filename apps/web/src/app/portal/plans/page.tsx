@@ -8,6 +8,8 @@ import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { portalNav } from "@/lib/copy";
 import { formatBytes, formatMoney } from "@/lib/format";
+
+const UNLIMITED_TRAFFIC = Number.MAX_SAFE_INTEGER;
 import type { ManualOrderRecord, PlanRecord, PortalOverviewResponse } from "@/lib/types";
 
 export default function PortalPlansPage() {
@@ -168,7 +170,7 @@ export default function PortalPlansPage() {
                 </div>
                 <div className="split align-end">
                   <div className="price-line">{formatMoney(plan.priceCents)}</div>
-                  <span className="fine-print">{plan.durationDays} 天 / {formatBytes(plan.trafficBytes)}</span>
+                  <span className="fine-print">{plan.durationDays} 天 / {plan.trafficBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(plan.trafficBytes)}</span>
                 </div>
               </div>
 
@@ -176,11 +178,11 @@ export default function PortalPlansPage() {
                 <div className="tri-grid">
                   <div className="split">
                     <span className="muted">上行</span>
-                    <strong>{plan.speedUpMbps} Mbps</strong>
+                    <strong>{plan.speedUpMbps === 0 ? "不限速" : `${plan.speedUpMbps} Mbps`}</strong>
                   </div>
                   <div className="split">
                     <span className="muted">下行</span>
-                    <strong>{plan.speedDownMbps} Mbps</strong>
+                    <strong>{plan.speedDownMbps === 0 ? "不限速" : `${plan.speedDownMbps} Mbps`}</strong>
                   </div>
                   <div className="split">
                     <span className="muted">设备数</span>
@@ -195,7 +197,7 @@ export default function PortalPlansPage() {
                   </div>
                   <div className="list-row">
                     <span className="muted">周期流量</span>
-                    <strong>{formatBytes(plan.trafficBytes)}</strong>
+                    <strong>{plan.trafficBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(plan.trafficBytes)}</strong>
                   </div>
                   <div className="list-row">
                     <span className="muted">交付方式</span>
