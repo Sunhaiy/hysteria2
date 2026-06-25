@@ -7,8 +7,10 @@ import { Icon } from "./icon";
 
 export function SidebarNav({
   items,
+  onNavigate,
 }: {
   items: NavItem[];
+  onNavigate?: () => void;
 }) {
   const pathname = usePathname();
   return (
@@ -17,7 +19,12 @@ export function SidebarNav({
       {items.map((item) => {
         const active = pathname === item.href;
         return (
-          <Link key={item.href} href={item.href} className={`nav-link${active ? " active" : ""}`}>
+          <Link
+            key={item.href}
+            href={item.href}
+            className={`nav-link${active ? " active" : ""}`}
+            onClick={onNavigate}
+          >
             <Icon name={item.icon} />
             <span className="nav-link-title">{item.label}</span>
             <span className="fine-print mono nav-link-meta">{item.meta}</span>

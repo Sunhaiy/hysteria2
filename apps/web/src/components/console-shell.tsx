@@ -64,18 +64,27 @@ export function ConsoleShell({
 
   return (
     <div className="app-shell">
+      {mobileNavOpen && (
+        <div
+          className="mobile-nav-backdrop"
+          onClick={() => setMobileNavOpen(false)}
+        />
+      )}
+
       <aside className={`sidebar${mobileNavOpen ? " open" : ""}`}>
         <div className="sidebar-header">
-          <button
-            type="button"
-            className="toolbar-button mobile-nav-toggle"
-            onClick={() => setMobileNavOpen((value) => !value)}
-          >
-            <Icon name="menu" />
-            <span>{mobileNavOpen ? "收起导航" : "打开导航"}</span>
-          </button>
-          <div className="brand-lockup">
-            <h1 className="brand-title">Hysteria 2</h1>
+          <div className="sidebar-brand-row">
+            <div className="brand-lockup">
+              <h1 className="brand-title">Hysteria 2</h1>
+            </div>
+            <button
+              type="button"
+              className="mobile-nav-toggle"
+              aria-label={mobileNavOpen ? "收起导航" : "打开导航"}
+              onClick={() => setMobileNavOpen((value) => !value)}
+            >
+              <Icon name={mobileNavOpen ? "close" : "menu"} />
+            </button>
           </div>
           <div className="sidebar-user">
             <div>
@@ -85,10 +94,10 @@ export function ConsoleShell({
           </div>
         </div>
 
-        <SidebarNav items={navItems} />
+        <SidebarNav items={navItems} onNavigate={() => setMobileNavOpen(false)} />
 
         <div className="sidebar-footer">
-          <Link href="/" className="ghost-button">
+          <Link href="/" className="ghost-button" onClick={() => setMobileNavOpen(false)}>
             <Icon name="home" />
             <span>返回入口</span>
           </Link>
