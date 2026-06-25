@@ -1304,6 +1304,7 @@ export class ControlPlaneStoreService {
 
   async createRedemptionCode(input: {
     label: string;
+    code?: string;
     kind: 'plan' | 'traffic_pack';
     planId?: string;
     trafficBytes?: number;
@@ -1333,10 +1334,18 @@ export class ControlPlaneStoreService {
       throw new BadRequestException('Invalid expiresAt');
     }
 
+    if (input.code) {
+      const exists = await this.prisma.redemptionCode.findUnique({
+        where: { code: input.code },
+        select: { id: true },
+      });
+      if (exists) throw new ConflictException(`Redemption code "${input.code}" already exists`);
+    }
+
     try {
       const code = await this.prisma.redemptionCode.create({
         data: {
-          code: await this.generateUniqueRedemptionCode(),
+          code: input.code ?? await this.generateUniqueRedemptionCode(),
           label: input.label,
           kind: this.toDbRedemptionCodeKind(input.kind),
           planId: input.planId,

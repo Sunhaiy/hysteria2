@@ -398,6 +398,11 @@ export class CreateRedemptionCodeDto {
   @IsNotEmpty()
   label!: string;
 
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  code?: string;
+
   @IsIn(['plan', 'traffic_pack'])
   kind!: 'plan' | 'traffic_pack';
 

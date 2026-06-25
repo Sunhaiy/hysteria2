@@ -34,6 +34,7 @@ export class RedemptionCodesController {
   ) {
     return this.store.createRedemptionCode({
       label: body.label,
+      code: body.code,
       kind: body.kind,
       planId: body.planId,
       trafficBytes: body.trafficBytes,

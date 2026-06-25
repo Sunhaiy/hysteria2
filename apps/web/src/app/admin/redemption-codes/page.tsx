@@ -25,6 +25,7 @@ const GB = 1024 * 1024 * 1024;
 function emptyForm(planId = "") {
   return {
     label: "",
+    customCode: "",
     kind: "plan" as "plan" | "traffic_pack",
     planId,
     trafficBytes: 50 * GB,
@@ -123,6 +124,7 @@ export default function AdminRedemptionCodesPage() {
         token,
         body: {
           label: form.label,
+          code: form.customCode.trim() || undefined,
           kind: form.kind,
           planId: form.kind === "plan" ? form.planId : undefined,
           trafficBytes: form.kind === "traffic_pack" ? form.trafficBytes : undefined,
@@ -299,16 +301,27 @@ export default function AdminRedemptionCodesPage() {
         ) : null}
 
         <form id="code-form" className="form-grid" onSubmit={handleSubmit}>
-          <label className="field">
-            <span className="fine-print">标签</span>
-            <input
-              className="control"
-              value={form.label}
-              onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
-              placeholder="例如：Core 200 月卡 / 50GB 补量包"
-              required
-            />
-          </label>
+          <div className="two-col">
+            <label className="field">
+              <span className="fine-print">标签</span>
+              <input
+                className="control"
+                value={form.label}
+                onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
+                placeholder="例如：Core 200 月卡 / 50GB 补量包"
+                required
+              />
+            </label>
+            <label className="field">
+              <span className="fine-print">自定义兑换码（可选）</span>
+              <input
+                className="control mono"
+                value={form.customCode}
+                onChange={(e) => setForm((f) => ({ ...f, customCode: e.target.value }))}
+                placeholder="留空则自动生成"
+              />
+            </label>
+          </div>
 
           <div className="two-col">
             <label className="field">
