@@ -171,10 +171,6 @@ export default function PortalPlansPage() {
                     <span className="muted">周期流量</span>
                     <strong>{plan.trafficBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(plan.trafficBytes)}</strong>
                   </div>
-                  <div className="list-row">
-                    <span className="muted">交付方式</span>
-                    <strong>到账后自动生成专属链接</strong>
-                  </div>
                 </div>
 
                 <div className="toolbar-actions">

@@ -924,6 +924,14 @@ select.control {
   .tri-grid {
     grid-template-columns: 1fr;
   }
+
+  .plan-card .tri-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .chart-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 920px) {
@@ -975,6 +983,31 @@ select.control {
 
   .two-col {
     grid-template-columns: 1fr;
+  }
+
+  .plan-card-head {
+    padding: 12px;
+  }
+
+  .price-line {
+    font-size: 18px;
+  }
+
+  .plan-card .panel-body {
+    padding: 12px;
+    gap: 10px;
+  }
+
+  .chart-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    padding: 14px 16px 12px;
+  }
+
+  .topbar-subtitle {
+    display: none;
   }
 }
 

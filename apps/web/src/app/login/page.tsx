@@ -98,32 +98,8 @@ function LoginPageBody() {
               <button className="action-button" type="submit" disabled={submitting}>
                 {submitting ? "登录中..." : "登录"}
               </button>
-              <button
-                type="button"
-                className="ghost-button"
-                onClick={() => {
-                  setEmail("ops@hysteria.local");
-                  setPassword("admin123!");
-                }}
-              >
-                填充管理员示例
-              </button>
-              <button
-                type="button"
-                className="ghost-button"
-                onClick={() => {
-                  setEmail("lin@example.com");
-                  setPassword("member123!");
-                }}
-              >
-                填充会员示例
-              </button>
             </div>
           </form>
-          <div className="list">
-            <span className="fine-print mono">{homeCopy.adminHint}</span>
-            <span className="fine-print mono">{homeCopy.memberHint}</span>
-          </div>
         </div>
       </section>
     </main>
