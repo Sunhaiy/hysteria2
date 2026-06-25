@@ -87,6 +87,17 @@ export default function PortalPage() {
     >
       {error ? <div className="feedback error">{error}</div> : null}
 
+      {!overview && !emptyState && !error ? (
+        <>
+          <div className="skeleton-metrics">
+            {Array.from({ length: 4 }, (_, i) => <div key={i} className="skeleton skeleton-metric" />)}
+          </div>
+          <div className="skeleton-rows" style={{ marginTop: 16 }}>
+            {Array.from({ length: 4 }, (_, i) => <div key={i} className="skeleton skeleton-row" />)}
+          </div>
+        </>
+      ) : null}
+
       {overview ? (
         <>
           <section className="metric-grid">

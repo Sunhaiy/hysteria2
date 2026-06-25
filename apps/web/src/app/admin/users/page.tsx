@@ -13,12 +13,17 @@ import { adminNav } from "@/lib/copy";
 import { clearDraft, getDraft, saveDraft } from "@/lib/draft";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import { copyToClipboard } from "@/lib/clipboard";
+import { Toast, useToast } from "@/components/toast";
 import type {
   AdminCreateUserResponse,
   AdminUser,
   AdminUserAccessResponse,
   PlanRecord,
+  SubscriptionRecord,
+  UsageRollupRecord,
 } from "@/lib/types";
+
+const UNLIMITED_TRAFFIC = Number.MAX_SAFE_INTEGER;
 import { statusTone } from "@/lib/ui";
 
 const DRAFT_KEY = "user";
@@ -122,6 +127,12 @@ export default function AdminUsersPage() {
   const [drawerError, setDrawerError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [deliveryError, setDeliveryError] = useState<string | null>(null);
+  const { toast, showToast } = useToast();
+  const [statsDrawerOpen, setStatsDrawerOpen] = useState(false);
+  const [statsUser, setStatsUser] = useState<AdminUser | null>(null);
+  const [statsSubscription, setStatsSubscription] = useState<SubscriptionRecord | null>(null);
+  const [statsUsage, setStatsUsage] = useState<UsageRollupRecord[]>([]);
+  const [loadingStats, setLoadingStats] = useState(false);
 
   const syncProvisionForDraft = useCallback(
     (nextRole: UserFormState["role"], nextPlans: PlanRecord[]) => {
@@ -255,9 +266,30 @@ export default function AdminUsersPage() {
   async function copyText(value: string) {
     try {
       await copyToClipboard(value);
-      setFeedback({ msg: "已复制到剪贴板。", kind: "success" });
+      showToast("已复制到剪贴板");
     } catch {
-      setFeedback({ msg: "复制失败，请手动复制。", kind: "error" });
+      showToast("复制失败，请手动复制", "error");
+    }
+  }
+
+  async function openStats(user: AdminUser) {
+    setStatsUser(user);
+    setStatsDrawerOpen(true);
+    setStatsSubscription(null);
+    setStatsUsage([]);
+    if (!token) return;
+    setLoadingStats(true);
+    try {
+      const [sub, usage] = await Promise.all([
+        apiRequest<SubscriptionRecord | null>(`/api/admin/users/${user.id}/subscription`, { token }),
+        apiRequest<UsageRollupRecord[]>(`/api/admin/users/${user.id}/usage`, { token }),
+      ]);
+      setStatsSubscription(sub);
+      setStatsUsage(usage);
+    } catch {
+      // keep empty
+    } finally {
+      setLoadingStats(false);
     }
   }
 
@@ -390,6 +422,7 @@ export default function AdminUsersPage() {
         </>
       }
     >
+      <Toast toast={toast} />
       {feedback ? <div className={`feedback ${feedback.kind}`}>{feedback.msg}</div> : null}
 
       <Panel
@@ -428,6 +461,13 @@ export default function AdminUsersPage() {
                 ? formatDateTime(user.primaryAccessTokenLastUsedAt)
                 : "从未使用",
               <div key={`${user.id}-action`} className="table-actions">
+                <button
+                  className="ghost-button compact"
+                  type="button"
+                  onClick={() => void openStats(user)}
+                >
+                  流量
+                </button>
                 <button
                   className="ghost-button compact"
                   type="button"
@@ -747,6 +787,73 @@ export default function AdminUsersPage() {
             {deliveryError ? <div className="feedback warn">{deliveryError}</div> : null}
           </div>
         ) : null}
+      </Drawer>
+
+      <Drawer
+        open={statsDrawerOpen}
+        onClose={() => setStatsDrawerOpen(false)}
+        title={statsUser ? `流量详情：${statsUser.displayName}` : "流量详情"}
+        subtitle={statsUser?.email}
+      >
+        {loadingStats ? (
+          <div className="skeleton-rows">
+            {Array.from({ length: 4 }, (_, i) => <div key={i} className="skeleton skeleton-row" />)}
+          </div>
+        ) : statsSubscription ? (
+          <div className="page-stack">
+            <div className="kpi-list">
+              <div className="list-row">
+                <span className="muted">套餐</span>
+                <strong>{statsSubscription.planName}</strong>
+              </div>
+              <div className="list-row">
+                <span className="muted">状态</span>
+                <span className={`badge ${statsSubscription.status === "active" ? "success" : "warn"}`}>
+                  {statsSubscription.status}
+                </span>
+              </div>
+              <div className="list-row">
+                <span className="muted">已用流量</span>
+                <strong>{formatBytes(statsSubscription.consumedTrafficBytes)}</strong>
+              </div>
+              <div className="list-row">
+                <span className="muted">剩余流量</span>
+                <strong>{statsSubscription.trafficRemainingBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(statsSubscription.trafficRemainingBytes)}</strong>
+              </div>
+              <div className="list-row">
+                <span className="muted">总配额</span>
+                <strong>{statsSubscription.includedTrafficBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(statsSubscription.includedTrafficBytes)}</strong>
+              </div>
+              <div className="list-row">
+                <span className="muted">到期时间</span>
+                <strong>{formatDateTime(statsSubscription.endsAt)}</strong>
+              </div>
+              <div className="list-row">
+                <span className="muted">节点</span>
+                <strong>{statsSubscription.nodeLabel}</strong>
+              </div>
+            </div>
+
+            {statsUsage.length > 0 ? (
+              <div>
+                <div className="fine-print" style={{ marginBottom: 8 }}>最近流量记录</div>
+                <DataTable
+                  headers={["节点", "上传", "下载", "时间"]}
+                  rows={statsUsage.slice(0, 15).map((r) => [
+                    r.nodeLabel,
+                    formatBytes(r.txBytes),
+                    formatBytes(r.rxBytes),
+                    formatDateTime(r.bucketStart),
+                  ])}
+                />
+              </div>
+            ) : (
+              <div className="fine-print">暂无流量记录。</div>
+            )}
+          </div>
+        ) : (
+          <div className="fine-print">该用户还没有订阅记录。</div>
+        )}
       </Drawer>
     </ConsoleShell>
   );

@@ -1529,6 +1529,37 @@ export class ControlPlaneStoreService {
     }));
   }
 
+  async getUserSubscription(userId: string) {
+    const sub = await this.prisma.subscription.findFirst({
+      where: { userId },
+      include: { user: true, plan: true, node: true, trafficPacks: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return sub ? this.presentSubscription(sub) : null;
+  }
+
+  async getUsageRollupsByUser(userId: string, limit = 30) {
+    const rollups = await this.prisma.usageRollup.findMany({
+      where: { userId },
+      include: { user: true, node: true },
+      orderBy: { bucketStart: 'desc' },
+      take: limit,
+    });
+    return rollups.map((rollup) => ({
+      id: rollup.id,
+      userId: rollup.userId,
+      userEmail: rollup.user.email,
+      subscriptionId: rollup.subscriptionId,
+      nodeId: rollup.nodeId,
+      nodeLabel: rollup.node.label,
+      bucketStart: rollup.bucketStart.toISOString(),
+      txBytes: Number(rollup.txBytes),
+      rxBytes: Number(rollup.rxBytes),
+      source: rollup.source,
+      createdAt: rollup.createdAt.toISOString(),
+    }));
+  }
+
   async getCurrentSessions(limit = 50) {
     const snapshots = await this.prisma.onlineSnapshot.findMany({
       include: { user: true, node: true },

@@ -74,6 +74,16 @@ export class AdminUsersController {
     return this.portalService.getAccess(id);
   }
 
+  @Get(':id/subscription')
+  getUserSubscription(@Param('id') id: string) {
+    return this.store.getUserSubscription(id);
+  }
+
+  @Get(':id/usage')
+  getUserUsage(@Param('id') id: string) {
+    return this.store.getUsageRollupsByUser(id);
+  }
+
   @Post(':id/kick')
   kickUser(
     @Param('id') id: string,

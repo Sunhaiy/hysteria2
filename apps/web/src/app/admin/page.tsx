@@ -70,6 +70,9 @@ export default function AdminDashboardPage() {
   const restrictedUsers = users.filter((item) => item.status !== "active");
   const activeNodes = nodes.filter((item) => item.active);
   const totalConcurrent = nodes.reduce((sum, node) => sum + node.concurrentUsers, 0);
+  const passEvents = authEvents.filter((e) => e.granted).length;
+  const blockEvents = authEvents.filter((e) => !e.granted).length;
+  const maxConcurrent = Math.max(...nodes.map((n) => n.concurrentUsers), 1);
 
   return (
     <ConsoleShell
@@ -98,6 +101,71 @@ export default function AdminDashboardPage() {
         <MetricCard label="节点并发" value={String(totalConcurrent)} footnote="来自最近一次 online snapshot" />
         <MetricCard label="可售套餐" value={String(plans.filter((plan) => plan.active).length)} footnote="已启用套餐数" />
         <MetricCard label="受限用户" value={String(restrictedUsers.length)} footnote="暂停、封禁或已失效账号" />
+      </section>
+
+      <section className="chart-grid">
+        <Panel title="节点并发分布" copy="每节点当前在线客户端数量。">
+          <div className="bar-chart">
+            {nodes.length === 0 ? <span className="fine-print">暂无节点数据</span> : nodes.map((node) => (
+              <div key={node.id} className="bar-row">
+                <span className="bar-label">{node.label}</span>
+                <div className="bar-track">
+                  <div
+                    className="bar-fill"
+                    style={{ width: `${Math.round((node.concurrentUsers / maxConcurrent) * 100)}%` }}
+                  />
+                </div>
+                <span className="bar-value">{node.concurrentUsers}</span>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="订阅状态分布" copy="各状态订阅数量占比。">
+          <div className="bar-chart">
+            {[
+              { label: "活跃", count: activeSubscriptions.length, cls: "bar-fill-success" },
+              { label: "过期", count: subscriptions.filter((s) => s.status === "expired").length, cls: "bar-fill-warn" },
+              { label: "暂停", count: subscriptions.filter((s) => s.status === "paused").length, cls: "bar-fill-info" },
+            ].map(({ label, count, cls }) => (
+              <div key={label} className="bar-row">
+                <span className="bar-label">{label}</span>
+                <div className="bar-track">
+                  <div
+                    className={`bar-fill ${cls}`}
+                    style={{ width: subscriptions.length ? `${Math.round((count / subscriptions.length) * 100)}%` : "0%" }}
+                  />
+                </div>
+                <span className="bar-value">{count}</span>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="鉴权事件" copy={`最近 ${authEvents.length} 条鉴权记录通过率。`}>
+          <div className="bar-chart">
+            <div className="bar-row">
+              <span className="bar-label">通过</span>
+              <div className="bar-track">
+                <div
+                  className="bar-fill bar-fill-success"
+                  style={{ width: authEvents.length ? `${Math.round((passEvents / authEvents.length) * 100)}%` : "0%" }}
+                />
+              </div>
+              <span className="bar-value">{passEvents}</span>
+            </div>
+            <div className="bar-row">
+              <span className="bar-label">拦截</span>
+              <div className="bar-track">
+                <div
+                  className="bar-fill bar-fill-danger"
+                  style={{ width: authEvents.length ? `${Math.round((blockEvents / authEvents.length) * 100)}%` : "0%" }}
+                />
+              </div>
+              <span className="bar-value">{blockEvents}</span>
+            </div>
+          </div>
+        </Panel>
       </section>
 
       <section className="workspace-grid">

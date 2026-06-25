@@ -10,14 +10,15 @@ import { apiRequest, ApiError } from "@/lib/api";
 import { portalNav } from "@/lib/copy";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import { copyToClipboard } from "@/lib/clipboard";
+import { Toast, useToast } from "@/components/toast";
 import type { PortalAccessResponse } from "@/lib/types";
 
 export default function PortalAccessPage() {
   const { token } = useAuth();
   const [access, setAccess] = useState<PortalAccessResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
   const [emptyState, setEmptyState] = useState(false);
+  const { toast, showToast } = useToast();
 
   const load = useCallback(async () => {
     if (!token) {
@@ -50,9 +51,9 @@ export default function PortalAccessPage() {
   async function copyText(value: string) {
     try {
       await copyToClipboard(value);
-      setFeedback("已复制到剪贴板。");
+      showToast("已复制到剪贴板");
     } catch {
-      setFeedback("复制失败，请手动复制。");
+      showToast("复制失败，请手动复制", "error");
     }
   }
 
@@ -66,8 +67,8 @@ export default function PortalAccessPage() {
       toolbarMeta={access ? <span className="badge success">{access.nodeLabel}</span> : null}
       toolbarActions={<button className="toolbar-button" type="button" onClick={() => void load()}>刷新</button>}
     >
+      <Toast toast={toast} />
       {error ? <div className="feedback error">{error}</div> : null}
-      {feedback ? <div className="feedback success">{feedback}</div> : null}
 
       {access ? (
         <section className="workspace-grid">

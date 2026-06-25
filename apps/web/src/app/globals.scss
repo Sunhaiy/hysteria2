@@ -738,6 +738,39 @@ select.control {
   background: color-mix(in srgb, var(--status-redirect) 10%, transparent);
 }
 
+.toast {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  padding: 10px 20px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  font-size: var(--text-tiny);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: toast-in 180ms ease;
+  backdrop-filter: blur(8px);
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.toast-success {
+  border-color: color-mix(in srgb, var(--status-success) 40%, transparent);
+  color: var(--status-success);
+  background: color-mix(in srgb, var(--status-success) 12%, var(--bg-panel));
+}
+
+.toast-error {
+  border-color: color-mix(in srgb, var(--status-critical) 40%, transparent);
+  color: var(--status-critical);
+  background: color-mix(in srgb, var(--status-critical) 12%, var(--bg-panel));
+}
+
 .field-inline-actions {
   display: flex;
   flex-wrap: wrap;
@@ -777,6 +810,73 @@ select.control {
   height: 100%;
   border-radius: inherit;
   background: linear-gradient(90deg, var(--accent-400), var(--accent-500));
+}
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 0;
+}
+
+.bar-chart {
+  display: grid;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 36px;
+  align-items: center;
+  gap: 10px;
+}
+
+.bar-label {
+  font-size: var(--text-tiny);
+  color: var(--text-muted);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bar-value {
+  font-size: var(--text-tiny);
+  color: var(--text-subtle);
+  text-align: right;
+}
+
+.bar-track {
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border-default);
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent-400), var(--accent-500));
+  transition: width 400ms ease;
+  min-width: 2px;
+}
+
+.bar-fill-success {
+  background: linear-gradient(90deg, var(--status-success), color-mix(in srgb, var(--status-success) 60%, var(--accent-400)));
+}
+
+.bar-fill-warn {
+  background: linear-gradient(90deg, var(--status-redirect), color-mix(in srgb, var(--status-redirect) 60%, var(--accent-400)));
+}
+
+.bar-fill-danger {
+  background: linear-gradient(90deg, var(--status-critical), color-mix(in srgb, var(--status-critical) 60%, var(--accent-400)));
+}
+
+.bar-fill-info {
+  background: linear-gradient(90deg, var(--status-info), color-mix(in srgb, var(--status-info) 60%, var(--accent-400)));
 }
 
 .qr-card {

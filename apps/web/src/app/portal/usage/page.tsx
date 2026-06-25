@@ -10,6 +10,8 @@ import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { portalNav } from "@/lib/copy";
 import { formatBytes, formatDateTime } from "@/lib/format";
+
+const UNLIMITED_TRAFFIC = Number.MAX_SAFE_INTEGER;
 import type { PortalUsageResponse } from "@/lib/types";
 
 export default function PortalUsagePage() {
@@ -58,13 +60,24 @@ export default function PortalUsagePage() {
     >
       {error ? <div className="feedback error">{error}</div> : null}
 
+      {!usage && !emptyState && !error ? (
+        <>
+          <div className="skeleton-metrics">
+            {Array.from({ length: 4 }, (_, i) => <div key={i} className="skeleton skeleton-metric" />)}
+          </div>
+          <div className="skeleton-rows" style={{ marginTop: 16 }}>
+            {Array.from({ length: 5 }, (_, i) => <div key={i} className="skeleton skeleton-row" />)}
+          </div>
+        </>
+      ) : null}
+
       {usage ? (
         <>
           <section className="metric-grid">
             <MetricCard label="已用流量" value={formatBytes(usage.consumedBytes)} footnote="基础套餐已消耗部分" />
-            <MetricCard label="基础剩余" value={formatBytes(usage.baseRemainingBytes)} footnote="先从基础额度扣减" />
+            <MetricCard label="基础剩余" value={usage.baseRemainingBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(usage.baseRemainingBytes)} footnote="先从基础额度扣减" />
             <MetricCard label="流量包剩余" value={formatBytes(usage.packRemainingBytes)} footnote="额外叠加权益" />
-            <MetricCard label="总剩余" value={formatBytes(usage.totalRemainingBytes)} footnote="鉴权时按这个值决定是否允许接入" />
+            <MetricCard label="总剩余" value={usage.totalRemainingBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(usage.totalRemainingBytes)} footnote="鉴权时按这个值决定是否允许接入" />
           </section>
 
           <Panel title="最近同步记录" copy="以下为最近写入数据库的流量桶，不在前端本地计算。">

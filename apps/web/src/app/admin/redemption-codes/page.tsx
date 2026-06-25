@@ -12,6 +12,7 @@ import { adminNav } from "@/lib/copy";
 import { clearDraft, getDraft } from "@/lib/draft";
 import { formatBytes, formatDateTime, formatMoney } from "@/lib/format";
 import { copyToClipboard } from "@/lib/clipboard";
+import { Toast, useToast } from "@/components/toast";
 import type { PlanRecord, RedemptionCodeRecord } from "@/lib/types";
 import {
   fromDateTimeLocal,
@@ -47,6 +48,7 @@ export default function AdminRedemptionCodesPage() {
   const [submitting, setSubmitting] = useState(false);
   const [drawerError, setDrawerError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ msg: string; kind: "success" | "error" } | null>(null);
+  const { toast, showToast } = useToast();
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -74,9 +76,9 @@ export default function AdminRedemptionCodesPage() {
   async function copyText(value: string) {
     try {
       await copyToClipboard(value);
-      setFeedback({ msg: "已复制到剪贴板。", kind: "success" });
+      showToast("已复制到剪贴板");
     } catch {
-      setFeedback({ msg: "复制失败，请手动复制。", kind: "error" });
+      showToast("复制失败，请手动复制", "error");
     }
   }
 
@@ -194,6 +196,7 @@ export default function AdminRedemptionCodesPage() {
         </>
       }
     >
+      <Toast toast={toast} />
       {feedback ? <div className={`feedback ${feedback.kind}`}>{feedback.msg}</div> : null}
 
       <Panel

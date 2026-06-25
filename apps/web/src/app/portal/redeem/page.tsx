@@ -9,6 +9,7 @@ import { apiRequest, ApiError } from "@/lib/api";
 import { portalNav } from "@/lib/copy";
 import { formatBytes, formatDateTime, formatMoney } from "@/lib/format";
 import { copyToClipboard } from "@/lib/clipboard";
+import { Toast, useToast } from "@/components/toast";
 import type { PortalRedeemResponse } from "@/lib/types";
 import { humanizeOrderKind, humanizeRedemptionKind } from "@/lib/ui";
 
@@ -19,13 +20,14 @@ export default function PortalRedeemPage() {
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [result, setResult] = useState<PortalRedeemResponse | null>(null);
+  const { toast, showToast } = useToast();
 
   async function copyText(value: string) {
     try {
       await copyToClipboard(value);
-      setFeedback("已复制到剪贴板。");
+      showToast("已复制到剪贴板");
     } catch {
-      setFeedback("复制失败，请手动复制。");
+      showToast("复制失败，请手动复制", "error");
     }
   }
 
@@ -73,6 +75,7 @@ export default function PortalRedeemPage() {
         ) : null
       }
     >
+      <Toast toast={toast} />
       {error ? <div className="feedback error">{error}</div> : null}
       {feedback ? <div className="feedback success">{feedback}</div> : null}
 
