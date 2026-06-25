@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { Panel } from "@/components/panel";
@@ -19,7 +18,6 @@ export default function PortalPlansPage() {
   const [overview, setOverview] = useState<PortalOverviewResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [submittingPlanId, setSubmittingPlanId] = useState<string | null>(null);
-  const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
 
@@ -80,11 +78,9 @@ export default function PortalPlansPage() {
         token,
         body: {
           planId: plan.id,
-          note: note || undefined,
         },
       });
       setFeedback(`已提交 ${plan.name} 的开通申请，等待后台确认到账。`);
-      setNote("");
       await load();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "套餐申请提交失败。");
@@ -129,31 +125,6 @@ export default function PortalPlansPage() {
           后台确认到账前，暂不建议重复提交。
         </div>
       ) : null}
-
-      <Panel
-        title="下单说明"
-        copy="这里提交的是待支付订单，不会立刻生效。管理员确认到账后，套餐、带宽、节点组和专属接入信息会同步更新。"
-      >
-        <div className="form-grid">
-          <label className="field">
-            <span className="fine-print">订单备注</span>
-            <textarea
-              className="control textarea"
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-              placeholder="可填写付款渠道、备注名或希望客服看到的信息"
-            />
-          </label>
-          <div className="toolbar-actions">
-            <Link className="ghost-button" href="/portal/orders">
-              查看订单记录
-            </Link>
-            <Link className="ghost-button" href="/portal/access">
-              查看接入信息
-            </Link>
-          </div>
-        </div>
-      </Panel>
 
       <section className="plan-grid">
         {plans.map((plan) => {

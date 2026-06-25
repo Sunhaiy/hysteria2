@@ -9,6 +9,8 @@ import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { portalNav } from "@/lib/copy";
 import { formatBytes, formatDateTime, formatPercent } from "@/lib/format";
+
+const UNLIMITED_TRAFFIC = Number.MAX_SAFE_INTEGER;
 import type { PortalOverviewResponse } from "@/lib/types";
 
 export default function PortalPage() {
@@ -90,7 +92,7 @@ export default function PortalPage() {
           <section className="metric-grid">
             <MetricCard
               label="剩余总流量"
-              value={formatBytes(overview.remainingBytes)}
+              value={overview.remainingBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(overview.remainingBytes)}
               footnote="含基础套餐和流量包叠加"
             />
             <MetricCard
@@ -115,22 +117,22 @@ export default function PortalPage() {
               <div className="usage-grid">
                 <div className="split">
                   <span className="muted">总配额</span>
-                  <strong>{formatBytes(totalQuota)}</strong>
+                  <strong>{totalQuota >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(totalQuota)}</strong>
                 </div>
                 <div className="split">
                   <span className="muted">剩余配额</span>
-                  <strong>{formatBytes(overview.remainingBytes)}</strong>
+                  <strong>{overview.remainingBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(overview.remainingBytes)}</strong>
                 </div>
                 <div className="split">
                   <span className="muted">使用率</span>
-                  <strong>{formatPercent(totalQuota - overview.remainingBytes, totalQuota)}</strong>
+                  <strong>{totalQuota >= UNLIMITED_TRAFFIC ? "无限制" : formatPercent(totalQuota - overview.remainingBytes, totalQuota)}</strong>
                 </div>
               </div>
               <div className="usage-bar">
                 <div
                   className="usage-fill"
                   style={{
-                    width: formatPercent(totalQuota - overview.remainingBytes, totalQuota),
+                    width: totalQuota >= UNLIMITED_TRAFFIC ? "0%" : formatPercent(totalQuota - overview.remainingBytes, totalQuota),
                   }}
                 />
               </div>
