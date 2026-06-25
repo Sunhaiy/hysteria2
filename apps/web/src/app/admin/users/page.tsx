@@ -12,6 +12,7 @@ import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
 import { clearDraft, getDraft, saveDraft } from "@/lib/draft";
 import { formatBytes, formatDateTime } from "@/lib/format";
+import { copyToClipboard } from "@/lib/clipboard";
 import type {
   AdminCreateUserResponse,
   AdminUser,
@@ -253,7 +254,7 @@ export default function AdminUsersPage() {
 
   async function copyText(value: string) {
     try {
-      await navigator.clipboard.writeText(value);
+      await copyToClipboard(value);
       setFeedback({ msg: "已复制到剪贴板。", kind: "success" });
     } catch {
       setFeedback({ msg: "复制失败，请手动复制。", kind: "error" });

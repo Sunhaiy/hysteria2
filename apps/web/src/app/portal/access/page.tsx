@@ -9,6 +9,7 @@ import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { portalNav } from "@/lib/copy";
 import { formatBytes, formatDateTime } from "@/lib/format";
+import { copyToClipboard } from "@/lib/clipboard";
 import type { PortalAccessResponse } from "@/lib/types";
 
 export default function PortalAccessPage() {
@@ -48,7 +49,7 @@ export default function PortalAccessPage() {
 
   async function copyText(value: string) {
     try {
-      await navigator.clipboard.writeText(value);
+      await copyToClipboard(value);
       setFeedback("已复制到剪贴板。");
     } catch {
       setFeedback("复制失败，请手动复制。");
