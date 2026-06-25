@@ -940,7 +940,9 @@ select.control {
   }
 
   .sidebar {
-    position: relative;
+    position: sticky;
+    top: 0;
+    z-index: 40;
     height: auto;
     padding: 12px 16px;
     grid-template-rows: auto;
