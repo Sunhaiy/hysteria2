@@ -75,7 +75,6 @@ export function ConsoleShell({
             <span>{mobileNavOpen ? "收起导航" : "打开导航"}</span>
           </button>
           <div className="brand-lockup">
-            <span className="scope-chip">{scope}</span>
             <h1 className="brand-title">Hysteria 2</h1>
           </div>
           <div className="sidebar-user">
