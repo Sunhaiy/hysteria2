@@ -268,11 +268,11 @@ export class CreateNodeDto {
   active!: boolean;
 
   @IsInt()
-  @Min(1)
+  @Min(0)
   speedUpMbps!: number;
 
   @IsInt()
-  @Min(1)
+  @Min(0)
   speedDownMbps!: number;
 }
 
@@ -320,12 +320,12 @@ export class UpdateNodeDto {
 
   @IsOptional()
   @IsInt()
-  @Min(1)
+  @Min(0)
   speedUpMbps?: number;
 
   @IsOptional()
   @IsInt()
-  @Min(1)
+  @Min(0)
   speedDownMbps?: number;
 }
 

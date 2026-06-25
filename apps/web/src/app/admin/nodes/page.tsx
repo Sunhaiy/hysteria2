@@ -251,7 +251,7 @@ export default function AdminNodesPage() {
                   {node.hostname}:{node.port}
                 </span>
               </button>,
-              `${node.speedUpMbps} / ${node.speedDownMbps} Mbps`,
+              node.speedUpMbps === 0 && node.speedDownMbps === 0 ? "不限速" : `${node.speedUpMbps} / ${node.speedDownMbps} Mbps`,
               String(node.concurrentUsers),
               <span className="mono" key={`${node.id}-api`}>
                 {node.trafficApiBaseUrl}
@@ -359,8 +359,10 @@ export default function AdminNodesPage() {
               <input
                 className="control"
                 type="number"
-                min="1"
-                value={form.speedUpMbps}
+                min="0"
+                disabled={form.speedUpMbps === 0 && form.speedDownMbps === 0}
+                value={form.speedUpMbps === 0 && form.speedDownMbps === 0 ? "" : form.speedUpMbps}
+                placeholder={form.speedUpMbps === 0 && form.speedDownMbps === 0 ? "不限速" : ""}
                 onChange={(e) => set("speedUpMbps", Number(e.target.value))}
               />
             </label>
@@ -369,12 +371,36 @@ export default function AdminNodesPage() {
               <input
                 className="control"
                 type="number"
-                min="1"
-                value={form.speedDownMbps}
+                min="0"
+                disabled={form.speedUpMbps === 0 && form.speedDownMbps === 0}
+                value={form.speedUpMbps === 0 && form.speedDownMbps === 0 ? "" : form.speedDownMbps}
+                placeholder={form.speedUpMbps === 0 && form.speedDownMbps === 0 ? "不限速" : ""}
                 onChange={(e) => set("speedDownMbps", Number(e.target.value))}
               />
             </label>
           </div>
+          <label className="field checkbox-row">
+            <input
+              type="checkbox"
+              checked={form.speedUpMbps === 0 && form.speedDownMbps === 0}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  setForm((f) => {
+                    const next = { ...f, speedUpMbps: 0, speedDownMbps: 0 };
+                    if (!editingNode) saveDraft(DRAFT_KEY, next);
+                    return next;
+                  });
+                } else {
+                  setForm((f) => {
+                    const next = { ...f, speedUpMbps: 20, speedDownMbps: 120 };
+                    if (!editingNode) saveDraft(DRAFT_KEY, next);
+                    return next;
+                  });
+                }
+              }}
+            />
+            <span>不限制速率</span>
+          </label>
 
           <div className="field-section-label">Traffic API</div>
 
