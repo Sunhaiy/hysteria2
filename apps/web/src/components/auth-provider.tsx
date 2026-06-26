@@ -92,6 +92,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    const currentToken = getStoredToken();
+    if (currentToken) {
+      // Best-effort server-side revocation; never block the UI on it.
+      void apiRequest("/api/auth/logout", {
+        method: "POST",
+        token: currentToken,
+      }).catch(() => undefined);
+    }
     clearStoredToken();
     startTransition(() => {
       setToken(null);

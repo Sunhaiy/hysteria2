@@ -51,6 +51,11 @@ export class AuthService {
     };
   }
 
+  async logout(jti: string) {
+    await this.cache.del(`session:${jti}`);
+    return { success: true };
+  }
+
   async me(userId: string) {
     const user = await this.store.getUserById(userId);
     if (!user) {

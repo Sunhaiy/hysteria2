@@ -6,13 +6,17 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { Request } from 'express';
+import { CacheService } from '../cache/cache.service';
 import type { SessionPrincipal } from './auth.types';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
-  constructor(private readonly jwtService: JwtService) {}
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly cache: CacheService,
+  ) {}
 
-  canActivate(context: ExecutionContext) {
+  async canActivate(context: ExecutionContext) {
     const request = context
       .switchToHttp()
       .getRequest<Request & { principal?: SessionPrincipal }>();
@@ -27,14 +31,27 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     const token = header.slice('Bearer '.length);
+    let principal: SessionPrincipal;
     try {
-      const principal = this.jwtService.verify<SessionPrincipal>(token, {
-        secret: process.env.JWT_SECRET ?? 'local-dev-secret',
+      principal = this.jwtService.verify<SessionPrincipal>(token, {
+        secret: process.env.JWT_SECRET,
       });
-      request.principal = principal;
-      return true;
     } catch {
       throw new UnauthorizedException('Invalid bearer token');
     }
+
+    // A valid signature is not enough: the session must still be live in the
+    // cache. Logging out (or an admin revoking) deletes the session entry, so a
+    // signed-but-revoked token is rejected here even before it expires.
+    if (!principal.jti) {
+      throw new UnauthorizedException('Invalid bearer token');
+    }
+    const session = await this.cache.get(`session:${principal.jti}`);
+    if (!session) {
+      throw new UnauthorizedException('Session expired or revoked');
+    }
+
+    request.principal = principal;
+    return true;
   }
 }

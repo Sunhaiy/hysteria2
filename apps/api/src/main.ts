@@ -1,5 +1,6 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -8,6 +9,11 @@ async function bootstrap() {
   }
 
   const app = await NestFactory.create(AppModule);
+
+  // Security response headers (HSTS, X-Content-Type-Options, frameguard, etc.).
+  // This is a JSON API behind a separate web origin, so the CSP that would
+  // otherwise apply to served HTML is disabled to avoid breaking nothing here.
+  app.use(helmet({ contentSecurityPolicy: false }));
 
   const allowedOrigins = process.env.CORS_ORIGINS
     ? process.env.CORS_ORIGINS.split(',').map((o) => o.trim())
