@@ -70,6 +70,19 @@ export default function PortalPlansPage() {
       return;
     }
 
+    // Switching to a different plan while one is active is an immediate switch:
+    // the old plan's remaining base traffic and duration are discarded.
+    const isSwitch =
+      Boolean(overview) && overview?.subscription.planId !== plan.id;
+    if (isSwitch) {
+      const confirmed = window.confirm(
+        `升级/切换到「${plan.name}」后会立即生效：速度、流量和到期日都按新套餐从今天重算，当前套餐的剩余流量与剩余天数将作废（已单独购买的流量包不受影响）。确认提交申请？`,
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
     setSubmittingPlanId(plan.id);
     setError(null);
     setFeedback(null);
@@ -186,7 +199,9 @@ export default function PortalPlansPage() {
                         ? "等待确认"
                         : isCurrent
                           ? "继续续期这个套餐"
-                          : "提交开通申请"}
+                          : overview
+                            ? "升级到此套餐"
+                            : "提交开通申请"}
                   </button>
                   {isCurrent ? <span className="badge success">当前使用中</span> : null}
                   {!isCurrent && isPending ? <span className="badge warn">待处理</span> : null}

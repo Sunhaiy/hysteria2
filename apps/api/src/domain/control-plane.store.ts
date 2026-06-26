@@ -1737,21 +1737,52 @@ export class ControlPlaneStoreService {
     const { plan, nodeId } = await this.resolvePlanNode(tx, { planId: input.planId });
 
     if (existingSubscription) {
-      const extensionBase =
-        existingSubscription.endsAt.getTime() > input.grantedAt.getTime()
-          ? new Date(existingSubscription.endsAt)
-          : new Date(input.grantedAt);
-      extensionBase.setUTCDate(extensionBase.getUTCDate() + plan.durationDays);
+      const isSamePlan = existingSubscription.planId === plan.id;
 
+      if (isSamePlan) {
+        // Renewal of the current plan: extend the cycle and stack the plan's
+        // traffic allotment onto the remaining balance.
+        const extensionBase =
+          existingSubscription.endsAt.getTime() > input.grantedAt.getTime()
+            ? new Date(existingSubscription.endsAt)
+            : new Date(input.grantedAt);
+        extensionBase.setUTCDate(extensionBase.getUTCDate() + plan.durationDays);
+
+        await tx.subscription.update({
+          where: { id: existingSubscription.id },
+          data: {
+            nodeId,
+            status: SubscriptionStatus.ACTIVE,
+            endsAt: extensionBase,
+            includedTrafficBytes:
+              existingSubscription.includedTrafficBytes + plan.trafficBytes,
+            speedUpMbpsSnapshot: plan.speedUpMbps,
+            speedDownMbpsSnapshot: plan.speedDownMbps,
+            deviceLimitSnapshot: plan.deviceLimit,
+          },
+        });
+        return;
+      }
+
+      // Switching to a different plan = immediate upgrade/downgrade, no
+      // proration: the new plan's speed/device/traffic take effect now, the
+      // billing cycle restarts from today, and the previous plan's remaining
+      // base traffic and duration are discarded. Paid traffic packs are
+      // independent add-ons and are intentionally left untouched.
       await tx.subscription.update({
         where: { id: existingSubscription.id },
         data: {
           planId: plan.id,
           nodeId,
           status: SubscriptionStatus.ACTIVE,
-          endsAt: extensionBase,
-          includedTrafficBytes:
-            existingSubscription.includedTrafficBytes + plan.trafficBytes,
+          startsAt: input.grantedAt,
+          endsAt: this.buildSubscriptionEndDate(
+            input.grantedAt,
+            plan.durationDays,
+          ),
+          includedTrafficBytes: plan.trafficBytes,
+          bonusTrafficBytes: BigInt(0),
+          consumedTrafficBytes: BigInt(0),
           speedUpMbpsSnapshot: plan.speedUpMbps,
           speedDownMbpsSnapshot: plan.speedDownMbps,
           deviceLimitSnapshot: plan.deviceLimit,
