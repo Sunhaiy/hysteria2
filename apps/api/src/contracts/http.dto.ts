@@ -60,6 +60,12 @@ export class TestEmailDto {
   to!: string;
 }
 
+export class OAuthExchangeDto {
+  @IsString()
+  @IsNotEmpty()
+  code!: string;
+}
+
 export class RegisterDto {
   @IsEmail()
   email!: string;

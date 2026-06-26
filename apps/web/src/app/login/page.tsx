@@ -6,6 +6,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
+import { OAuthButtons } from "@/components/oauth-buttons";
 import { homeCopy } from "@/lib/copy";
 
 export default function LoginPage() {
@@ -34,6 +35,7 @@ function LoginPageBody() {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const oauthError = searchParams.get("oauth_error");
 
   useEffect(() => {
     if (!loading && session) {
@@ -95,6 +97,7 @@ function LoginPageBody() {
               />
             </label>
             {error ? <div className="feedback error">{error}</div> : null}
+            {oauthError ? <div className="feedback error">{oauthError}</div> : null}
             <div className="toolbar-actions" style={{ justifyContent: "space-between" }}>
               <Link className="fine-print" href="/register">
                 还没有账号？注册
@@ -104,6 +107,7 @@ function LoginPageBody() {
               </button>
             </div>
           </form>
+          <OAuthButtons />
         </div>
       </section>
     </main>

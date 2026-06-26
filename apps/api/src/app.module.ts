@@ -12,6 +12,7 @@ import { KickServiceModule } from './kick-service/kick-service.module';
 import { MailModule } from './mail/mail.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
 import { NodesModule } from './nodes/nodes.module';
+import { OAuthModule } from './oauth/oauth.module';
 import { OrdersModule } from './orders/orders.module';
 import { PlanBindingsModule } from './plan-bindings/plan-bindings.module';
 import { PlansModule } from './plans/plans.module';
@@ -41,6 +42,7 @@ import { AdminUsersModule } from './users/admin-users.module';
     DomainModule,
     IntegrationsModule,
     AuthModule,
+    OAuthModule,
     HealthModule,
     MonitoringModule,
     AdminUsersModule,

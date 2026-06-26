@@ -127,6 +127,33 @@ export class AuthService {
     return this.issueSession(user);
   }
 
+  async oauthLogin(input: { email: string; displayName: string }) {
+    const email = this.normalizeEmail(input.email);
+
+    let user = await this.store.findUserByEmail(email);
+    if (!user) {
+      // First-time third-party login = registration; honor the open-reg toggle.
+      if (!(await this.settings.isRegistrationEnabled())) {
+        throw new BadRequestException('当前未开放注册，请联系管理员');
+      }
+      const passwordHash = await hash(`${randomUUID()}${randomUUID()}`, 10);
+      await this.store.createUser({
+        email,
+        displayName: input.displayName?.trim() || email.split('@')[0] || email,
+        passwordHash,
+        role: 'member',
+        status: 'active',
+      });
+      user = await this.store.findUserByEmail(email);
+    }
+
+    if (!user) {
+      throw new BadRequestException('第三方登录失败，请重试');
+    }
+
+    return this.issueSession(user);
+  }
+
   async logout(jti: string) {
     await this.cache.del(`session:${jti}`);
     return { success: true };

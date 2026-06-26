@@ -19,6 +19,7 @@ interface AuthContextValue {
   session: SessionPayload | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<SessionPayload>;
+  adoptSession: (response: LoginResponse) => SessionPayload;
   logout: () => void;
   refresh: () => Promise<void>;
 }
@@ -69,12 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, [refresh]);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const response = await apiRequest<LoginResponse>("/api/auth/login", {
-      method: "POST",
-      body: { email, password },
-    });
-
+  const adoptSession = useCallback((response: LoginResponse) => {
     const nextSession: SessionPayload = {
       user: response.user,
       role: response.principal.role,
@@ -90,6 +86,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return nextSession;
   }, []);
+
+  const login = useCallback(
+    async (email: string, password: string) => {
+      const response = await apiRequest<LoginResponse>("/api/auth/login", {
+        method: "POST",
+        body: { email, password },
+      });
+      return adoptSession(response);
+    },
+    [adoptSession],
+  );
 
   const logout = useCallback(() => {
     const currentToken = getStoredToken();
@@ -114,10 +121,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session,
       loading,
       login,
+      adoptSession,
       logout,
       refresh,
     }),
-    [loading, login, logout, refresh, session, token],
+    [loading, login, adoptSession, logout, refresh, session, token],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

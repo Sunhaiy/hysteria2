@@ -309,6 +309,53 @@ img {
   border-radius: var(--radius-md);
 }
 
+.oauth-block {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.oauth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: var(--text-tiny);
+}
+
+.oauth-divider::before,
+.oauth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-default);
+}
+
+.oauth-buttons {
+  display: grid;
+  gap: 10px;
+}
+
+.oauth-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 11px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font-size: var(--text-body);
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.oauth-button:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-panel-alt);
+}
+
 details.field-section {
   border: 1px solid var(--border-default);
   border-radius: 10px;

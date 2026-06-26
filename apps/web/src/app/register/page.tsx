@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { ApiError, apiRequest } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
+import { OAuthButtons } from "@/components/oauth-buttons";
 
 export default function RegisterPage() {
   const { login } = useAuth();
@@ -173,6 +174,7 @@ export default function RegisterPage() {
               </button>
             </div>
           </form>
+          <OAuthButtons />
         </div>
       </section>
     </main>
