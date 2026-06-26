@@ -13,6 +13,7 @@ import { CacheService } from '../cache/cache.service';
 import { type SessionPrincipal } from '../common/auth.types';
 import { ControlPlaneStoreService } from '../domain/control-plane.store';
 import { MailService } from '../mail/mail.service';
+import { SettingsService } from '../settings/settings.service';
 
 const REGISTER_CODE_TTL_SECONDS = 10 * 60;
 const REGISTER_COOLDOWN_SECONDS = 60;
@@ -24,6 +25,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly cache: CacheService,
     private readonly mail: MailService,
+    private readonly settings: SettingsService,
   ) {}
 
   async login(email: string, password: string) {
@@ -41,6 +43,10 @@ export class AuthService {
   }
 
   async requestRegisterCode(rawEmail: string) {
+    if (!(await this.settings.isRegistrationEnabled())) {
+      throw new BadRequestException('当前未开放注册，请联系管理员');
+    }
+
     const email = this.normalizeEmail(rawEmail);
 
     const existing = await this.store.findUserByEmail(email);
@@ -68,7 +74,7 @@ export class AuthService {
 
     return {
       success: true,
-      emailed: this.mail.isConfigured,
+      emailed: await this.mail.isConfigured(),
       cooldownSeconds: REGISTER_COOLDOWN_SECONDS,
     };
   }
@@ -79,6 +85,10 @@ export class AuthService {
     password: string;
     displayName?: string;
   }) {
+    if (!(await this.settings.isRegistrationEnabled())) {
+      throw new BadRequestException('当前未开放注册，请联系管理员');
+    }
+
     const email = this.normalizeEmail(input.email);
 
     const existing = await this.store.findUserByEmail(email);

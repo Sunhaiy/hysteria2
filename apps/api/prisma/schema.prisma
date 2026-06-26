@@ -271,3 +271,11 @@ model OnlineSnapshot {
 
   @@index([userId, capturedAt])
 }
+
+// Simple key-value store for admin-editable runtime settings (SMTP, feature
+// toggles like open registration). Secret values are masked when read back.
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

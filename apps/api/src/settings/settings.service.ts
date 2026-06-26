@@ -1,0 +1,70 @@
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+
+export interface SmtpConfig {
+  host?: string;
+  port: number;
+  user?: string;
+  pass?: string;
+  from?: string;
+  configured: boolean;
+}
+
+@Injectable()
+export class SettingsService {
+  private cache: Map<string, string> | null = null;
+
+  constructor(private readonly prisma: PrismaService) {}
+
+  private async all(): Promise<Map<string, string>> {
+    if (this.cache) {
+      return this.cache;
+    }
+    const rows = await this.prisma.setting.findMany();
+    this.cache = new Map(rows.map((row) => [row.key, row.value]));
+    return this.cache;
+  }
+
+  async get(key: string): Promise<string | undefined> {
+    return (await this.all()).get(key);
+  }
+
+  async setMany(updates: Record<string, string>) {
+    for (const [key, value] of Object.entries(updates)) {
+      await this.prisma.setting.upsert({
+        where: { key },
+        create: { key, value },
+        update: { value },
+      });
+    }
+    this.cache = null; // invalidate so the next read reflects the change
+  }
+
+  /** SMTP config: DB settings take precedence, env vars are the fallback. */
+  async getSmtpConfig(): Promise<SmtpConfig> {
+    const map = await this.all();
+    const pick = (key: string, envKey: string) =>
+      map.get(key) || process.env[envKey] || undefined;
+
+    const host = pick('smtp.host', 'SMTP_HOST');
+    const user = pick('smtp.user', 'SMTP_USER');
+    const pass = pick('smtp.pass', 'SMTP_PASS');
+    const from = pick('smtp.from', 'SMTP_FROM') || user;
+    const port = Number(pick('smtp.port', 'SMTP_PORT') || 465);
+
+    return {
+      host,
+      port: Number.isFinite(port) ? port : 465,
+      user,
+      pass,
+      from,
+      configured: Boolean(host && user && pass),
+    };
+  }
+
+  /** Open registration defaults to enabled; admins can turn it off. */
+  async isRegistrationEnabled(): Promise<boolean> {
+    const value = await this.get('registration.enabled');
+    return value === undefined ? true : value === 'true';
+  }
+}

@@ -18,6 +18,7 @@ import { PlansModule } from './plans/plans.module';
 import { PortalModule } from './portal/portal.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedemptionCodesModule } from './redemption-codes/redemption-codes.module';
+import { SettingsModule } from './settings/settings.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { UsageSyncModule } from './usage-sync/usage-sync.module';
 import { AdminUsersModule } from './users/admin-users.module';
@@ -34,9 +35,10 @@ import { AdminUsersModule } from './users/admin-users.module';
     }),
     ScheduleModule.forRoot(),
     CacheModule,
+    PrismaModule,
+    SettingsModule,
     MailModule,
     DomainModule,
-    PrismaModule,
     IntegrationsModule,
     AuthModule,
     HealthModule,

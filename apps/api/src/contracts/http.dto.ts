@@ -28,6 +28,38 @@ export class RequestRegisterCodeDto {
   email!: string;
 }
 
+export class UpdateSettingsDto {
+  @IsOptional()
+  @IsString()
+  smtpHost?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  smtpPort?: number;
+
+  @IsOptional()
+  @IsString()
+  smtpUser?: string;
+
+  @IsOptional()
+  @IsString()
+  smtpPass?: string;
+
+  @IsOptional()
+  @IsString()
+  smtpFrom?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  registrationEnabled?: boolean;
+}
+
+export class TestEmailDto {
+  @IsEmail()
+  to!: string;
+}
+
 export class RegisterDto {
   @IsEmail()
   email!: string;

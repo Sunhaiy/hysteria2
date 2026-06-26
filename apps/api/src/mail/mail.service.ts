@@ -1,49 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
 import nodemailer, { type Transporter } from 'nodemailer';
+import { SettingsService } from '../settings/settings.service';
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
   private transporter: Transporter | null = null;
-  private readonly from: string;
+  private signature = '';
 
-  constructor() {
-    const host = process.env.SMTP_HOST;
-    const port = Number(process.env.SMTP_PORT ?? 465);
-    const user = process.env.SMTP_USER;
-    const pass = process.env.SMTP_PASS;
-    this.from = process.env.SMTP_FROM ?? user ?? 'no-reply@hysteria.local';
+  constructor(private readonly settings: SettingsService) {}
 
-    if (host && user && pass) {
-      this.transporter = nodemailer.createTransport({
-        host,
-        port,
-        // 465 -> implicit TLS; 587/25 -> STARTTLS upgrade.
-        secure: port === 465,
-        auth: { user, pass },
-      });
-      this.logger.log(`SMTP transport configured (${host}:${port})`);
-    } else {
-      this.logger.warn(
-        'SMTP not configured (SMTP_HOST/SMTP_USER/SMTP_PASS missing); ' +
-          'verification codes will be logged instead of emailed.',
-      );
-    }
-  }
-
-  get isConfigured() {
-    return this.transporter !== null;
+  async isConfigured() {
+    return (await this.settings.getSmtpConfig()).configured;
   }
 
   async sendVerificationCode(email: string, code: string) {
-    if (!this.transporter) {
-      // Dev fallback: surface the code in logs so the flow is testable without SMTP.
-      this.logger.warn(`[DEV] Verification code for ${email}: ${code}`);
-      return;
-    }
-
-    await this.transporter.sendMail({
-      from: this.from,
+    await this.send({
       to: email,
       subject: 'Hysteria 2 注册验证码',
       text: `你的注册验证码是 ${code}，10 分钟内有效。如果这不是你本人操作，请忽略本邮件。`,
@@ -53,6 +25,57 @@ export class MailService {
         `<p style="font-size:28px;font-weight:700;letter-spacing:4px">${code}</p>` +
         `<p style="color:#666">10 分钟内有效。如果这不是你本人操作，请忽略本邮件。</p>` +
         `</div>`,
+      devNote: `[DEV] Verification code for ${email}: ${code}`,
+    });
+  }
+
+  async sendTest(email: string) {
+    await this.send({
+      to: email,
+      subject: 'Hysteria 2 邮件配置测试',
+      text: '这是一封来自 Hysteria 2 控制台的测试邮件，收到说明 SMTP 配置正确。',
+      html:
+        `<div style="font-family:system-ui,sans-serif;font-size:15px;color:#1a1a1a">` +
+        `<p>这是一封来自 <b>Hysteria 2 控制台</b> 的测试邮件。</p>` +
+        `<p>收到本邮件说明 SMTP 配置正确，可以正常发送注册验证码。</p>` +
+        `</div>`,
+      devNote: `[DEV] Test email requested for ${email} (SMTP not configured)`,
+    });
+  }
+
+  private async send(input: {
+    to: string;
+    subject: string;
+    text: string;
+    html: string;
+    devNote: string;
+  }) {
+    const cfg = await this.settings.getSmtpConfig();
+    if (!cfg.configured || !cfg.host || !cfg.user || !cfg.pass) {
+      // Dev fallback: surface in logs so the flow stays testable without SMTP.
+      this.logger.warn(input.devNote);
+      return;
+    }
+
+    // Rebuild the transporter only when the SMTP config actually changes, so
+    // admin edits take effect without a process restart.
+    const signature = `${cfg.host}:${cfg.port}:${cfg.user}:${cfg.pass}`;
+    if (!this.transporter || this.signature !== signature) {
+      this.transporter = nodemailer.createTransport({
+        host: cfg.host,
+        port: cfg.port,
+        secure: cfg.port === 465, // 465 implicit TLS, 587/25 STARTTLS
+        auth: { user: cfg.user, pass: cfg.pass },
+      });
+      this.signature = signature;
+    }
+
+    await this.transporter.sendMail({
+      from: cfg.from || cfg.user,
+      to: input.to,
+      subject: input.subject,
+      text: input.text,
+      html: input.html,
     });
   }
 }

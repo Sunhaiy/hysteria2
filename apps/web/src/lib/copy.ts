@@ -15,6 +15,7 @@ export const adminNav: NavItem[] = [
   { href: "/admin/orders", label: "人工订单", icon: "receipt_long", meta: "BILL" },
   { href: "/admin/usage", label: "用量日志", icon: "monitoring", meta: "STAT" },
   { href: "/admin/sessions", label: "会话控制", icon: "shield_person", meta: "LIVE" },
+  { href: "/admin/settings", label: "系统设置", icon: "settings", meta: "CONF" },
 ];
 
 export const portalNav: NavItem[] = [
