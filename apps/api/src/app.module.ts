@@ -9,6 +9,7 @@ import { HealthModule } from './health/health.module';
 import { HysteriaAuthModule } from './hysteria-auth/hysteria-auth.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { KickServiceModule } from './kick-service/kick-service.module';
+import { MailModule } from './mail/mail.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
 import { NodesModule } from './nodes/nodes.module';
 import { OrdersModule } from './orders/orders.module';
@@ -33,6 +34,7 @@ import { AdminUsersModule } from './users/admin-users.module';
     }),
     ScheduleModule.forRoot(),
     CacheModule,
+    MailModule,
     DomainModule,
     PrismaModule,
     IntegrationsModule,

@@ -8,7 +8,10 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Length,
+  MaxLength,
   Min,
+  MinLength,
 } from 'class-validator';
 
 export class LoginDto {
@@ -18,6 +21,30 @@ export class LoginDto {
   @IsString()
   @IsNotEmpty()
   password!: string;
+}
+
+export class RequestRegisterCodeDto {
+  @IsEmail()
+  email!: string;
+}
+
+export class RegisterDto {
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  @Length(6, 6)
+  code!: string;
+
+  @IsString()
+  @MinLength(8)
+  @MaxLength(72)
+  password!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  displayName?: string;
 }
 
 export class CreateUserDto {

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
@@ -94,7 +95,10 @@ function LoginPageBody() {
               />
             </label>
             {error ? <div className="feedback error">{error}</div> : null}
-            <div className="toolbar-actions">
+            <div className="toolbar-actions" style={{ justifyContent: "space-between" }}>
+              <Link className="fine-print" href="/register">
+                还没有账号？注册
+              </Link>
               <button className="action-button" type="submit" disabled={submitting}>
                 {submitting ? "登录中..." : "登录"}
               </button>
