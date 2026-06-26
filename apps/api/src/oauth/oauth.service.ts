@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { CacheService } from '../cache/cache.service';
 import { AuthService } from '../auth/auth.service';
+import { SettingsService } from '../settings/settings.service';
 
 type Provider = 'google' | 'github';
 
@@ -18,6 +19,7 @@ export class OAuthService {
   constructor(
     private readonly cache: CacheService,
     private readonly auth: AuthService,
+    private readonly settings: SettingsService,
   ) {}
 
   private apiBase() {
@@ -36,23 +38,17 @@ export class OAuthService {
     return `${this.apiBase()}/api/auth/oauth/${provider}/callback`;
   }
 
-  private credentials(provider: Provider) {
-    if (provider === 'google') {
-      return {
-        id: process.env.GOOGLE_CLIENT_ID,
-        secret: process.env.GOOGLE_CLIENT_SECRET,
-      };
-    }
-    return {
-      id: process.env.GITHUB_CLIENT_ID,
-      secret: process.env.GITHUB_CLIENT_SECRET,
-    };
+  private async credentials(provider: Provider) {
+    const cfg = await this.settings.getOAuthConfig();
+    const entry = provider === 'google' ? cfg.google : cfg.github;
+    return { id: entry.clientId, secret: entry.clientSecret };
   }
 
-  providersStatus() {
+  async providersStatus() {
+    const cfg = await this.settings.getOAuthConfig();
     return {
-      google: Boolean(this.credentials('google').id),
-      github: Boolean(this.credentials('github').id),
+      google: cfg.google.configured,
+      github: cfg.github.configured,
     };
   }
 
@@ -64,7 +60,7 @@ export class OAuthService {
 
   async buildAuthorizeUrl(provider: string) {
     this.assertProvider(provider);
-    const { id } = this.credentials(provider);
+    const { id } = await this.credentials(provider);
     if (!id) {
       throw new BadRequestException('该第三方登录尚未配置');
     }
@@ -136,7 +132,7 @@ export class OAuthService {
   }
 
   private async fetchGoogleProfile(code: string): Promise<OAuthProfile> {
-    const { id, secret } = this.credentials('google');
+    const { id, secret } = await this.credentials('google');
     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -167,7 +163,7 @@ export class OAuthService {
   }
 
   private async fetchGithubProfile(code: string): Promise<OAuthProfile> {
-    const { id, secret } = this.credentials('github');
+    const { id, secret } = await this.credentials('github');
     const tokenRes = await fetch(
       'https://github.com/login/oauth/access_token',
       {

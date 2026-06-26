@@ -67,4 +67,30 @@ export class SettingsService {
     const value = await this.get('registration.enabled');
     return value === undefined ? true : value === 'true';
   }
+
+  /** OAuth credentials: DB settings take precedence, env vars are the fallback. */
+  async getOAuthConfig() {
+    const map = await this.all();
+    const pick = (key: string, envKey: string) =>
+      map.get(key) || process.env[envKey] || undefined;
+
+    const google = {
+      clientId: pick('oauth.google.id', 'GOOGLE_CLIENT_ID'),
+      clientSecret: pick('oauth.google.secret', 'GOOGLE_CLIENT_SECRET'),
+    };
+    const github = {
+      clientId: pick('oauth.github.id', 'GITHUB_CLIENT_ID'),
+      clientSecret: pick('oauth.github.secret', 'GITHUB_CLIENT_SECRET'),
+    };
+    return {
+      google: {
+        ...google,
+        configured: Boolean(google.clientId && google.clientSecret),
+      },
+      github: {
+        ...github,
+        configured: Boolean(github.clientId && github.clientSecret),
+      },
+    };
+  }
 }

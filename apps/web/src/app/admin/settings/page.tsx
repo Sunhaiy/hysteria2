@@ -8,6 +8,13 @@ import { Toast, useToast } from "@/components/toast";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
 
+interface OAuthProviderState {
+  clientId: string;
+  secretSet: boolean;
+  configured: boolean;
+  callbackUrl: string;
+}
+
 interface SettingsResponse {
   smtp: {
     host: string;
@@ -16,6 +23,10 @@ interface SettingsResponse {
     from: string;
     passSet: boolean;
     configured: boolean;
+  };
+  oauth: {
+    google: OAuthProviderState;
+    github: OAuthProviderState;
   };
   registrationEnabled: boolean;
 }
@@ -38,6 +49,13 @@ export default function AdminSettingsPage() {
   const [testTo, setTestTo] = useState("");
   const [testing, setTesting] = useState(false);
 
+  const [oauth, setOauth] = useState<SettingsResponse["oauth"] | null>(null);
+  const [googleId, setGoogleId] = useState("");
+  const [googleSecret, setGoogleSecret] = useState("");
+  const [githubId, setGithubId] = useState("");
+  const [githubSecret, setGithubSecret] = useState("");
+  const [savingOauth, setSavingOauth] = useState(false);
+
   const applySettings = useCallback((data: SettingsResponse) => {
     setHost(data.smtp.host);
     setPort(String(data.smtp.port));
@@ -47,6 +65,11 @@ export default function AdminSettingsPage() {
     setConfigured(data.smtp.configured);
     setRegistrationEnabled(data.registrationEnabled);
     setPass("");
+    setOauth(data.oauth);
+    setGoogleId(data.oauth.google.clientId);
+    setGithubId(data.oauth.github.clientId);
+    setGoogleSecret("");
+    setGithubSecret("");
   }, []);
 
   const load = useCallback(async () => {
@@ -97,6 +120,33 @@ export default function AdminSettingsPage() {
       setError(cause instanceof ApiError ? cause.message : "保存失败。");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveOauth() {
+    if (!token) {
+      return;
+    }
+    setSavingOauth(true);
+    setError(null);
+    try {
+      const body: Record<string, unknown> = {
+        googleClientId: googleId,
+        githubClientId: githubId,
+      };
+      if (googleSecret) body.googleClientSecret = googleSecret;
+      if (githubSecret) body.githubClientSecret = githubSecret;
+      const data = await apiRequest<SettingsResponse>("/api/admin/settings", {
+        method: "PATCH",
+        token,
+        body,
+      });
+      applySettings(data);
+      showToast("第三方登录配置已保存");
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "保存失败。");
+    } finally {
+      setSavingOauth(false);
     }
   }
 
@@ -220,6 +270,82 @@ export default function AdminSettingsPage() {
             <div className="toolbar-actions">
               <button className="action-button" type="button" disabled={saving} onClick={() => void save()}>
                 {saving ? "保存中..." : "保存设置"}
+              </button>
+            </div>
+          </Panel>
+
+          <Panel
+            title="第三方登录（OAuth）"
+            copy="去 Google / GitHub 创建 OAuth 应用，把下方回调地址填进去，再回来填 Client ID/Secret。密钥不会回显，留空表示保持不变。"
+          >
+            <div className="form-grid">
+              <div className="list-row">
+                <span className="muted">Google 状态</span>
+                <span className={`badge ${oauth?.google.configured ? "success" : "warn"}`}>
+                  {oauth?.google.configured ? "已启用" : "未配置"}
+                </span>
+              </div>
+              <label className="field">
+                <span className="fine-print">Google 回调地址（填到 Google 控制台）</span>
+                <input className="control mono" value={oauth?.google.callbackUrl ?? ""} readOnly />
+              </label>
+              <label className="field">
+                <span className="fine-print">Google Client ID</span>
+                <input
+                  className="control"
+                  value={googleId}
+                  onChange={(event) => setGoogleId(event.target.value)}
+                  placeholder="xxxxx.apps.googleusercontent.com"
+                  autoComplete="off"
+                />
+              </label>
+              <label className="field">
+                <span className="fine-print">Google Client Secret</span>
+                <input
+                  className="control"
+                  type="password"
+                  value={googleSecret}
+                  onChange={(event) => setGoogleSecret(event.target.value)}
+                  placeholder={oauth?.google.secretSet ? "已设置（留空保持不变）" : "请输入 Secret"}
+                  autoComplete="new-password"
+                />
+              </label>
+
+              <div className="list-row" style={{ marginTop: 8 }}>
+                <span className="muted">GitHub 状态</span>
+                <span className={`badge ${oauth?.github.configured ? "success" : "warn"}`}>
+                  {oauth?.github.configured ? "已启用" : "未配置"}
+                </span>
+              </div>
+              <label className="field">
+                <span className="fine-print">GitHub 回调地址（填到 GitHub OAuth App）</span>
+                <input className="control mono" value={oauth?.github.callbackUrl ?? ""} readOnly />
+              </label>
+              <label className="field">
+                <span className="fine-print">GitHub Client ID</span>
+                <input
+                  className="control"
+                  value={githubId}
+                  onChange={(event) => setGithubId(event.target.value)}
+                  placeholder="Iv1.xxxxxxxx"
+                  autoComplete="off"
+                />
+              </label>
+              <label className="field">
+                <span className="fine-print">GitHub Client Secret</span>
+                <input
+                  className="control"
+                  type="password"
+                  value={githubSecret}
+                  onChange={(event) => setGithubSecret(event.target.value)}
+                  placeholder={oauth?.github.secretSet ? "已设置（留空保持不变）" : "请输入 Secret"}
+                  autoComplete="new-password"
+                />
+              </label>
+            </div>
+            <div className="toolbar-actions">
+              <button className="action-button" type="button" disabled={savingOauth} onClick={() => void saveOauth()}>
+                {savingOauth ? "保存中..." : "保存第三方登录配置"}
               </button>
             </div>
           </Panel>

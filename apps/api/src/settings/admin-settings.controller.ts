@@ -24,7 +24,12 @@ export class AdminSettingsController {
   @Get()
   async getSettings() {
     const smtp = await this.settings.getSmtpConfig();
+    const oauth = await this.settings.getOAuthConfig();
     const registrationEnabled = await this.settings.isRegistrationEnabled();
+    const callbackBase =
+      process.env.OAUTH_CALLBACK_BASE ||
+      process.env.API_PUBLIC_URL ||
+      'http://212.103.62.228:4000';
     return {
       smtp: {
         host: smtp.host ?? '',
@@ -34,6 +39,22 @@ export class AdminSettingsController {
         // Never echo the password back; only whether one is set.
         passSet: Boolean(smtp.pass),
         configured: smtp.configured,
+      },
+      oauth: {
+        // Client IDs are not secret (they appear in the redirect); show them.
+        // Secrets are write-only — only report whether they are set.
+        google: {
+          clientId: oauth.google.clientId ?? '',
+          secretSet: Boolean(oauth.google.clientSecret),
+          configured: oauth.google.configured,
+          callbackUrl: `${callbackBase}/api/auth/oauth/google/callback`,
+        },
+        github: {
+          clientId: oauth.github.clientId ?? '',
+          secretSet: Boolean(oauth.github.clientSecret),
+          configured: oauth.github.configured,
+          callbackUrl: `${callbackBase}/api/auth/oauth/github/callback`,
+        },
       },
       registrationEnabled,
     };
@@ -50,6 +71,18 @@ export class AdminSettingsController {
     if (body.smtpFrom !== undefined) updates['smtp.from'] = body.smtpFrom.trim();
     if (body.registrationEnabled !== undefined) {
       updates['registration.enabled'] = String(body.registrationEnabled);
+    }
+    if (body.googleClientId !== undefined) {
+      updates['oauth.google.id'] = body.googleClientId.trim();
+    }
+    if (body.googleClientSecret) {
+      updates['oauth.google.secret'] = body.googleClientSecret.trim();
+    }
+    if (body.githubClientId !== undefined) {
+      updates['oauth.github.id'] = body.githubClientId.trim();
+    }
+    if (body.githubClientSecret) {
+      updates['oauth.github.secret'] = body.githubClientSecret.trim();
     }
     await this.settings.setMany(updates);
     return this.getSettings();

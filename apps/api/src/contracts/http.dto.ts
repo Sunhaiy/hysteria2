@@ -53,6 +53,22 @@ export class UpdateSettingsDto {
   @IsOptional()
   @IsBoolean()
   registrationEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  googleClientId?: string;
+
+  @IsOptional()
+  @IsString()
+  googleClientSecret?: string;
+
+  @IsOptional()
+  @IsString()
+  githubClientId?: string;
+
+  @IsOptional()
+  @IsString()
+  githubClientSecret?: string;
 }
 
 export class TestEmailDto {
