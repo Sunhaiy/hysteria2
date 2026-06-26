@@ -1018,12 +1018,22 @@ select.control {
     align-content: start;
     grid-template-rows: auto 1fr auto;
     gap: 24px;
-    background: color-mix(in srgb, var(--bg-canvas) 62%, transparent);
-    backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
+    background: transparent;
     border-right: none;
     border-bottom: none;
     animation: mobile-nav-open 180ms ease-out;
+  }
+
+  /* Dedicated glass layer — isolated from the grid/overflow/animation above so
+     backdrop-filter compositing is not broken. */
+  .sidebar.open::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background: color-mix(in srgb, var(--bg-canvas) 62%, transparent);
+    -webkit-backdrop-filter: blur(24px);
+    backdrop-filter: blur(24px);
   }
 
   .sidebar.open > * {
