@@ -29,6 +29,7 @@ export default function PortalOrdersPage() {
   const { token } = useAuth();
   const [orders, setOrders] = useState<ManualOrderRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(async () => {
     if (!token) {
@@ -43,6 +44,8 @@ export default function PortalOrdersPage() {
       setOrders(nextOrders);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "订单记录加载失败。");
+    } finally {
+      setLoaded(true);
     }
   }, [token]);
 
@@ -76,12 +79,23 @@ export default function PortalOrdersPage() {
     >
       {error ? <div className="feedback error">{error}</div> : null}
 
-      {pendingOrders.length ? (
+      {!loaded && !error ? (
+        <Panel title="历史订单" copy="正在加载订单记录...">
+          <div className="skeleton-rows">
+            {Array.from({ length: 5 }, (_, i) => (
+              <div key={i} className="skeleton skeleton-row" />
+            ))}
+          </div>
+        </Panel>
+      ) : null}
+
+      {loaded && pendingOrders.length ? (
         <div className="feedback warn">
           你当前有 {pendingOrders.length} 笔待处理订单。后台确认到账后，套餐或流量会自动写入账号。
         </div>
       ) : null}
 
+      {loaded ? (
       <Panel title="历史订单" copy="pending 表示等待人工确认，applied 表示权益已经到账。">
         <DataTable
           headers={["类型", "套餐 / 权益", "状态", "金额", "处理时间", "备注"]}
@@ -97,6 +111,7 @@ export default function PortalOrdersPage() {
           ])}
         />
       </Panel>
+      ) : null}
 
       <Panel title="还想开通新套餐？" copy="你可以直接在前台选择套餐提交申请，也可以继续使用 CDK 兑换。">
         <div className="toolbar-actions">

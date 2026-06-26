@@ -70,6 +70,16 @@ export default function PortalAccessPage() {
       <Toast toast={toast} />
       {error ? <div className="feedback error">{error}</div> : null}
 
+      {!access && !emptyState && !error ? (
+        <section className="workspace-grid">
+          <div className="skeleton" style={{ height: 360, borderRadius: "var(--radius-md)" }} />
+          <div className="split">
+            <div className="skeleton" style={{ height: 170, borderRadius: "var(--radius-md)" }} />
+            <div className="skeleton" style={{ height: 170, borderRadius: "var(--radius-md)" }} />
+          </div>
+        </section>
+      ) : null}
+
       {access ? (
         <section className="workspace-grid">
           <Panel title="二维码与 URI" copy="URI 只保留连接必需字段，其他建议留在配置片段。">

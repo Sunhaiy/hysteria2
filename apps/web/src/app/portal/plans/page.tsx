@@ -140,6 +140,19 @@ export default function PortalPlansPage() {
         </div>
       ) : null}
 
+      {loading ? (
+        <section className="plan-grid">
+          {Array.from({ length: 3 }, (_, i) => (
+            <div
+              key={i}
+              className="skeleton"
+              style={{ height: 260, borderRadius: "var(--radius-md)" }}
+            />
+          ))}
+        </section>
+      ) : null}
+
+      {!loading ? (
       <section className="plan-grid">
         {plans.map((plan) => {
           const isCurrent = overview?.subscription.planId === plan.id;
@@ -211,6 +224,7 @@ export default function PortalPlansPage() {
           );
         })}
       </section>
+      ) : null}
     </ConsoleShell>
   );
 }
