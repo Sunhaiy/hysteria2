@@ -525,6 +525,16 @@ export class CreateRedemptionCodeDto {
   expiresAt?: string;
 }
 
+export class AdjustBalanceDto {
+  @IsInt()
+  @Min(0)
+  balanceCents!: number;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
 export class PurchasePlanDto {
   @IsString()
   @IsNotEmpty()

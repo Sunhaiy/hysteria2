@@ -11,7 +11,7 @@ import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
 import { clearDraft, getDraft, saveDraft } from "@/lib/draft";
-import { formatBytes, formatDateTime } from "@/lib/format";
+import { formatBytes, formatDateTime, formatMoney } from "@/lib/format";
 import { copyToClipboard } from "@/lib/clipboard";
 import { Toast, useToast } from "@/components/toast";
 import type {
@@ -21,6 +21,7 @@ import type {
   PlanRecord,
   SubscriptionRecord,
   UsageRollupRecord,
+  WalletResponse,
 } from "@/lib/types";
 
 const UNLIMITED_TRAFFIC = Number.MAX_SAFE_INTEGER;
@@ -133,6 +134,9 @@ export default function AdminUsersPage() {
   const [statsSubscription, setStatsSubscription] = useState<SubscriptionRecord | null>(null);
   const [statsUsage, setStatsUsage] = useState<UsageRollupRecord[]>([]);
   const [loadingStats, setLoadingStats] = useState(false);
+  const [statsWallet, setStatsWallet] = useState<WalletResponse | null>(null);
+  const [balanceInput, setBalanceInput] = useState("");
+  const [savingBalance, setSavingBalance] = useState(false);
 
   const syncProvisionForDraft = useCallback(
     (nextRole: UserFormState["role"], nextPlans: PlanRecord[]) => {
@@ -277,19 +281,48 @@ export default function AdminUsersPage() {
     setStatsDrawerOpen(true);
     setStatsSubscription(null);
     setStatsUsage([]);
+    setStatsWallet(null);
+    setBalanceInput("");
     if (!token) return;
     setLoadingStats(true);
     try {
-      const [sub, usage] = await Promise.all([
+      const [sub, usage, wallet] = await Promise.all([
         apiRequest<SubscriptionRecord | null>(`/api/admin/users/${user.id}/subscription`, { token }),
         apiRequest<UsageRollupRecord[]>(`/api/admin/users/${user.id}/usage`, { token }),
+        apiRequest<WalletResponse>(`/api/admin/users/${user.id}/wallet`, { token }),
       ]);
       setStatsSubscription(sub);
       setStatsUsage(usage);
+      setStatsWallet(wallet);
+      setBalanceInput((wallet.balanceCents / 100).toFixed(2));
     } catch {
       // keep empty
     } finally {
       setLoadingStats(false);
+    }
+  }
+
+  async function saveBalance() {
+    if (!token || !statsUser) return;
+    const cents = Math.round(Number(balanceInput) * 100);
+    if (!Number.isFinite(cents) || cents < 0) {
+      showToast("请输入有效的余额", "error");
+      return;
+    }
+    setSavingBalance(true);
+    try {
+      const wallet = await apiRequest<WalletResponse>(
+        `/api/admin/users/${statsUser.id}/balance`,
+        { method: "PATCH", token, body: { balanceCents: cents } },
+      );
+      setStatsWallet(wallet);
+      setBalanceInput((wallet.balanceCents / 100).toFixed(2));
+      showToast("余额已更新");
+      await load();
+    } catch (cause) {
+      showToast(cause instanceof ApiError ? cause.message : "更新余额失败", "error");
+    } finally {
+      setSavingBalance(false);
     }
   }
 
@@ -799,40 +832,88 @@ export default function AdminUsersPage() {
           <div className="skeleton-rows">
             {Array.from({ length: 4 }, (_, i) => <div key={i} className="skeleton skeleton-row" />)}
           </div>
-        ) : statsSubscription ? (
+        ) : (
           <div className="page-stack">
             <div className="kpi-list">
               <div className="list-row">
-                <span className="muted">套餐</span>
-                <strong>{statsSubscription.planName}</strong>
+                <span className="muted">钱包余额</span>
+                <strong>{formatMoney(statsWallet?.balanceCents ?? 0)}</strong>
               </div>
-              <div className="list-row">
-                <span className="muted">状态</span>
-                <span className={`badge ${statsSubscription.status === "active" ? "success" : "warn"}`}>
-                  {statsSubscription.status}
-                </span>
-              </div>
-              <div className="list-row">
-                <span className="muted">已用流量</span>
-                <strong>{formatBytes(statsSubscription.consumedTrafficBytes)}</strong>
-              </div>
-              <div className="list-row">
-                <span className="muted">剩余流量</span>
-                <strong>{statsSubscription.trafficRemainingBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(statsSubscription.trafficRemainingBytes)}</strong>
-              </div>
-              <div className="list-row">
-                <span className="muted">总配额</span>
-                <strong>{statsSubscription.includedTrafficBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(statsSubscription.includedTrafficBytes)}</strong>
-              </div>
-              <div className="list-row">
-                <span className="muted">到期时间</span>
-                <strong>{formatDateTime(statsSubscription.endsAt)}</strong>
-              </div>
-              <div className="list-row">
-                <span className="muted">节点</span>
-                <strong>{statsSubscription.nodeLabel}</strong>
+              <div className="list-row" style={{ alignItems: "center" }}>
+                <span className="muted">调整余额（元）</span>
+                <div className="toolbar-actions" style={{ gap: 8 }}>
+                  <input
+                    className="control"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    style={{ width: 130 }}
+                    value={balanceInput}
+                    onChange={(e) => setBalanceInput(e.target.value)}
+                  />
+                  <button
+                    className="ghost-button compact"
+                    type="button"
+                    disabled={savingBalance}
+                    onClick={() => void saveBalance()}
+                  >
+                    {savingBalance ? "保存中..." : "保存"}
+                  </button>
+                </div>
               </div>
             </div>
+
+            {statsWallet && statsWallet.transactions.length > 0 ? (
+              <div>
+                <div className="fine-print" style={{ marginBottom: 8 }}>钱包流水</div>
+                <DataTable
+                  headers={["类型", "金额", "备注", "时间"]}
+                  rows={statsWallet.transactions.slice(0, 10).map((t) => [
+                    t.kind,
+                    `${t.amountCents >= 0 ? "+" : ""}${formatMoney(t.amountCents)}`,
+                    t.note ?? "-",
+                    formatDateTime(t.createdAt),
+                  ])}
+                />
+              </div>
+            ) : null}
+
+            {statsSubscription ? (
+              <div className="kpi-list">
+                <div className="list-row">
+                  <span className="muted">套餐</span>
+                  <strong>{statsSubscription.planName}</strong>
+                </div>
+                <div className="list-row">
+                  <span className="muted">状态</span>
+                  <span className={`badge ${statsSubscription.status === "active" ? "success" : "warn"}`}>
+                    {statsSubscription.status}
+                  </span>
+                </div>
+                <div className="list-row">
+                  <span className="muted">已用流量</span>
+                  <strong>{formatBytes(statsSubscription.consumedTrafficBytes)}</strong>
+                </div>
+                <div className="list-row">
+                  <span className="muted">剩余流量</span>
+                  <strong>{statsSubscription.trafficRemainingBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(statsSubscription.trafficRemainingBytes)}</strong>
+                </div>
+                <div className="list-row">
+                  <span className="muted">总配额</span>
+                  <strong>{statsSubscription.includedTrafficBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(statsSubscription.includedTrafficBytes)}</strong>
+                </div>
+                <div className="list-row">
+                  <span className="muted">到期时间</span>
+                  <strong>{formatDateTime(statsSubscription.endsAt)}</strong>
+                </div>
+                <div className="list-row">
+                  <span className="muted">节点</span>
+                  <strong>{statsSubscription.nodeLabel}</strong>
+                </div>
+              </div>
+            ) : (
+              <div className="fine-print">该用户还没有订阅记录。</div>
+            )}
 
             {statsUsage.length > 0 ? (
               <div>
@@ -847,12 +928,8 @@ export default function AdminUsersPage() {
                   ])}
                 />
               </div>
-            ) : (
-              <div className="fine-print">暂无流量记录。</div>
-            )}
+            ) : null}
           </div>
-        ) : (
-          <div className="fine-print">该用户还没有订阅记录。</div>
         )}
       </Drawer>
     </ConsoleShell>

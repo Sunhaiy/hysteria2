@@ -1591,6 +1591,36 @@ export class ControlPlaneStoreService {
     };
   }
 
+  /** Admin sets a user's balance to an absolute value, logging the delta. */
+  async adjustUserBalance(
+    userId: string,
+    newBalanceCents: number,
+    note?: string,
+  ) {
+    const user = await this.mustGetUserRecord(userId);
+    if (newBalanceCents < 0) {
+      throw new BadRequestException('余额不能为负');
+    }
+    const delta = newBalanceCents - user.balanceCents;
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: { balanceCents: newBalanceCents },
+      });
+      if (delta !== 0) {
+        await tx.walletTransaction.create({
+          data: {
+            userId,
+            amountCents: delta,
+            kind: 'ADJUST',
+            note: note?.trim() || '管理员调整余额',
+          },
+        });
+      }
+    });
+    return this.getWallet(userId);
+  }
+
   /**
    * Validate a discount code for a checkout and compute the discount in cents
    * (capped at the base price). Does NOT mutate anything.

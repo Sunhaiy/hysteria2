@@ -12,7 +12,11 @@ import { AdminGuard } from '../common/admin.guard';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { CurrentPrincipal } from '../common/current-principal.decorator';
 import type { SessionPrincipal } from '../common/auth.types';
-import { CreateUserDto, UpdateUserDto } from '../contracts/http.dto';
+import {
+  AdjustBalanceDto,
+  CreateUserDto,
+  UpdateUserDto,
+} from '../contracts/http.dto';
 import { ControlPlaneStoreService } from '../domain/control-plane.store';
 import { KickService } from '../kick-service/kick-service.service';
 import { PortalService } from '../portal/portal.service';
@@ -82,6 +86,16 @@ export class AdminUsersController {
   @Get(':id/usage')
   getUserUsage(@Param('id') id: string) {
     return this.store.getUsageRollupsByUser(id);
+  }
+
+  @Get(':id/wallet')
+  getUserWallet(@Param('id') id: string) {
+    return this.store.getWallet(id);
+  }
+
+  @Patch(':id/balance')
+  adjustUserBalance(@Param('id') id: string, @Body() body: AdjustBalanceDto) {
+    return this.store.adjustUserBalance(id, body.balanceCents, body.note);
   }
 
   @Post(':id/kick')
