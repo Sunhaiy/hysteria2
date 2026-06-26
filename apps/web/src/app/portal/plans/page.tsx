@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { Drawer } from "@/components/drawer";
-import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { Toast, useToast } from "@/components/toast";
 import { apiRequest, ApiError } from "@/lib/api";
@@ -27,9 +26,7 @@ export default function PortalPlansPage() {
   const [overview, setOverview] = useState<PortalOverviewResponse | null>(null);
   const [balanceCents, setBalanceCents] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [submittingPlanId, setSubmittingPlanId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
   const { toast, showToast } = useToast();
 
   // Self-serve checkout state
@@ -90,44 +87,6 @@ export default function PortalPlansPage() {
   }, [load]);
 
   const pendingRenewal = orders.find((order) => order.status === "pending" && order.kind === "renewal");
-
-  async function requestPlan(plan: PlanRecord) {
-    if (!token) {
-      return;
-    }
-
-    // Switching to a different plan while one is active is an immediate switch:
-    // the old plan's remaining base traffic and duration are discarded.
-    const isSwitch =
-      Boolean(overview) && overview?.subscription.planId !== plan.id;
-    if (isSwitch) {
-      const confirmed = window.confirm(
-        `升级/切换到「${plan.name}」后会立即生效：速度、流量和到期日都按新套餐从今天重算，当前套餐的剩余流量与剩余天数将作废（已单独购买的流量包不受影响）。确认提交申请？`,
-      );
-      if (!confirmed) {
-        return;
-      }
-    }
-
-    setSubmittingPlanId(plan.id);
-    setError(null);
-    setFeedback(null);
-    try {
-      await apiRequest<ManualOrderRecord>("/api/portal/orders/request", {
-        method: "POST",
-        token,
-        body: {
-          planId: plan.id,
-        },
-      });
-      setFeedback(`已提交 ${plan.name} 的开通申请，等待后台确认到账。`);
-      await load();
-    } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "套餐申请提交失败。");
-    } finally {
-      setSubmittingPlanId(null);
-    }
-  }
 
   const refreshQuote = useCallback(
     async (plan: PlanRecord, code: string) => {
@@ -213,7 +172,6 @@ export default function PortalPlansPage() {
       }
     >
       {error ? <div className="feedback error">{error}</div> : null}
-      {feedback ? <div className="feedback success">{feedback}</div> : null}
 
       {pendingRenewal ? (
         <div className="feedback warn">
@@ -287,22 +245,11 @@ export default function PortalPlansPage() {
                     type="button"
                     onClick={() => openCheckout(plan)}
                   >
-                    用余额购买
+                    购买
                   </button>
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    disabled={Boolean(pendingRenewal) || submittingPlanId === plan.id}
-                    onClick={() => void requestPlan(plan)}
-                  >
-                    {submittingPlanId === plan.id
-                      ? "提交中..."
-                      : isPending
-                        ? "等待确认"
-                        : isCurrent
-                          ? "续期申请"
-                          : "提交开通申请"}
-                  </button>
+                  <Link className="ghost-button" href="/portal/redeem">
+                    cdk充值
+                  </Link>
                   {isCurrent ? <span className="badge success">当前使用中</span> : null}
                   {!isCurrent && isPending ? <span className="badge warn">待处理</span> : null}
                 </div>
