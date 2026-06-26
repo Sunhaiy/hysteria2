@@ -2,7 +2,11 @@ import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { CurrentPrincipal } from '../common/current-principal.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import type { SessionPrincipal } from '../common/auth.types';
-import { RedeemCodeDto, RequestPlanOrderDto } from '../contracts/http.dto';
+import {
+  PurchasePlanDto,
+  RedeemCodeDto,
+  RequestPlanOrderDto,
+} from '../contracts/http.dto';
 import { PortalService } from './portal.service';
 
 @Controller('api/portal')
@@ -53,5 +57,34 @@ export class PortalController {
     @Body() body: RedeemCodeDto,
   ) {
     return this.portalService.redeemCode(principal.sub, body.code);
+  }
+
+  @Get('wallet')
+  getWallet(@CurrentPrincipal() principal: SessionPrincipal) {
+    return this.portalService.getWallet(principal.sub);
+  }
+
+  @Post('purchase/quote')
+  quotePurchase(
+    @CurrentPrincipal() principal: SessionPrincipal,
+    @Body() body: PurchasePlanDto,
+  ) {
+    return this.portalService.quotePurchase(
+      principal.sub,
+      body.planId,
+      body.discountCode,
+    );
+  }
+
+  @Post('purchase')
+  purchase(
+    @CurrentPrincipal() principal: SessionPrincipal,
+    @Body() body: PurchasePlanDto,
+  ) {
+    return this.portalService.purchase(
+      principal.sub,
+      body.planId,
+      body.discountCode,
+    );
   }
 }

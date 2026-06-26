@@ -33,11 +33,33 @@ export class PortalService {
   async redeemCode(userId: string, code: string) {
     const result = await this.store.redeemRedemptionCode(userId, code);
 
+    // A balance top-up may leave the user without an active subscription, so
+    // overview/access can legitimately be unavailable — degrade gracefully.
     return {
       ...result,
-      overview: await this.store.getPortalOverview(userId),
-      access: await this.getAccess(userId),
+      overview: await this.safe(() => this.store.getPortalOverview(userId)),
+      access: await this.safe(() => this.getAccess(userId)),
     };
+  }
+
+  getWallet(userId: string) {
+    return this.store.getWallet(userId);
+  }
+
+  quotePurchase(userId: string, planId: string, discountCode?: string) {
+    return this.store.quotePurchase(userId, planId, discountCode);
+  }
+
+  purchase(userId: string, planId: string, discountCode?: string) {
+    return this.store.purchaseWithBalance(userId, planId, discountCode);
+  }
+
+  private async safe<T>(fn: () => Promise<T>): Promise<T | null> {
+    try {
+      return await fn();
+    } catch {
+      return null;
+    }
   }
 
   async getAccess(userId: string) {

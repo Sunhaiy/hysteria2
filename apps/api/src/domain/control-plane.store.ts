@@ -66,6 +66,8 @@ type RedemptionCodeWithRelations = Prisma.RedemptionCodeGetPayload<{
   };
 }>;
 
+type CdkKind = 'plan' | 'traffic_pack' | 'balance' | 'discount';
+
 @Injectable()
 export class ControlPlaneStoreService {
   constructor(private readonly prisma: PrismaService) {}
@@ -784,6 +786,7 @@ export class ControlPlaneStoreService {
       plan: this.presentPlanShallow(plan),
       nodeLabel: node.label,
       remainingBytes: usage.totalRemainingBytes,
+      balanceCents: user.balanceCents,
       online,
       packs: packs.map((pack) => this.presentTrafficPack(pack)),
     };
@@ -1305,20 +1308,45 @@ export class ControlPlaneStoreService {
   async createRedemptionCode(input: {
     label: string;
     code?: string;
-    kind: 'plan' | 'traffic_pack';
+    kind: CdkKind;
     planId?: string;
     trafficBytes?: number;
     amountCents?: number;
+    discountPercent?: number;
+    discountCents?: number;
+    maxUses?: number;
     note?: string;
     expiresAt?: string;
     createdById?: string;
   }) {
     if (input.kind === 'plan' && !input.planId) {
-      throw new BadRequestException('Plan redemption code requires a plan');
+      throw new BadRequestException('套餐兑换码需要选择套餐');
     }
 
     if (input.kind === 'traffic_pack' && !input.trafficBytes) {
-      throw new BadRequestException('Traffic pack redemption code requires traffic bytes');
+      throw new BadRequestException('流量包兑换码需要填写流量大小');
+    }
+
+    if (input.kind === 'balance' && (!input.amountCents || input.amountCents <= 0)) {
+      throw new BadRequestException('余额兑换码需要填写充值金额');
+    }
+
+    if (input.kind === 'discount') {
+      const hasPercent =
+        input.discountPercent !== undefined && input.discountPercent > 0;
+      const hasFixed =
+        input.discountCents !== undefined && input.discountCents > 0;
+      if (!hasPercent && !hasFixed) {
+        throw new BadRequestException('折扣兑换码需要填写折扣百分比或定额减免');
+      }
+      if (hasPercent && input.discountPercent! > 100) {
+        throw new BadRequestException('折扣百分比不能超过 100');
+      }
+    }
+
+    const maxUses = input.maxUses ?? 1;
+    if (maxUses < 1) {
+      throw new BadRequestException('使用次数至少为 1');
     }
 
     if (input.planId) {
@@ -1339,19 +1367,26 @@ export class ControlPlaneStoreService {
         where: { code: input.code },
         select: { id: true },
       });
-      if (exists) throw new ConflictException(`Redemption code "${input.code}" already exists`);
+      if (exists) throw new ConflictException(`兑换码 "${input.code}" 已存在`);
     }
 
     try {
       const code = await this.prisma.redemptionCode.create({
         data: {
-          code: input.code ?? await this.generateUniqueRedemptionCode(),
+          code: input.code ?? (await this.generateUniqueRedemptionCode()),
           label: input.label,
           kind: this.toDbRedemptionCodeKind(input.kind),
-          planId: input.planId,
+          planId: input.kind === 'plan' ? input.planId : undefined,
           trafficBytes:
-            input.trafficBytes !== undefined ? BigInt(input.trafficBytes) : undefined,
+            input.kind === 'traffic_pack' && input.trafficBytes !== undefined
+              ? BigInt(input.trafficBytes)
+              : undefined,
           amountCents: input.amountCents ?? 0,
+          discountPercent:
+            input.kind === 'discount' ? input.discountPercent ?? null : null,
+          discountCents:
+            input.kind === 'discount' ? input.discountCents ?? null : null,
+          maxUses,
           note: input.note,
           expiresAt,
           createdById: input.createdById,
@@ -1363,6 +1398,22 @@ export class ControlPlaneStoreService {
     } catch (error) {
       this.handlePrismaError(error);
     }
+  }
+
+  async getRedemptionCodeUses(codeId: string) {
+    const uses = await this.prisma.redemptionUse.findMany({
+      where: { codeId },
+      include: { user: true },
+      orderBy: { redeemedAt: 'desc' },
+    });
+    return uses.map((use) => ({
+      id: use.id,
+      userId: use.userId,
+      userEmail: use.user?.email ?? null,
+      userDisplayName: use.user?.displayName ?? null,
+      orderId: use.orderId,
+      redeemedAt: use.redeemedAt.toISOString(),
+    }));
   }
 
   async patchRedemptionCode(codeId: string, input: { status?: 'active' | 'void' }) {
@@ -1419,9 +1470,13 @@ export class ControlPlaneStoreService {
     });
 
     if (!existing) throw new NotFoundException('兑换码不存在');
-    if (existing.status === RedemptionCodeStatus.REDEEMED) throw new BadRequestException('兑换码已被使用');
+    if (existing.status === RedemptionCodeStatus.REDEEMED) throw new BadRequestException('兑换码已用完');
     if (existing.status === RedemptionCodeStatus.VOID) throw new BadRequestException('兑换码已作废');
     if (existing.status === RedemptionCodeStatus.EXPIRED) throw new BadRequestException('兑换码已过期');
+
+    if (this.fromDbRedemptionCodeKind(existing.kind) === 'discount') {
+      throw new BadRequestException('折扣码请在购买套餐结算时使用');
+    }
 
     if (existing.expiresAt && existing.expiresAt.getTime() <= Date.now()) {
       await this.prisma.redemptionCode.update({
@@ -1442,44 +1497,289 @@ export class ControlPlaneStoreService {
 
         if (!code) throw new NotFoundException('兑换码不存在');
         if (code.status !== RedemptionCodeStatus.ACTIVE) throw new BadRequestException('兑换码当前不可使用');
+        if (code.usedCount >= code.maxUses) throw new BadRequestException('兑换码已用完');
+
+        // One use per user per code.
+        const priorUse = await tx.redemptionUse.findUnique({
+          where: { codeId_userId: { codeId: code.id, userId } },
+        });
+        if (priorUse) throw new BadRequestException('你已经使用过这张兑换码');
 
         const openSubscription = await this.findOpenSubscriptionForUser(tx, userId);
 
-        const order =
-          code.kind === RedemptionCodeKind.PLAN
-            ? await this.applyPlanRedemptionCode(tx, {
-                userId,
-                code,
-                openSubscription,
-                redeemedAt: timestamp,
-              })
-            : await this.applyTrafficPackRedemptionCode(tx, {
-                userId,
-                code,
-                openSubscription,
-                redeemedAt: timestamp,
-              });
+        let order: Awaited<ReturnType<typeof this.applyPlanRedemptionCode>> | null =
+          null;
+        if (code.kind === RedemptionCodeKind.PLAN) {
+          order = await this.applyPlanRedemptionCode(tx, {
+            userId,
+            code,
+            openSubscription,
+            redeemedAt: timestamp,
+          });
+        } else if (code.kind === RedemptionCodeKind.TRAFFIC_PACK) {
+          order = await this.applyTrafficPackRedemptionCode(tx, {
+            userId,
+            code,
+            openSubscription,
+            redeemedAt: timestamp,
+          });
+        } else if (code.kind === RedemptionCodeKind.BALANCE) {
+          await tx.user.update({
+            where: { id: userId },
+            data: { balanceCents: { increment: code.amountCents } },
+          });
+          await tx.walletTransaction.create({
+            data: {
+              userId,
+              amountCents: code.amountCents,
+              kind: 'TOPUP',
+              note: `兑换码充值 ${code.code}`,
+            },
+          });
+        }
 
+        await tx.redemptionUse.create({
+          data: { codeId: code.id, userId, orderId: order?.id ?? null },
+        });
+
+        const nextUsedCount = code.usedCount + 1;
+        const exhausted = nextUsedCount >= code.maxUses;
         const redeemedCode = await tx.redemptionCode.update({
           where: { id: code.id },
           data: {
-            status: RedemptionCodeStatus.REDEEMED,
+            usedCount: nextUsedCount,
+            status: exhausted
+              ? RedemptionCodeStatus.REDEEMED
+              : RedemptionCodeStatus.ACTIVE,
             redeemedById: userId,
             redeemedAt: timestamp,
           },
           include: { plan: true, createdBy: true, redeemedBy: true },
         });
 
-        return { code: redeemedCode, order };
+        const user = await tx.user.findUnique({ where: { id: userId } });
+
+        return { code: redeemedCode, order, balanceCents: user?.balanceCents ?? 0 };
       });
 
       return {
         code: this.presentRedemptionCode(result.code),
-        order: this.presentManualOrder(result.order),
+        order: result.order ? this.presentManualOrder(result.order) : null,
+        balanceCents: result.balanceCents,
       };
     } catch (error) {
       this.handlePrismaError(error);
     }
+  }
+
+  async getWallet(userId: string) {
+    const user = await this.mustGetUserRecord(userId);
+    const transactions = await this.prisma.walletTransaction.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    return {
+      balanceCents: user.balanceCents,
+      transactions: transactions.map((txn) => ({
+        id: txn.id,
+        amountCents: txn.amountCents,
+        kind: txn.kind.toLowerCase(),
+        note: txn.note,
+        createdAt: txn.createdAt.toISOString(),
+      })),
+    };
+  }
+
+  /**
+   * Validate a discount code for a checkout and compute the discount in cents
+   * (capped at the base price). Does NOT mutate anything.
+   */
+  private async resolveDiscount(
+    tx: Prisma.TransactionClient,
+    rawCode: string,
+    userId: string,
+    basePriceCents: number,
+  ) {
+    const codeValue = this.normalizeRedemptionCode(rawCode);
+    const code = await tx.redemptionCode.findUnique({
+      where: { code: codeValue },
+    });
+    if (!code || code.kind !== RedemptionCodeKind.DISCOUNT) {
+      throw new BadRequestException('折扣码无效');
+    }
+    if (code.status === RedemptionCodeStatus.VOID) {
+      throw new BadRequestException('折扣码已作废');
+    }
+    if (
+      code.status !== RedemptionCodeStatus.ACTIVE ||
+      code.usedCount >= code.maxUses
+    ) {
+      throw new BadRequestException('折扣码已用完');
+    }
+    if (code.expiresAt && code.expiresAt.getTime() <= Date.now()) {
+      throw new BadRequestException('折扣码已过期');
+    }
+    const priorUse = await tx.redemptionUse.findUnique({
+      where: { codeId_userId: { codeId: code.id, userId } },
+    });
+    if (priorUse) {
+      throw new BadRequestException('你已经使用过这张折扣码');
+    }
+
+    let discount = 0;
+    if (code.discountPercent && code.discountPercent > 0) {
+      discount = Math.floor((basePriceCents * code.discountPercent) / 100);
+    } else if (code.discountCents && code.discountCents > 0) {
+      discount = code.discountCents;
+    }
+    discount = Math.min(discount, basePriceCents);
+    return { code, discountCents: discount };
+  }
+
+  async quotePurchase(userId: string, planId: string, discountCode?: string) {
+    const user = await this.mustGetUserRecord(userId);
+    const plan = await this.mustGetPlanRecord(planId);
+    if (!plan.active) {
+      throw new BadRequestException('套餐已下架');
+    }
+
+    const basePriceCents = plan.priceCents;
+    let discountCents = 0;
+    let discountLabel: string | null = null;
+    if (discountCode?.trim()) {
+      const resolved = await this.resolveDiscount(
+        this.prisma,
+        discountCode,
+        userId,
+        basePriceCents,
+      );
+      discountCents = resolved.discountCents;
+      discountLabel = resolved.code.label;
+    }
+
+    const finalPriceCents = Math.max(basePriceCents - discountCents, 0);
+    return {
+      planId: plan.id,
+      planName: plan.name,
+      basePriceCents,
+      discountCents,
+      discountLabel,
+      finalPriceCents,
+      balanceCents: user.balanceCents,
+      sufficient: user.balanceCents >= finalPriceCents,
+    };
+  }
+
+  async purchaseWithBalance(
+    userId: string,
+    planId: string,
+    discountCode?: string,
+  ) {
+    await this.mustGetUserRecord(userId);
+    const plan = await this.mustGetPlanRecord(planId);
+    if (!plan.active) {
+      throw new BadRequestException('套餐已下架');
+    }
+    await this.resolvePlanNode(this.prisma, { planId });
+
+    const timestamp = new Date();
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const user = await tx.user.findUnique({ where: { id: userId } });
+        if (!user) throw new NotFoundException('用户不存在');
+
+        const basePriceCents = plan.priceCents;
+        let discountCents = 0;
+        let discountCodeId: string | null = null;
+        if (discountCode?.trim()) {
+          const resolved = await this.resolveDiscount(
+            tx,
+            discountCode,
+            userId,
+            basePriceCents,
+          );
+          discountCents = resolved.discountCents;
+          discountCodeId = resolved.code.id;
+        }
+
+        const finalPriceCents = Math.max(basePriceCents - discountCents, 0);
+        if (user.balanceCents < finalPriceCents) {
+          throw new BadRequestException('余额不足，请先充值');
+        }
+
+        await tx.user.update({
+          where: { id: userId },
+          data: { balanceCents: { decrement: finalPriceCents } },
+        });
+        await tx.walletTransaction.create({
+          data: {
+            userId,
+            amountCents: -finalPriceCents,
+            kind: 'PURCHASE',
+            note: `购买套餐 ${plan.name}`,
+          },
+        });
+
+        const order = await tx.manualOrder.create({
+          data: {
+            userId,
+            planId: plan.id,
+            status: OrderStatus.APPLIED,
+            kind: OrderKind.RENEWAL,
+            amountCents: finalPriceCents,
+            durationDays: plan.durationDays,
+            note:
+              discountCents > 0
+                ? `余额购买（折扣 ${this.formatCents(discountCents)}）`
+                : '余额购买',
+            processedAt: timestamp,
+          },
+        });
+
+        await this.grantPlanEntitlement(tx, {
+          userId,
+          planId: plan.id,
+          grantedAt: timestamp,
+        });
+
+        if (discountCodeId) {
+          const discountRecord = await tx.redemptionCode.findUnique({
+            where: { id: discountCodeId },
+          });
+          if (discountRecord) {
+            await tx.redemptionUse.create({
+              data: {
+                codeId: discountRecord.id,
+                userId,
+                orderId: order.id,
+              },
+            });
+            const nextUsed = discountRecord.usedCount + 1;
+            await tx.redemptionCode.update({
+              where: { id: discountRecord.id },
+              data: {
+                usedCount: nextUsed,
+                status:
+                  nextUsed >= discountRecord.maxUses
+                    ? RedemptionCodeStatus.REDEEMED
+                    : RedemptionCodeStatus.ACTIVE,
+                redeemedById: userId,
+                redeemedAt: timestamp,
+              },
+            });
+          }
+        }
+      });
+    } catch (error) {
+      this.handlePrismaError(error);
+    }
+
+    return this.getPortalOverview(userId);
+  }
+
+  private formatCents(cents: number) {
+    return `¥${(cents / 100).toFixed(2)}`;
   }
 
   async getAuthEvents(limit = 20) {
@@ -1890,6 +2190,7 @@ export class ControlPlaneStoreService {
       role: this.fromDbUserRole(user.role),
       status: this.fromDbUserStatus(user.status),
       notes: user.notes,
+      balanceCents: user.balanceCents,
       plainPassword: user.plainPassword ?? null,
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),
@@ -2075,6 +2376,10 @@ export class ControlPlaneStoreService {
           ? Number(code.trafficBytes)
           : null,
       amountCents: code.amountCents,
+      discountPercent: code.discountPercent,
+      discountCents: code.discountCents,
+      maxUses: code.maxUses,
+      usedCount: code.usedCount,
       note: code.note,
       expiresAt: code.expiresAt?.toISOString() ?? null,
       createdById: code.createdById,
@@ -2350,12 +2655,30 @@ export class ControlPlaneStoreService {
     }
   }
 
-  private fromDbRedemptionCodeKind(kind: RedemptionCodeKind): 'plan' | 'traffic_pack' {
-    return kind === RedemptionCodeKind.TRAFFIC_PACK ? 'traffic_pack' : 'plan';
+  private fromDbRedemptionCodeKind(kind: RedemptionCodeKind): CdkKind {
+    switch (kind) {
+      case RedemptionCodeKind.TRAFFIC_PACK:
+        return 'traffic_pack';
+      case RedemptionCodeKind.BALANCE:
+        return 'balance';
+      case RedemptionCodeKind.DISCOUNT:
+        return 'discount';
+      default:
+        return 'plan';
+    }
   }
 
-  private toDbRedemptionCodeKind(kind: 'plan' | 'traffic_pack') {
-    return kind === 'traffic_pack' ? RedemptionCodeKind.TRAFFIC_PACK : RedemptionCodeKind.PLAN;
+  private toDbRedemptionCodeKind(kind: CdkKind) {
+    switch (kind) {
+      case 'traffic_pack':
+        return RedemptionCodeKind.TRAFFIC_PACK;
+      case 'balance':
+        return RedemptionCodeKind.BALANCE;
+      case 'discount':
+        return RedemptionCodeKind.DISCOUNT;
+      default:
+        return RedemptionCodeKind.PLAN;
+    }
   }
 
   private fromDbRedemptionCodeStatus(

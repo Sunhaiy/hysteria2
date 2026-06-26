@@ -484,8 +484,8 @@ export class CreateRedemptionCodeDto {
   @IsNotEmpty()
   code?: string;
 
-  @IsIn(['plan', 'traffic_pack'])
-  kind!: 'plan' | 'traffic_pack';
+  @IsIn(['plan', 'traffic_pack', 'balance', 'discount'])
+  kind!: 'plan' | 'traffic_pack' | 'balance' | 'discount';
 
   @IsOptional()
   @IsString()
@@ -502,12 +502,37 @@ export class CreateRedemptionCodeDto {
   amountCents?: number;
 
   @IsOptional()
+  @IsInt()
+  @Min(1)
+  discountPercent?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  discountCents?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxUses?: number;
+
+  @IsOptional()
   @IsString()
   note?: string;
 
   @IsOptional()
   @IsDateString()
   expiresAt?: string;
+}
+
+export class PurchasePlanDto {
+  @IsString()
+  @IsNotEmpty()
+  planId!: string;
+
+  @IsOptional()
+  @IsString()
+  discountCode?: string;
 }
 
 export class UpdateRedemptionCodeDto {

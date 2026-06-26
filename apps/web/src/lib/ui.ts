@@ -38,6 +38,10 @@ export function humanizeRedemptionKind(kind: string) {
       return "套餐开通";
     case "traffic_pack":
       return "流量包";
+    case "balance":
+      return "余额充值";
+    case "discount":
+      return "折扣券";
     default:
       return kind;
   }

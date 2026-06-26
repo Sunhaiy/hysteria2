@@ -122,7 +122,7 @@ export default function PortalRedeemPage() {
 
       {result ? (
         <section className="workspace-grid">
-          <Panel title="兑换结果" copy="成功后会同步更新订单、套餐状态和接入信息。">
+          <Panel title="兑换结果" copy="成功后会同步更新订单、套餐状态、余额和接入信息。">
             <div className="kpi-list">
               <div className="list-row">
                 <span className="muted">权益类型</span>
@@ -132,47 +132,71 @@ export default function PortalRedeemPage() {
                 <span className="muted">兑换标签</span>
                 <strong>{result.code.label}</strong>
               </div>
-              <div className="list-row">
-                <span className="muted">订单类型</span>
-                <strong>{humanizeOrderKind(result.order.kind)}</strong>
-              </div>
-              <div className="list-row">
-                <span className="muted">订单金额</span>
-                <strong>{formatMoney(result.order.amountCents)}</strong>
-              </div>
-              <div className="list-row">
-                <span className="muted">当前套餐</span>
-                <strong>{result.overview.subscription.planName}</strong>
-              </div>
-              <div className="list-row">
-                <span className="muted">套餐到期</span>
-                <strong>{formatDateTime(result.access.expiresAt)}</strong>
-              </div>
-              <div className="list-row">
-                <span className="muted">剩余流量</span>
-                <strong>{formatBytes(result.access.trafficRemaining)}</strong>
-              </div>
+              {result.code.kind === "balance" ? (
+                <>
+                  <div className="list-row">
+                    <span className="muted">本次充值</span>
+                    <strong>{formatMoney(result.code.amountCents)}</strong>
+                  </div>
+                  <div className="list-row">
+                    <span className="muted">当前余额</span>
+                    <strong>{formatMoney(result.balanceCents ?? 0)}</strong>
+                  </div>
+                </>
+              ) : null}
+              {result.order ? (
+                <>
+                  <div className="list-row">
+                    <span className="muted">订单类型</span>
+                    <strong>{humanizeOrderKind(result.order.kind)}</strong>
+                  </div>
+                  <div className="list-row">
+                    <span className="muted">订单金额</span>
+                    <strong>{formatMoney(result.order.amountCents)}</strong>
+                  </div>
+                </>
+              ) : null}
+              {result.overview ? (
+                <div className="list-row">
+                  <span className="muted">当前套餐</span>
+                  <strong>{result.overview.subscription.planName}</strong>
+                </div>
+              ) : null}
+              {result.access ? (
+                <>
+                  <div className="list-row">
+                    <span className="muted">套餐到期</span>
+                    <strong>{formatDateTime(result.access.expiresAt)}</strong>
+                  </div>
+                  <div className="list-row">
+                    <span className="muted">剩余流量</span>
+                    <strong>{formatBytes(result.access.trafficRemaining)}</strong>
+                  </div>
+                </>
+              ) : null}
             </div>
           </Panel>
 
-          <Panel title="直接交付" copy="兑换成功后，专属 URI 和令牌已经准备好，可以直接复制。">
-            <label className="field">
-              <span className="fine-print">访问令牌</span>
-              <input className="control mono" value={result.access.token} readOnly />
-            </label>
-            <label className="field">
-              <span className="fine-print">连接 URI</span>
-              <textarea className="control textarea mono" value={result.access.uri} readOnly />
-            </label>
-            <div className="toolbar-actions">
-              <button className="action-button" type="button" onClick={() => void copyText(result.access.uri)}>
-                复制 URI
-              </button>
-              <button className="ghost-button" type="button" onClick={() => void copyText(result.access.configSnippet)}>
-                复制配置片段
-              </button>
-            </div>
-          </Panel>
+          {result.access ? (
+            <Panel title="直接交付" copy="兑换成功后，专属 URI 和令牌已经准备好，可以直接复制。">
+              <label className="field">
+                <span className="fine-print">访问令牌</span>
+                <input className="control mono" value={result.access.token} readOnly />
+              </label>
+              <label className="field">
+                <span className="fine-print">连接 URI</span>
+                <textarea className="control textarea mono" value={result.access.uri} readOnly />
+              </label>
+              <div className="toolbar-actions">
+                <button className="action-button" type="button" onClick={() => result.access && void copyText(result.access.uri)}>
+                  复制 URI
+                </button>
+                <button className="ghost-button" type="button" onClick={() => result.access && void copyText(result.access.configSnippet)}>
+                  复制配置片段
+                </button>
+              </div>
+            </Panel>
+          ) : null}
         </section>
       ) : null}
     </ConsoleShell>

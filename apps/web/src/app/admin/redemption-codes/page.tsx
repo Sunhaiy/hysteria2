@@ -13,7 +13,11 @@ import { clearDraft, getDraft } from "@/lib/draft";
 import { formatBytes, formatDateTime, formatMoney } from "@/lib/format";
 import { copyToClipboard } from "@/lib/clipboard";
 import { Toast, useToast } from "@/components/toast";
-import type { PlanRecord, RedemptionCodeRecord } from "@/lib/types";
+import type {
+  PlanRecord,
+  RedemptionCodeRecord,
+  RedemptionUseRecord,
+} from "@/lib/types";
 import {
   fromDateTimeLocal,
   humanizeRedemptionKind,
@@ -23,14 +27,37 @@ import {
 
 const GB = 1024 * 1024 * 1024;
 
+type CdkKind = "plan" | "traffic_pack" | "balance" | "discount";
+
+function describeCodeValue(item: RedemptionCodeRecord) {
+  switch (item.kind) {
+    case "plan":
+      return item.planName ?? "套餐开通";
+    case "traffic_pack":
+      return item.trafficBytes ? formatBytes(item.trafficBytes) : "流量包";
+    case "balance":
+      return `充值 ${formatMoney(item.amountCents)}`;
+    case "discount":
+      return item.discountPercent
+        ? `减 ${item.discountPercent}%`
+        : `减 ${formatMoney(item.discountCents ?? 0)}`;
+    default:
+      return "-";
+  }
+}
+
 function emptyForm(planId = "") {
   return {
     label: "",
     customCode: "",
-    kind: "plan" as "plan" | "traffic_pack",
+    kind: "plan" as CdkKind,
     planId,
     trafficBytes: 50 * GB,
     amountCents: 1800,
+    discountMode: "percent" as "percent" | "fixed",
+    discountPercent: 20,
+    discountAmountCents: 1000,
+    maxUses: 1,
     expiresAt: "",
     note: "",
   };
@@ -49,6 +76,30 @@ export default function AdminRedemptionCodesPage() {
   const [drawerError, setDrawerError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ msg: string; kind: "success" | "error" } | null>(null);
   const { toast, showToast } = useToast();
+
+  const [usesDrawerOpen, setUsesDrawerOpen] = useState(false);
+  const [usesCode, setUsesCode] = useState<RedemptionCodeRecord | null>(null);
+  const [uses, setUses] = useState<RedemptionUseRecord[]>([]);
+  const [usesLoading, setUsesLoading] = useState(false);
+
+  async function openUses(code: RedemptionCodeRecord) {
+    if (!token) return;
+    setUsesCode(code);
+    setUses([]);
+    setUsesDrawerOpen(true);
+    setUsesLoading(true);
+    try {
+      const rows = await apiRequest<RedemptionUseRecord[]>(
+        `/api/admin/redemption-codes/${code.id}/uses`,
+        { token },
+      );
+      setUses(rows);
+    } catch {
+      // keep empty
+    } finally {
+      setUsesLoading(false);
+    }
+  }
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -131,6 +182,15 @@ export default function AdminRedemptionCodesPage() {
           planId: form.kind === "plan" ? form.planId : undefined,
           trafficBytes: form.kind === "traffic_pack" ? form.trafficBytes : undefined,
           amountCents: form.amountCents,
+          discountPercent:
+            form.kind === "discount" && form.discountMode === "percent"
+              ? form.discountPercent
+              : undefined,
+          discountCents:
+            form.kind === "discount" && form.discountMode === "fixed"
+              ? form.discountAmountCents
+              : undefined,
+          maxUses: form.maxUses,
           expiresAt: form.expiresAt === "permanent" ? undefined : fromDateTimeLocal(form.expiresAt),
           note: form.note || undefined,
         },
@@ -212,30 +272,33 @@ export default function AdminRedemptionCodesPage() {
         ) : null}
         {codes.length > 0 ? (
           <DataTable
-            headers={["标签 / CDK", "权益", "状态", "价值", "到期 / 兑换", "操作"]}
+            headers={["标签 / CDK", "类型 / 权益", "状态", "使用次数", "到期", "操作"]}
             rows={codes.map((item) => [
               <div key={item.id} className="split">
                 <strong>{item.label}</strong>
                 <span className="mono">{item.code}</span>
               </div>,
-              item.kind === "plan"
-                ? item.planName ?? humanizeRedemptionKind(item.kind)
-                : item.trafficBytes
-                  ? formatBytes(item.trafficBytes)
-                  : humanizeRedemptionKind(item.kind),
+              <div key={`${item.id}-v`} className="split">
+                <span className="fine-print">{humanizeRedemptionKind(item.kind)}</span>
+                <strong>{describeCodeValue(item)}</strong>
+              </div>,
               <span key={`${item.id}-st`} className={`badge ${statusTone(item.status)}`}>
                 {humanizeRedemptionStatus(item.status)}
               </span>,
-              formatMoney(item.amountCents),
-              <div key={`${item.id}-tl`} className="split">
-                <span>{item.expiresAt ? formatDateTime(item.expiresAt) : "不限时"}</span>
-                <span className="fine-print">
-                  {item.redeemedAt
-                    ? `已由 ${item.redeemedByEmail ?? "会员"} 兑换`
-                    : "未兑换"}
-                </span>
-              </div>,
+              <span key={`${item.id}-u`} className="mono">
+                {item.usedCount} / {item.maxUses}
+              </span>,
+              <span key={`${item.id}-tl`}>
+                {item.expiresAt ? formatDateTime(item.expiresAt) : "不限时"}
+              </span>,
               <div key={`${item.id}-act`} className="table-actions">
+                <button
+                  className="ghost-button compact"
+                  type="button"
+                  onClick={() => void openUses(item)}
+                >
+                  使用记录
+                </button>
                 <button
                   className="ghost-button compact"
                   type="button"
@@ -281,7 +344,8 @@ export default function AdminRedemptionCodesPage() {
                 submitting ||
                 !form.label.trim() ||
                 (form.kind === "plan" && !form.planId) ||
-                (form.kind === "traffic_pack" && !form.trafficBytes)
+                (form.kind === "traffic_pack" && !form.trafficBytes) ||
+                (form.kind === "balance" && form.amountCents <= 0)
               }
             >
               {submitting ? "生成中..." : "生成兑换码"}
@@ -331,16 +395,20 @@ export default function AdminRedemptionCodesPage() {
               <span className="fine-print">类型</span>
               <CustomSelect
                 value={form.kind}
-                onChange={(v) => setForm((f) => ({ ...f, kind: v as "plan" | "traffic_pack" }))}
+                onChange={(v) => setForm((f) => ({ ...f, kind: v as CdkKind }))}
                 options={[
                   { value: "plan", label: "套餐开通码" },
                   { value: "traffic_pack", label: "流量包兑换码" },
+                  { value: "balance", label: "余额充值码" },
+                  { value: "discount", label: "折扣券" },
                 ]}
               />
             </label>
 
             <label className="field">
-              <span className="fine-print">价值（元）</span>
+              <span className="fine-print">
+                {form.kind === "balance" ? "充值金额（元）" : "价值（元）"}
+              </span>
               <input
                 className="control"
                 type="number"
@@ -366,7 +434,9 @@ export default function AdminRedemptionCodesPage() {
                 ]}
               />
             </label>
-          ) : (
+          ) : null}
+
+          {form.kind === "traffic_pack" ? (
             <label className="field">
               <span className="fine-print">流量（GB）</span>
               <input
@@ -380,7 +450,72 @@ export default function AdminRedemptionCodesPage() {
               />
               <span className="field-hint">{formatBytes(form.trafficBytes)}</span>
             </label>
-          )}
+          ) : null}
+
+          {form.kind === "discount" ? (
+            <div className="two-col">
+              <label className="field">
+                <span className="fine-print">折扣方式</span>
+                <CustomSelect
+                  value={form.discountMode}
+                  onChange={(v) =>
+                    setForm((f) => ({ ...f, discountMode: v as "percent" | "fixed" }))
+                  }
+                  options={[
+                    { value: "percent", label: "百分比折扣" },
+                    { value: "fixed", label: "定额减免" },
+                  ]}
+                />
+              </label>
+              {form.discountMode === "percent" ? (
+                <label className="field">
+                  <span className="fine-print">折扣百分比（%）</span>
+                  <input
+                    className="control"
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={form.discountPercent}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, discountPercent: Math.round(Number(e.target.value)) }))
+                    }
+                  />
+                  <span className="field-hint">减免 {form.discountPercent}%</span>
+                </label>
+              ) : (
+                <label className="field">
+                  <span className="fine-print">减免金额（元）</span>
+                  <input
+                    className="control"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.discountAmountCents / 100}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        discountAmountCents: Math.round(Number(e.target.value) * 100),
+                      }))
+                    }
+                  />
+                </label>
+              )}
+            </div>
+          ) : null}
+
+          <label className="field">
+            <span className="fine-print">可使用次数</span>
+            <input
+              className="control"
+              type="number"
+              min="1"
+              value={form.maxUses}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, maxUses: Math.max(1, Math.round(Number(e.target.value))) }))
+              }
+            />
+            <span className="field-hint">同一会员每张码只能用一次；总共可被使用 {form.maxUses} 次</span>
+          </label>
 
           <div className="two-col">
             <div className="field">
@@ -414,6 +549,47 @@ export default function AdminRedemptionCodesPage() {
             </label>
           </div>
         </form>
+      </Drawer>
+
+      <Drawer
+        open={usesDrawerOpen}
+        onClose={() => setUsesDrawerOpen(false)}
+        title={usesCode ? `使用记录 · ${usesCode.label}` : "使用记录"}
+      >
+        {usesCode ? (
+          <div className="kpi-list" style={{ marginBottom: 12 }}>
+            <div className="list-row">
+              <span className="muted">兑换码</span>
+              <strong className="mono">{usesCode.code}</strong>
+            </div>
+            <div className="list-row">
+              <span className="muted">已用 / 总次数</span>
+              <strong>
+                {usesCode.usedCount} / {usesCode.maxUses}
+              </strong>
+            </div>
+          </div>
+        ) : null}
+        {usesLoading ? (
+          <div className="skeleton-rows">
+            {Array.from({ length: 3 }, (_, i) => (
+              <div key={i} className="skeleton skeleton-row" />
+            ))}
+          </div>
+        ) : uses.length ? (
+          <DataTable
+            headers={["会员", "邮箱", "使用时间"]}
+            rows={uses.map((u) => [
+              u.userDisplayName ?? "-",
+              u.userEmail ?? "-",
+              formatDateTime(u.redeemedAt),
+            ])}
+          />
+        ) : (
+          <div className="empty-state">
+            <div className="empty-state-title">还没有人使用这张兑换码</div>
+          </div>
+        )}
       </Drawer>
     </ConsoleShell>
   );

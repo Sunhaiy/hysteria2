@@ -39,10 +39,18 @@ export class RedemptionCodesController {
       planId: body.planId,
       trafficBytes: body.trafficBytes,
       amountCents: body.amountCents,
+      discountPercent: body.discountPercent,
+      discountCents: body.discountCents,
+      maxUses: body.maxUses,
       note: body.note,
       expiresAt: body.expiresAt,
       createdById: principal.sub,
     });
+  }
+
+  @Get(':id/uses')
+  listCodeUses(@Param('id') id: string) {
+    return this.store.getRedemptionCodeUses(id);
   }
 
   @Patch(':id')

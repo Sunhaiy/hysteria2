@@ -140,12 +140,16 @@ export interface RedemptionCodeRecord {
   id: string;
   code: string;
   label: string;
-  kind: "plan" | "traffic_pack";
+  kind: "plan" | "traffic_pack" | "balance" | "discount";
   status: "active" | "redeemed" | "void" | "expired";
   planId?: string | null;
   planName?: string | null;
   trafficBytes?: number | null;
   amountCents: number;
+  discountPercent?: number | null;
+  discountCents?: number | null;
+  maxUses: number;
+  usedCount: number;
   note?: string | null;
   expiresAt?: string | null;
   createdById?: string | null;
@@ -155,6 +159,37 @@ export interface RedemptionCodeRecord {
   redeemedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface RedemptionUseRecord {
+  id: string;
+  userId: string;
+  userEmail?: string | null;
+  userDisplayName?: string | null;
+  orderId?: string | null;
+  redeemedAt: string;
+}
+
+export interface WalletResponse {
+  balanceCents: number;
+  transactions: Array<{
+    id: string;
+    amountCents: number;
+    kind: string;
+    note?: string | null;
+    createdAt: string;
+  }>;
+}
+
+export interface PurchaseQuote {
+  planId: string;
+  planName: string;
+  basePriceCents: number;
+  discountCents: number;
+  discountLabel?: string | null;
+  finalPriceCents: number;
+  balanceCents: number;
+  sufficient: boolean;
 }
 
 export interface UsageRollupRecord {
@@ -202,6 +237,7 @@ export interface PortalOverviewResponse {
   plan: Omit<PlanRecord, "boundNodes" | "bindings">;
   nodeLabel?: string | null;
   remainingBytes: number;
+  balanceCents?: number;
   online: number;
   packs: Array<{
     id: string;
@@ -247,7 +283,8 @@ export interface PortalAccessResponse {
 
 export interface PortalRedeemResponse {
   code: RedemptionCodeRecord;
-  order: ManualOrderRecord;
-  overview: PortalOverviewResponse;
-  access: PortalAccessResponse;
+  order: ManualOrderRecord | null;
+  balanceCents?: number;
+  overview: PortalOverviewResponse | null;
+  access: PortalAccessResponse | null;
 }

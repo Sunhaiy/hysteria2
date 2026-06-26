@@ -46,6 +46,15 @@ enum OrderKind {
 enum RedemptionCodeKind {
   PLAN
   TRAFFIC_PACK
+  BALANCE
+  DISCOUNT
+}
+
+enum WalletTxnKind {
+  TOPUP
+  PURCHASE
+  REFUND
+  ADJUST
 }
 
 enum RedemptionCodeStatus {
@@ -64,6 +73,7 @@ model User {
   role            UserRole         @default(MEMBER)
   status          UserStatus       @default(ACTIVE)
   notes           String?
+  balanceCents    Int              @default(0)
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   accessTokens    AccessToken[]
@@ -73,6 +83,8 @@ model User {
   processedOrders ManualOrder[]    @relation("ManualOrderProcessedBy")
   createdCodes    RedemptionCode[] @relation("RedemptionCodeCreatedBy")
   redeemedCodes   RedemptionCode[] @relation("RedemptionCodeRedeemedBy")
+  redemptionUses  RedemptionUse[]
+  walletTxns      WalletTransaction[]
   authEvents      AuthEvent[]
   usageRollups    UsageRollup[]
   onlineSnapshots OnlineSnapshot[]
@@ -205,26 +217,56 @@ model ManualOrder {
 }
 
 model RedemptionCode {
-  id           String               @id @default(cuid())
-  code         String               @unique
-  label        String
-  kind         RedemptionCodeKind
-  status       RedemptionCodeStatus @default(ACTIVE)
-  planId       String?
-  trafficBytes BigInt?
-  amountCents  Int                  @default(0)
-  note         String?
-  expiresAt    DateTime?
-  createdById  String?
-  redeemedById String?
-  redeemedAt   DateTime?
-  createdAt    DateTime             @default(now())
-  updatedAt    DateTime             @updatedAt
-  plan         Plan?                @relation(fields: [planId], references: [id], onDelete: SetNull)
-  createdBy    User?                @relation("RedemptionCodeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  redeemedBy   User?                @relation("RedemptionCodeRedeemedBy", fields: [redeemedById], references: [id], onDelete: SetNull)
+  id              String               @id @default(cuid())
+  code            String               @unique
+  label           String
+  kind            RedemptionCodeKind
+  status          RedemptionCodeStatus @default(ACTIVE)
+  planId          String?
+  trafficBytes    BigInt?
+  amountCents     Int                  @default(0)
+  discountPercent Int?
+  discountCents   Int?
+  maxUses         Int                  @default(1)
+  usedCount       Int                  @default(0)
+  note            String?
+  expiresAt       DateTime?
+  createdById     String?
+  redeemedById    String?
+  redeemedAt      DateTime?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  plan            Plan?                @relation(fields: [planId], references: [id], onDelete: SetNull)
+  createdBy       User?                @relation("RedemptionCodeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  redeemedBy      User?                @relation("RedemptionCodeRedeemedBy", fields: [redeemedById], references: [id], onDelete: SetNull)
+  uses            RedemptionUse[]
 
   @@index([status, createdAt])
+}
+
+model RedemptionUse {
+  id         String         @id @default(cuid())
+  codeId     String
+  userId     String
+  orderId    String?
+  redeemedAt DateTime       @default(now())
+  code       RedemptionCode @relation(fields: [codeId], references: [id], onDelete: Cascade)
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([codeId, userId])
+  @@index([codeId, redeemedAt])
+}
+
+model WalletTransaction {
+  id          String        @id @default(cuid())
+  userId      String
+  amountCents Int
+  kind        WalletTxnKind
+  note        String?
+  createdAt   DateTime      @default(now())
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }
 
 model AuthEvent {
