@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect } from "react";
+import { Icon } from "@/components/icon";
 import { useSite } from "@/components/site-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
 
@@ -106,13 +107,12 @@ export default function HomePage() {
           <span className="lp-brand-tag">VPN</span>
         </div>
         <nav className="lp-nav-links">
-          <a href="#top">首页</a>
-          <a href="#features">特点</a>
-          <a href="#how">使用</a>
-          <Link href="/portal">套餐</Link>
-          <Link href="/login">登录</Link>
+          <Link className="lp-nav-login" href="/login">
+            <Icon name="login" />
+            <span>登录</span>
+          </Link>
           <ThemeToggle className="lp-icon-btn" />
-          <Link className="lp-btn lp-btn-primary" href="/register">
+          <Link className="lp-btn lp-btn-accent" href="/register">
             立即使用
           </Link>
         </nav>

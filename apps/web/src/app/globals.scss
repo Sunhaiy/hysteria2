@@ -1413,7 +1413,10 @@ select.control {
   display: block;
   padding: 0;
   color: var(--text-primary);
-  overflow-x: hidden;
+  /* clip (not hidden): prevents horizontal overflow from the globe/orbit
+     without turning .lp into a scroll container, which would break the
+     sticky nav. */
+  overflow-x: clip;
 }
 
 .theme-toggle,
@@ -1532,6 +1535,33 @@ select.control {
 .lp-btn-ghost:hover {
   transform: translateY(-2px);
   border-color: var(--accent-500);
+}
+
+/* Accent CTA — the prominent green nav button */
+.lp-btn-accent {
+  color: #ffffff;
+  background: var(--accent-500);
+  border-color: var(--accent-500);
+  box-shadow: 0 10px 26px -14px color-mix(in srgb, var(--accent-500) 85%, transparent);
+}
+
+.lp-btn-accent:hover {
+  transform: translateY(-2px);
+  background: var(--accent-400);
+  border-color: var(--accent-400);
+  box-shadow: 0 16px 34px -14px color-mix(in srgb, var(--accent-500) 90%, transparent);
+}
+
+.lp-nav-login {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.lp-nav-login .icon-slot svg {
+  width: 18px;
+  height: 18px;
 }
 
 /* Hero — two column */
@@ -1972,12 +2002,6 @@ select.control {
   .lp-hero-visual {
     order: -1;
     min-height: 360px;
-  }
-  .lp-nav-links a:not(.lp-btn) {
-    display: none;
-  }
-  .lp-nav-links .lp-icon-btn {
-    display: inline-flex;
   }
 }
 
