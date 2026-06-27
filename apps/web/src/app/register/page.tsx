@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { ApiError, apiRequest } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
+import { AuthShell } from "@/components/auth-shell";
 import { OAuthButtons } from "@/components/oauth-buttons";
 
 export default function RegisterPage() {
@@ -83,100 +84,83 @@ export default function RegisterPage() {
   }
 
   return (
-    <main className="auth-page">
-      <section className="panel auth-card">
-        <div className="panel-header">
-          <div className="split">
-            <span className="scope-chip">Register</span>
-            <h1 className="panel-title">注册 Hysteria 2 账号</h1>
-            <span className="panel-copy">
-              使用邮箱验证码创建会员账号，注册后可在套餐中心选购或在兑换中心激活。
-            </span>
-          </div>
-        </div>
-        <div className="panel-body">
-          <form className="form-grid" onSubmit={handleSubmit}>
-            <label className="field">
-              <span className="fine-print">邮箱</span>
-              <div className="toolbar-actions" style={{ gap: 8 }}>
-                <input
-                  className="control"
-                  style={{ flex: 1 }}
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="you@example.com"
-                  autoComplete="username"
-                />
-                <button
-                  className="toolbar-button"
-                  type="button"
-                  disabled={sending || cooldown > 0}
-                  onClick={() => void sendCode()}
-                >
-                  {cooldown > 0
-                    ? `${cooldown}s`
-                    : sending
-                      ? "发送中..."
-                      : codeSent
-                        ? "重新发送"
-                        : "发送验证码"}
-                </button>
-              </div>
-            </label>
+    <AuthShell active="register">
+      <form className="auth2-fields" onSubmit={handleSubmit}>
+        <label className="auth2-input">
+          <span className="auth2-input-icon">✉️</span>
+          <input
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="邮箱地址"
+            autoComplete="username"
+          />
+          <button
+            className="auth2-code-btn"
+            type="button"
+            disabled={sending || cooldown > 0}
+            onClick={() => void sendCode()}
+          >
+            {cooldown > 0
+              ? `${cooldown}s`
+              : sending
+                ? "发送中"
+                : codeSent
+                  ? "重新发送"
+                  : "获取验证码"}
+          </button>
+        </label>
 
-            <label className="field">
-              <span className="fine-print">验证码</span>
-              <input
-                className="control"
-                value={code}
-                onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
-                placeholder="6 位数字验证码"
-                inputMode="numeric"
-              />
-            </label>
+        <label className="auth2-input">
+          <span className="auth2-input-icon">🔢</span>
+          <input
+            value={code}
+            onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+            placeholder="6 位验证码"
+            inputMode="numeric"
+          />
+        </label>
 
-            <label className="field">
-              <span className="fine-print">显示名称（可选）</span>
-              <input
-                className="control"
-                value={displayName}
-                onChange={(event) => setDisplayName(event.target.value)}
-                placeholder="留空则使用邮箱前缀"
-                autoComplete="nickname"
-              />
-            </label>
+        <label className="auth2-input">
+          <span className="auth2-input-icon">👤</span>
+          <input
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+            placeholder="显示名称（可选）"
+            autoComplete="nickname"
+          />
+        </label>
 
-            <label className="field">
-              <span className="fine-print">密码（至少 8 位）</span>
-              <input
-                className="control"
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="请设置登录密码"
-                autoComplete="new-password"
-              />
-            </label>
+        <label className="auth2-input">
+          <span className="auth2-input-icon">🔒</span>
+          <input
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="设置密码（至少 8 位）"
+            autoComplete="new-password"
+          />
+        </label>
 
-            {error ? <div className="feedback error">{error}</div> : null}
-            {notice ? <div className="feedback success">{notice}</div> : null}
+        {error ? <div className="feedback error">{error}</div> : null}
+        {notice ? <div className="feedback success">{notice}</div> : null}
 
-            <div className="toolbar-actions" style={{ justifyContent: "space-between" }}>
-              <Link className="fine-print" href="/login">
-                已有账号？去登录
-              </Link>
-              <button
-                className="action-button"
-                type="submit"
-                disabled={submitting || !codeSent || code.length !== 6 || password.length < 8}
-              >
-                {submitting ? "注册中..." : "注册并登录"}
-              </button>
-            </div>
-          </form>
-          <OAuthButtons />
-        </div>
-      </section>
-    </main>
+        <button
+          className="auth2-submit"
+          type="submit"
+          disabled={submitting || !codeSent || code.length !== 6 || password.length < 8}
+        >
+          {submitting ? "注册中..." : "注册并登录"}
+        </button>
+      </form>
+
+      <OAuthButtons />
+
+      <div className="auth2-foot">
+        已有账号？
+        <Link className="auth2-link" href="/login">
+          去登录
+        </Link>
+      </div>
+    </AuthShell>
   );
 }

@@ -6,21 +6,16 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
+import { AuthShell } from "@/components/auth-shell";
 import { OAuthButtons } from "@/components/oauth-buttons";
-import { useSite } from "@/components/site-provider";
-import { homeCopy } from "@/lib/copy";
 
 export default function LoginPage() {
   return (
     <Suspense
       fallback={
-        <main className="auth-page">
-          <section className="panel auth-card">
-            <div className="panel-body">
-              <span className="fine-print">正在加载登录页...</span>
-            </div>
-          </section>
-        </main>
+        <AuthShell active="login">
+          <span className="fine-print">正在加载...</span>
+        </AuthShell>
       }
     >
       <LoginPageBody />
@@ -30,7 +25,6 @@ export default function LoginPage() {
 
 function LoginPageBody() {
   const { session, login, loading } = useAuth();
-  const site = useSite();
   const searchParams = useSearchParams();
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -66,52 +60,51 @@ function LoginPageBody() {
   }
 
   return (
-    <main className="auth-page">
-      <section className="panel auth-card">
-        <div className="panel-header">
-          <div className="split">
-            <span className="scope-chip">Login</span>
-            <h1 className="panel-title">登录 {site.name} 控制台</h1>
-            <span className="panel-copy">{site.description || homeCopy.description}</span>
-          </div>
+    <AuthShell active="login">
+      <form className="auth2-fields" onSubmit={handleSubmit}>
+        <label className="auth2-input">
+          <span className="auth2-input-icon">✉️</span>
+          <input
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="邮箱地址"
+            autoComplete="username"
+          />
+        </label>
+        <label className="auth2-input">
+          <span className="auth2-input-icon">🔒</span>
+          <input
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="密码"
+            autoComplete="current-password"
+          />
+        </label>
+
+        <div className="auth2-row">
+          <label className="auth2-check">
+            <input type="checkbox" />
+            <span>记住我</span>
+          </label>
         </div>
-        <div className="panel-body">
-          <form className="form-grid" onSubmit={handleSubmit}>
-            <label className="field">
-              <span className="fine-print">邮箱</span>
-              <input
-                className="control"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="you@example.com"
-                autoComplete="username"
-              />
-            </label>
-            <label className="field">
-              <span className="fine-print">密码</span>
-              <input
-                className="control"
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="请输入密码"
-                autoComplete="current-password"
-              />
-            </label>
-            {error ? <div className="feedback error">{error}</div> : null}
-            {oauthError ? <div className="feedback error">{oauthError}</div> : null}
-            <div className="toolbar-actions" style={{ justifyContent: "space-between" }}>
-              <Link className="fine-print" href="/register">
-                还没有账号？注册
-              </Link>
-              <button className="action-button" type="submit" disabled={submitting}>
-                {submitting ? "登录中..." : "登录"}
-              </button>
-            </div>
-          </form>
-          <OAuthButtons />
-        </div>
-      </section>
-    </main>
+
+        {error ? <div className="feedback error">{error}</div> : null}
+        {oauthError ? <div className="feedback error">{oauthError}</div> : null}
+
+        <button className="auth2-submit" type="submit" disabled={submitting}>
+          {submitting ? "登录中..." : "登录"}
+        </button>
+      </form>
+
+      <OAuthButtons />
+
+      <div className="auth2-foot">
+        还没有账号？
+        <Link className="auth2-link" href="/register">
+          立即注册
+        </Link>
+      </div>
+    </AuthShell>
   );
 }
