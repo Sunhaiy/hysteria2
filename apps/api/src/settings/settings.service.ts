@@ -68,10 +68,14 @@ export class SettingsService {
     return value === undefined ? true : value === 'true';
   }
 
-  /** Portal button labels + the CDK button target (may be an external URL). */
+  /** Portal button labels, purchase mode, and the CDK/shop link. */
   async getPortalBranding() {
     const map = await this.all();
+    const mode = map.get('portal.purchaseMode');
     return {
+      // "balance" = self-serve wallet checkout; "cdk" = buy a CDK at the shop
+      // link then redeem it.
+      purchaseMode: mode === 'cdk' ? 'cdk' : 'balance',
       buyButtonText: map.get('portal.buyButtonText') || '购买',
       cdkButtonText: map.get('portal.cdkButtonText') || 'cdk充值',
       cdkButtonUrl: map.get('portal.cdkButtonUrl') || '/portal/redeem',

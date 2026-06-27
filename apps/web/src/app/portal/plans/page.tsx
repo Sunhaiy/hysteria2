@@ -15,6 +15,7 @@ import type {
   ManualOrderRecord,
   PlanRecord,
   PortalOverviewResponse,
+  PortalRedeemResponse,
   PurchaseQuote,
   WalletResponse,
 } from "@/lib/types";
@@ -26,10 +27,18 @@ export default function PortalPlansPage() {
   const [overview, setOverview] = useState<PortalOverviewResponse | null>(null);
   const [balanceCents, setBalanceCents] = useState(0);
   const [branding, setBranding] = useState({
+    purchaseMode: "balance" as "balance" | "cdk",
     buyButtonText: "购买",
     cdkButtonText: "cdk充值",
     cdkButtonUrl: "/portal/redeem",
   });
+
+  // CDK-purchase mode state
+  const [cdkPlan, setCdkPlan] = useState<PlanRecord | null>(null);
+  const [cdkInput, setCdkInput] = useState("");
+  const [cdkRedeeming, setCdkRedeeming] = useState(false);
+  const [cdkError, setCdkError] = useState<string | null>(null);
+  const [cdkSuccess, setCdkSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { toast, showToast } = useToast();
@@ -153,6 +162,47 @@ export default function PortalPlansPage() {
     }
   }
 
+  function openCdkPurchase(plan: PlanRecord) {
+    setCdkPlan(plan);
+    setCdkInput("");
+    setCdkError(null);
+    setCdkSuccess(null);
+  }
+
+  async function redeemForPlan() {
+    if (!token || !cdkInput.trim()) return;
+    setCdkRedeeming(true);
+    setCdkError(null);
+    try {
+      const result = await apiRequest<PortalRedeemResponse>("/api/portal/redeem", {
+        method: "POST",
+        token,
+        body: { code: cdkInput.trim() },
+      });
+      const planName =
+        result.overview?.subscription.planName ??
+        result.code.planName ??
+        cdkPlan?.name ??
+        "套餐";
+      setCdkSuccess(`🎉 恭喜！已成功开通「${planName}」`);
+      await load();
+    } catch (cause) {
+      setCdkError(cause instanceof ApiError ? cause.message : "兑换失败，请检查 CDK。");
+    } finally {
+      setCdkRedeeming(false);
+    }
+  }
+
+  function handleBuy(plan: PlanRecord) {
+    if (branding.purchaseMode === "cdk") {
+      openCdkPurchase(plan);
+    } else {
+      openCheckout(plan);
+    }
+  }
+
+  const shopIsExternal = branding.cdkButtonUrl.startsWith("http");
+
   return (
     <ConsoleShell
       title="套餐选择"
@@ -255,7 +305,7 @@ export default function PortalPlansPage() {
                   <button
                     className="action-button"
                     type="button"
-                    onClick={() => openCheckout(plan)}
+                    onClick={() => handleBuy(plan)}
                   >
                     {branding.buyButtonText}
                   </button>
@@ -284,6 +334,79 @@ export default function PortalPlansPage() {
       ) : null}
 
       <Toast toast={toast} />
+
+      <Drawer
+        open={Boolean(cdkPlan)}
+        onClose={() => setCdkPlan(null)}
+        title={cdkPlan ? `购买 · ${cdkPlan.name}` : "购买"}
+        footer={
+          cdkSuccess ? (
+            <div className="toolbar-actions">
+              <button className="action-button" type="button" onClick={() => setCdkPlan(null)}>
+                完成
+              </button>
+            </div>
+          ) : (
+            <div className="toolbar-actions">
+              <button
+                className="action-button"
+                type="button"
+                disabled={cdkRedeeming || !cdkInput.trim()}
+                onClick={() => void redeemForPlan()}
+              >
+                {cdkRedeeming ? "兑换中..." : "兑换开通"}
+              </button>
+              <button className="ghost-button" type="button" onClick={() => setCdkPlan(null)}>
+                取消
+              </button>
+            </div>
+          )
+        }
+      >
+        {cdkSuccess ? (
+          <div className="feedback success" style={{ fontSize: 16, padding: "16px 18px" }}>
+            {cdkSuccess}
+          </div>
+        ) : (
+          <>
+            {cdkError ? <div className="feedback error">{cdkError}</div> : null}
+
+            <div className="feedback info">
+              在店铺购买对应套餐的 CDK，然后把卡密粘贴到下方兑换即可立即开通。
+            </div>
+
+            {shopIsExternal ? (
+              <a
+                className="action-button"
+                href={branding.cdkButtonUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ display: "inline-flex", marginBottom: 12 }}
+              >
+                前往店铺购买 CDK
+              </a>
+            ) : (
+              <Link
+                className="action-button"
+                href={branding.cdkButtonUrl}
+                style={{ display: "inline-flex", marginBottom: 12 }}
+              >
+                前往店铺购买 CDK
+              </Link>
+            )}
+
+            <label className="field">
+              <span className="fine-print">输入 CDK 卡密</span>
+              <input
+                className="control mono"
+                value={cdkInput}
+                onChange={(event) => setCdkInput(event.target.value.toUpperCase())}
+                placeholder="HY2-XXXX-XXXX-XXXX"
+              />
+            </label>
+          </>
+        )}
+      </Drawer>
 
       <Drawer
         open={Boolean(checkoutPlan)}

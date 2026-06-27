@@ -86,6 +86,9 @@ export class AdminSettingsController {
     if (body.githubClientSecret) {
       updates['oauth.github.secret'] = body.githubClientSecret.trim();
     }
+    if (body.purchaseMode !== undefined) {
+      updates['portal.purchaseMode'] = body.purchaseMode;
+    }
     if (body.buyButtonText !== undefined) {
       updates['portal.buyButtonText'] = body.buyButtonText.trim();
     }

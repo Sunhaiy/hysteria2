@@ -71,6 +71,10 @@ export class UpdateSettingsDto {
   githubClientSecret?: string;
 
   @IsOptional()
+  @IsIn(['balance', 'cdk'])
+  purchaseMode?: 'balance' | 'cdk';
+
+  @IsOptional()
   @IsString()
   @MaxLength(20)
   buyButtonText?: string;

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
+import { CustomSelect } from "@/components/custom-select";
 import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { Toast, useToast } from "@/components/toast";
@@ -29,6 +30,7 @@ interface SettingsResponse {
     github: OAuthProviderState;
   };
   branding: {
+    purchaseMode: "balance" | "cdk";
     buyButtonText: string;
     cdkButtonText: string;
     cdkButtonUrl: string;
@@ -61,6 +63,7 @@ export default function AdminSettingsPage() {
   const [githubSecret, setGithubSecret] = useState("");
   const [savingOauth, setSavingOauth] = useState(false);
 
+  const [purchaseMode, setPurchaseMode] = useState<"balance" | "cdk">("balance");
   const [buyButtonText, setBuyButtonText] = useState("");
   const [cdkButtonText, setCdkButtonText] = useState("");
   const [cdkButtonUrl, setCdkButtonUrl] = useState("");
@@ -80,6 +83,7 @@ export default function AdminSettingsPage() {
     setGithubId(data.oauth.github.clientId);
     setGoogleSecret("");
     setGithubSecret("");
+    setPurchaseMode(data.branding.purchaseMode);
     setBuyButtonText(data.branding.buyButtonText);
     setCdkButtonText(data.branding.cdkButtonText);
     setCdkButtonUrl(data.branding.cdkButtonUrl);
@@ -173,10 +177,10 @@ export default function AdminSettingsPage() {
       const data = await apiRequest<SettingsResponse>("/api/admin/settings", {
         method: "PATCH",
         token,
-        body: { buyButtonText, cdkButtonText, cdkButtonUrl },
+        body: { purchaseMode, buyButtonText, cdkButtonText, cdkButtonUrl },
       });
       applySettings(data);
-      showToast("前台按钮文案已保存");
+      showToast("前台购买设置已保存");
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "保存失败。");
     } finally {
@@ -309,10 +313,21 @@ export default function AdminSettingsPage() {
           </Panel>
 
           <Panel
-            title="前台按钮文案"
-            copy="自定义会员套餐页两个按钮的文字。CDK 按钮链接可填站内路径（如 /portal/redeem）或完整外链（http 开头，新标签打开）。"
+            title="前台购买设置"
+            copy="选择会员点「购买」的行为：余额购买走站内钱包结算；CDK购买会弹出输入框，会员去店铺（下方链接）买卡后回来兑换。链接可填站内路径（/portal/redeem）或完整外链（http 开头，新标签打开）。"
           >
             <div className="form-grid">
+              <label className="field">
+                <span className="fine-print">购买方式</span>
+                <CustomSelect
+                  value={purchaseMode}
+                  onChange={(v) => setPurchaseMode(v as "balance" | "cdk")}
+                  options={[
+                    { value: "balance", label: "余额购买（站内钱包结算）" },
+                    { value: "cdk", label: "CDK购买（去店铺买卡后兑换）" },
+                  ]}
+                />
+              </label>
               <div className="two-col">
                 <label className="field">
                   <span className="fine-print">购买按钮文案</span>
@@ -345,7 +360,7 @@ export default function AdminSettingsPage() {
             </div>
             <div className="toolbar-actions">
               <button className="action-button" type="button" disabled={savingBranding} onClick={() => void saveBranding()}>
-                {savingBranding ? "保存中..." : "保存按钮文案"}
+                {savingBranding ? "保存中..." : "保存购买设置"}
               </button>
             </div>
           </Panel>
