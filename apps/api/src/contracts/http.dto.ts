@@ -536,6 +536,11 @@ export class CreateRedemptionCodeDto {
   maxUses?: number;
 
   @IsOptional()
+  @IsInt()
+  @Min(1)
+  count?: number;
+
+  @IsOptional()
   @IsString()
   note?: string;
 

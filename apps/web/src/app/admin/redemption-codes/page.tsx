@@ -58,6 +58,7 @@ function emptyForm(planId = "") {
     discountPercent: 20,
     discountAmountCents: 1000,
     maxUses: 1,
+    count: 1,
     expiresAt: "",
     note: "",
   };
@@ -81,6 +82,13 @@ export default function AdminRedemptionCodesPage() {
   const [usesCode, setUsesCode] = useState<RedemptionCodeRecord | null>(null);
   const [uses, setUses] = useState<RedemptionUseRecord[]>([]);
   const [usesLoading, setUsesLoading] = useState(false);
+
+  const [batchCodes, setBatchCodes] = useState<string[]>([]);
+  const [search, setSearch] = useState("");
+  const [kindFilter, setKindFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 20;
 
   async function openUses(code: RedemptionCodeRecord) {
     if (!token) return;
@@ -172,12 +180,12 @@ export default function AdminRedemptionCodesPage() {
     setDrawerError(null);
     setFeedback(null);
     try {
-      const created = await apiRequest<RedemptionCodeRecord>("/api/admin/redemption-codes", {
+      const created = await apiRequest<RedemptionCodeRecord[]>("/api/admin/redemption-codes", {
         method: "POST",
         token,
         body: {
           label: form.label,
-          code: form.customCode.trim() || undefined,
+          code: form.count > 1 ? undefined : form.customCode.trim() || undefined,
           kind: form.kind,
           planId: form.kind === "plan" ? form.planId : undefined,
           trafficBytes: form.kind === "traffic_pack" ? form.trafficBytes : undefined,
@@ -191,13 +199,19 @@ export default function AdminRedemptionCodesPage() {
               ? form.discountAmountCents
               : undefined,
           maxUses: form.maxUses,
+          count: form.count,
           expiresAt: form.expiresAt === "permanent" ? undefined : fromDateTimeLocal(form.expiresAt),
           note: form.note || undefined,
         },
       });
-      setLatestCode(created.code);
+      const newCodes = created.map((c) => c.code);
+      setLatestCode(newCodes[0] ?? null);
+      setBatchCodes(newCodes);
       clearDraft("code");
-      setFeedback({ msg: `兑换码已生成：${created.code}`, kind: "success" });
+      setFeedback({
+        msg: newCodes.length > 1 ? `已批量生成 ${newCodes.length} 张兑换码` : `兑换码已生成：${newCodes[0]}`,
+        kind: "success",
+      });
       setForm(emptyForm(plans[0]?.id ?? ""));
       forceClose();
       await load();
@@ -223,6 +237,19 @@ export default function AdminRedemptionCodesPage() {
       setFeedback({ msg: cause instanceof ApiError ? cause.message : "作废兑换码失败。", kind: "error" });
     }
   }
+
+  const filtered = codes.filter((c) => {
+    if (kindFilter !== "all" && c.kind !== kindFilter) return false;
+    if (statusFilter !== "all" && c.status !== statusFilter) return false;
+    const q = search.trim().toLowerCase();
+    if (q && !c.code.toLowerCase().includes(q) && !c.label.toLowerCase().includes(q)) {
+      return false;
+    }
+    return true;
+  });
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageItems = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
   return (
     <ConsoleShell
@@ -259,9 +286,83 @@ export default function AdminRedemptionCodesPage() {
       <Toast toast={toast} />
       {feedback ? <div className={`feedback ${feedback.kind}`}>{feedback.msg}</div> : null}
 
+      {batchCodes.length > 0 ? (
+        <Panel
+          title={`本次生成 ${batchCodes.length} 张兑换码`}
+          copy="复制下面的卡密上架到你的店铺。关闭本页后此列表不再显示，请先复制保存。"
+          action={
+            <div className="toolbar-actions">
+              <button
+                className="action-button"
+                type="button"
+                onClick={() => void copyText(batchCodes.join("\n"))}
+              >
+                复制全部
+              </button>
+              <button className="ghost-button" type="button" onClick={() => setBatchCodes([])}>
+                收起
+              </button>
+            </div>
+          }
+        >
+          <textarea
+            className="control textarea mono"
+            style={{ minHeight: 160 }}
+            readOnly
+            value={batchCodes.join("\n")}
+          />
+        </Panel>
+      ) : null}
+
       <Panel
         title="兑换码列表"
         copy="会员兑换后会自动生成订单记录，这里可以看到发放、兑换和作废状态。"
+        action={
+          <div className="toolbar-actions" style={{ gap: 8, flexWrap: "wrap" }}>
+            <input
+              className="control"
+              style={{ width: 200 }}
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(0);
+              }}
+              placeholder="搜索卡密 / 标签"
+            />
+            <div style={{ width: 140 }}>
+              <CustomSelect
+                value={kindFilter}
+                onChange={(v) => {
+                  setKindFilter(v);
+                  setPage(0);
+                }}
+                options={[
+                  { value: "all", label: "全部类型" },
+                  { value: "plan", label: "套餐开通" },
+                  { value: "traffic_pack", label: "流量包" },
+                  { value: "balance", label: "余额充值" },
+                  { value: "discount", label: "折扣券" },
+                ]}
+              />
+            </div>
+            <div style={{ width: 130 }}>
+              <CustomSelect
+                value={statusFilter}
+                onChange={(v) => {
+                  setStatusFilter(v);
+                  setPage(0);
+                }}
+                options={[
+                  { value: "all", label: "全部状态" },
+                  { value: "active", label: "可兑换" },
+                  { value: "redeemed", label: "已用完" },
+                  { value: "void", label: "已作废" },
+                  { value: "expired", label: "已过期" },
+                ]}
+              />
+            </div>
+          </div>
+        }
       >
         {loading && codes.length === 0 ? (
           <div className="skeleton-rows">
@@ -270,10 +371,10 @@ export default function AdminRedemptionCodesPage() {
             ))}
           </div>
         ) : null}
-        {codes.length > 0 ? (
+        {filtered.length > 0 ? (
           <DataTable
             headers={["标签 / CDK", "类型 / 权益", "状态", "使用次数", "到期", "操作"]}
-            rows={codes.map((item) => [
+            rows={pageItems.map((item) => [
               <div key={item.id} className="split">
                 <strong>{item.label}</strong>
                 <span className="mono">{item.code}</span>
@@ -318,6 +419,10 @@ export default function AdminRedemptionCodesPage() {
               </div>,
             ])}
           />
+        ) : codes.length > 0 ? (
+          <div className="empty-state">
+            <div className="empty-state-title">没有符合筛选条件的兑换码</div>
+          </div>
         ) : !loading ? (
           <div className="empty-state">
             <div className="empty-state-icon">🎟️</div>
@@ -325,6 +430,32 @@ export default function AdminRedemptionCodesPage() {
             <button className="action-button" type="button" onClick={openCreate}>
               生成第一张兑换码
             </button>
+          </div>
+        ) : null}
+
+        {filtered.length > PAGE_SIZE ? (
+          <div className="toolbar-actions" style={{ justifyContent: "space-between", marginTop: 12 }}>
+            <span className="fine-print">
+              共 {filtered.length} 张 · 第 {safePage + 1}/{pageCount} 页
+            </span>
+            <div className="toolbar-actions" style={{ gap: 8 }}>
+              <button
+                className="ghost-button compact"
+                type="button"
+                disabled={safePage <= 0}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+              >
+                上一页
+              </button>
+              <button
+                className="ghost-button compact"
+                type="button"
+                disabled={safePage >= pageCount - 1}
+                onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+              >
+                下一页
+              </button>
+            </div>
           </div>
         ) : null}
       </Panel>
@@ -503,19 +634,35 @@ export default function AdminRedemptionCodesPage() {
             </div>
           ) : null}
 
-          <label className="field">
-            <span className="fine-print">可使用次数</span>
-            <input
-              className="control"
-              type="number"
-              min="1"
-              value={form.maxUses}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, maxUses: Math.max(1, Math.round(Number(e.target.value))) }))
-              }
-            />
-            <span className="field-hint">同一会员每张码只能用一次；总共可被使用 {form.maxUses} 次</span>
-          </label>
+          <div className="two-col">
+            <label className="field">
+              <span className="fine-print">每张可使用次数</span>
+              <input
+                className="control"
+                type="number"
+                min="1"
+                value={form.maxUses}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, maxUses: Math.max(1, Math.round(Number(e.target.value))) }))
+                }
+              />
+              <span className="field-hint">同一会员每张码只能用一次</span>
+            </label>
+            <label className="field">
+              <span className="fine-print">生成数量（批量上架）</span>
+              <input
+                className="control"
+                type="number"
+                min="1"
+                max="500"
+                value={form.count}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, count: Math.min(500, Math.max(1, Math.round(Number(e.target.value)))) }))
+                }
+              />
+              <span className="field-hint">{form.count > 1 ? `批量生成 ${form.count} 张（忽略自定义码）` : "1-500，批量生成自动取随机码"}</span>
+            </label>
+          </div>
 
           <div className="two-col">
             <div className="field">

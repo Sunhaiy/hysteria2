@@ -1315,6 +1315,7 @@ export class ControlPlaneStoreService {
     discountPercent?: number;
     discountCents?: number;
     maxUses?: number;
+    count?: number;
     note?: string;
     expiresAt?: string;
     createdById?: string;
@@ -1349,6 +1350,14 @@ export class ControlPlaneStoreService {
       throw new BadRequestException('使用次数至少为 1');
     }
 
+    const count = input.count ?? 1;
+    if (count < 1 || count > 500) {
+      throw new BadRequestException('生成数量需在 1-500 之间');
+    }
+    if (count > 1 && input.code) {
+      throw new BadRequestException('批量生成不支持自定义兑换码');
+    }
+
     if (input.planId) {
       await this.mustGetPlanRecord(input.planId);
     }
@@ -1370,31 +1379,47 @@ export class ControlPlaneStoreService {
       if (exists) throw new ConflictException(`兑换码 "${input.code}" 已存在`);
     }
 
-    try {
-      const code = await this.prisma.redemptionCode.create({
-        data: {
-          code: input.code ?? (await this.generateUniqueRedemptionCode()),
-          label: input.label,
-          kind: this.toDbRedemptionCodeKind(input.kind),
-          planId: input.kind === 'plan' ? input.planId : undefined,
-          trafficBytes:
-            input.kind === 'traffic_pack' && input.trafficBytes !== undefined
-              ? BigInt(input.trafficBytes)
-              : undefined,
-          amountCents: input.amountCents ?? 0,
-          discountPercent:
-            input.kind === 'discount' ? input.discountPercent ?? null : null,
-          discountCents:
-            input.kind === 'discount' ? input.discountCents ?? null : null,
-          maxUses,
-          note: input.note,
-          expiresAt,
-          createdById: input.createdById,
-        },
-        include: { plan: true, createdBy: true, redeemedBy: true },
-      });
+    // Build the set of unique codes to create (custom code only for count === 1).
+    const codeValues: string[] = [];
+    if (count === 1 && input.code) {
+      codeValues.push(input.code);
+    } else {
+      const seen = new Set<string>();
+      while (seen.size < count) {
+        seen.add(await this.generateUniqueRedemptionCode());
+      }
+      codeValues.push(...seen);
+    }
 
-      return this.presentRedemptionCode(code);
+    const sharedData = {
+      label: input.label,
+      kind: this.toDbRedemptionCodeKind(input.kind),
+      planId: input.kind === 'plan' ? input.planId : undefined,
+      trafficBytes:
+        input.kind === 'traffic_pack' && input.trafficBytes !== undefined
+          ? BigInt(input.trafficBytes)
+          : undefined,
+      amountCents: input.amountCents ?? 0,
+      discountPercent:
+        input.kind === 'discount' ? input.discountPercent ?? null : null,
+      discountCents:
+        input.kind === 'discount' ? input.discountCents ?? null : null,
+      maxUses,
+      note: input.note,
+      expiresAt,
+      createdById: input.createdById,
+    };
+
+    try {
+      await this.prisma.redemptionCode.createMany({
+        data: codeValues.map((code) => ({ code, ...sharedData })),
+      });
+      const created = await this.prisma.redemptionCode.findMany({
+        where: { code: { in: codeValues } },
+        include: { plan: true, createdBy: true, redeemedBy: true },
+        orderBy: { createdAt: 'desc' },
+      });
+      return created.map((code) => this.presentRedemptionCode(code));
     } catch (error) {
       this.handlePrismaError(error);
     }

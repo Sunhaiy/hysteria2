@@ -42,6 +42,7 @@ export class RedemptionCodesController {
       discountPercent: body.discountPercent,
       discountCents: body.discountCents,
       maxUses: body.maxUses,
+      count: body.count,
       note: body.note,
       expiresAt: body.expiresAt,
       createdById: principal.sub,
