@@ -8,20 +8,20 @@ import { useSite } from "@/components/site-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 const PILLS = [
-  { icon: "⚡", title: "高速稳定", copy: "优质线路，极速体验" },
-  { icon: "🛡️", title: "隐私安全", copy: "强加密保护，安全无忧" },
-  { icon: "🌐", title: "全球节点", copy: "多地区线路自由选择" },
+  { icon: "bolt", title: "高速稳定", copy: "优质线路，极速体验" },
+  { icon: "shield", title: "隐私安全", copy: "强加密保护，安全无忧" },
+  { icon: "globe", title: "全球节点", copy: "多地区线路自由选择" },
 ];
 
 const TRUST = ["AES-256 加密", "无日志政策", "多平台支持", "7×24 自助"];
 
 const FEATURES = [
-  { icon: "⚡", title: "秒级自助开通", copy: "余额钱包 + CDK 兑换，付款即到账，套餐立即生效。" },
-  { icon: "🔌", title: "Hysteria 2 原生接入", copy: "一键复制 URI、扫码导入或拷贝配置片段，开箱即用。" },
-  { icon: "🧩", title: "灵活套餐组合", copy: "限速/不限速、设备数、周期流量自由搭配，随时升级。" },
-  { icon: "🔒", title: "安全鉴权", copy: "会话可即时吊销、登录限流防撞库，账号更安心。" },
-  { icon: "🔑", title: "多种登录方式", copy: "邮箱验证码注册，支持 Google、GitHub 一键登录。" },
-  { icon: "📊", title: "实时流量统计", copy: "用量日志、在线设备、到期与余额一目了然。" },
+  { icon: "bolt", title: "秒级自助开通", copy: "余额钱包 + CDK 兑换，付款即到账，套餐立即生效。" },
+  { icon: "plug", title: "Hysteria 2 原生接入", copy: "一键复制 URI、扫码导入或拷贝配置片段，开箱即用。" },
+  { icon: "puzzle", title: "灵活套餐组合", copy: "限速/不限速、设备数、周期流量自由搭配，随时升级。" },
+  { icon: "lock", title: "安全鉴权", copy: "会话可即时吊销、登录限流防撞库，账号更安心。" },
+  { icon: "key", title: "多种登录方式", copy: "邮箱验证码注册，支持 Google、GitHub 一键登录。" },
+  { icon: "monitoring", title: "实时流量统计", copy: "用量日志、在线设备、到期与余额一目了然。" },
 ];
 
 const STEPS = [
@@ -96,7 +96,7 @@ export default function HomePage() {
           <div className="lp-pills reveal">
             {PILLS.map((p) => (
               <div key={p.title} className="lp-pill">
-                <span className="lp-pill-icon">{p.icon}</span>
+                <span className="lp-pill-icon"><Icon name={p.icon} /></span>
                 <div>
                   <div className="lp-pill-title">{p.title}</div>
                   <div className="lp-pill-copy">{p.copy}</div>
@@ -154,7 +154,7 @@ export default function HomePage() {
               className="lp-feature reveal"
               style={{ transitionDelay: `${(i % 3) * 80}ms` }}
             >
-              <div className="lp-feature-icon">{f.icon}</div>
+              <div className="lp-feature-icon"><Icon name={f.icon} /></div>
               <h3 className="lp-feature-title">{f.title}</h3>
               <p className="lp-feature-copy">{f.copy}</p>
             </article>

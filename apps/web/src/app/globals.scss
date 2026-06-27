@@ -1448,10 +1448,10 @@ select.control {
   justify-content: space-between;
   gap: 16px;
   padding: 14px 32px;
-  background: color-mix(in srgb, var(--bg-canvas) 60%, transparent);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 70%, transparent);
+  background: color-mix(in srgb, var(--bg-canvas) 55%, transparent);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 60%, transparent);
 }
 
 .lp-brand {
@@ -1481,13 +1481,13 @@ select.control {
   font-size: 14px;
 }
 
-.lp-nav-links a {
+.lp-nav-links a:not(.lp-btn) {
   color: var(--text-secondary);
   text-decoration: none;
   transition: color 140ms ease;
 }
 
-.lp-nav-links a:hover {
+.lp-nav-links a:not(.lp-btn):hover {
   color: var(--text-primary);
 }
 
@@ -2261,29 +2261,28 @@ select.control {
   cursor: pointer;
 }
 
+/* Ink button: monochrome, simple, no glow */
 .auth2-submit {
   margin-top: 4px;
   height: 50px;
   border-radius: 12px;
-  border: none;
-  background: var(--accent-500);
-  color: #ffffff;
+  border: 1px solid var(--text-primary);
+  background: var(--text-primary);
+  color: var(--bg-canvas);
   font-size: 15px;
   font-weight: 700;
   cursor: pointer;
-  transition: background 140ms ease, transform 140ms ease, box-shadow 140ms ease;
-  box-shadow: 0 14px 30px -16px color-mix(in srgb, var(--accent-500) 90%, transparent);
+  transition: opacity 140ms ease, transform 140ms ease;
 }
 
 .auth2-submit:hover:not(:disabled) {
-  background: var(--accent-400);
   transform: translateY(-1px);
+  opacity: 0.92;
 }
 
 .auth2-submit:disabled {
-  opacity: 0.55;
+  opacity: 0.45;
   cursor: not-allowed;
-  box-shadow: none;
 }
 
 .auth2-foot {
@@ -2326,5 +2325,76 @@ select.control {
   }
   .auth2 .oauth-buttons {
     grid-auto-flow: row;
+  }
+}
+
+/* Landing/auth icon coloring (replacing emoji) */
+.lp-pill-icon,
+.lp-feature-icon,
+.auth2-feature-icon {
+  color: var(--accent-500);
+}
+
+.lp-feature-icon .icon-slot,
+.lp-feature-icon .icon-slot svg {
+  width: 24px;
+  height: 24px;
+}
+
+.auth2-feature-icon {
+  display: inline-grid;
+  place-items: center;
+}
+
+.auth2-input-icon {
+  display: inline-grid;
+  place-items: center;
+  color: var(--text-muted);
+}
+
+/* Auth: back-to-home + top bar */
+.auth2-right-top {
+  position: absolute;
+  top: 18px;
+  left: 24px;
+  right: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.auth2-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-decoration: none;
+  transition: color 140ms ease;
+}
+
+.auth2-back:hover {
+  color: var(--text-primary);
+}
+
+.auth2-tabs {
+  margin-top: 40px;
+}
+
+/* Globe network-node pulse */
+@keyframes lp-node-pulse {
+  0%, 100% { opacity: 0.12; transform: scale(1); }
+  50% { opacity: 0.34; transform: scale(1.5); }
+}
+
+.lp-node-halo {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: lp-node-pulse 2.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-node-halo {
+    animation: none;
   }
 }

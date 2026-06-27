@@ -3,13 +3,14 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { HeroGlobe } from "./hero-globe";
+import { Icon } from "./icon";
 import { ThemeToggle } from "./theme-toggle";
 import { useSite } from "./site-provider";
 
 const FEATURES = [
-  { icon: "🔒", title: "隐私安全", copy: "保护你的数据" },
-  { icon: "⚡", title: "高速稳定", copy: "优质线路体验" },
-  { icon: "🌐", title: "全球覆盖", copy: "多地区线路" },
+  { icon: "lock", title: "隐私安全", copy: "保护你的数据" },
+  { icon: "bolt", title: "高速稳定", copy: "优质线路体验" },
+  { icon: "globe", title: "全球覆盖", copy: "多地区线路" },
 ];
 
 export function AuthShell({
@@ -25,7 +26,7 @@ export function AuthShell({
     <main className="auth2">
       <div className="auth2-card">
         <section className="auth2-left">
-          <div className="auth2-brand">
+          <Link className="auth2-brand" href="/">
             <span className="lp-logo" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="24" height="24">
                 <path d="M4 5h4l4 9 4-9h4l-6 14h-4z" fill="var(--accent-500)" />
@@ -33,7 +34,7 @@ export function AuthShell({
             </span>
             <span>{site.name}</span>
             <span className="lp-brand-tag">VPN</span>
-          </div>
+          </Link>
 
           <h1 className="auth2-title">
             自由连接
@@ -49,7 +50,9 @@ export function AuthShell({
           <div className="auth2-features">
             {FEATURES.map((f) => (
               <div key={f.title} className="auth2-feature">
-                <span className="auth2-feature-icon">{f.icon}</span>
+                <span className="auth2-feature-icon">
+                  <Icon name={f.icon} />
+                </span>
                 <div>
                   <div className="auth2-feature-title">{f.title}</div>
                   <div className="auth2-feature-copy">{f.copy}</div>
@@ -61,6 +64,10 @@ export function AuthShell({
 
         <section className="auth2-right">
           <div className="auth2-right-top">
+            <Link className="auth2-back" href="/">
+              <Icon name="home" />
+              <span>返回首页</span>
+            </Link>
             <ThemeToggle className="lp-icon-btn" />
           </div>
 

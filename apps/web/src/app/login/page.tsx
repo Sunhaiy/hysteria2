@@ -7,6 +7,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
 import { AuthShell } from "@/components/auth-shell";
+import { Icon } from "@/components/icon";
 import { OAuthButtons } from "@/components/oauth-buttons";
 
 export default function LoginPage() {
@@ -63,7 +64,7 @@ function LoginPageBody() {
     <AuthShell active="login">
       <form className="auth2-fields" onSubmit={handleSubmit}>
         <label className="auth2-input">
-          <span className="auth2-input-icon">✉️</span>
+          <span className="auth2-input-icon"><Icon name="mail" /></span>
           <input
             value={email}
             onChange={(event) => setEmail(event.target.value)}
@@ -72,7 +73,7 @@ function LoginPageBody() {
           />
         </label>
         <label className="auth2-input">
-          <span className="auth2-input-icon">🔒</span>
+          <span className="auth2-input-icon"><Icon name="lock" /></span>
           <input
             type="password"
             value={password}

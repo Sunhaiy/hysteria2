@@ -19,6 +19,15 @@ type IconName =
   | "settings"
   | "sun"
   | "moon"
+  | "mail"
+  | "lock"
+  | "bolt"
+  | "shield"
+  | "globe"
+  | "plug"
+  | "puzzle"
+  | "key"
+  | "hash"
   | "logout"
   | "login"
   | "home"
@@ -178,6 +187,64 @@ const icons: Record<IconName, ReactElement> = {
   moon: (
     <BaseIcon>
       <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />
+    </BaseIcon>
+  ),
+  mail: (
+    <BaseIcon>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="m3.5 7 8.5 6 8.5-6" />
+    </BaseIcon>
+  ),
+  lock: (
+    <BaseIcon>
+      <rect x="5" y="11" width="14" height="10" rx="2" />
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+    </BaseIcon>
+  ),
+  bolt: (
+    <BaseIcon>
+      <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" />
+    </BaseIcon>
+  ),
+  shield: (
+    <BaseIcon>
+      <path d="M12 3 5 6v5c0 4.5 3 8.4 7 10 4-1.6 7-5.5 7-10V6l-7-3Z" />
+    </BaseIcon>
+  ),
+  globe: (
+    <BaseIcon>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18" />
+      <path d="M12 3c3 3 3 15 0 18c-3-3-3-15 0-18Z" />
+    </BaseIcon>
+  ),
+  plug: (
+    <BaseIcon>
+      <path d="M12 22v-5" />
+      <rect x="7" y="9" width="10" height="8" rx="2" />
+      <path d="M9.5 9V5" />
+      <path d="M14.5 9V5" />
+    </BaseIcon>
+  ),
+  puzzle: (
+    <BaseIcon>
+      <path d="M9 4.5a2 2 0 0 1 4 0c0 .8 1 1 1.5.6l2.4-1 1 2.4c-.4.5-.2 1.5.6 1.5a2 2 0 0 1 0 4c-.8 0-1 1-.6 1.5l-1 2.4-2.4-1c-.5-.4-1.5-.2-1.5.6a2 2 0 0 1-4 0c0-.8-1-1-1.5-.6l-2.4 1-1-2.4c.4-.5.2-1.5-.6-1.5a2 2 0 0 1 0-4c.8 0 1-1 .6-1.5l1-2.4 2.4 1c.5.4 1.5.2 1.5-.6Z" />
+    </BaseIcon>
+  ),
+  key: (
+    <BaseIcon>
+      <circle cx="7.5" cy="15.5" r="3.5" />
+      <path d="m10 13 9-9" />
+      <path d="m15 5 3 3" />
+      <path d="m18 8 2-2" />
+    </BaseIcon>
+  ),
+  hash: (
+    <BaseIcon>
+      <path d="M5 9h14" />
+      <path d="M5 15h14" />
+      <path d="M10 4 8 20" />
+      <path d="M16 4l-2 16" />
     </BaseIcon>
   ),
   settings: (

@@ -6,6 +6,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { ApiError, apiRequest } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
 import { AuthShell } from "@/components/auth-shell";
+import { Icon } from "@/components/icon";
 import { OAuthButtons } from "@/components/oauth-buttons";
 
 export default function RegisterPage() {
@@ -87,7 +88,7 @@ export default function RegisterPage() {
     <AuthShell active="register">
       <form className="auth2-fields" onSubmit={handleSubmit}>
         <label className="auth2-input">
-          <span className="auth2-input-icon">✉️</span>
+          <span className="auth2-input-icon"><Icon name="mail" /></span>
           <input
             value={email}
             onChange={(event) => setEmail(event.target.value)}
@@ -111,7 +112,7 @@ export default function RegisterPage() {
         </label>
 
         <label className="auth2-input">
-          <span className="auth2-input-icon">🔢</span>
+          <span className="auth2-input-icon"><Icon name="hash" /></span>
           <input
             value={code}
             onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
@@ -121,7 +122,7 @@ export default function RegisterPage() {
         </label>
 
         <label className="auth2-input">
-          <span className="auth2-input-icon">👤</span>
+          <span className="auth2-input-icon"><Icon name="account_circle" /></span>
           <input
             value={displayName}
             onChange={(event) => setDisplayName(event.target.value)}
@@ -131,7 +132,7 @@ export default function RegisterPage() {
         </label>
 
         <label className="auth2-input">
-          <span className="auth2-input-icon">🔒</span>
+          <span className="auth2-input-icon"><Icon name="lock" /></span>
           <input
             type="password"
             value={password}
