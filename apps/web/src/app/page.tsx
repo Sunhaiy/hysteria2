@@ -3,53 +3,75 @@
 import Link from "next/link";
 import { useEffect } from "react";
 import { useSite } from "@/components/site-provider";
+import { ThemeToggle } from "@/components/theme-toggle";
+
+const PILLS = [
+  { icon: "⚡", title: "高速稳定", copy: "优质线路，极速体验" },
+  { icon: "🛡️", title: "隐私安全", copy: "强加密保护，安全无忧" },
+  { icon: "🌐", title: "全球节点", copy: "多地区线路自由选择" },
+];
+
+const TRUST = ["AES-256 加密", "无日志政策", "多平台支持", "7×24 自助"];
 
 const FEATURES = [
-  {
-    icon: "⚡",
-    title: "秒级自助开通",
-    copy: "余额钱包 + CDK 兑换，付款即到账，套餐立即生效，无需等待人工审核。",
-  },
-  {
-    icon: "🔌",
-    title: "Hysteria 2 原生接入",
-    copy: "一键复制连接 URI、扫码导入或拷贝推荐配置片段，主流客户端开箱即用。",
-  },
-  {
-    icon: "🧩",
-    title: "灵活套餐组合",
-    copy: "限速 / 不限速、设备数、周期流量自由搭配，按需选择，随时升级切换。",
-  },
-  {
-    icon: "🛡️",
-    title: "安全鉴权",
-    copy: "会话可即时吊销、登录限流防撞库、全站安全响应头，账号更稳更安心。",
-  },
-  {
-    icon: "🔑",
-    title: "多种登录方式",
-    copy: "邮箱验证码注册，支持 Google、GitHub 一键登录，告别繁琐密码。",
-  },
-  {
-    icon: "📊",
-    title: "实时流量统计",
-    copy: "用量日志、在线设备数、到期与剩余流量一目了然，余额一键查看。",
-  },
+  { icon: "⚡", title: "秒级自助开通", copy: "余额钱包 + CDK 兑换，付款即到账，套餐立即生效。" },
+  { icon: "🔌", title: "Hysteria 2 原生接入", copy: "一键复制 URI、扫码导入或拷贝配置片段，开箱即用。" },
+  { icon: "🧩", title: "灵活套餐组合", copy: "限速/不限速、设备数、周期流量自由搭配，随时升级。" },
+  { icon: "🔒", title: "安全鉴权", copy: "会话可即时吊销、登录限流防撞库，账号更安心。" },
+  { icon: "🔑", title: "多种登录方式", copy: "邮箱验证码注册，支持 Google、GitHub 一键登录。" },
+  { icon: "📊", title: "实时流量统计", copy: "用量日志、在线设备、到期与余额一目了然。" },
 ];
 
 const STEPS = [
-  { n: "01", title: "注册账号", copy: "邮箱验证码或第三方账号，30 秒完成注册。" },
+  { n: "01", title: "注册账号", copy: "邮箱验证码或第三方账号，30 秒完成。" },
   { n: "02", title: "充值 / 兑换", copy: "余额充值或输入 CDK 卡密，立即到账。" },
   { n: "03", title: "选择套餐", copy: "挑选合适套餐自助开通，立即生效。" },
-  { n: "04", title: "连接即用", copy: "复制接入信息导入客户端，畅享高速连接。" },
+  { n: "04", title: "连接即用", copy: "复制接入信息导入客户端，畅享高速。" },
 ];
 
-const STATS = [
-  { value: "多节点", label: "覆盖优质线路" },
-  { value: "秒级", label: "自助开通到账" },
-  { value: "不限速", label: "高端套餐可选" },
-  { value: "7×24", label: "全程自助" },
-];
+function Globe() {
+  return (
+    <svg className="lp-globe" viewBox="0 0 460 460" role="img" aria-label="全球节点示意">
+      <defs>
+        <pattern id="lp-dots" width="9" height="9" patternUnits="userSpaceOnUse">
+          <circle cx="2" cy="2" r="1.15" fill="var(--accent-500)" />
+        </pattern>
+        <radialGradient id="lp-sphere" cx="38%" cy="32%" r="75%">
+          <stop offset="0%" stopColor="#ffffff" stopOpacity="0" />
+          <stop offset="62%" stopColor="#ffffff" stopOpacity="0" />
+          <stop offset="100%" stopColor="var(--accent-500)" stopOpacity="0.16" />
+        </radialGradient>
+        <clipPath id="lp-clip">
+          <circle cx="230" cy="200" r="140" />
+        </clipPath>
+      </defs>
+
+      {/* platform */}
+      <ellipse cx="230" cy="372" rx="168" ry="34" fill="var(--accent-500)" opacity="0.10" />
+      <ellipse cx="230" cy="360" rx="132" ry="26" fill="var(--accent-500)" opacity="0.08" />
+
+      {/* sphere */}
+      <g clipPath="url(#lp-clip)">
+        <circle cx="230" cy="200" r="140" fill="var(--accent-ghost)" />
+        <rect x="90" y="60" width="280" height="280" fill="url(#lp-dots)" />
+        <g fill="none" stroke="var(--accent-500)" strokeOpacity="0.18">
+          <ellipse cx="230" cy="200" rx="48" ry="140" />
+          <ellipse cx="230" cy="200" rx="98" ry="140" />
+          <ellipse cx="230" cy="200" rx="140" ry="48" />
+          <ellipse cx="230" cy="200" rx="140" ry="98" />
+        </g>
+        <circle cx="230" cy="200" r="140" fill="url(#lp-sphere)" />
+      </g>
+      <circle cx="230" cy="200" r="140" fill="none" stroke="var(--accent-500)" strokeOpacity="0.28" />
+
+      {/* orbit */}
+      <g transform="rotate(-18 230 200)">
+        <ellipse cx="230" cy="200" rx="195" ry="74" fill="none" stroke="var(--accent-500)" strokeOpacity="0.45" strokeDasharray="2 6" strokeLinecap="round" />
+        <circle cx="425" cy="200" r="6" fill="var(--accent-500)" />
+      </g>
+    </svg>
+  );
+}
 
 export default function HomePage() {
   const site = useSite();
@@ -74,48 +96,96 @@ export default function HomePage() {
   return (
     <main className="lp">
       <header className="lp-nav">
-        <div className="lp-brand">{site.name}</div>
+        <div className="lp-brand">
+          <span className="lp-logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22">
+              <path d="M4 5h4l4 9 4-9h4l-6 14h-4z" fill="var(--accent-500)" />
+            </svg>
+          </span>
+          <span>{site.name}</span>
+          <span className="lp-brand-tag">VPN</span>
+        </div>
         <nav className="lp-nav-links">
-          <a href="#features">功能</a>
-          <a href="#how">使用流程</a>
+          <a href="#top">首页</a>
+          <a href="#features">特点</a>
+          <a href="#how">使用</a>
+          <Link href="/portal">套餐</Link>
           <Link href="/login">登录</Link>
+          <ThemeToggle className="lp-icon-btn" />
           <Link className="lp-btn lp-btn-primary" href="/register">
-            免费注册
+            立即使用
           </Link>
         </nav>
       </header>
 
-      <section className="lp-hero">
-        <div className="lp-orb lp-orb-a" />
-        <div className="lp-orb lp-orb-b" />
-        <span className="lp-eyebrow reveal">基于 Hysteria 2 · 高速 · 稳定 · 抗封锁</span>
-        <h1 className="lp-hero-title reveal">
-          更快更稳的
-          <span className="lp-grad"> {site.name} </span>
-          连接体验
-        </h1>
-        <p className="lp-hero-sub reveal">
-          自助开通、即时到账、原生 Hysteria 2 接入。从注册到连接，全程几分钟搞定，
-          把网络体验交还到你自己手里。
-        </p>
-        <div className="lp-hero-cta reveal">
-          <Link className="lp-btn lp-btn-primary lp-btn-lg" href="/register">
-            立即注册
-          </Link>
-          <Link className="lp-btn lp-btn-ghost lp-btn-lg" href="/login">
-            登录控制台
-          </Link>
+      <section id="top" className="lp-hero">
+        <div className="lp-hero-text">
+          <h1 className="lp-hero-title reveal">
+            自由连接
+            <br />
+            全球无限可能
+          </h1>
+          <p className="lp-hero-sub reveal">
+            稳定、安全、快速的 {site.name} 服务，保护你的隐私，畅享全球网络。
+          </p>
+          <div className="lp-hero-cta reveal">
+            <Link className="lp-btn lp-btn-primary lp-btn-lg" href="/register">
+              立即体验 <span aria-hidden="true">›</span>
+            </Link>
+            <Link className="lp-btn lp-btn-ghost lp-btn-lg" href="/portal">
+              查看套餐
+            </Link>
+          </div>
+          <div className="lp-pills reveal">
+            {PILLS.map((p) => (
+              <div key={p.title} className="lp-pill">
+                <span className="lp-pill-icon">{p.icon}</span>
+                <div>
+                  <div className="lp-pill-title">{p.title}</div>
+                  <div className="lp-pill-copy">{p.copy}</div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
 
-        <div className="lp-stats reveal">
-          {STATS.map((s) => (
-            <div key={s.label} className="lp-stat">
-              <div className="lp-stat-value">{s.value}</div>
-              <div className="lp-stat-label">{s.label}</div>
+        <div className="lp-hero-visual reveal">
+          <Globe />
+          <div className="lp-card lp-card-status">
+            <div className="lp-card-row">
+              <span className="lp-card-label">已连接</span>
+              <span className="lp-dot-online" />
             </div>
-          ))}
+            <div className="lp-card-time">00:12:36</div>
+            <div className="lp-bars">
+              <span /><span /><span /><span />
+            </div>
+          </div>
+          <div className="lp-card lp-card-speed">
+            <div className="lp-card-label">连接速度</div>
+            <div className="lp-card-speed-value">120 Mbps</div>
+            <svg className="lp-spark" viewBox="0 0 100 28" preserveAspectRatio="none">
+              <polyline points="0,22 18,18 34,20 52,9 70,13 86,5 100,7" fill="none" stroke="var(--accent-500)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+          <div className="lp-card lp-card-node">
+            <div className="lp-card-label">节点位置</div>
+            <div className="lp-card-node-row">
+              <span>📍 美国 · cn2</span>
+              <span className="lp-chev">⌄</span>
+            </div>
+          </div>
         </div>
       </section>
+
+      <div className="lp-trust">
+        <span className="lp-trust-lead">值得信赖的 {site.name} 服务</span>
+        {TRUST.map((t) => (
+          <span key={t} className="lp-trust-item">
+            {t}
+          </span>
+        ))}
+      </div>
 
       <section id="features" className="lp-section">
         <span className="lp-eyebrow reveal">为什么选择 {site.name}</span>
@@ -173,7 +243,9 @@ export default function HomePage() {
           <Link href="/register">注册</Link>
           <Link href="/portal">用户中心</Link>
         </div>
-        <span className="lp-footer-note">© {new Date().getFullYear()} {site.name} · Powered by Hysteria 2</span>
+        <span className="lp-footer-note">
+          © {new Date().getFullYear()} {site.name} · Powered by Hysteria 2
+        </span>
       </footer>
     </main>
   );

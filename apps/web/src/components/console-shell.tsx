@@ -9,6 +9,7 @@ import { useAuth } from "./auth-provider";
 import { Icon } from "./icon";
 import { SidebarNav } from "./sidebar-nav";
 import { useSite } from "./site-provider";
+import { ThemeToggle } from "./theme-toggle";
 
 export function ConsoleShell({
   title,
@@ -103,6 +104,7 @@ export function ConsoleShell({
             <Icon name="home" />
             <span>返回入口</span>
           </Link>
+          <ThemeToggle className="ghost-button" />
           <button
             type="button"
             className="ghost-button"

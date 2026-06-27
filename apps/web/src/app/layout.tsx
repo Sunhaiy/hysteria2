@@ -2,7 +2,11 @@ import type { Metadata } from "next";
 import { Inter, Roboto_Mono } from "next/font/google";
 import { AuthProvider } from "@/components/auth-provider";
 import { SiteProvider } from "@/components/site-provider";
+import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.scss";
+
+// Apply the stored theme before paint to avoid a flash of the wrong theme.
+const themeBootstrap = `(function(){try{var t=localStorage.getItem('theme');if(t!=='dark'&&t!=='light')t='light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();`;
 
 const inter = Inter({
   variable: "--font-body-face",
@@ -27,14 +31,20 @@ export default function RootLayout({
   return (
     <html
       lang="zh-CN"
-      data-theme="dark"
+      data-theme="light"
       data-accent="green"
+      suppressHydrationWarning
       className={`${inter.variable} ${robotoMono.variable}`}
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
+      </head>
       <body>
-        <SiteProvider>
-          <AuthProvider>{children}</AuthProvider>
-        </SiteProvider>
+        <ThemeProvider>
+          <SiteProvider>
+            <AuthProvider>{children}</AuthProvider>
+          </SiteProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
