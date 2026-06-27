@@ -24,6 +24,11 @@ export class PortalController {
     return this.portalService.getPlans();
   }
 
+  @Get('branding')
+  getBranding() {
+    return this.portalService.getBranding();
+  }
+
   @Get('usage')
   getUsage(@CurrentPrincipal() principal: SessionPrincipal) {
     return this.portalService.getUsage(principal.sub);

@@ -69,6 +69,21 @@ export class UpdateSettingsDto {
   @IsOptional()
   @IsString()
   githubClientSecret?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  buyButtonText?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  cdkButtonText?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  cdkButtonUrl?: string;
 }
 
 export class TestEmailDto {

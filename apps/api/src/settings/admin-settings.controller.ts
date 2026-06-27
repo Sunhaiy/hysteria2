@@ -25,6 +25,7 @@ export class AdminSettingsController {
   async getSettings() {
     const smtp = await this.settings.getSmtpConfig();
     const oauth = await this.settings.getOAuthConfig();
+    const branding = await this.settings.getPortalBranding();
     const registrationEnabled = await this.settings.isRegistrationEnabled();
     const callbackBase =
       process.env.OAUTH_CALLBACK_BASE ||
@@ -56,6 +57,7 @@ export class AdminSettingsController {
           callbackUrl: `${callbackBase}/api/auth/oauth/github/callback`,
         },
       },
+      branding,
       registrationEnabled,
     };
   }
@@ -83,6 +85,15 @@ export class AdminSettingsController {
     }
     if (body.githubClientSecret) {
       updates['oauth.github.secret'] = body.githubClientSecret.trim();
+    }
+    if (body.buyButtonText !== undefined) {
+      updates['portal.buyButtonText'] = body.buyButtonText.trim();
+    }
+    if (body.cdkButtonText !== undefined) {
+      updates['portal.cdkButtonText'] = body.cdkButtonText.trim();
+    }
+    if (body.cdkButtonUrl !== undefined) {
+      updates['portal.cdkButtonUrl'] = body.cdkButtonUrl.trim();
     }
     await this.settings.setMany(updates);
     return this.getSettings();

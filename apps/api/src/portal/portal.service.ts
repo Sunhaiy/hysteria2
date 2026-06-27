@@ -1,10 +1,18 @@
 import { Injectable } from '@nestjs/common';
 import QRCode from 'qrcode';
 import { ControlPlaneStoreService } from '../domain/control-plane.store';
+import { SettingsService } from '../settings/settings.service';
 
 @Injectable()
 export class PortalService {
-  constructor(private readonly store: ControlPlaneStoreService) {}
+  constructor(
+    private readonly store: ControlPlaneStoreService,
+    private readonly settings: SettingsService,
+  ) {}
+
+  getBranding() {
+    return this.settings.getPortalBranding();
+  }
 
   getSubscription(userId: string) {
     return this.store.getPortalOverview(userId);

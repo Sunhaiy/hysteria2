@@ -68,6 +68,16 @@ export class SettingsService {
     return value === undefined ? true : value === 'true';
   }
 
+  /** Portal button labels + the CDK button target (may be an external URL). */
+  async getPortalBranding() {
+    const map = await this.all();
+    return {
+      buyButtonText: map.get('portal.buyButtonText') || '购买',
+      cdkButtonText: map.get('portal.cdkButtonText') || 'cdk充值',
+      cdkButtonUrl: map.get('portal.cdkButtonUrl') || '/portal/redeem',
+    };
+  }
+
   /** OAuth credentials: DB settings take precedence, env vars are the fallback. */
   async getOAuthConfig() {
     const map = await this.all();

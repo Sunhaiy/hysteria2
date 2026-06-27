@@ -25,6 +25,11 @@ export default function PortalPlansPage() {
   const [orders, setOrders] = useState<ManualOrderRecord[]>([]);
   const [overview, setOverview] = useState<PortalOverviewResponse | null>(null);
   const [balanceCents, setBalanceCents] = useState(0);
+  const [branding, setBranding] = useState({
+    buyButtonText: "购买",
+    cdkButtonText: "cdk充值",
+    cdkButtonUrl: "/portal/redeem",
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { toast, showToast } = useToast();
@@ -66,6 +71,13 @@ export default function PortalPlansPage() {
         wallet = await apiRequest<WalletResponse>("/api/portal/wallet", { token });
       } catch {
         wallet = null;
+      }
+
+      try {
+        const b = await apiRequest<typeof branding>("/api/portal/branding", { token });
+        if (b) setBranding(b);
+      } catch {
+        // keep defaults
       }
 
       setPlans(nextPlans);
@@ -245,11 +257,22 @@ export default function PortalPlansPage() {
                     type="button"
                     onClick={() => openCheckout(plan)}
                   >
-                    购买
+                    {branding.buyButtonText}
                   </button>
-                  <Link className="ghost-button" href="/portal/redeem">
-                    cdk充值
-                  </Link>
+                  {branding.cdkButtonUrl.startsWith("http") ? (
+                    <a
+                      className="ghost-button"
+                      href={branding.cdkButtonUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {branding.cdkButtonText}
+                    </a>
+                  ) : (
+                    <Link className="ghost-button" href={branding.cdkButtonUrl}>
+                      {branding.cdkButtonText}
+                    </Link>
+                  )}
                   {isCurrent ? <span className="badge success">当前使用中</span> : null}
                   {!isCurrent && isPending ? <span className="badge warn">待处理</span> : null}
                 </div>

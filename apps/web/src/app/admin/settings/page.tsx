@@ -28,6 +28,11 @@ interface SettingsResponse {
     google: OAuthProviderState;
     github: OAuthProviderState;
   };
+  branding: {
+    buyButtonText: string;
+    cdkButtonText: string;
+    cdkButtonUrl: string;
+  };
   registrationEnabled: boolean;
 }
 
@@ -56,6 +61,11 @@ export default function AdminSettingsPage() {
   const [githubSecret, setGithubSecret] = useState("");
   const [savingOauth, setSavingOauth] = useState(false);
 
+  const [buyButtonText, setBuyButtonText] = useState("");
+  const [cdkButtonText, setCdkButtonText] = useState("");
+  const [cdkButtonUrl, setCdkButtonUrl] = useState("");
+  const [savingBranding, setSavingBranding] = useState(false);
+
   const applySettings = useCallback((data: SettingsResponse) => {
     setHost(data.smtp.host);
     setPort(String(data.smtp.port));
@@ -70,6 +80,9 @@ export default function AdminSettingsPage() {
     setGithubId(data.oauth.github.clientId);
     setGoogleSecret("");
     setGithubSecret("");
+    setBuyButtonText(data.branding.buyButtonText);
+    setCdkButtonText(data.branding.cdkButtonText);
+    setCdkButtonUrl(data.branding.cdkButtonUrl);
   }, []);
 
   const load = useCallback(async () => {
@@ -147,6 +160,27 @@ export default function AdminSettingsPage() {
       setError(cause instanceof ApiError ? cause.message : "保存失败。");
     } finally {
       setSavingOauth(false);
+    }
+  }
+
+  async function saveBranding() {
+    if (!token) {
+      return;
+    }
+    setSavingBranding(true);
+    setError(null);
+    try {
+      const data = await apiRequest<SettingsResponse>("/api/admin/settings", {
+        method: "PATCH",
+        token,
+        body: { buyButtonText, cdkButtonText, cdkButtonUrl },
+      });
+      applySettings(data);
+      showToast("前台按钮文案已保存");
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "保存失败。");
+    } finally {
+      setSavingBranding(false);
     }
   }
 
@@ -270,6 +304,48 @@ export default function AdminSettingsPage() {
             <div className="toolbar-actions">
               <button className="action-button" type="button" disabled={saving} onClick={() => void save()}>
                 {saving ? "保存中..." : "保存设置"}
+              </button>
+            </div>
+          </Panel>
+
+          <Panel
+            title="前台按钮文案"
+            copy="自定义会员套餐页两个按钮的文字。CDK 按钮链接可填站内路径（如 /portal/redeem）或完整外链（http 开头，新标签打开）。"
+          >
+            <div className="form-grid">
+              <div className="two-col">
+                <label className="field">
+                  <span className="fine-print">购买按钮文案</span>
+                  <input
+                    className="control"
+                    value={buyButtonText}
+                    onChange={(event) => setBuyButtonText(event.target.value)}
+                    placeholder="购买"
+                  />
+                </label>
+                <label className="field">
+                  <span className="fine-print">CDK 按钮文案</span>
+                  <input
+                    className="control"
+                    value={cdkButtonText}
+                    onChange={(event) => setCdkButtonText(event.target.value)}
+                    placeholder="cdk充值"
+                  />
+                </label>
+              </div>
+              <label className="field">
+                <span className="fine-print">CDK 按钮链接</span>
+                <input
+                  className="control"
+                  value={cdkButtonUrl}
+                  onChange={(event) => setCdkButtonUrl(event.target.value)}
+                  placeholder="/portal/redeem 或 https://t.me/yourbot"
+                />
+              </label>
+            </div>
+            <div className="toolbar-actions">
+              <button className="action-button" type="button" disabled={savingBranding} onClick={() => void saveBranding()}>
+                {savingBranding ? "保存中..." : "保存按钮文案"}
               </button>
             </div>
           </Panel>
