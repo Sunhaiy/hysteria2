@@ -26,6 +26,7 @@ export class AdminSettingsController {
     const smtp = await this.settings.getSmtpConfig();
     const oauth = await this.settings.getOAuthConfig();
     const branding = await this.settings.getPortalBranding();
+    const site = await this.settings.getSiteInfo();
     const registrationEnabled = await this.settings.isRegistrationEnabled();
     const callbackBase =
       process.env.OAUTH_CALLBACK_BASE ||
@@ -58,6 +59,7 @@ export class AdminSettingsController {
         },
       },
       branding,
+      site,
       registrationEnabled,
     };
   }
@@ -85,6 +87,12 @@ export class AdminSettingsController {
     }
     if (body.githubClientSecret) {
       updates['oauth.github.secret'] = body.githubClientSecret.trim();
+    }
+    if (body.siteName !== undefined) {
+      updates['site.name'] = body.siteName.trim();
+    }
+    if (body.siteDescription !== undefined) {
+      updates['site.description'] = body.siteDescription.trim();
     }
     if (body.purchaseMode !== undefined) {
       updates['portal.purchaseMode'] = body.purchaseMode;

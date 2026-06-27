@@ -8,6 +8,7 @@ import type { NavItem } from "@/lib/copy";
 import { useAuth } from "./auth-provider";
 import { Icon } from "./icon";
 import { SidebarNav } from "./sidebar-nav";
+import { useSite } from "./site-provider";
 
 export function ConsoleShell({
   title,
@@ -29,6 +30,7 @@ export function ConsoleShell({
   children: ReactNode;
 }) {
   const { session, loading, logout } = useAuth();
+  const site = useSite();
   const router = useRouter();
   const pathname = usePathname();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -75,7 +77,7 @@ export function ConsoleShell({
         <div className="sidebar-header">
           <div className="sidebar-brand-row">
             <div className="brand-lockup">
-              <h1 className="brand-title">Hysteria 2</h1>
+              <h1 className="brand-title">{site.name}</h1>
             </div>
             <button
               type="button"

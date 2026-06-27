@@ -35,6 +35,10 @@ interface SettingsResponse {
     cdkButtonText: string;
     cdkButtonUrl: string;
   };
+  site: {
+    name: string;
+    description: string;
+  };
   registrationEnabled: boolean;
 }
 
@@ -63,6 +67,9 @@ export default function AdminSettingsPage() {
   const [githubSecret, setGithubSecret] = useState("");
   const [savingOauth, setSavingOauth] = useState(false);
 
+  const [siteName, setSiteName] = useState("");
+  const [siteDescription, setSiteDescription] = useState("");
+  const [savingSite, setSavingSite] = useState(false);
   const [purchaseMode, setPurchaseMode] = useState<"balance" | "cdk">("balance");
   const [buyButtonText, setBuyButtonText] = useState("");
   const [cdkButtonText, setCdkButtonText] = useState("");
@@ -83,6 +90,8 @@ export default function AdminSettingsPage() {
     setGithubId(data.oauth.github.clientId);
     setGoogleSecret("");
     setGithubSecret("");
+    setSiteName(data.site.name);
+    setSiteDescription(data.site.description);
     setPurchaseMode(data.branding.purchaseMode);
     setBuyButtonText(data.branding.buyButtonText);
     setCdkButtonText(data.branding.cdkButtonText);
@@ -167,6 +176,27 @@ export default function AdminSettingsPage() {
     }
   }
 
+  async function saveSite() {
+    if (!token) {
+      return;
+    }
+    setSavingSite(true);
+    setError(null);
+    try {
+      const data = await apiRequest<SettingsResponse>("/api/admin/settings", {
+        method: "PATCH",
+        token,
+        body: { siteName, siteDescription },
+      });
+      applySettings(data);
+      showToast("站点资料已保存");
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "保存失败。");
+    } finally {
+      setSavingSite(false);
+    }
+  }
+
   async function saveBranding() {
     if (!token) {
       return;
@@ -236,6 +266,37 @@ export default function AdminSettingsPage() {
         </div>
       ) : (
         <>
+          <Panel
+            title="站点资料"
+            copy="站点名称显示在侧边栏、登录页等位置；简介显示在登录页副标题。"
+          >
+            <div className="form-grid">
+              <label className="field">
+                <span className="fine-print">站点名称</span>
+                <input
+                  className="control"
+                  value={siteName}
+                  onChange={(event) => setSiteName(event.target.value)}
+                  placeholder="九玄"
+                />
+              </label>
+              <label className="field">
+                <span className="fine-print">站点简介（可选）</span>
+                <input
+                  className="control"
+                  value={siteDescription}
+                  onChange={(event) => setSiteDescription(event.target.value)}
+                  placeholder="一句话介绍你的站点"
+                />
+              </label>
+            </div>
+            <div className="toolbar-actions">
+              <button className="action-button" type="button" disabled={savingSite} onClick={() => void saveSite()}>
+                {savingSite ? "保存中..." : "保存站点资料"}
+              </button>
+            </div>
+          </Panel>
+
           <Panel
             title="会员注册"
             copy="关闭后，会员将无法通过邮箱验证码自助注册（登录与已注册账号不受影响）。"

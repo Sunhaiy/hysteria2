@@ -68,6 +68,15 @@ export class SettingsService {
     return value === undefined ? true : value === 'true';
   }
 
+  /** Public site identity (name shown in the sidebar/login, optional tagline). */
+  async getSiteInfo() {
+    const map = await this.all();
+    return {
+      name: map.get('site.name') || 'Hysteria 2',
+      description: map.get('site.description') || '',
+    };
+  }
+
   /** Portal button labels, purchase mode, and the CDK/shop link. */
   async getPortalBranding() {
     const map = await this.all();

@@ -71,6 +71,16 @@ export class UpdateSettingsDto {
   githubClientSecret?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  siteName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  siteDescription?: string;
+
+  @IsOptional()
   @IsIn(['balance', 'cdk'])
   purchaseMode?: 'balance' | 'cdk';
 

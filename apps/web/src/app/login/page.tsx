@@ -7,6 +7,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
 import { OAuthButtons } from "@/components/oauth-buttons";
+import { useSite } from "@/components/site-provider";
 import { homeCopy } from "@/lib/copy";
 
 export default function LoginPage() {
@@ -29,6 +30,7 @@ export default function LoginPage() {
 
 function LoginPageBody() {
   const { session, login, loading } = useAuth();
+  const site = useSite();
   const searchParams = useSearchParams();
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -69,8 +71,8 @@ function LoginPageBody() {
         <div className="panel-header">
           <div className="split">
             <span className="scope-chip">Login</span>
-            <h1 className="panel-title">登录 Hysteria 2 控制台</h1>
-            <span className="panel-copy">{homeCopy.description}</span>
+            <h1 className="panel-title">登录 {site.name} 控制台</h1>
+            <span className="panel-copy">{site.description || homeCopy.description}</span>
           </div>
         </div>
         <div className="panel-body">
