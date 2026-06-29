@@ -23,6 +23,7 @@ export const portalNav: NavItem[] = [
   { href: "/portal/plans", label: "套餐选择", icon: "stacks", meta: "PLAN" },
   { href: "/portal/redeem", label: "兑换中心", icon: "redeem", meta: "CDK" },
   { href: "/portal/access", label: "接入信息", icon: "qr_code_2", meta: "HY2" },
+  { href: "/portal/tutorial", label: "使用教程", icon: "book", meta: "GUIDE" },
   { href: "/portal/usage", label: "流量使用", icon: "network_node", meta: "FLOW" },
   { href: "/portal/orders", label: "订单记录", icon: "payments", meta: "BILL" },
 ];

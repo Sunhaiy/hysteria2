@@ -80,11 +80,11 @@ export function HeroGlobe({ className = "lp-globe" }: { className?: string }) {
       <path d="M120 130 A140 140 0 0 1 320 120" fill="none" stroke="#ffffff" strokeOpacity="0.35" strokeWidth="1.6" strokeLinecap="round" />
 
       {/* orbits */}
-      <g transform="rotate(-20 230 200)">
+      <g className="lp-globe-orbit lp-globe-orbit-a">
         <ellipse cx="230" cy="200" rx="196" ry="72" fill="none" stroke="var(--accent-500)" strokeOpacity="0.45" strokeDasharray="2 7" strokeLinecap="round" />
         <circle cx="426" cy="200" r="6" fill="var(--accent-500)" />
       </g>
-      <g transform="rotate(24 230 200)">
+      <g className="lp-globe-orbit lp-globe-orbit-b">
         <ellipse cx="230" cy="200" rx="180" ry="58" fill="none" stroke="var(--accent-500)" strokeOpacity="0.22" />
         <circle cx="50" cy="200" r="4" fill="var(--accent-500)" opacity="0.7" />
       </g>

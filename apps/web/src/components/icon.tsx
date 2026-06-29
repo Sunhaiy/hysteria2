@@ -31,6 +31,7 @@ type IconName =
   | "logout"
   | "login"
   | "home"
+  | "book"
   | "add"
   | "edit"
   | "refresh";
@@ -271,6 +272,12 @@ const icons: Record<IconName, ReactElement> = {
     <BaseIcon>
       <path d="m4 11 8-7 8 7" />
       <path d="M6 10.5V20h12v-9.5" />
+    </BaseIcon>
+  ),
+  book: (
+    <BaseIcon>
+      <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z" />
+      <path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z" />
     </BaseIcon>
   ),
   add: (
