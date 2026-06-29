@@ -1449,8 +1449,8 @@ select.control {
   gap: 16px;
   padding: 14px 32px;
   background: color-mix(in srgb, var(--bg-canvas) 55%, transparent);
-  backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
   border-bottom: 1px solid color-mix(in srgb, var(--border-default) 60%, transparent);
 }
 
