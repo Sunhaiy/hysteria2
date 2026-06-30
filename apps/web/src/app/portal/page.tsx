@@ -43,21 +43,12 @@ function UsageChart({ data }: { data: ReturnType<typeof buildSevenDayUsage> }) {
     return { ...item, x, y };
   });
   const line = points.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
-  const area = `${line} L100,82 L0,82 Z`;
-
   return (
     <div className="portal-chart-wrap">
       <div className="portal-chart-unit">单位：GB</div>
       <svg className="portal-chart" viewBox="0 0 100 88" preserveAspectRatio="none" role="img" aria-label="近 7 日流量趋势">
-        <defs>
-          <linearGradient id="portal-chart-fill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="var(--accent-500)" stopOpacity="0.34" />
-            <stop offset="100%" stopColor="var(--accent-500)" stopOpacity="0" />
-          </linearGradient>
-        </defs>
         {[18, 34, 50, 66, 82].map((y) => <line key={y} x1="0" x2="100" y1={y} y2={y} className="portal-chart-grid" />)}
         {points.map((point) => <line key={point.key} x1={point.x} x2={point.x} y1="12" y2="82" className="portal-chart-grid vertical" />)}
-        <path d={area} fill="url(#portal-chart-fill)" />
         <path d={line} className="portal-chart-line" />
         {points.map((point) => <circle key={point.key} cx={point.x} cy={point.y} r="1.5" className="portal-chart-point" />)}
       </svg>
@@ -191,7 +182,10 @@ export default function PortalPage() {
                   <div className="portal-panel-heading"><h3>流量包与权益</h3><Link href="/portal/plans">查看全部 ›</Link></div>
                   {overview.packs.length ? overview.packs.slice(0, 2).map((pack) => (
                     <div className="portal-pack-row" key={pack.id}>
-                      <div><strong>{pack.label}</strong><span className="badge success">{pack.status}</span><small>{pack.expiresAt ? `生效至 ${formatDateTime(pack.expiresAt)}` : "跟随当前订阅"}</small></div>
+                      <div className="portal-pack-copy">
+                        <div className="portal-pack-title"><strong>{pack.label}</strong><span className="badge success">{pack.status}</span></div>
+                        <small>{pack.expiresAt ? `生效至 ${formatDateTime(pack.expiresAt)}` : "跟随当前订阅"}</small>
+                      </div>
                       <b>{formatBytes(pack.remainingBytes)}</b>
                     </div>
                   )) : <div className="portal-empty-inline">当前没有额外流量包</div>}
