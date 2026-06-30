@@ -14,11 +14,8 @@ import { ThemeToggle } from "./theme-toggle";
 export function ConsoleShell({
   title,
   subtitle,
-  scope,
   navItems,
   requireRole,
-  toolbarMeta,
-  toolbarActions,
   children,
 }: {
   title: string;
@@ -126,10 +123,6 @@ export function ConsoleShell({
             <div className="topbar-subtitle">{subtitle}</div>
           </div>
         </header>
-        <div className="toolbar">
-          <div className="toolbar-meta">{toolbarMeta}</div>
-          <div className="toolbar-actions">{toolbarActions}</div>
-        </div>
         <div className="workspace-body">{children}</div>
       </main>
     </div>
