@@ -1,19 +1,19 @@
 :root,
 [data-theme="dark"] {
-  --bg-canvas: #111318;
-  --bg-panel: #181b21;
-  --bg-panel-alt: #20242c;
-  --bg-panel-raised: #262b34;
+  --bg-canvas: oklch(0.145 0 0);
+  --bg-panel: oklch(0.205 0 0);
+  --bg-panel-alt: oklch(0.269 0 0);
+  --bg-panel-raised: oklch(0.205 0 0);
   --bg-elevated: rgba(255, 255, 255, 0.025);
-  --border-default: #2a303a;
-  --border-strong: #3a4350;
-  --border-soft: rgba(226, 232, 240, 0.09);
-  --text-primary: #f8fafc;
-  --text-secondary: #d1d7e0;
-  --text-muted: #98a2b1;
-  --text-subtle: #748091;
-  --shadow-color: rgba(2, 6, 23, 0.3);
-  --surface-overlay: linear-gradient(180deg, rgba(255, 255, 255, 0.014), rgba(255, 255, 255, 0));
+  --border-default: oklch(1 0 0 / 10%);
+  --border-strong: oklch(1 0 0 / 15%);
+  --border-soft: oklch(1 0 0 / 10%);
+  --text-primary: oklch(0.985 0 0);
+  --text-secondary: oklch(0.922 0 0);
+  --text-muted: oklch(0.708 0 0);
+  --text-subtle: oklch(0.556 0 0);
+  --shadow-color: rgba(0, 0, 0, 0.38);
+  --surface-overlay: linear-gradient(180deg, transparent, transparent);
   color-scheme: dark;
 }
 
