@@ -1,8 +1,21 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import * as echarts from "echarts";
+import * as echarts from "echarts/core";
+import { BarChart, LineChart, PieChart } from "echarts/charts";
+import { GridComponent, LegendComponent, TooltipComponent } from "echarts/components";
+import { CanvasRenderer } from "echarts/renderers";
 import type { EChartsOption } from "echarts";
+
+echarts.use([
+  BarChart,
+  LineChart,
+  PieChart,
+  GridComponent,
+  LegendComponent,
+  TooltipComponent,
+  CanvasRenderer,
+]);
 
 export function EChart({
   option,
