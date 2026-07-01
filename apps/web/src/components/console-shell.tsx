@@ -16,6 +16,8 @@ export function ConsoleShell({
   subtitle,
   navItems,
   requireRole,
+  toolbarMeta,
+  toolbarActions,
   children,
 }: {
   title: string;
@@ -118,10 +120,16 @@ export function ConsoleShell({
 
       <main className="workspace">
         <header className="topbar">
-          <div>
+          <div className="topbar-copy">
             <h2 className="topbar-title">{title}</h2>
             <div className="topbar-subtitle">{subtitle}</div>
           </div>
+          {toolbarMeta || toolbarActions ? (
+            <div className="topbar-tools">
+              {toolbarMeta ? <div className="topbar-meta">{toolbarMeta}</div> : null}
+              {toolbarActions ? <div className="topbar-actions">{toolbarActions}</div> : null}
+            </div>
+          ) : null}
         </header>
         <div className="workspace-body">{children}</div>
       </main>

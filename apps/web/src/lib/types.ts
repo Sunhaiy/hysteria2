@@ -207,6 +207,43 @@ export interface UsageRollupRecord {
   createdAt: string;
 }
 
+export interface UsageSummaryResponse {
+  totals: {
+    txBytes: number;
+    rxBytes: number;
+    totalBytes: number;
+    recordCount: number;
+    last24HoursBytes: number;
+    last7DaysBytes: number;
+  };
+  daily: Array<{
+    date: string;
+    txBytes: number;
+    rxBytes: number;
+    totalBytes: number;
+  }>;
+  nodes: Array<{
+    nodeId: string;
+    nodeLabel: string;
+    active: boolean;
+    txBytes: number;
+    rxBytes: number;
+    totalBytes: number;
+    recordCount: number;
+    lastSeenAt?: string | null;
+  }>;
+  users: Array<{
+    userId: string;
+    userEmail: string;
+    userDisplayName: string;
+    txBytes: number;
+    rxBytes: number;
+    totalBytes: number;
+    recordCount: number;
+    lastSeenAt?: string | null;
+  }>;
+}
+
 export interface SessionRecord {
   userId: string;
   userEmail: string;

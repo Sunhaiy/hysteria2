@@ -13,6 +13,11 @@ export class MonitoringController {
     return this.store.getUsageRollups();
   }
 
+  @Get('usage/summary')
+  getUsageSummary() {
+    return this.store.getUsageSummary();
+  }
+
   @Get('sessions')
   getSessions() {
     return this.store.getCurrentSessions();

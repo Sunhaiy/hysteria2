@@ -1862,7 +1862,7 @@ export class ControlPlaneStoreService {
     }));
   }
 
-  async getUsageRollups(limit = 30) {
+  async getUsageRollups(limit = 200) {
     const rollups = await this.prisma.usageRollup.findMany({
       include: { user: true, node: true },
       orderBy: { bucketStart: 'desc' },
@@ -1882,6 +1882,128 @@ export class ControlPlaneStoreService {
       source: rollup.source,
       createdAt: rollup.createdAt.toISOString(),
     }));
+  }
+
+  async getUsageSummary() {
+    const now = new Date();
+    const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const fourteenDaysAgo = new Date(now.getTime() - 13 * 24 * 60 * 60 * 1000);
+    fourteenDaysAgo.setUTCHours(0, 0, 0, 0);
+
+    const [totals, last24Hours, last7Days, nodeGroups, userGroups, recent] =
+      await Promise.all([
+        this.prisma.usageRollup.aggregate({
+          _sum: { txBytes: true, rxBytes: true },
+          _count: { _all: true },
+        }),
+        this.prisma.usageRollup.aggregate({
+          where: { bucketStart: { gte: dayAgo } },
+          _sum: { txBytes: true, rxBytes: true },
+        }),
+        this.prisma.usageRollup.aggregate({
+          where: { bucketStart: { gte: sevenDaysAgo } },
+          _sum: { txBytes: true, rxBytes: true },
+        }),
+        this.prisma.usageRollup.groupBy({
+          by: ['nodeId'],
+          _sum: { txBytes: true, rxBytes: true },
+          _count: { _all: true },
+          _max: { bucketStart: true },
+        }),
+        this.prisma.usageRollup.groupBy({
+          by: ['userId'],
+          _sum: { txBytes: true, rxBytes: true },
+          _count: { _all: true },
+          _max: { bucketStart: true },
+        }),
+        this.prisma.usageRollup.findMany({
+          where: { bucketStart: { gte: fourteenDaysAgo } },
+          select: { bucketStart: true, txBytes: true, rxBytes: true },
+          orderBy: { bucketStart: 'asc' },
+        }),
+      ]);
+
+    const [nodes, users] = await Promise.all([
+      this.prisma.node.findMany({
+        select: { id: true, label: true, active: true },
+      }),
+      this.prisma.user.findMany({
+        where: { id: { in: userGroups.map((group) => group.userId) } },
+        select: { id: true, email: true, displayName: true },
+      }),
+    ]);
+
+    const nodeGroupMap = new Map(nodeGroups.map((group) => [group.nodeId, group]));
+    const userMap = new Map(users.map((user) => [user.id, user]));
+    const numberValue = (value: bigint | null | undefined) => Number(value ?? 0n);
+    const totalValue = (tx: bigint | null | undefined, rx: bigint | null | undefined) =>
+      numberValue(tx) + numberValue(rx);
+
+    const dailyMap = new Map<string, { txBytes: number; rxBytes: number }>();
+    for (let index = 0; index < 14; index += 1) {
+      const date = new Date(fourteenDaysAgo);
+      date.setUTCDate(date.getUTCDate() + index);
+      dailyMap.set(date.toISOString().slice(0, 10), { txBytes: 0, rxBytes: 0 });
+    }
+    for (const item of recent) {
+      const key = item.bucketStart.toISOString().slice(0, 10);
+      const current = dailyMap.get(key) ?? { txBytes: 0, rxBytes: 0 };
+      current.txBytes += Number(item.txBytes);
+      current.rxBytes += Number(item.rxBytes);
+      dailyMap.set(key, current);
+    }
+
+    return {
+      totals: {
+        txBytes: numberValue(totals._sum.txBytes),
+        rxBytes: numberValue(totals._sum.rxBytes),
+        totalBytes: totalValue(totals._sum.txBytes, totals._sum.rxBytes),
+        recordCount: totals._count._all,
+        last24HoursBytes: totalValue(last24Hours._sum.txBytes, last24Hours._sum.rxBytes),
+        last7DaysBytes: totalValue(last7Days._sum.txBytes, last7Days._sum.rxBytes),
+      },
+      daily: [...dailyMap.entries()].map(([date, value]) => ({
+        date,
+        ...value,
+        totalBytes: value.txBytes + value.rxBytes,
+      })),
+      nodes: nodes
+        .map((node) => {
+          const group = nodeGroupMap.get(node.id);
+          const txBytes = numberValue(group?._sum.txBytes);
+          const rxBytes = numberValue(group?._sum.rxBytes);
+          return {
+            nodeId: node.id,
+            nodeLabel: node.label,
+            active: node.active,
+            txBytes,
+            rxBytes,
+            totalBytes: txBytes + rxBytes,
+            recordCount: group?._count._all ?? 0,
+            lastSeenAt: group?._max.bucketStart?.toISOString() ?? null,
+          };
+        })
+        .sort((a, b) => b.totalBytes - a.totalBytes),
+      users: userGroups
+        .map((group) => {
+          const user = userMap.get(group.userId);
+          const txBytes = numberValue(group._sum.txBytes);
+          const rxBytes = numberValue(group._sum.rxBytes);
+          return {
+            userId: group.userId,
+            userEmail: user?.email ?? '未知用户',
+            userDisplayName: user?.displayName ?? '未知用户',
+            txBytes,
+            rxBytes,
+            totalBytes: txBytes + rxBytes,
+            recordCount: group._count._all,
+            lastSeenAt: group._max.bucketStart?.toISOString() ?? null,
+          };
+        })
+        .sort((a, b) => b.totalBytes - a.totalBytes)
+        .slice(0, 10),
+    };
   }
 
   async getUserSubscription(userId: string) {
