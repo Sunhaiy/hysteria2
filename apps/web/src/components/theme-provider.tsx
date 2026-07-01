@@ -9,9 +9,7 @@ import {
   type ReactNode,
 } from "react";
 
-export type Theme = "light" | "dark" | "midnight" | "dusk" | "black";
-
-const THEMES: Theme[] = ["light", "dark", "midnight", "dusk", "black"];
+export type Theme = "light" | "dark";
 
 const ThemeContext = createContext<{ theme: Theme; apply: (theme: Theme) => void }>({
   theme: "light",
@@ -27,7 +25,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const current = document.documentElement.getAttribute("data-theme");
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setTheme(THEMES.includes(current as Theme) ? (current as Theme) : "light");
+    setTheme(current === "dark" ? "dark" : "light");
   }, []);
 
   const apply = useCallback((next: Theme) => {

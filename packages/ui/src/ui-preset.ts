@@ -1,4 +1,4 @@
-export type SurfaceTheme = "light" | "dark" | "midnight" | "dusk" | "black";
+export type SurfaceTheme = "light" | "dark";
 export type AccentTheme =
   | "blue"
   | "green"
