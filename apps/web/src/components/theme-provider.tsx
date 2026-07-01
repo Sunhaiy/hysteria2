@@ -9,11 +9,13 @@ import {
   type ReactNode,
 } from "react";
 
-type Theme = "light" | "dark";
+export type Theme = "light" | "dark" | "midnight" | "dusk" | "black";
 
-const ThemeContext = createContext<{ theme: Theme; toggle: () => void }>({
+const THEMES: Theme[] = ["light", "dark", "midnight", "dusk", "black"];
+
+const ThemeContext = createContext<{ theme: Theme; apply: (theme: Theme) => void }>({
   theme: "light",
-  toggle: () => {},
+  apply: () => {},
 });
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -25,7 +27,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const current = document.documentElement.getAttribute("data-theme");
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setTheme(current === "dark" ? "dark" : "light");
+    setTheme(THEMES.includes(current as Theme) ? (current as Theme) : "light");
   }, []);
 
   const apply = useCallback((next: Theme) => {
@@ -38,13 +40,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const toggle = useCallback(
-    () => apply(theme === "dark" ? "light" : "dark"),
-    [theme, apply],
-  );
-
   return (
-    <ThemeContext.Provider value={{ theme, toggle }}>
+    <ThemeContext.Provider value={{ theme, apply }}>
       {children}
     </ThemeContext.Provider>
   );

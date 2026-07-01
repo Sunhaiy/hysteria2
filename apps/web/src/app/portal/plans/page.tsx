@@ -9,6 +9,7 @@ import { Toast, useToast } from "@/components/toast";
 import { apiRequest, ApiError } from "@/lib/api";
 import { portalNav } from "@/lib/copy";
 import { formatBytes, formatMoney } from "@/lib/format";
+import { normalizePlanAccent } from "@/lib/plan-accents";
 
 const UNLIMITED_TRAFFIC = Number.MAX_SAFE_INTEGER;
 import type {
@@ -261,11 +262,10 @@ export default function PortalPlansPage() {
           const isPending = pendingRenewal?.planId === plan.id;
 
           return (
-            <article className="plan-card" key={plan.id}>
+            <article className="plan-card" data-plan-accent={normalizePlanAccent(plan.accent)} key={plan.id}>
               <div className="plan-card-head">
                 <div className="split">
-                  <span className={`scope-chip ${plan.accent}`}>{plan.accent}</span>
-                  <h2 className="panel-title">{plan.name}</h2>
+                  <h2 className="panel-title plan-card-title"><span aria-hidden="true" />{plan.name}</h2>
                   <span className="panel-copy">{plan.description ?? "标准会员套餐"}</span>
                 </div>
                 <div className="split align-end">

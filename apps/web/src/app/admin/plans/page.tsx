@@ -11,6 +11,7 @@ import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
 import { clearDraft, getDraft, saveDraft } from "@/lib/draft";
 import { formatBytes, formatMoney } from "@/lib/format";
+import { normalizePlanAccent, PLAN_ACCENTS } from "@/lib/plan-accents";
 import type { NodeRecord, PlanBindingRecord, PlanRecord } from "@/lib/types";
 import { slugifyValue } from "@/lib/ui";
 
@@ -62,7 +63,7 @@ function fromRecord(plan: PlanRecord): PlanForm {
     speedDownMbps: plan.speedDownMbps,
     deviceLimit: plan.deviceLimit,
     priceCents: plan.priceCents,
-    accent: plan.accent,
+    accent: normalizePlanAccent(plan.accent),
   };
 }
 
@@ -176,7 +177,7 @@ export default function AdminPlansPage() {
         slug: form.slug.trim(),
         name: form.name.trim(),
         description: form.description.trim(),
-        accent: form.accent.trim() || "green",
+        accent: normalizePlanAccent(form.accent),
       };
 
       if (editingPlan) {
@@ -303,7 +304,7 @@ export default function AdminPlansPage() {
                 className="link-button"
                 onClick={() => openEdit(plan)}
               >
-                <span>{plan.name}</span>
+                <span className="admin-plan-name" data-plan-accent={normalizePlanAccent(plan.accent)}><i aria-hidden="true" />{plan.name}</span>
                 <span className="muted">
                   {plan.slug} · {plan.active ? "启用中" : "已停用"}
                 </span>
@@ -509,6 +510,24 @@ export default function AdminPlansPage() {
             </label>
           </div>
 
+          <fieldset className="plan-accent-picker">
+            <legend className="fine-print">套餐主题色</legend>
+            <div className="plan-accent-options">
+              {PLAN_ACCENTS.map((accent) => (
+                <button
+                  key={accent.value}
+                  type="button"
+                  className={form.accent === accent.value ? "selected" : ""}
+                  onClick={() => set("accent", accent.value)}
+                  aria-pressed={form.accent === accent.value}
+                >
+                  <span className="plan-accent-swatch" style={{ background: accent.color }} />
+                  <span>{accent.label}</span>
+                </button>
+              ))}
+            </div>
+          </fieldset>
+
           <details className="field-section">
             <summary>其他配置（可选）</summary>
             <div className="field-section-body">
@@ -519,15 +538,6 @@ export default function AdminPlansPage() {
                   placeholder="套餐简介，展示给用户"
                   value={form.description}
                   onChange={(e) => set("description", e.target.value)}
-                />
-              </label>
-              <label className="field">
-                <span className="fine-print">Accent 颜色</span>
-                <input
-                  className="control"
-                  placeholder="green / teal / orange"
-                  value={form.accent}
-                  onChange={(e) => set("accent", e.target.value)}
                 />
               </label>
             </div>

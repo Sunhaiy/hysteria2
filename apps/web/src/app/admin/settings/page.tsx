@@ -57,6 +57,7 @@ export default function AdminSettingsPage() {
   const [passSet, setPassSet] = useState(false);
   const [configured, setConfigured] = useState(false);
   const [registrationEnabled, setRegistrationEnabled] = useState(true);
+  const [savingRegistration, setSavingRegistration] = useState(false);
   const [testTo, setTestTo] = useState("");
   const [testing, setTesting] = useState(false);
 
@@ -130,7 +131,6 @@ export default function AdminSettingsPage() {
         smtpPort: Number(port) || 465,
         smtpUser: user,
         smtpFrom: from,
-        registrationEnabled,
       };
       if (pass) {
         body.smtpPass = pass;
@@ -146,6 +146,25 @@ export default function AdminSettingsPage() {
       setError(cause instanceof ApiError ? cause.message : "保存失败。");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveRegistration() {
+    if (!token) return;
+    setSavingRegistration(true);
+    setError(null);
+    try {
+      const data = await apiRequest<SettingsResponse>("/api/admin/settings", {
+        method: "PATCH",
+        token,
+        body: { registrationEnabled },
+      });
+      applySettings(data);
+      showToast(registrationEnabled ? "会员自助注册已开放" : "会员自助注册已关闭");
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "保存失败。");
+    } finally {
+      setSavingRegistration(false);
     }
   }
 
@@ -301,14 +320,26 @@ export default function AdminSettingsPage() {
             title="会员注册"
             copy="关闭后，会员将无法通过邮箱验证码自助注册（登录与已注册账号不受影响）。"
           >
-            <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-              <input
-                type="checkbox"
-                checked={registrationEnabled}
-                onChange={(event) => setRegistrationEnabled(event.target.checked)}
-              />
-              <span>{registrationEnabled ? "已开放自助注册" : "已关闭自助注册"}</span>
-            </label>
+            <div className="setting-toggle-row">
+              <div className="setting-toggle-copy">
+                <strong>{registrationEnabled ? "允许新会员注册" : "暂停新会员注册"}</strong>
+                <span>{registrationEnabled ? "访客可以通过邮箱验证码创建会员账号。" : "注册入口仍会显示，但无法提交新的注册申请。"}</span>
+              </div>
+              <label className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={registrationEnabled}
+                  onChange={(event) => setRegistrationEnabled(event.target.checked)}
+                />
+                <span className="toggle-track" aria-hidden="true"><span /></span>
+                <span className="toggle-label">{registrationEnabled ? "已开启" : "已关闭"}</span>
+              </label>
+            </div>
+            <div className="toolbar-actions">
+              <button className="action-button" type="button" disabled={savingRegistration} onClick={() => void saveRegistration()}>
+                {savingRegistration ? "保存中..." : "保存注册设置"}
+              </button>
+            </div>
           </Panel>
 
           <Panel
