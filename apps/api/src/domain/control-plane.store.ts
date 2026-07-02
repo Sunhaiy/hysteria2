@@ -797,6 +797,14 @@ export class ControlPlaneStoreService {
     const subscription = await this.mustGetActiveSubscriptionRecordForUser(userId);
     const token = await this.mustGetAccessTokenByUser(userId);
     const node = await this.mustGetNodeRecord(subscription.nodeId);
+    const bindings = await this.prisma.planBinding.findMany({
+      where: {
+        planId: subscription.planId,
+        node: { active: true },
+      },
+      include: { node: true },
+      orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
+    });
     const usage = await this.getUsageForUser(userId);
 
     return {
@@ -811,9 +819,22 @@ export class ControlPlaneStoreService {
         }),
       }),
       node,
+      nodes: bindings.map((binding) => binding.node),
       token,
       trafficRemaining: usage.totalRemainingBytes,
     };
+  }
+
+  async getAccessBundleByToken(tokenValue: string) {
+    const token = await this.prisma.accessToken.findFirst({
+      where: { token: tokenValue, revokedAt: null },
+    });
+    if (!token) {
+      throw new NotFoundException('Subscription not found');
+    }
+
+    const bundle = await this.getAccessBundle(token.userId);
+    return { ...bundle, token };
   }
 
   async createManualOrder(input: {

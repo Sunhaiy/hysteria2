@@ -317,6 +317,11 @@ export interface PortalAccessResponse {
   nodeLabel: string;
   expiresAt: string;
   trafficRemaining: number;
+  nodes: Array<{
+    id: string;
+    label: string;
+    uri: string;
+  }>;
 }
 
 export interface PortalRedeemResponse {

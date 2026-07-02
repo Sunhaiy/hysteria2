@@ -11,6 +11,7 @@ import { portalNav } from "@/lib/copy";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import { copyToClipboard } from "@/lib/clipboard";
 import { Toast, useToast } from "@/components/toast";
+import { apiBaseUrl } from "@/lib/config";
 import type { PortalAccessResponse } from "@/lib/types";
 
 export default function PortalAccessPage() {
@@ -19,6 +20,9 @@ export default function PortalAccessPage() {
   const [error, setError] = useState<string | null>(null);
   const [emptyState, setEmptyState] = useState(false);
   const { toast, showToast } = useToast();
+  const subscriptionUrl = access
+    ? `${apiBaseUrl.replace(/\/$/, "")}/subscribe/${encodeURIComponent(access.token)}`
+    : "";
 
   const load = useCallback(async () => {
     if (!token) {
@@ -60,11 +64,11 @@ export default function PortalAccessPage() {
   return (
     <ConsoleShell
       title="接入信息"
-      subtitle="返回可直接导入的 Hysteria 2 URI、二维码和推荐配置片段"
+      subtitle="复制一条订阅链接，在客户端中自动同步套餐内全部节点"
       scope="Member"
       navItems={portalNav}
       requireRole="member"
-      toolbarMeta={access ? <span className="badge success">{access.nodeLabel}</span> : null}
+      toolbarMeta={access ? <span className="badge success">{access.nodes.length} 个节点</span> : null}
       toolbarActions={<button className="toolbar-button" type="button" onClick={() => void load()}>刷新</button>}
     >
       <Toast toast={toast} />
@@ -82,6 +86,31 @@ export default function PortalAccessPage() {
 
       {access ? (
         <section className="workspace-grid">
+          <Panel title="一键订阅" copy="适用于 v2rayN 与 Hiddify。导入后会自动出现套餐内全部节点，刷新订阅即可同步后台变更。">
+            <div className="subscription-import-card">
+              <div>
+                <span className="badge success">推荐</span>
+                <h3>复制订阅链接并导入客户端</h3>
+                <p className="muted">v2rayN：订阅分组 → 添加订阅；Hiddify：从剪贴板添加配置。</p>
+              </div>
+              <label className="field">
+                <span className="fine-print">专属订阅链接</span>
+                <textarea className="control textarea mono" value={subscriptionUrl} readOnly />
+              </label>
+              <div className="toolbar-actions">
+                <button className="action-button" type="button" onClick={() => void copyText(subscriptionUrl)}>
+                  复制订阅链接
+                </button>
+              </div>
+              <div className="subscription-node-list" aria-label="套餐可用节点">
+                {access.nodes.map((node) => (
+                  <span className="badge" key={node.id}>{node.label}</span>
+                ))}
+              </div>
+              <p className="fine-print">订阅链接包含接入凭据，请勿转发给他人。</p>
+            </div>
+          </Panel>
+
           <Panel title="二维码与 URI" copy="URI 只保留连接必需字段，其他建议留在配置片段。">
             <div className="qr-card">
               <Image
@@ -99,7 +128,7 @@ export default function PortalAccessPage() {
                 <input className="control mono" value={access.token} readOnly />
               </label>
               <label className="field">
-                <span className="fine-print">连接 URI</span>
+                <span className="fine-print">推荐节点连接 URI</span>
                 <textarea className="control textarea mono" value={access.uri} readOnly />
               </label>
               <div className="toolbar-actions">

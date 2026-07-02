@@ -1683,6 +1683,27 @@ select.control {
   height: auto;
 }
 
+.subscription-import-card {
+  display: grid;
+  gap: 16px;
+}
+
+.subscription-import-card > div:first-child {
+  display: grid;
+  gap: 8px;
+}
+
+.subscription-import-card h3,
+.subscription-import-card p {
+  margin: 0;
+}
+
+.subscription-node-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .lp-globe-orbit {
   transform-box: view-box;
   transform-origin: 230px 200px;
