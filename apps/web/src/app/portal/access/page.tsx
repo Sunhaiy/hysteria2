@@ -85,64 +85,70 @@ export default function PortalAccessPage() {
       ) : null}
 
       {access ? (
-        <section className="workspace-grid">
-          <Panel title="一键订阅" copy="适用于 v2rayN 与 Hiddify。导入后会自动出现套餐内全部节点，刷新订阅即可同步后台变更。">
-            <div className="subscription-import-card">
-              <div>
-                <span className="badge success">推荐</span>
-                <h3>复制订阅链接并导入客户端</h3>
-                <p className="muted">v2rayN：订阅分组 → 添加订阅；Hiddify：从剪贴板添加配置。</p>
+        <section className="portal-access-layout">
+          <div className="portal-access-subscription">
+            <Panel title="一键订阅" copy="导入后自动显示套餐内全部节点，刷新订阅即可同步后台变更。">
+              <div className="subscription-import-card">
+                <div className="subscription-import-head">
+                  <div className="subscription-import-copy">
+                    <span className="badge success">v2rayN · Hiddify</span>
+                    <h3>复制订阅链接并导入客户端</h3>
+                    <p className="muted">v2rayN：订阅分组 → 添加订阅；Hiddify：从剪贴板添加配置。</p>
+                  </div>
+                  <div className="subscription-node-list" aria-label="套餐可用节点">
+                    {access.nodes.map((node) => (
+                      <span className="badge" key={node.id}>{node.label}</span>
+                    ))}
+                  </div>
+                </div>
+                <label className="field">
+                  <span className="fine-print">专属订阅链接</span>
+                  <div className="subscription-link-row">
+                    <input className="control mono" value={subscriptionUrl} readOnly />
+                    <button className="action-button" type="button" onClick={() => void copyText(subscriptionUrl)}>
+                      复制订阅链接
+                    </button>
+                  </div>
+                </label>
+                <p className="fine-print subscription-security-note">订阅链接包含接入凭据，请勿转发给他人。</p>
               </div>
-              <label className="field">
-                <span className="fine-print">专属订阅链接</span>
-                <textarea className="control textarea mono" value={subscriptionUrl} readOnly />
-              </label>
-              <div className="toolbar-actions">
-                <button className="action-button" type="button" onClick={() => void copyText(subscriptionUrl)}>
-                  复制订阅链接
-                </button>
-              </div>
-              <div className="subscription-node-list" aria-label="套餐可用节点">
-                {access.nodes.map((node) => (
-                  <span className="badge" key={node.id}>{node.label}</span>
-                ))}
-              </div>
-              <p className="fine-print">订阅链接包含接入凭据，请勿转发给他人。</p>
-            </div>
-          </Panel>
+            </Panel>
+          </div>
 
-          <Panel title="二维码与 URI" copy="URI 只保留连接必需字段，其他建议留在配置片段。">
-            <div className="qr-card">
-              <Image
-                src={access.qrCode}
-                alt="Hysteria 2 接入二维码"
-                className="qr-image"
-                width={240}
-                height={240}
-                unoptimized
-              />
-            </div>
-            <div className="form-grid">
-              <label className="field">
-                <span className="fine-print">订阅令牌</span>
-                <input className="control mono" value={access.token} readOnly />
-              </label>
-              <label className="field">
-                <span className="fine-print">推荐节点连接 URI</span>
-                <textarea className="control textarea mono" value={access.uri} readOnly />
-              </label>
-              <div className="toolbar-actions">
-                <button className="action-button" type="button" onClick={() => void copyText(access.uri)}>
-                  复制 URI
-                </button>
-                <button className="ghost-button" type="button" onClick={() => void copyText(access.token)}>
-                  复制令牌
-                </button>
+          <div className="portal-access-primary">
+            <Panel title="二维码与 URI" copy="用于只导入当前推荐节点。">
+              <div className="qr-card">
+                <Image
+                  src={access.qrCode}
+                  alt="Hysteria 2 接入二维码"
+                  className="qr-image"
+                  width={240}
+                  height={240}
+                  unoptimized
+                />
               </div>
-            </div>
-          </Panel>
+              <div className="form-grid">
+                <label className="field">
+                  <span className="fine-print">订阅令牌</span>
+                  <input className="control mono" value={access.token} readOnly />
+                </label>
+                <label className="field">
+                  <span className="fine-print">推荐节点连接 URI</span>
+                  <textarea className="control textarea mono" value={access.uri} readOnly />
+                </label>
+                <div className="toolbar-actions">
+                  <button className="action-button" type="button" onClick={() => void copyText(access.uri)}>
+                    复制 URI
+                  </button>
+                  <button className="ghost-button" type="button" onClick={() => void copyText(access.token)}>
+                    复制令牌
+                  </button>
+                </div>
+              </div>
+            </Panel>
+          </div>
 
-          <div className="split">
+          <div className="portal-access-side">
             <Panel title="当前接入状态" copy="套餐到期或流量耗尽后，新的连接请求会被拒绝。">
               <div className="kpi-list">
                 <div className="list-row">

@@ -1683,27 +1683,6 @@ select.control {
   height: auto;
 }
 
-.subscription-import-card {
-  display: grid;
-  gap: 16px;
-}
-
-.subscription-import-card > div:first-child {
-  display: grid;
-  gap: 8px;
-}
-
-.subscription-import-card h3,
-.subscription-import-card p {
-  margin: 0;
-}
-
-.subscription-node-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
 .lp-globe-orbit {
   transform-box: view-box;
   transform-origin: 230px 200px;
@@ -3808,9 +3787,91 @@ select.control {
   text-align: right;
 }
 
+.portal-access-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(340px, 0.8fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.portal-access-subscription {
+  grid-column: 1 / -1;
+}
+
+.portal-access-primary,
+.portal-access-side {
+  min-width: 0;
+}
+
+.portal-access-side {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.subscription-import-card,
+.subscription-import-copy {
+  display: grid;
+}
+
+.subscription-import-card {
+  gap: 14px;
+}
+
+.subscription-import-copy {
+  gap: 6px;
+  min-width: 0;
+}
+
+.subscription-import-card h3,
+.subscription-import-card p {
+  margin: 0;
+}
+
+.subscription-import-head,
+.subscription-link-row {
+  display: flex;
+  gap: 14px;
+}
+
+.subscription-import-head {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.subscription-import-copy .badge {
+  justify-self: start;
+}
+
+.subscription-node-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.subscription-link-row {
+  align-items: stretch;
+}
+
+.subscription-link-row .control {
+  min-width: 0;
+}
+
+.subscription-link-row .action-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.subscription-security-note {
+  padding-top: 2px;
+}
+
 @media (max-width: 1200px) {
   .admin-chart-grid,
-  .admin-overview-row {
+  .admin-overview-row,
+  .portal-access-layout {
     grid-template-columns: 1fr;
   }
 }
@@ -3823,5 +3884,14 @@ select.control {
 
   .usage-filter-count {
     justify-items: start;
+  }
+
+  .subscription-import-head,
+  .subscription-link-row {
+    display: grid;
+  }
+
+  .subscription-node-list {
+    justify-content: flex-start;
   }
 }
