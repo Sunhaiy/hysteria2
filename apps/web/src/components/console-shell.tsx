@@ -77,7 +77,10 @@ export function ConsoleShell({
         <div className="sidebar-header">
           <div className="sidebar-brand-row">
             <div className="brand-lockup">
-              <h1 className="brand-title">{site.name}</h1>
+              <h1 className="brand-title">
+                <span className="desktop-brand-title">{site.name}</span>
+                <span className="mobile-page-title">{title}</span>
+              </h1>
             </div>
             <button
               type="button"
@@ -119,7 +122,7 @@ export function ConsoleShell({
       </aside>
 
       <main className="workspace">
-        <header className="topbar">
+        <header className={`topbar${toolbarMeta || toolbarActions ? " has-tools" : ""}`}>
           <div className="topbar-copy">
             <h2 className="topbar-title">{title}</h2>
             <div className="topbar-subtitle">{subtitle}</div>

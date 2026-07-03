@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { Drawer } from "@/components/drawer";
+import { Icon } from "@/components/icon";
 import { useAuth } from "@/components/auth-provider";
 import { Toast, useToast } from "@/components/toast";
 import { apiRequest, ApiError } from "@/lib/api";
@@ -142,6 +143,7 @@ export default function PortalPlansPage() {
 
   async function confirmPurchase() {
     if (!token || !checkoutPlan) return;
+    const renewing = overview?.subscription.planId === checkoutPlan.id;
     setPurchasing(true);
     setCheckoutError(null);
     try {
@@ -154,7 +156,7 @@ export default function PortalPlansPage() {
         },
       });
       setCheckoutPlan(null);
-      showToast("购买成功，套餐已生效");
+      showToast(renewing ? "续费成功，套餐周期已延长" : "购买成功，套餐已生效");
       await load();
     } catch (cause) {
       setCheckoutError(cause instanceof ApiError ? cause.message : "购买失败。");
@@ -203,6 +205,10 @@ export default function PortalPlansPage() {
   }
 
   const shopIsExternal = branding.cdkButtonUrl.startsWith("http");
+  const checkoutIsRenewal = Boolean(
+    checkoutPlan && overview?.subscription.planId === checkoutPlan.id,
+  );
+  const cdkIsRenewal = Boolean(cdkPlan && overview?.subscription.planId === cdkPlan.id);
 
   return (
     <ConsoleShell
@@ -262,69 +268,82 @@ export default function PortalPlansPage() {
           const isPending = pendingRenewal?.planId === plan.id;
 
           return (
-            <article className="plan-card" data-plan-accent={normalizePlanAccent(plan.accent)} key={plan.id}>
+            <article
+              className={`plan-card premium-plan-card${isCurrent ? " current" : ""}${isPending ? " pending" : ""}`}
+              data-plan-accent={normalizePlanAccent(plan.accent)}
+              key={plan.id}
+            >
               <div className="plan-card-head">
-                <div className="split">
+                <div className="plan-card-copy">
+                  <span className="plan-card-eyebrow">
+                    {isCurrent ? "正在使用" : isPending ? "等待处理" : "会员套餐"}
+                  </span>
                   <h2 className="panel-title plan-card-title"><span aria-hidden="true" />{plan.name}</h2>
                   <span className="panel-copy">{plan.description ?? "标准会员套餐"}</span>
                 </div>
-                <div className="split align-end">
+                <div className="plan-price-block">
                   <div className="price-line">{formatMoney(plan.priceCents)}</div>
-                  <span className="fine-print">{plan.durationDays} 天 / {plan.trafficBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(plan.trafficBytes)}</span>
+                  <span className="fine-print">每 {plan.durationDays} 天</span>
                 </div>
               </div>
 
               <div className="panel-body">
-                <div className="tri-grid">
-                  <div className="split">
-                    <span className="muted">上行</span>
-                    <strong>{plan.speedUpMbps === 0 ? "不限速" : `${plan.speedUpMbps} Mbps`}</strong>
+                <div className="plan-spec-grid">
+                  <div className="plan-spec-item">
+                    <Icon name="bolt" />
+                    <span>上行<strong>{plan.speedUpMbps === 0 ? "不限速" : `${plan.speedUpMbps} Mbps`}</strong></span>
                   </div>
-                  <div className="split">
-                    <span className="muted">下行</span>
-                    <strong>{plan.speedDownMbps === 0 ? "不限速" : `${plan.speedDownMbps} Mbps`}</strong>
+                  <div className="plan-spec-item">
+                    <Icon name="monitoring" />
+                    <span>下行<strong>{plan.speedDownMbps === 0 ? "不限速" : `${plan.speedDownMbps} Mbps`}</strong></span>
                   </div>
-                  <div className="split">
-                    <span className="muted">设备数</span>
-                    <strong>{plan.deviceLimit} 台</strong>
+                  <div className="plan-spec-item">
+                    <Icon name="account_circle" />
+                    <span>设备<strong>{plan.deviceLimit} 台</strong></span>
                   </div>
                 </div>
 
-                <div className="feature-list">
-                  <div className="list-row">
-                    <span className="muted">节点</span>
-                    <strong>{plan.boundNodes.join(" / ") || "未绑定"}</strong>
+                <div className="plan-benefit-list">
+                  <div>
+                    <span className="plan-benefit-icon"><Icon name="globe" /></span>
+                    <span>可用节点</span>
+                    <strong>{plan.boundNodes.join(" · ") || "未绑定"}</strong>
                   </div>
-                  <div className="list-row">
-                    <span className="muted">周期流量</span>
+                  <div>
+                    <span className="plan-benefit-icon"><Icon name="network_node" /></span>
+                    <span>周期流量</span>
                     <strong>{plan.trafficBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(plan.trafficBytes)}</strong>
                   </div>
                 </div>
 
-                <div className="toolbar-actions">
-                  <button
-                    className="action-button"
-                    type="button"
-                    onClick={() => handleBuy(plan)}
-                  >
-                    {branding.buyButtonText}
-                  </button>
-                  {branding.cdkButtonUrl.startsWith("http") ? (
-                    <a
-                      className="ghost-button"
-                      href={branding.cdkButtonUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                <div className="plan-card-footer">
+                  <div className="plan-card-actions">
+                    <button
+                      className="action-button"
+                      type="button"
+                      onClick={() => handleBuy(plan)}
                     >
-                      {branding.cdkButtonText}
-                    </a>
-                  ) : (
-                    <Link className="ghost-button" href={branding.cdkButtonUrl}>
-                      {branding.cdkButtonText}
-                    </Link>
-                  )}
-                  {isCurrent ? <span className="badge success">当前使用中</span> : null}
-                  {!isCurrent && isPending ? <span className="badge warn">待处理</span> : null}
+                      {isCurrent ? "续费当前套餐" : branding.buyButtonText}
+                    </button>
+                    {branding.cdkButtonUrl.startsWith("http") ? (
+                      <a
+                        className="ghost-button"
+                        href={branding.cdkButtonUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {branding.cdkButtonText}
+                      </a>
+                    ) : (
+                      <Link className="ghost-button" href={branding.cdkButtonUrl}>
+                        {branding.cdkButtonText}
+                      </Link>
+                    )}
+                  </div>
+                  <div className="plan-card-status">
+                    {isCurrent ? <span className="badge success">当前套餐</span> : null}
+                    {!isCurrent && isPending ? <span className="badge warn">待处理</span> : null}
+                  </div>
                 </div>
               </div>
             </article>
@@ -338,7 +357,7 @@ export default function PortalPlansPage() {
       <Drawer
         open={Boolean(cdkPlan)}
         onClose={() => setCdkPlan(null)}
-        title={cdkPlan ? `购买 · ${cdkPlan.name}` : "购买"}
+        title={cdkPlan ? `${cdkIsRenewal ? "续费" : "购买"} · ${cdkPlan.name}` : "购买"}
         footer={
           cdkSuccess ? (
             <div className="toolbar-actions">
@@ -354,7 +373,7 @@ export default function PortalPlansPage() {
                 disabled={cdkRedeeming || !cdkInput.trim()}
                 onClick={() => void redeemForPlan()}
               >
-                {cdkRedeeming ? "兑换中..." : "兑换开通"}
+                {cdkRedeeming ? "兑换中..." : cdkIsRenewal ? "兑换续费" : "兑换开通"}
               </button>
               <button className="ghost-button" type="button" onClick={() => setCdkPlan(null)}>
                 取消
@@ -411,7 +430,11 @@ export default function PortalPlansPage() {
       <Drawer
         open={Boolean(checkoutPlan)}
         onClose={() => setCheckoutPlan(null)}
-        title={checkoutPlan ? `用余额购买 · ${checkoutPlan.name}` : "用余额购买"}
+        title={
+          checkoutPlan
+            ? `用余额${checkoutIsRenewal ? "续费" : "购买"} · ${checkoutPlan.name}`
+            : "用余额购买"
+        }
         footer={
           <div className="toolbar-actions">
             <button
@@ -421,10 +444,10 @@ export default function PortalPlansPage() {
               onClick={() => void confirmPurchase()}
             >
               {purchasing
-                ? "购买中..."
+                ? checkoutIsRenewal ? "续费中..." : "购买中..."
                 : quote && !quote.sufficient
                   ? "余额不足"
-                  : "确认购买"}
+                  : checkoutIsRenewal ? "确认续费" : "确认购买"}
             </button>
             <button className="ghost-button" type="button" onClick={() => setCheckoutPlan(null)}>
               取消
@@ -435,7 +458,9 @@ export default function PortalPlansPage() {
         {checkoutError ? <div className="feedback error">{checkoutError}</div> : null}
 
         <div className="feedback info">
-          购买后立即生效：速度 / 流量 / 到期日按新套餐从今天重算，当前套餐剩余将作废（流量包不受影响）。
+          {checkoutIsRenewal
+            ? "续费会从当前到期日继续延长套餐周期，并叠加本周期流量，不会清空现有剩余。"
+            : "切换套餐后立即生效：速度、流量与周期按新套餐重新计算，附加流量包不受影响。"}
         </div>
 
         <label className="field">

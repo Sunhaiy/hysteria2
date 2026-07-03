@@ -3971,3 +3971,317 @@ select.control {
     font-size: 17px;
   }
 }
+
+/* Configurable browser identity */
+.site-icon-editor {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.site-icon-preview {
+  display: grid;
+  width: 72px;
+  height: 72px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: 16px;
+  background: var(--bg-panel-alt);
+}
+
+.site-icon-preview img {
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+}
+
+.site-icon-controls {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.site-icon-upload {
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.site-icon-upload input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Premium member plan cards */
+.premium-plan-card {
+  position: relative;
+  isolation: isolate;
+  min-height: 430px;
+  border-top: 1px solid var(--border-default);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--plan-accent) 7%, transparent), transparent 42%),
+    var(--bg-panel);
+  box-shadow: 0 18px 44px -36px var(--shadow-color);
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.premium-plan-card::before {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  right: 20px;
+  left: 20px;
+  height: 3px;
+  border-radius: 0 0 8px 8px;
+  background: var(--plan-accent);
+}
+
+.premium-plan-card:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--plan-accent) 42%, var(--border-default));
+  box-shadow: 0 24px 52px -38px var(--shadow-color);
+}
+
+.premium-plan-card.current {
+  border-color: color-mix(in srgb, var(--plan-accent) 50%, var(--border-default));
+}
+
+.premium-plan-card .plan-card-head {
+  min-height: 132px;
+  padding: 24px 22px 20px;
+}
+
+.plan-card-copy {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.plan-card-eyebrow {
+  width: fit-content;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--plan-accent) 12%, transparent);
+  color: var(--plan-accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.premium-plan-card .plan-card-title {
+  font-size: 24px;
+}
+
+.plan-price-block {
+  display: grid;
+  gap: 7px;
+  justify-items: end;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.premium-plan-card .price-line {
+  font-size: 30px;
+  letter-spacing: -0.04em;
+}
+
+.premium-plan-card .panel-body {
+  align-content: start;
+  padding: 20px 22px 22px;
+  gap: 16px;
+}
+
+.plan-spec-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.plan-spec-item {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--bg-panel-alt) 92%, transparent);
+}
+
+.plan-spec-item .icon-slot {
+  width: 18px;
+  height: 18px;
+  color: var(--plan-accent);
+}
+
+.plan-spec-item > span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.plan-spec-item strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-benefit-list {
+  display: grid;
+  gap: 2px;
+  padding: 4px 0;
+}
+
+.plan-benefit-list > div {
+  display: grid;
+  grid-template-columns: auto minmax(78px, 0.35fr) minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  min-height: 42px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.plan-benefit-list > div:last-child {
+  border-bottom: 0;
+}
+
+.plan-benefit-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--plan-accent) 11%, transparent);
+  color: var(--plan-accent);
+}
+
+.plan-benefit-icon .icon-slot {
+  width: 16px;
+  height: 16px;
+}
+
+.plan-benefit-list > div > span:nth-child(2) {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.plan-benefit-list strong {
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 2px;
+}
+
+.plan-card-actions,
+.plan-card-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.premium-plan-card .action-button,
+.premium-plan-card .ghost-button {
+  min-height: 42px;
+  padding-inline: 16px;
+}
+
+.mobile-page-title {
+  display: none;
+}
+
+@media (max-width: 920px) {
+  .desktop-brand-title {
+    display: none;
+  }
+
+  .mobile-page-title {
+    display: block;
+    overflow: hidden;
+    max-width: calc(100vw - 96px);
+    font-size: 18px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .topbar-copy {
+    display: none;
+  }
+
+  .topbar:not(.has-tools) {
+    display: none;
+  }
+
+  .topbar.has-tools {
+    padding: 10px 16px;
+  }
+}
+
+@media (max-width: 620px) {
+  .site-icon-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .premium-plan-card {
+    min-height: 0;
+  }
+
+  .premium-plan-card .plan-card-head {
+    min-height: 0;
+    padding: 20px 18px 18px;
+  }
+
+  .premium-plan-card .panel-body {
+    padding: 16px 18px 18px;
+  }
+
+  .plan-price-block {
+    justify-items: start;
+    text-align: left;
+  }
+
+  .premium-plan-card .price-line {
+    font-size: 26px;
+  }
+
+  .plan-spec-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .plan-spec-item {
+    padding: 10px 8px;
+  }
+
+  .plan-card-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .plan-card-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .premium-plan-card .action-button,
+  .premium-plan-card .ghost-button {
+    justify-content: center;
+  }
+}

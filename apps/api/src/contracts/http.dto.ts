@@ -81,6 +81,16 @@ export class UpdateSettingsDto {
   siteDescription?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  siteBrowserTitle?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100000)
+  siteIconUrl?: string;
+
+  @IsOptional()
   @IsIn(['balance', 'cdk'])
   purchaseMode?: 'balance' | 'cdk';
 

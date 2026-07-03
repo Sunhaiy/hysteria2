@@ -94,6 +94,12 @@ export class AdminSettingsController {
     if (body.siteDescription !== undefined) {
       updates['site.description'] = body.siteDescription.trim();
     }
+    if (body.siteBrowserTitle !== undefined) {
+      updates['site.browserTitle'] = body.siteBrowserTitle.trim();
+    }
+    if (body.siteIconUrl !== undefined) {
+      updates['site.iconUrl'] = body.siteIconUrl.trim();
+    }
     if (body.purchaseMode !== undefined) {
       updates['portal.purchaseMode'] = body.purchaseMode;
     }

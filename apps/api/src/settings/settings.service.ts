@@ -68,12 +68,15 @@ export class SettingsService {
     return value === undefined ? true : value === 'true';
   }
 
-  /** Public site identity (name shown in the sidebar/login, optional tagline). */
+  /** Public site identity used by the UI and browser chrome. */
   async getSiteInfo() {
     const map = await this.all();
+    const name = map.get('site.name') || 'Hysteria 2';
     return {
-      name: map.get('site.name') || 'Hysteria 2',
+      name,
       description: map.get('site.description') || '',
+      browserTitle: map.get('site.browserTitle') || name,
+      iconUrl: map.get('site.iconUrl') || '/favicon.ico',
     };
   }
 

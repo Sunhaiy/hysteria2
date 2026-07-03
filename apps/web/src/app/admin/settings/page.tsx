@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { CustomSelect } from "@/components/custom-select";
 import { Panel } from "@/components/panel";
@@ -38,6 +38,8 @@ interface SettingsResponse {
   site: {
     name: string;
     description: string;
+    browserTitle: string;
+    iconUrl: string;
   };
   registrationEnabled: boolean;
 }
@@ -70,6 +72,8 @@ export default function AdminSettingsPage() {
 
   const [siteName, setSiteName] = useState("");
   const [siteDescription, setSiteDescription] = useState("");
+  const [siteBrowserTitle, setSiteBrowserTitle] = useState("");
+  const [siteIconUrl, setSiteIconUrl] = useState("");
   const [savingSite, setSavingSite] = useState(false);
   const [purchaseMode, setPurchaseMode] = useState<"balance" | "cdk">("balance");
   const [buyButtonText, setBuyButtonText] = useState("");
@@ -93,6 +97,8 @@ export default function AdminSettingsPage() {
     setGithubSecret("");
     setSiteName(data.site.name);
     setSiteDescription(data.site.description);
+    setSiteBrowserTitle(data.site.browserTitle);
+    setSiteIconUrl(data.site.iconUrl);
     setPurchaseMode(data.branding.purchaseMode);
     setBuyButtonText(data.branding.buyButtonText);
     setCdkButtonText(data.branding.cdkButtonText);
@@ -205,15 +211,35 @@ export default function AdminSettingsPage() {
       const data = await apiRequest<SettingsResponse>("/api/admin/settings", {
         method: "PATCH",
         token,
-        body: { siteName, siteDescription },
+        body: { siteName, siteDescription, siteBrowserTitle, siteIconUrl },
       });
       applySettings(data);
+      window.dispatchEvent(new CustomEvent("site-info-updated", { detail: data.site }));
       showToast("站点资料已保存");
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "保存失败。");
     } finally {
       setSavingSite(false);
     }
+  }
+
+  function handleSiteIconFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (file.size > 64 * 1024) {
+      setError("站点图标请控制在 64 KB 以内，建议使用 64×64 PNG、ICO 或 SVG。");
+      event.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setSiteIconUrl(reader.result);
+        setError(null);
+      }
+    };
+    reader.readAsDataURL(file);
   }
 
   async function saveBranding() {
@@ -287,7 +313,7 @@ export default function AdminSettingsPage() {
         <>
           <Panel
             title="站点资料"
-            copy="站点名称显示在侧边栏、登录页等位置；简介显示在登录页副标题。"
+            copy="统一管理站点名称、浏览器标签标题与标签图标。"
           >
             <div className="form-grid">
               <label className="field">
@@ -308,6 +334,54 @@ export default function AdminSettingsPage() {
                   placeholder="一句话介绍你的站点"
                 />
               </label>
+              <label className="field">
+                <span className="fine-print">浏览器标签标题</span>
+                <input
+                  className="control"
+                  value={siteBrowserTitle}
+                  onChange={(event) => setSiteBrowserTitle(event.target.value)}
+                  placeholder="素心Network VPN"
+                  maxLength={80}
+                />
+              </label>
+              <div className="field site-icon-field">
+                <span className="fine-print">浏览器标签图标</span>
+                <div className="site-icon-editor">
+                  <div className="site-icon-preview">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={siteIconUrl || "/favicon.ico"} alt="站点图标预览" />
+                  </div>
+                  <div className="site-icon-controls">
+                    <input
+                      className="control"
+                      value={siteIconUrl.startsWith("data:") ? "已选择本地图标" : siteIconUrl}
+                      onChange={(event) => setSiteIconUrl(event.target.value)}
+                      onFocus={(event) => {
+                        if (siteIconUrl.startsWith("data:")) event.currentTarget.select();
+                      }}
+                      placeholder="https://example.com/favicon.png"
+                    />
+                    <div className="toolbar-actions">
+                      <label className="toolbar-button site-icon-upload">
+                        上传图标
+                        <input
+                          type="file"
+                          accept="image/png,image/svg+xml,image/x-icon,image/vnd.microsoft.icon,image/webp"
+                          onChange={handleSiteIconFile}
+                        />
+                      </label>
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={() => setSiteIconUrl("/favicon.ico")}
+                      >
+                        恢复默认
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <span className="fine-print">支持图片链接或上传 64 KB 以内的小图标。</span>
+              </div>
             </div>
             <div className="toolbar-actions">
               <button className="action-button" type="button" disabled={savingSite} onClick={() => void saveSite()}>
