@@ -3895,3 +3895,79 @@ select.control {
     justify-content: flex-start;
   }
 }
+
+/* Member analytics dashboard */
+.portal-analytics {
+  display: grid;
+  gap: 16px;
+}
+
+.portal-analytics .panel-header a {
+  color: var(--text-muted);
+  font-size: var(--text-tiny);
+}
+
+.portal-analytics .panel-header a:hover {
+  color: var(--accent-400);
+}
+
+.portal-analytics .metric-card:nth-child(3) .metric-value {
+  font-size: 19px;
+  line-height: 1.15;
+}
+
+.portal-chart-empty {
+  display: grid;
+  min-height: 320px;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: var(--text-tiny);
+}
+
+.portal-chart-empty.compact {
+  min-height: 240px;
+}
+
+.portal-plan-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.portal-plan-facts > div {
+  display: grid;
+  gap: 5px;
+  min-height: 76px;
+  align-content: center;
+  padding: 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: var(--bg-panel-alt);
+}
+
+.portal-plan-facts span {
+  color: var(--text-muted);
+  font-size: var(--text-tiny);
+}
+
+.portal-plan-facts strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.portal-analytics-footnote {
+  text-align: right;
+}
+
+@media (max-width: 720px) {
+  .portal-plan-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .portal-analytics .metric-card:nth-child(3) .metric-value {
+    font-size: 17px;
+  }
+}
