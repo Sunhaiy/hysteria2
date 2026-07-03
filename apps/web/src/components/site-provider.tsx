@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { usePathname } from "next/navigation";
 import { apiRequest } from "@/lib/api";
 
 interface SiteInfo {
@@ -27,20 +28,12 @@ const SiteContext = createContext<SiteInfo>(defaultSite);
 
 export function SiteProvider({ children }: { children: ReactNode }) {
   const [site, setSite] = useState<SiteInfo>(defaultSite);
+  const pathname = usePathname();
 
   useEffect(() => {
     const applySite = (info: SiteInfo) => {
       if (!info?.name) return;
       setSite(info);
-      document.title = info.browserTitle || info.name;
-
-      let icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
-      if (!icon) {
-        icon = document.createElement("link");
-        icon.rel = "icon";
-        document.head.appendChild(icon);
-      }
-      icon.href = info.iconUrl || "/favicon.ico";
     };
 
     void apiRequest<SiteInfo>("/api/site")
@@ -53,6 +46,18 @@ export function SiteProvider({ children }: { children: ReactNode }) {
     window.addEventListener("site-info-updated", handleUpdate);
     return () => window.removeEventListener("site-info-updated", handleUpdate);
   }, []);
+
+  useEffect(() => {
+    document.title = site.browserTitle || site.name;
+
+    let icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (!icon) {
+      icon = document.createElement("link");
+      icon.rel = "icon";
+      document.head.appendChild(icon);
+    }
+    icon.href = site.iconUrl || "/favicon.ico";
+  }, [pathname, site]);
 
   return <SiteContext.Provider value={site}>{children}</SiteContext.Provider>;
 }
