@@ -283,6 +283,8 @@ model AuthEvent {
   user                  User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
   accessToken           AccessToken? @relation(fields: [accessTokenId], references: [id], onDelete: SetNull)
   node                  Node?        @relation(fields: [nodeId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
 }
 
 model UsageRollup {
@@ -312,6 +314,7 @@ model OnlineSnapshot {
   node              Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
 
   @@index([userId, capturedAt])
+  @@index([nodeId, capturedAt])
 }
 
 // Simple key-value store for admin-editable runtime settings (SMTP, feature

@@ -20,6 +20,23 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 
 const bytesInGiB = 1024 * 1024 * 1024;
+const onlineSnapshotFreshnessMs = 150_000;
+const reconnectGraceMs = 2 * 60_000;
+
+function remoteHost(remoteAddr?: string) {
+  if (!remoteAddr) return undefined;
+
+  const bracketedIpv6 = remoteAddr.match(/^\[([^\]]+)](?::\d+)?$/);
+  if (bracketedIpv6) return bracketedIpv6[1];
+
+  const firstColon = remoteAddr.indexOf(':');
+  const lastColon = remoteAddr.lastIndexOf(':');
+  if (firstColon === lastColon && lastColon > 0) {
+    return remoteAddr.slice(0, lastColon);
+  }
+
+  return remoteAddr;
+}
 
 type UserWithTokens = Prisma.UserGetPayload<{
   include: {
@@ -1092,7 +1109,8 @@ export class ControlPlaneStoreService {
     }
 
     const onlineCount = await this.getCurrentOnlineCount(user.id);
-    if (onlineCount >= subscription.deviceLimitSnapshot) {
+    const reconnecting = await this.isRecentReconnect(user.id, input.remoteAddr);
+    if (onlineCount >= subscription.deviceLimitSnapshot && !reconnecting) {
       return this.rejectAuth('device_limit_exceeded', input, token.id, user.id, node.id);
     }
 
@@ -1218,7 +1236,12 @@ export class ControlPlaneStoreService {
 
   async applyOnlineSnapshot(nodeId: string, onlineMap: Record<string, number>) {
     const previous = await this.prisma.onlineSnapshot.findMany({
-      where: { nodeId },
+      where: {
+        nodeId,
+        capturedAt: {
+          gte: new Date(Date.now() - onlineSnapshotFreshnessMs),
+        },
+      },
       orderBy: { capturedAt: 'desc' },
       include: { user: true },
     });
@@ -1247,7 +1270,12 @@ export class ControlPlaneStoreService {
 
   async getCurrentOnlineCount(userId: string) {
     const snapshots = await this.prisma.onlineSnapshot.findMany({
-      where: { userId },
+      where: {
+        userId,
+        capturedAt: {
+          gte: new Date(Date.now() - onlineSnapshotFreshnessMs),
+        },
+      },
       orderBy: { capturedAt: 'desc' },
     });
 
@@ -1259,6 +1287,28 @@ export class ControlPlaneStoreService {
     }
 
     return [...latestByNode.values()].reduce((sum, value) => sum + value, 0);
+  }
+
+  private async isRecentReconnect(userId: string, remoteAddr?: string) {
+    const host = remoteHost(remoteAddr);
+    if (!host) return false;
+
+    const recentGrants = await this.prisma.authEvent.findMany({
+      where: {
+        userId,
+        granted: true,
+        createdAt: {
+          gte: new Date(Date.now() - reconnectGraceMs),
+        },
+      },
+      select: { remoteAddr: true },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
+
+    return recentGrants.some(
+      (event) => remoteHost(event.remoteAddr ?? undefined) === host,
+    );
   }
 
   async validateUserIsRestricted(userId: string) {
