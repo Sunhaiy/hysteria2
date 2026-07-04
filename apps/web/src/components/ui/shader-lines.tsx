@@ -36,6 +36,7 @@ export function ShaderAnimation({
     let width = 1;
     let height = 1;
     let pixelRatio = 1;
+    let lastPaintAt = 0;
 
     const resize = () => {
       const bounds = canvas.getBoundingClientRect();
@@ -91,7 +92,10 @@ export function ShaderAnimation({
     };
 
     const animate = (timestamp: number) => {
-      paint(timestamp);
+      if (timestamp - lastPaintAt >= 1000 / 24) {
+        paint(timestamp);
+        lastPaintAt = timestamp;
+      }
       frameId = window.requestAnimationFrame(animate);
     };
 
