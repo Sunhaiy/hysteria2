@@ -11,6 +11,31 @@ import { formatDateTime } from "@/lib/format";
 import type { AuthEventRecord, SessionRecord } from "@/lib/types";
 
 type EventFilter = "all" | "blocked" | "granted";
+type DisplayAuthEvent = AuthEventRecord & { repeatCount: number };
+
+const AUTH_REASON_LABELS: Record<string, string> = {
+  ok: "鉴权通过",
+  token_not_found: "旧配置令牌已失效",
+  node_unavailable: "节点不可用",
+  user_not_active: "用户已停用",
+  subscription_missing: "没有有效套餐",
+  subscription_not_active: "套餐未启用",
+  subscription_expired: "套餐已到期",
+  node_forbidden: "套餐不包含该节点",
+  traffic_exhausted: "流量已用尽",
+  device_limit_exceeded: "设备数超过限制",
+};
+
+function sourceHost(remoteAddr?: string | null) {
+  if (!remoteAddr) return "无来源地址";
+  const bracketedIpv6 = remoteAddr.match(/^\[([^\]]+)](?::\d+)?$/);
+  if (bracketedIpv6) return bracketedIpv6[1];
+  const firstColon = remoteAddr.indexOf(":");
+  const lastColon = remoteAddr.lastIndexOf(":");
+  return firstColon === lastColon && lastColon > 0
+    ? remoteAddr.slice(0, lastColon)
+    : remoteAddr;
+}
 
 export default function AdminSessionsPage() {
   const { token } = useAuth();
@@ -50,11 +75,28 @@ export default function AdminSessionsPage() {
     blocked: authEvents.filter((event) => !event.granted).length,
   }), [authEvents, sessions]);
 
-  const visibleEvents = useMemo(() => authEvents.filter((event) => {
-    if (eventFilter === "blocked") return !event.granted;
-    if (eventFilter === "granted") return event.granted;
-    return true;
-  }), [authEvents, eventFilter]);
+  const visibleEvents = useMemo(() => {
+    const grouped = new Map<string, DisplayAuthEvent>();
+    for (const event of authEvents) {
+      if (eventFilter === "blocked" && event.granted) continue;
+      if (eventFilter === "granted" && !event.granted) continue;
+
+      const key = [
+        event.granted ? "granted" : "blocked",
+        event.reason,
+        event.userId ?? event.submittedTokenPreview ?? "unknown",
+        event.nodeId ?? "unknown-node",
+        sourceHost(event.remoteAddr),
+      ].join("|");
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.repeatCount += 1;
+      } else {
+        grouped.set(key, { ...event, repeatCount: 1 });
+      }
+    }
+    return [...grouped.values()];
+  }, [authEvents, eventFilter]);
 
   return (
     <ConsoleShell
@@ -112,12 +154,12 @@ export default function AdminSessionsPage() {
               <article className={`auth-event-row ${event.granted ? "granted" : "blocked"}`} key={event.id}>
                 <span className={`badge ${event.granted ? "success" : "danger"}`}>{event.granted ? "放行" : "拦截"}</span>
                 <div className="auth-event-main">
-                  <strong>{event.reason || (event.granted ? "鉴权通过" : "鉴权拒绝")}</strong>
+                  <strong>{AUTH_REASON_LABELS[event.reason] ?? event.reason ?? (event.granted ? "鉴权通过" : "鉴权拒绝")}</strong>
                   <span>{event.userEmail ?? event.submittedTokenPreview ?? "未知用户"} · {event.nodeLabel ?? "未知节点"}</span>
                 </div>
                 <div className="auth-event-meta">
-                  <span>{event.remoteAddr ?? "无来源地址"}</span>
-                  <small>{formatDateTime(event.createdAt)}</small>
+                  <span>{sourceHost(event.remoteAddr)}</span>
+                  <small>{event.repeatCount > 1 ? `已合并 ${event.repeatCount} 条 · ` : ""}{formatDateTime(event.createdAt)}</small>
                 </div>
               </article>
             ))}

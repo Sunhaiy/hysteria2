@@ -52,9 +52,11 @@ function LoginPageBody() {
           (nextSession.role === "admin" ? "/admin" : "/portal"),
       );
     } catch (cause) {
-      setError(
-        cause instanceof ApiError ? cause.message : "登录失败，请检查 API 是否已启动。",
-      );
+      if (cause instanceof ApiError && cause.status === 401) {
+        setError("邮箱或密码错误，请检查后重新输入。");
+      } else {
+        setError(cause instanceof ApiError ? cause.message : "登录失败，请稍后重试。");
+      }
     } finally {
       setSubmitting(false);
     }
@@ -66,6 +68,8 @@ function LoginPageBody() {
         <label className="auth2-input">
           <span className="auth2-input-icon"><Icon name="mail" /></span>
           <input
+            aria-describedby={error ? "login-error" : undefined}
+            aria-invalid={Boolean(error)}
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             placeholder="邮箱地址"
@@ -75,6 +79,8 @@ function LoginPageBody() {
         <label className="auth2-input">
           <span className="auth2-input-icon"><Icon name="lock" /></span>
           <input
+            aria-describedby={error ? "login-error" : undefined}
+            aria-invalid={Boolean(error)}
             type="password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
@@ -83,15 +89,19 @@ function LoginPageBody() {
           />
         </label>
 
+        {error ? (
+          <div className="feedback error auth2-login-error" id="login-error" role="alert">
+            {error}
+          </div>
+        ) : null}
+        {oauthError ? <div className="feedback error" role="alert">{oauthError}</div> : null}
+
         <div className="auth2-row">
           <label className="auth2-check">
             <input type="checkbox" />
             <span>记住我</span>
           </label>
         </div>
-
-        {error ? <div className="feedback error">{error}</div> : null}
-        {oauthError ? <div className="feedback error">{oauthError}</div> : null}
 
         <button className="auth2-submit" type="submit" disabled={submitting}>
           {submitting ? "登录中..." : "登录"}

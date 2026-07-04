@@ -66,6 +66,19 @@ export function ConsoleShell({
 
   return (
     <div className="app-shell">
+      <header className="mobile-console-header">
+        <h1>{title}</h1>
+        <button
+          type="button"
+          className="mobile-nav-toggle"
+          aria-label="打开导航"
+          aria-expanded={mobileNavOpen}
+          onClick={() => setMobileNavOpen(true)}
+        >
+          <Icon name="menu" />
+        </button>
+      </header>
+
       {mobileNavOpen && (
         <div
           className="mobile-nav-backdrop"
@@ -77,18 +90,15 @@ export function ConsoleShell({
         <div className="sidebar-header">
           <div className="sidebar-brand-row">
             <div className="brand-lockup">
-              <h1 className="brand-title">
-                <span className="desktop-brand-title">{site.name}</span>
-                <span className="mobile-page-title">{title}</span>
-              </h1>
+              <h1 className="brand-title">{site.name}</h1>
             </div>
             <button
               type="button"
               className="mobile-nav-toggle"
-              aria-label={mobileNavOpen ? "收起导航" : "打开导航"}
-              onClick={() => setMobileNavOpen((value) => !value)}
+              aria-label="关闭导航"
+              onClick={() => setMobileNavOpen(false)}
             >
-              <Icon name={mobileNavOpen ? "close" : "menu"} />
+              <Icon name="close" />
             </button>
           </div>
           <div className="sidebar-user">

@@ -3295,6 +3295,227 @@ select.control {
   }
 }
 
+/* Simplified console navigation */
+.mobile-console-header {
+  display: none;
+}
+
+@media (max-width: 920px) {
+  .app-shell {
+    padding-top: 62px;
+  }
+
+  .mobile-console-header {
+    position: fixed;
+    z-index: 40;
+    top: 0;
+    right: 0;
+    left: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 62px;
+    padding: 10px 14px 10px 18px;
+    border-bottom: 1px solid var(--border-default);
+    background: color-mix(in srgb, var(--bg-canvas) 96%, transparent);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+  }
+
+  .mobile-console-header h1 {
+    overflow: hidden;
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-console-header .mobile-nav-toggle {
+    margin-left: auto;
+  }
+
+  .sidebar {
+    top: 0;
+    right: 0;
+    left: auto;
+    z-index: 50;
+    width: min(320px, 86vw);
+    height: 100dvh;
+    padding: 18px 16px;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 14px;
+    overflow-y: auto;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 1px solid var(--border-default);
+    background: var(--bg-panel);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    transform: translateX(105%);
+    transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .sidebar.open {
+    inset: 0 0 0 auto;
+    width: min(320px, 86vw);
+    height: 100dvh;
+    padding: 18px 16px;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 14px;
+    overflow-y: auto;
+    border-left: 1px solid var(--border-default);
+    background: var(--bg-panel);
+    transform: translateX(0);
+    animation: none;
+  }
+
+  .sidebar.open::before {
+    display: none;
+  }
+
+  .sidebar.open > * {
+    animation: none;
+  }
+
+  .sidebar-header,
+  .sidebar.open .sidebar-header {
+    width: 100%;
+    gap: 12px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border-default);
+  }
+
+  .sidebar-brand-row,
+  .sidebar.open .sidebar-brand-row {
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .sidebar.open .sidebar-user {
+    display: flex;
+    padding: 0;
+    border: 0;
+  }
+
+  .sidebar.open .nav-group {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 4px;
+    align-content: start;
+  }
+
+  .sidebar.open .nav-link {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+    gap: 10px;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 12px;
+    border-radius: 10px;
+    background: transparent;
+    font-size: var(--text-body);
+  }
+
+  .sidebar.open .nav-link.active {
+    background: var(--accent-ghost);
+  }
+
+  .sidebar.open .nav-link-title {
+    overflow: hidden;
+    font-size: 14px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sidebar.open .sidebar-footer {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+
+  .sidebar.open .sidebar-footer .ghost-button {
+    min-height: 42px;
+    justify-content: flex-start;
+  }
+
+  .mobile-nav-backdrop {
+    position: fixed;
+    z-index: 49;
+    inset: 0;
+    display: block;
+    background: rgba(0, 0, 0, 0.52);
+  }
+
+  .topbar.has-tools {
+    min-height: 0;
+    padding: 10px 14px;
+    align-items: center;
+    flex-direction: row;
+  }
+
+  .topbar.has-tools .topbar-tools {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+/* Auth forms must stay inside narrow mobile viewports. */
+.auth2-login-error {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+@media (max-width: 880px) {
+  .auth2,
+  .auth2-card,
+  .auth2-right,
+  .auth2-form,
+  .auth2-fields,
+  .auth2-input {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .auth2 {
+    overflow-x: clip;
+  }
+
+  .auth2-card {
+    max-width: 460px;
+  }
+
+  .auth2-right {
+    min-height: 100dvh;
+  }
+}
+
+@media (max-width: 420px) {
+  .auth2-right {
+    padding: 56px 20px 32px;
+  }
+
+  .auth2-right-top {
+    right: 20px;
+    left: 20px;
+  }
+
+  .auth2-code-btn {
+    max-width: 108px;
+    padding: 7px 9px;
+    overflow: hidden;
+    font-size: 12px;
+    text-overflow: ellipsis;
+  }
+}
+
 /* Plan color system */
 .plan-card {
   --plan-accent: #22c55e;

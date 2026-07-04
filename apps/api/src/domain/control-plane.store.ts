@@ -22,6 +22,7 @@ import { PrismaService } from '../prisma/prisma.service';
 const bytesInGiB = 1024 * 1024 * 1024;
 const onlineSnapshotFreshnessMs = 150_000;
 const reconnectGraceMs = 2 * 60_000;
+const rejectedAuthDedupeMs = 15 * 60_000;
 
 function remoteHost(remoteAddr?: string) {
   if (!remoteAddr) return undefined;
@@ -1060,15 +1061,23 @@ export class ControlPlaneStoreService {
     await this.expireOverdueSubscriptions();
     await this.expireTrafficPacks();
 
-    const token = await this.prisma.accessToken.findFirst({
-      where: { token: input.tokenValue, revokedAt: null },
-    });
+    const [token, node] = await Promise.all([
+      this.prisma.accessToken.findFirst({
+        where: { token: input.tokenValue, revokedAt: null },
+      }),
+      this.prisma.node.findUnique({ where: { id: input.nodeId } }),
+    ]);
     if (!token) {
-      return this.rejectAuth('token_not_found', input);
+      return this.rejectAuth(
+        'token_not_found',
+        input,
+        undefined,
+        undefined,
+        node?.id,
+      );
     }
 
     const user = await this.mustGetUserRecord(token.userId);
-    const node = await this.prisma.node.findUnique({ where: { id: input.nodeId } });
 
     if (!node || !node.active) {
       return this.rejectAuth('node_unavailable', input, token.id, user.id, node?.id);
@@ -2414,15 +2423,41 @@ export class ControlPlaneStoreService {
     userId?: string,
     nodeId?: string,
   ) {
+    const submittedTokenPreview = this.previewToken(input.tokenValue);
+    const normalizedRemoteAddr =
+      reason === 'token_not_found'
+        ? remoteHost(input.remoteAddr) ?? input.remoteAddr
+        : input.remoteAddr;
+
+    if (reason === 'token_not_found') {
+      const recentDuplicate = await this.prisma.authEvent.findFirst({
+        where: {
+          reason,
+          granted: false,
+          nodeId: nodeId ?? null,
+          remoteAddr: normalizedRemoteAddr ?? null,
+          submittedTokenPreview,
+          createdAt: {
+            gte: new Date(Date.now() - rejectedAuthDedupeMs),
+          },
+        },
+        select: { id: true },
+      });
+
+      if (recentDuplicate) {
+        return { ok: false as const, reason };
+      }
+    }
+
     await this.recordAuthEvent({
       userId,
       accessTokenId,
       nodeId,
       granted: false,
       reason,
-      remoteAddr: input.remoteAddr,
+      remoteAddr: normalizedRemoteAddr,
       requestedTxBps: input.requestedTxBps,
-      submittedTokenPreview: this.previewToken(input.tokenValue),
+      submittedTokenPreview,
     });
 
     return { ok: false as const, reason };

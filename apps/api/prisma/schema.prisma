@@ -285,6 +285,7 @@ model AuthEvent {
   node                  Node?        @relation(fields: [nodeId], references: [id], onDelete: SetNull)
 
   @@index([userId, createdAt])
+  @@index([reason, submittedTokenPreview, remoteAddr, createdAt])
 }
 
 model UsageRollup {
