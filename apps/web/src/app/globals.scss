@@ -3300,6 +3300,22 @@ select.control {
   display: none;
 }
 
+.page-utility-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-height: 38px;
+}
+
+.page-utility-bar .topbar-meta,
+.page-utility-bar .topbar-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 @media (max-width: 920px) {
   .app-shell {
     padding-top: 62px;
@@ -3317,9 +3333,10 @@ select.control {
     min-height: 62px;
     padding: 10px 14px 10px 18px;
     border-bottom: 1px solid var(--border-default);
-    background: color-mix(in srgb, var(--bg-canvas) 96%, transparent);
-    -webkit-backdrop-filter: blur(14px);
-    backdrop-filter: blur(14px);
+    background: color-mix(in srgb, var(--bg-panel) 68%, transparent);
+    box-shadow: 0 14px 34px -28px var(--shadow-color);
+    -webkit-backdrop-filter: saturate(150%) blur(20px);
+    backdrop-filter: saturate(150%) blur(20px);
   }
 
   .mobile-console-header h1 {
@@ -3335,6 +3352,12 @@ select.control {
 
   .mobile-console-header .mobile-nav-toggle {
     margin-left: auto;
+  }
+
+  .page-utility-bar {
+    min-height: 0;
+    justify-content: space-between;
+    flex-wrap: wrap;
   }
 
   .sidebar {
@@ -4242,29 +4265,21 @@ select.control {
 .premium-plan-card {
   position: relative;
   isolation: isolate;
-  min-height: 430px;
+  min-height: 310px;
   border-top: 1px solid var(--border-default);
   background:
-    linear-gradient(145deg, color-mix(in srgb, var(--plan-accent) 7%, transparent), transparent 42%),
+    linear-gradient(145deg, color-mix(in srgb, var(--plan-accent) 4%, transparent), transparent 38%),
     var(--bg-panel);
   box-shadow: 0 18px 44px -36px var(--shadow-color);
   transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
 }
 
 .premium-plan-card::before {
-  content: "";
-  position: absolute;
-  z-index: 2;
-  top: 0;
-  right: 20px;
-  left: 20px;
-  height: 3px;
-  border-radius: 0 0 8px 8px;
-  background: var(--plan-accent);
+  display: none;
 }
 
 .premium-plan-card:hover {
-  transform: translateY(-3px);
+  transform: translateY(-1px);
   border-color: color-mix(in srgb, var(--plan-accent) 42%, var(--border-default));
   box-shadow: 0 24px 52px -38px var(--shadow-color);
 }
@@ -4274,13 +4289,13 @@ select.control {
 }
 
 .premium-plan-card .plan-card-head {
-  min-height: 132px;
-  padding: 24px 22px 20px;
+  min-height: 94px;
+  padding: 18px 18px 16px;
 }
 
 .plan-card-copy {
   display: grid;
-  gap: 7px;
+  gap: 5px;
   min-width: 0;
 }
 
@@ -4296,41 +4311,41 @@ select.control {
 }
 
 .premium-plan-card .plan-card-title {
-  font-size: 24px;
+  font-size: 20px;
 }
 
 .plan-price-block {
   display: grid;
-  gap: 7px;
+  gap: 4px;
   justify-items: end;
   text-align: right;
   white-space: nowrap;
 }
 
 .premium-plan-card .price-line {
-  font-size: 30px;
+  font-size: 24px;
   letter-spacing: -0.04em;
 }
 
 .premium-plan-card .panel-body {
   align-content: start;
-  padding: 20px 22px 22px;
-  gap: 16px;
+  padding: 14px 18px 16px;
+  gap: 11px;
 }
 
 .plan-spec-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
 }
 
 .plan-spec-item {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
-  padding: 12px;
+  padding: 9px 10px;
   border: 1px solid var(--border-default);
-  border-radius: 11px;
+  border-radius: 9px;
   background: color-mix(in srgb, var(--bg-panel-alt) 92%, transparent);
 }
 
@@ -4367,7 +4382,7 @@ select.control {
   grid-template-columns: auto minmax(78px, 0.35fr) minmax(0, 1fr);
   gap: 9px;
   align-items: center;
-  min-height: 42px;
+  min-height: 34px;
   border-bottom: 1px solid var(--border-default);
 }
 
@@ -4377,17 +4392,17 @@ select.control {
 
 .plan-benefit-icon {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   place-items: center;
-  border-radius: 8px;
+  border-radius: 7px;
   background: color-mix(in srgb, var(--plan-accent) 11%, transparent);
   color: var(--plan-accent);
 }
 
 .plan-benefit-icon .icon-slot {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 
 .plan-benefit-list > div > span:nth-child(2) {
@@ -4421,8 +4436,8 @@ select.control {
 
 .premium-plan-card .action-button,
 .premium-plan-card .ghost-button {
-  min-height: 42px;
-  padding-inline: 16px;
+  min-height: 38px;
+  padding-inline: 15px;
 }
 
 .mobile-page-title {
@@ -4467,11 +4482,11 @@ select.control {
 
   .premium-plan-card .plan-card-head {
     min-height: 0;
-    padding: 20px 18px 18px;
+    padding: 15px 16px 14px;
   }
 
   .premium-plan-card .panel-body {
-    padding: 16px 18px 18px;
+    padding: 12px 16px 14px;
   }
 
   .plan-price-block {
@@ -4480,7 +4495,7 @@ select.control {
   }
 
   .premium-plan-card .price-line {
-    font-size: 26px;
+    font-size: 22px;
   }
 
   .plan-spec-grid {
@@ -4488,17 +4503,12 @@ select.control {
   }
 
   .plan-spec-item {
-    padding: 10px 8px;
+    padding: 8px 7px;
   }
 
   .plan-card-footer {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .plan-card-actions {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+    align-items: center;
+    flex-direction: row;
   }
 
   .premium-plan-card .action-button,

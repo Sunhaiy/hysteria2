@@ -217,28 +217,6 @@ export default function PortalPlansPage() {
       scope="Member"
       navItems={portalNav}
       requireRole="member"
-      toolbarMeta={
-        <>
-          <span className="badge info">余额 {formatMoney(balanceCents)}</span>
-          {overview ? (
-            <span className="badge success">当前套餐：{overview.subscription.planName}</span>
-          ) : pendingRenewal ? (
-            <span className="badge warn">有待处理申请</span>
-          ) : (
-            <span className="badge info">{loading ? "加载中..." : `${plans.length} 个套餐`}</span>
-          )}
-        </>
-      }
-      toolbarActions={
-        <div className="toolbar-actions">
-          <Link className="toolbar-button" href="/portal/redeem">
-            去兑换中心
-          </Link>
-          <button className="toolbar-button" type="button" onClick={() => void load()}>
-            刷新
-          </button>
-        </div>
-      }
     >
       {error ? <div className="feedback error">{error}</div> : null}
 
@@ -275,9 +253,6 @@ export default function PortalPlansPage() {
             >
               <div className="plan-card-head">
                 <div className="plan-card-copy">
-                  <span className="plan-card-eyebrow">
-                    {isCurrent ? "正在使用" : isPending ? "等待处理" : "会员套餐"}
-                  </span>
                   <h2 className="panel-title plan-card-title"><span aria-hidden="true" />{plan.name}</h2>
                   <span className="panel-copy">{plan.description ?? "标准会员套餐"}</span>
                 </div>
@@ -317,29 +292,13 @@ export default function PortalPlansPage() {
                 </div>
 
                 <div className="plan-card-footer">
-                  <div className="plan-card-actions">
-                    <button
-                      className="action-button"
-                      type="button"
-                      onClick={() => handleBuy(plan)}
-                    >
-                      {isCurrent ? "续费当前套餐" : branding.buyButtonText}
-                    </button>
-                    {branding.cdkButtonUrl.startsWith("http") ? (
-                      <a
-                        className="ghost-button"
-                        href={branding.cdkButtonUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        {branding.cdkButtonText}
-                      </a>
-                    ) : (
-                      <Link className="ghost-button" href={branding.cdkButtonUrl}>
-                        {branding.cdkButtonText}
-                      </Link>
-                    )}
-                  </div>
+                  <button
+                    className="action-button"
+                    type="button"
+                    onClick={() => handleBuy(plan)}
+                  >
+                    {isCurrent ? "续费套餐" : branding.buyButtonText}
+                  </button>
                   <div className="plan-card-status">
                     {isCurrent ? <span className="badge success">当前套餐</span> : null}
                     {!isCurrent && isPending ? <span className="badge warn">待处理</span> : null}

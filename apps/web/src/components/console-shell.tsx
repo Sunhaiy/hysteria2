@@ -13,7 +13,6 @@ import { ThemeToggle } from "./theme-toggle";
 
 export function ConsoleShell({
   title,
-  subtitle,
   navItems,
   requireRole,
   toolbarMeta,
@@ -132,19 +131,15 @@ export function ConsoleShell({
       </aside>
 
       <main className="workspace">
-        <header className={`topbar${toolbarMeta || toolbarActions ? " has-tools" : ""}`}>
-          <div className="topbar-copy">
-            <h2 className="topbar-title">{title}</h2>
-            <div className="topbar-subtitle">{subtitle}</div>
-          </div>
+        <div className="workspace-body">
           {toolbarMeta || toolbarActions ? (
-            <div className="topbar-tools">
+            <div className="page-utility-bar">
               {toolbarMeta ? <div className="topbar-meta">{toolbarMeta}</div> : null}
               {toolbarActions ? <div className="topbar-actions">{toolbarActions}</div> : null}
             </div>
           ) : null}
-        </header>
-        <div className="workspace-body">{children}</div>
+          {children}
+        </div>
       </main>
     </div>
   );
