@@ -5,12 +5,13 @@ import { useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { Drawer } from "@/components/drawer";
 import { Icon } from "@/components/icon";
+import { ShaderAnimation } from "@/components/ui/shader-lines";
 import { useAuth } from "@/components/auth-provider";
 import { Toast, useToast } from "@/components/toast";
 import { apiRequest, ApiError } from "@/lib/api";
 import { portalNav } from "@/lib/copy";
 import { formatBytes, formatMoney } from "@/lib/format";
-import { normalizePlanAccent } from "@/lib/plan-accents";
+import { normalizePlanAccent, planAccentColor } from "@/lib/plan-accents";
 
 const UNLIMITED_TRAFFIC = Number.MAX_SAFE_INTEGER;
 import type {
@@ -244,13 +245,15 @@ export default function PortalPlansPage() {
         {plans.map((plan) => {
           const isCurrent = overview?.subscription.planId === plan.id;
           const isPending = pendingRenewal?.planId === plan.id;
+          const accent = normalizePlanAccent(plan.accent);
 
           return (
             <article
               className={`plan-card premium-plan-card${isCurrent ? " current" : ""}${isPending ? " pending" : ""}`}
-              data-plan-accent={normalizePlanAccent(plan.accent)}
+              data-plan-accent={accent}
               key={plan.id}
             >
+              <ShaderAnimation color={planAccentColor(accent)} className="plan-card-shader" />
               <div className="plan-card-head">
                 <div className="plan-card-copy">
                   <h2 className="panel-title plan-card-title"><span aria-hidden="true" />{plan.name}</h2>

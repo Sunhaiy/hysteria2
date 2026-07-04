@@ -6,12 +6,13 @@ import { CustomSelect } from "@/components/custom-select";
 import { DataTable } from "@/components/data-table";
 import { Drawer } from "@/components/drawer";
 import { Panel } from "@/components/panel";
+import { ShaderAnimation } from "@/components/ui/shader-lines";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
 import { clearDraft, getDraft, saveDraft } from "@/lib/draft";
 import { formatBytes, formatMoney } from "@/lib/format";
-import { normalizePlanAccent, PLAN_ACCENTS } from "@/lib/plan-accents";
+import { normalizePlanAccent, planAccentColor, PLAN_ACCENTS } from "@/lib/plan-accents";
 import type { NodeRecord, PlanBindingRecord, PlanRecord } from "@/lib/types";
 import { slugifyValue } from "@/lib/ui";
 
@@ -512,6 +513,20 @@ export default function AdminPlansPage() {
 
           <fieldset className="plan-accent-picker">
             <legend className="fine-print">套餐主题色</legend>
+            <div className="plan-accent-preview">
+              <ShaderAnimation color={planAccentColor(form.accent)} className="plan-accent-preview-shader" />
+              <div className="plan-accent-preview-copy">
+                <span
+                  className="plan-accent-preview-dot"
+                  style={{ background: planAccentColor(form.accent) }}
+                />
+                <strong>{form.name.trim() || "套餐名称"}</strong>
+                <small>
+                  {PLAN_ACCENTS.find((accent) => accent.value === form.accent)?.label ?? "翡翠绿"}
+                  {' · 动态卡片预览'}
+                </small>
+              </div>
+            </div>
             <div className="plan-accent-options">
               {PLAN_ACCENTS.map((accent) => (
                 <button

@@ -480,9 +480,12 @@ details.field-section .field-section-body {
   width: 18px;
   height: 18px;
   color: currentColor;
+  line-height: 0;
+  vertical-align: middle;
 }
 
 .icon-slot svg {
+  display: block;
   width: 18px;
   height: 18px;
 }
@@ -3605,6 +3608,51 @@ select.control {
   margin-bottom: 8px;
 }
 
+.plan-accent-preview {
+  position: relative;
+  min-height: 92px;
+  margin-bottom: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: var(--bg-panel);
+}
+
+.plan-accent-preview-shader {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.85;
+}
+
+.plan-accent-preview-copy {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 9px;
+  align-content: center;
+  min-height: 92px;
+  padding: 16px;
+}
+
+.plan-accent-preview-copy strong {
+  align-self: center;
+}
+
+.plan-accent-preview-copy small {
+  grid-column: 2;
+  color: var(--text-muted);
+}
+
+.plan-accent-preview-dot {
+  width: 9px;
+  height: 9px;
+  align-self: center;
+  border-radius: 50%;
+}
+
 .plan-accent-options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4274,6 +4322,29 @@ select.control {
   transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
 }
 
+.shader-lines {
+  display: block;
+}
+
+.plan-card-shader {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  right: 0;
+  left: 0;
+  width: 100%;
+  height: 128px;
+  opacity: 0.72;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.76) 56%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.76) 56%, transparent 100%);
+}
+
+.premium-plan-card > :not(.plan-card-shader) {
+  position: relative;
+  z-index: 1;
+}
+
 .premium-plan-card::before {
   display: none;
 }
@@ -4398,6 +4469,7 @@ select.control {
   border-radius: 7px;
   background: color-mix(in srgb, var(--plan-accent) 11%, transparent);
   color: var(--plan-accent);
+  line-height: 0;
 }
 
 .plan-benefit-icon .icon-slot {
@@ -4405,9 +4477,18 @@ select.control {
   height: 14px;
 }
 
+.plan-benefit-icon .icon-slot svg {
+  width: 14px;
+  height: 14px;
+}
+
 .plan-benefit-list > div > span:nth-child(2) {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
   color: var(--text-muted);
   font-size: 12px;
+  line-height: 1;
 }
 
 .plan-benefit-list strong {

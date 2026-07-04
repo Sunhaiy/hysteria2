@@ -15,3 +15,8 @@ export function normalizePlanAccent(value: string): PlanAccent {
     ? (value as PlanAccent)
     : "green";
 }
+
+export function planAccentColor(value: string) {
+  const normalized = normalizePlanAccent(value);
+  return PLAN_ACCENTS.find((accent) => accent.value === normalized)?.color ?? "#22c55e";
+}
