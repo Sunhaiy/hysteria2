@@ -1133,7 +1133,7 @@ select.control {
     z-index: 50;
     height: 100dvh;
     width: 100vw;
-    overflow-y: auto;
+    overflow: hidden;
     padding: 20px;
     display: grid;
     align-items: start;
@@ -3634,7 +3634,7 @@ select.control {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr) auto;
     gap: 14px;
-    overflow-y: auto;
+    overflow: hidden;
     border-left: 1px solid var(--border-default);
     background: var(--bg-panel);
     transform: translateX(0);
@@ -3675,6 +3675,13 @@ select.control {
     grid-template-columns: 1fr;
     gap: 4px;
     align-content: start;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-right: 4px;
+    overscroll-behavior: contain;
+    scrollbar-color: var(--border-strong) transparent;
+    scrollbar-width: thin;
   }
 
   .sidebar.open .nav-link {
@@ -3705,6 +3712,12 @@ select.control {
     display: grid;
     grid-template-columns: 1fr;
     gap: 7px;
+    position: relative;
+    z-index: 1;
+    padding-top: 12px;
+    padding-bottom: max(0px, env(safe-area-inset-bottom));
+    border-top: 1px solid var(--border-default);
+    background: var(--bg-panel);
   }
 
   .sidebar.open .sidebar-footer .ghost-button {
