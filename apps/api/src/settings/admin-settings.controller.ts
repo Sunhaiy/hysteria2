@@ -27,6 +27,7 @@ export class AdminSettingsController {
     const oauth = await this.settings.getOAuthConfig();
     const branding = await this.settings.getPortalBranding();
     const site = await this.settings.getSiteInfo();
+    const tutorial = await this.settings.getTutorialConfig();
     const registrationEnabled = await this.settings.isRegistrationEnabled();
     const callbackBase =
       process.env.OAUTH_CALLBACK_BASE ||
@@ -60,6 +61,7 @@ export class AdminSettingsController {
       },
       branding,
       site,
+      tutorial,
       registrationEnabled,
     };
   }
@@ -67,12 +69,16 @@ export class AdminSettingsController {
   @Patch()
   async updateSettings(@Body() body: UpdateSettingsDto) {
     const updates: Record<string, string> = {};
-    if (body.smtpHost !== undefined) updates['smtp.host'] = body.smtpHost.trim();
-    if (body.smtpPort !== undefined) updates['smtp.port'] = String(body.smtpPort);
-    if (body.smtpUser !== undefined) updates['smtp.user'] = body.smtpUser.trim();
+    if (body.smtpHost !== undefined)
+      updates['smtp.host'] = body.smtpHost.trim();
+    if (body.smtpPort !== undefined)
+      updates['smtp.port'] = String(body.smtpPort);
+    if (body.smtpUser !== undefined)
+      updates['smtp.user'] = body.smtpUser.trim();
     // Only overwrite the password when a non-empty value is provided.
     if (body.smtpPass) updates['smtp.pass'] = body.smtpPass;
-    if (body.smtpFrom !== undefined) updates['smtp.from'] = body.smtpFrom.trim();
+    if (body.smtpFrom !== undefined)
+      updates['smtp.from'] = body.smtpFrom.trim();
     if (body.registrationEnabled !== undefined) {
       updates['registration.enabled'] = String(body.registrationEnabled);
     }
@@ -112,6 +118,24 @@ export class AdminSettingsController {
     if (body.cdkButtonUrl !== undefined) {
       updates['portal.cdkButtonUrl'] = body.cdkButtonUrl.trim();
     }
+    if (body.tutorialWindowsClient !== undefined)
+      updates['tutorial.windows.client'] = body.tutorialWindowsClient.trim();
+    if (body.tutorialWindowsSteps !== undefined)
+      updates['tutorial.windows.steps'] = body.tutorialWindowsSteps.trim();
+    if (body.tutorialWindowsUrl !== undefined)
+      updates['tutorial.windows.url'] = body.tutorialWindowsUrl.trim();
+    if (body.tutorialAndroidClient !== undefined)
+      updates['tutorial.android.client'] = body.tutorialAndroidClient.trim();
+    if (body.tutorialAndroidSteps !== undefined)
+      updates['tutorial.android.steps'] = body.tutorialAndroidSteps.trim();
+    if (body.tutorialAndroidUrl !== undefined)
+      updates['tutorial.android.url'] = body.tutorialAndroidUrl.trim();
+    if (body.tutorialIosClient !== undefined)
+      updates['tutorial.ios.client'] = body.tutorialIosClient.trim();
+    if (body.tutorialIosSteps !== undefined)
+      updates['tutorial.ios.steps'] = body.tutorialIosSteps.trim();
+    if (body.tutorialIosUrl !== undefined)
+      updates['tutorial.ios.url'] = body.tutorialIosUrl.trim();
     await this.settings.setMany(updates);
     return this.getSettings();
   }

@@ -10,6 +10,51 @@ export interface SmtpConfig {
   configured: boolean;
 }
 
+export type TutorialUploadPlatform = 'windows' | 'android';
+
+export interface TutorialAssetRecord {
+  storedName: string;
+  originalName: string;
+  size: number;
+  uploadedAt: string;
+}
+
+const TUTORIAL_DEFAULTS = {
+  windows: {
+    name: 'Windows',
+    meta: '电脑',
+    client: 'v2rayN',
+    steps: [
+      '下载并安装 v2rayN 客户端',
+      '打开「接入信息」，复制一键订阅链接',
+      '在 v2rayN 的订阅分组中添加订阅地址',
+      '更新订阅，选择节点并启用系统代理',
+    ],
+  },
+  android: {
+    name: 'Android',
+    meta: '手机 / 平板',
+    client: 'Hiddify',
+    steps: [
+      '下载并安装 Hiddify 客户端',
+      '打开「接入信息」，复制一键订阅链接',
+      '在 Hiddify 中从剪贴板添加配置',
+      '选择节点，允许 VPN 权限并开始连接',
+    ],
+  },
+  ios: {
+    name: 'iOS',
+    meta: 'iPhone / iPad',
+    client: 'sing-box',
+    steps: [
+      '从 App Store 安装 sing-box 客户端',
+      '打开「接入信息」，复制订阅或配置地址',
+      '在 sing-box 中添加远程配置',
+      '允许 VPN 权限并启动连接',
+    ],
+  },
+} as const;
+
 @Injectable()
 export class SettingsService {
   private cache: Map<string, string> | null = null;
@@ -38,6 +83,75 @@ export class SettingsService {
       });
     }
     this.cache = null; // invalidate so the next read reflects the change
+  }
+
+  async getTutorialAsset(
+    platform: TutorialUploadPlatform,
+  ): Promise<TutorialAssetRecord | null> {
+    const raw = await this.get(`tutorial.${platform}.asset`);
+    if (!raw) return null;
+    try {
+      const asset = JSON.parse(raw) as Partial<TutorialAssetRecord>;
+      if (
+        typeof asset.storedName !== 'string' ||
+        typeof asset.originalName !== 'string' ||
+        typeof asset.size !== 'number' ||
+        typeof asset.uploadedAt !== 'string'
+      ) {
+        return null;
+      }
+      return asset as TutorialAssetRecord;
+    } catch {
+      return null;
+    }
+  }
+
+  async saveTutorialAsset(
+    platform: TutorialUploadPlatform,
+    asset: TutorialAssetRecord,
+  ) {
+    await this.setMany({
+      [`tutorial.${platform}.asset`]: JSON.stringify(asset),
+    });
+  }
+
+  async getTutorialConfig() {
+    const map = await this.all();
+    const buildPlatform = async (platform: keyof typeof TUTORIAL_DEFAULTS) => {
+      const defaults = TUTORIAL_DEFAULTS[platform];
+      const steps = (
+        map.get(`tutorial.${platform}.steps`) || defaults.steps.join('\n')
+      )
+        .split('\n')
+        .map((step) => step.trim())
+        .filter(Boolean);
+      const asset =
+        platform === 'ios' ? null : await this.getTutorialAsset(platform);
+      return {
+        id: platform,
+        name: defaults.name,
+        meta: defaults.meta,
+        client: map.get(`tutorial.${platform}.client`) || defaults.client,
+        steps,
+        externalUrl: map.get(`tutorial.${platform}.url`) || '',
+        asset: asset
+          ? {
+              originalName: asset.originalName,
+              size: asset.size,
+              uploadedAt: asset.uploadedAt,
+              downloadUrl: `/api/tutorial-assets/${platform}/download`,
+            }
+          : null,
+      };
+    };
+
+    return {
+      platforms: await Promise.all([
+        buildPlatform('windows'),
+        buildPlatform('android'),
+        buildPlatform('ios'),
+      ]),
+    };
   }
 
   /** SMTP config: DB settings take precedence, env vars are the fallback. */

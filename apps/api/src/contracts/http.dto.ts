@@ -108,6 +108,51 @@ export class UpdateSettingsDto {
   @IsString()
   @MaxLength(300)
   cdkButtonUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  tutorialWindowsClient?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  tutorialWindowsSteps?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  tutorialWindowsUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  tutorialAndroidClient?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  tutorialAndroidSteps?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  tutorialAndroidUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  tutorialIosClient?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  tutorialIosSteps?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  tutorialIosUrl?: string;
 }
 
 export class TestEmailDto {

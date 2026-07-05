@@ -16,6 +16,27 @@ interface OAuthProviderState {
   callbackUrl: string;
 }
 
+type TutorialPlatformId = "windows" | "android" | "ios";
+
+interface TutorialPlatformSettings {
+  id: TutorialPlatformId;
+  name: string;
+  meta: string;
+  client: string;
+  steps: string[];
+  externalUrl: string;
+  asset: {
+    originalName: string;
+    size: number;
+    uploadedAt: string;
+    downloadUrl: string;
+  } | null;
+}
+
+interface TutorialSettings {
+  platforms: TutorialPlatformSettings[];
+}
+
 interface SettingsResponse {
   smtp: {
     host: string;
@@ -41,7 +62,13 @@ interface SettingsResponse {
     browserTitle: string;
     iconUrl: string;
   };
+  tutorial: TutorialSettings;
   registrationEnabled: boolean;
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
 export default function AdminSettingsPage() {
@@ -75,11 +102,20 @@ export default function AdminSettingsPage() {
   const [siteBrowserTitle, setSiteBrowserTitle] = useState("");
   const [siteIconUrl, setSiteIconUrl] = useState("");
   const [savingSite, setSavingSite] = useState(false);
-  const [purchaseMode, setPurchaseMode] = useState<"balance" | "cdk">("balance");
+  const [purchaseMode, setPurchaseMode] = useState<"balance" | "cdk">(
+    "balance",
+  );
   const [buyButtonText, setBuyButtonText] = useState("");
   const [cdkButtonText, setCdkButtonText] = useState("");
   const [cdkButtonUrl, setCdkButtonUrl] = useState("");
   const [savingBranding, setSavingBranding] = useState(false);
+  const [tutorial, setTutorial] = useState<TutorialSettings>({ platforms: [] });
+  const [tutorialFiles, setTutorialFiles] = useState<
+    Partial<Record<TutorialPlatformId, File>>
+  >({});
+  const [savingTutorial, setSavingTutorial] = useState(false);
+  const [uploadingPlatform, setUploadingPlatform] =
+    useState<TutorialPlatformId | null>(null);
 
   const applySettings = useCallback((data: SettingsResponse) => {
     setHost(data.smtp.host);
@@ -103,6 +139,7 @@ export default function AdminSettingsPage() {
     setBuyButtonText(data.branding.buyButtonText);
     setCdkButtonText(data.branding.cdkButtonText);
     setCdkButtonUrl(data.branding.cdkButtonUrl);
+    setTutorial(data.tutorial);
   }, []);
 
   const load = useCallback(async () => {
@@ -111,7 +148,9 @@ export default function AdminSettingsPage() {
     }
     setError(null);
     try {
-      const data = await apiRequest<SettingsResponse>("/api/admin/settings", { token });
+      const data = await apiRequest<SettingsResponse>("/api/admin/settings", {
+        token,
+      });
       applySettings(data);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "设置加载失败。");
@@ -166,7 +205,9 @@ export default function AdminSettingsPage() {
         body: { registrationEnabled },
       });
       applySettings(data);
-      showToast(registrationEnabled ? "会员自助注册已开放" : "会员自助注册已关闭");
+      showToast(
+        registrationEnabled ? "会员自助注册已开放" : "会员自助注册已关闭",
+      );
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "保存失败。");
     } finally {
@@ -214,7 +255,9 @@ export default function AdminSettingsPage() {
         body: { siteName, siteDescription, siteBrowserTitle, siteIconUrl },
       });
       applySettings(data);
-      window.dispatchEvent(new CustomEvent("site-info-updated", { detail: data.site }));
+      window.dispatchEvent(
+        new CustomEvent("site-info-updated", { detail: data.site }),
+      );
       showToast("站点资料已保存");
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "保存失败。");
@@ -263,6 +306,73 @@ export default function AdminSettingsPage() {
     }
   }
 
+  function updateTutorialPlatform(
+    id: TutorialPlatformId,
+    patch: Partial<TutorialPlatformSettings>,
+  ) {
+    setTutorial((current) => ({
+      platforms: current.platforms.map((platform) =>
+        platform.id === id ? { ...platform, ...patch } : platform,
+      ),
+    }));
+  }
+
+  async function saveTutorial() {
+    if (!token) return;
+    setSavingTutorial(true);
+    setError(null);
+    const platform = (id: TutorialPlatformId) =>
+      tutorial.platforms.find((item) => item.id === id);
+    try {
+      const data = await apiRequest<SettingsResponse>("/api/admin/settings", {
+        method: "PATCH",
+        token,
+        body: {
+          tutorialWindowsClient: platform("windows")?.client ?? "v2rayN",
+          tutorialWindowsSteps: platform("windows")?.steps.join("\n") ?? "",
+          tutorialWindowsUrl: platform("windows")?.externalUrl ?? "",
+          tutorialAndroidClient: platform("android")?.client ?? "Hiddify",
+          tutorialAndroidSteps: platform("android")?.steps.join("\n") ?? "",
+          tutorialAndroidUrl: platform("android")?.externalUrl ?? "",
+          tutorialIosClient: platform("ios")?.client ?? "sing-box",
+          tutorialIosSteps: platform("ios")?.steps.join("\n") ?? "",
+          tutorialIosUrl: platform("ios")?.externalUrl ?? "",
+        },
+      });
+      applySettings(data);
+      showToast("使用教程已保存");
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "教程保存失败。");
+    } finally {
+      setSavingTutorial(false);
+    }
+  }
+
+  async function uploadTutorialApp(id: "windows" | "android") {
+    if (!token || !tutorialFiles[id]) return;
+    setUploadingPlatform(id);
+    setError(null);
+    const body = new FormData();
+    body.append("file", tutorialFiles[id]);
+    try {
+      const data = await apiRequest<TutorialSettings>(
+        `/api/admin/tutorial-assets/${id}`,
+        {
+          method: "POST",
+          token,
+          body,
+        },
+      );
+      setTutorial(data);
+      setTutorialFiles((current) => ({ ...current, [id]: undefined }));
+      showToast(`${id === "windows" ? "Windows" : "Android"} 客户端已上传`);
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "客户端上传失败。");
+    } finally {
+      setUploadingPlatform(null);
+    }
+  }
+
   async function sendTest() {
     if (!token || !testTo) {
       return;
@@ -274,9 +384,16 @@ export default function AdminSettingsPage() {
         token,
         body: { to: testTo },
       });
-      showToast(configured ? "测试邮件已发送，请查收" : "未配置 SMTP，验证码已写入后端日志");
+      showToast(
+        configured
+          ? "测试邮件已发送，请查收"
+          : "未配置 SMTP，验证码已写入后端日志",
+      );
     } catch (cause) {
-      showToast(cause instanceof ApiError ? cause.message : "发送失败", "error");
+      showToast(
+        cause instanceof ApiError ? cause.message : "发送失败",
+        "error",
+      );
     } finally {
       setTesting(false);
     }
@@ -295,7 +412,11 @@ export default function AdminSettingsPage() {
         </span>
       }
       toolbarActions={
-        <button className="toolbar-button" type="button" onClick={() => void load()}>
+        <button
+          className="toolbar-button"
+          type="button"
+          onClick={() => void load()}
+        >
           刷新
         </button>
       }
@@ -349,15 +470,23 @@ export default function AdminSettingsPage() {
                 <div className="site-icon-editor">
                   <div className="site-icon-preview">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={siteIconUrl || "/favicon.ico"} alt="站点图标预览" />
+                    <img
+                      src={siteIconUrl || "/favicon.ico"}
+                      alt="站点图标预览"
+                    />
                   </div>
                   <div className="site-icon-controls">
                     <input
                       className="control"
-                      value={siteIconUrl.startsWith("data:") ? "已选择本地图标" : siteIconUrl}
+                      value={
+                        siteIconUrl.startsWith("data:")
+                          ? "已选择本地图标"
+                          : siteIconUrl
+                      }
                       onChange={(event) => setSiteIconUrl(event.target.value)}
                       onFocus={(event) => {
-                        if (siteIconUrl.startsWith("data:")) event.currentTarget.select();
+                        if (siteIconUrl.startsWith("data:"))
+                          event.currentTarget.select();
                       }}
                       placeholder="https://example.com/favicon.png"
                     />
@@ -380,11 +509,18 @@ export default function AdminSettingsPage() {
                     </div>
                   </div>
                 </div>
-                <span className="fine-print">支持图片链接或上传 64 KB 以内的小图标。</span>
+                <span className="fine-print">
+                  支持图片链接或上传 64 KB 以内的小图标。
+                </span>
               </div>
             </div>
             <div className="toolbar-actions">
-              <button className="action-button" type="button" disabled={savingSite} onClick={() => void saveSite()}>
+              <button
+                className="action-button"
+                type="button"
+                disabled={savingSite}
+                onClick={() => void saveSite()}
+              >
                 {savingSite ? "保存中..." : "保存站点资料"}
               </button>
             </div>
@@ -396,22 +532,170 @@ export default function AdminSettingsPage() {
           >
             <div className="setting-toggle-row">
               <div className="setting-toggle-copy">
-                <strong>{registrationEnabled ? "允许新会员注册" : "暂停新会员注册"}</strong>
-                <span>{registrationEnabled ? "访客可以通过邮箱验证码创建会员账号。" : "注册入口仍会显示，但无法提交新的注册申请。"}</span>
+                <strong>
+                  {registrationEnabled ? "允许新会员注册" : "暂停新会员注册"}
+                </strong>
+                <span>
+                  {registrationEnabled
+                    ? "访客可以通过邮箱验证码创建会员账号。"
+                    : "注册入口仍会显示，但无法提交新的注册申请。"}
+                </span>
               </div>
               <label className="toggle-switch">
                 <input
                   type="checkbox"
                   checked={registrationEnabled}
-                  onChange={(event) => setRegistrationEnabled(event.target.checked)}
+                  onChange={(event) =>
+                    setRegistrationEnabled(event.target.checked)
+                  }
                 />
-                <span className="toggle-track" aria-hidden="true"><span /></span>
-                <span className="toggle-label">{registrationEnabled ? "已开启" : "已关闭"}</span>
+                <span className="toggle-track" aria-hidden="true">
+                  <span />
+                </span>
+                <span className="toggle-label">
+                  {registrationEnabled ? "已开启" : "已关闭"}
+                </span>
               </label>
             </div>
             <div className="toolbar-actions">
-              <button className="action-button" type="button" disabled={savingRegistration} onClick={() => void saveRegistration()}>
+              <button
+                className="action-button"
+                type="button"
+                disabled={savingRegistration}
+                onClick={() => void saveRegistration()}
+              >
                 {savingRegistration ? "保存中..." : "保存注册设置"}
+              </button>
+            </div>
+          </Panel>
+
+          <Panel
+            title="使用教程与客户端下载"
+            copy="Windows 使用 v2rayN，Android 使用 Hiddify，iOS 使用 sing-box。每行填写一个操作步骤；Windows 与 Android 安装包会保存到持久目录，部署后不会丢失。"
+          >
+            <div className="tutorial-admin-grid">
+              {tutorial.platforms.map((platform) => (
+                <section className="tutorial-admin-card" key={platform.id}>
+                  <div className="tutorial-admin-heading">
+                    <div>
+                      <strong>{platform.name}</strong>
+                      <span>{platform.meta}</span>
+                    </div>
+                    <span className="badge info">{platform.client}</span>
+                  </div>
+                  <label className="field">
+                    <span className="fine-print">客户端名称</span>
+                    <input
+                      className="control"
+                      value={platform.client}
+                      onChange={(event) =>
+                        updateTutorialPlatform(platform.id, {
+                          client: event.target.value,
+                        })
+                      }
+                      placeholder={
+                        platform.id === "windows"
+                          ? "v2rayN"
+                          : platform.id === "android"
+                            ? "Hiddify"
+                            : "sing-box"
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="fine-print">操作步骤（每行一项）</span>
+                    <textarea
+                      className="control tutorial-steps-editor"
+                      value={platform.steps.join("\n")}
+                      onChange={(event) =>
+                        updateTutorialPlatform(platform.id, {
+                          steps: event.target.value.split("\n"),
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="fine-print">
+                      {platform.id === "ios"
+                        ? "App Store / 外部下载链接"
+                        : "备用外部下载链接（可选）"}
+                    </span>
+                    <input
+                      className="control"
+                      value={platform.externalUrl}
+                      onChange={(event) =>
+                        updateTutorialPlatform(platform.id, {
+                          externalUrl: event.target.value,
+                        })
+                      }
+                      placeholder="https://..."
+                    />
+                  </label>
+                  {platform.id !== "ios" ? (
+                    <div className="tutorial-upload-box">
+                      <div>
+                        <strong>
+                          {platform.asset?.originalName ?? "尚未上传安装包"}
+                        </strong>
+                        <span>
+                          {platform.asset
+                            ? `${formatFileSize(platform.asset.size)} · ${new Date(platform.asset.uploadedAt).toLocaleString("zh-CN")}`
+                            : platform.id === "windows"
+                              ? "支持 EXE、MSI、ZIP，最大 250 MB"
+                              : "支持 APK，最大 250 MB"}
+                        </span>
+                      </div>
+                      <input
+                        className="control"
+                        type="file"
+                        accept={
+                          platform.id === "windows" ? ".exe,.msi,.zip" : ".apk"
+                        }
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          setTutorialFiles((current) => ({
+                            ...current,
+                            [platform.id]: file,
+                          }));
+                        }}
+                      />
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        disabled={
+                          !tutorialFiles[platform.id] ||
+                          uploadingPlatform === platform.id
+                        }
+                        onClick={() =>
+                          void uploadTutorialApp(
+                            platform.id as "windows" | "android",
+                          )
+                        }
+                      >
+                        {uploadingPlatform === platform.id
+                          ? "上传中..."
+                          : platform.asset
+                            ? "替换安装包"
+                            : "上传安装包"}
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="fine-print tutorial-ios-note">
+                      iOS 不在服务器上传安装包，填写 App Store
+                      或指定渠道链接即可。
+                    </p>
+                  )}
+                </section>
+              ))}
+            </div>
+            <div className="toolbar-actions">
+              <button
+                className="action-button"
+                type="button"
+                disabled={savingTutorial}
+                onClick={() => void saveTutorial()}
+              >
+                {savingTutorial ? "保存中..." : "保存教程内容"}
               </button>
             </div>
           </Panel>
@@ -435,7 +719,9 @@ export default function AdminSettingsPage() {
                 <input
                   className="control"
                   value={port}
-                  onChange={(event) => setPort(event.target.value.replace(/\D/g, "").slice(0, 5))}
+                  onChange={(event) =>
+                    setPort(event.target.value.replace(/\D/g, "").slice(0, 5))
+                  }
                   placeholder="465"
                   inputMode="numeric"
                 />
@@ -457,7 +743,9 @@ export default function AdminSettingsPage() {
                   type="password"
                   value={pass}
                   onChange={(event) => setPass(event.target.value)}
-                  placeholder={passSet ? "已设置（留空保持不变）" : "请输入授权码"}
+                  placeholder={
+                    passSet ? "已设置（留空保持不变）" : "请输入授权码"
+                  }
                   autoComplete="new-password"
                 />
               </label>
@@ -472,7 +760,12 @@ export default function AdminSettingsPage() {
               </label>
             </div>
             <div className="toolbar-actions">
-              <button className="action-button" type="button" disabled={saving} onClick={() => void save()}>
+              <button
+                className="action-button"
+                type="button"
+                disabled={saving}
+                onClick={() => void save()}
+              >
                 {saving ? "保存中..." : "保存设置"}
               </button>
             </div>
@@ -525,7 +818,12 @@ export default function AdminSettingsPage() {
               </label>
             </div>
             <div className="toolbar-actions">
-              <button className="action-button" type="button" disabled={savingBranding} onClick={() => void saveBranding()}>
+              <button
+                className="action-button"
+                type="button"
+                disabled={savingBranding}
+                onClick={() => void saveBranding()}
+              >
                 {savingBranding ? "保存中..." : "保存购买设置"}
               </button>
             </div>
@@ -538,13 +836,21 @@ export default function AdminSettingsPage() {
             <div className="form-grid">
               <div className="list-row">
                 <span className="muted">Google 状态</span>
-                <span className={`badge ${oauth?.google.configured ? "success" : "warn"}`}>
+                <span
+                  className={`badge ${oauth?.google.configured ? "success" : "warn"}`}
+                >
                   {oauth?.google.configured ? "已启用" : "未配置"}
                 </span>
               </div>
               <label className="field">
-                <span className="fine-print">Google 回调地址（填到 Google 控制台）</span>
-                <input className="control mono" value={oauth?.google.callbackUrl ?? ""} readOnly />
+                <span className="fine-print">
+                  Google 回调地址（填到 Google 控制台）
+                </span>
+                <input
+                  className="control mono"
+                  value={oauth?.google.callbackUrl ?? ""}
+                  readOnly
+                />
               </label>
               <label className="field">
                 <span className="fine-print">Google Client ID</span>
@@ -563,20 +869,32 @@ export default function AdminSettingsPage() {
                   type="password"
                   value={googleSecret}
                   onChange={(event) => setGoogleSecret(event.target.value)}
-                  placeholder={oauth?.google.secretSet ? "已设置（留空保持不变）" : "请输入 Secret"}
+                  placeholder={
+                    oauth?.google.secretSet
+                      ? "已设置（留空保持不变）"
+                      : "请输入 Secret"
+                  }
                   autoComplete="new-password"
                 />
               </label>
 
               <div className="list-row" style={{ marginTop: 8 }}>
                 <span className="muted">GitHub 状态</span>
-                <span className={`badge ${oauth?.github.configured ? "success" : "warn"}`}>
+                <span
+                  className={`badge ${oauth?.github.configured ? "success" : "warn"}`}
+                >
                   {oauth?.github.configured ? "已启用" : "未配置"}
                 </span>
               </div>
               <label className="field">
-                <span className="fine-print">GitHub 回调地址（填到 GitHub OAuth App）</span>
-                <input className="control mono" value={oauth?.github.callbackUrl ?? ""} readOnly />
+                <span className="fine-print">
+                  GitHub 回调地址（填到 GitHub OAuth App）
+                </span>
+                <input
+                  className="control mono"
+                  value={oauth?.github.callbackUrl ?? ""}
+                  readOnly
+                />
               </label>
               <label className="field">
                 <span className="fine-print">GitHub Client ID</span>
@@ -595,19 +913,31 @@ export default function AdminSettingsPage() {
                   type="password"
                   value={githubSecret}
                   onChange={(event) => setGithubSecret(event.target.value)}
-                  placeholder={oauth?.github.secretSet ? "已设置（留空保持不变）" : "请输入 Secret"}
+                  placeholder={
+                    oauth?.github.secretSet
+                      ? "已设置（留空保持不变）"
+                      : "请输入 Secret"
+                  }
                   autoComplete="new-password"
                 />
               </label>
             </div>
             <div className="toolbar-actions">
-              <button className="action-button" type="button" disabled={savingOauth} onClick={() => void saveOauth()}>
+              <button
+                className="action-button"
+                type="button"
+                disabled={savingOauth}
+                onClick={() => void saveOauth()}
+              >
                 {savingOauth ? "保存中..." : "保存第三方登录配置"}
               </button>
             </div>
           </Panel>
 
-          <Panel title="发送测试邮件" copy="保存配置后，填写一个邮箱地址验证 SMTP 是否可用。">
+          <Panel
+            title="发送测试邮件"
+            copy="保存配置后，填写一个邮箱地址验证 SMTP 是否可用。"
+          >
             <div className="form-grid">
               <label className="field">
                 <span className="fine-print">收件邮箱</span>
