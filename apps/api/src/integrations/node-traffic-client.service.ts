@@ -6,8 +6,16 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 interface TrafficNode {
   id: string;
+  protocol: 'hysteria2' | 'vless_reality';
   trafficApiBaseUrl: string;
   trafficApiSecret: string;
+}
+
+interface ProvisionedUser {
+  userId: string;
+  id: string;
+  email: string;
+  flow: string;
 }
 
 @Injectable()
@@ -32,6 +40,27 @@ export class NodeTrafficClientService {
       ),
     );
     return data;
+  }
+
+  async syncUsers(node: TrafficNode, users: ProvisionedUser[]) {
+    if (node.protocol !== 'vless_reality') {
+      return { added: 0, removed: 0, total: 0 };
+    }
+    if (node.trafficApiBaseUrl.startsWith('mock://')) {
+      return { added: users.length, removed: 0, total: users.length };
+    }
+
+    const response = await firstValueFrom(
+      this.httpService.put<{ added: number; removed: number; total: number }>(
+        `${node.trafficApiBaseUrl}/users`,
+        users,
+        {
+          headers: { Authorization: node.trafficApiSecret },
+          timeout: REQUEST_TIMEOUT_MS,
+        },
+      ),
+    );
+    return response.data;
   }
 
   async clearTraffic(node: TrafficNode) {

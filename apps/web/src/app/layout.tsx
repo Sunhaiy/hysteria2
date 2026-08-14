@@ -21,7 +21,7 @@ const robotoMono = Roboto_Mono({
 
 export const metadata: Metadata = {
   title: "Hysteria 2 Control Plane",
-  description: "Dense, operator-first membership and traffic management console for Hysteria 2.",
+  description: "Operator-first membership and traffic management console for Hysteria 2 and VLESS + REALITY.",
 };
 
 export default function RootLayout({

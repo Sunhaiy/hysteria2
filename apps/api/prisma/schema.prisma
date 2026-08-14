@@ -18,6 +18,11 @@ enum UserStatus {
   BANNED
 }
 
+enum NodeProtocol {
+  HYSTERIA2
+  VLESS_REALITY
+}
+
 enum SubscriptionStatus {
   ACTIVE
   EXPIRED
@@ -65,24 +70,24 @@ enum RedemptionCodeStatus {
 }
 
 model User {
-  id              String           @id @default(cuid())
-  email           String           @unique
+  id              String              @id @default(cuid())
+  email           String              @unique
   displayName     String
   passwordHash    String
   plainPassword   String?
-  role            UserRole         @default(MEMBER)
-  status          UserStatus       @default(ACTIVE)
+  role            UserRole            @default(MEMBER)
+  status          UserStatus          @default(ACTIVE)
   notes           String?
-  balanceCents    Int              @default(0)
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  balanceCents    Int                 @default(0)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
   accessTokens    AccessToken[]
   subscriptions   Subscription[]
   trafficPacks    TrafficPack[]
-  manualOrders    ManualOrder[]    @relation("ManualOrderTargetUser")
-  processedOrders ManualOrder[]    @relation("ManualOrderProcessedBy")
-  createdCodes    RedemptionCode[] @relation("RedemptionCodeCreatedBy")
-  redeemedCodes   RedemptionCode[] @relation("RedemptionCodeRedeemedBy")
+  manualOrders    ManualOrder[]       @relation("ManualOrderTargetUser")
+  processedOrders ManualOrder[]       @relation("ManualOrderProcessedBy")
+  createdCodes    RedemptionCode[]    @relation("RedemptionCodeCreatedBy")
+  redeemedCodes   RedemptionCode[]    @relation("RedemptionCodeRedeemedBy")
   redemptionUses  RedemptionUse[]
   walletTxns      WalletTransaction[]
   authEvents      AuthEvent[]
@@ -95,6 +100,7 @@ model AccessToken {
   userId     String
   label      String
   token      String      @unique
+  vlessUuid  String      @unique @default(uuid())
   createdAt  DateTime    @default(now())
   lastUsedAt DateTime?
   revokedAt  DateTime?
@@ -124,26 +130,34 @@ model Plan {
 }
 
 model Node {
-  id                String           @id @default(cuid())
-  label             String           @unique
-  hostname          String
-  port              Int
-  obfsPassword      String?
-  sni               String?
-  pinSHA256         String?
-  allowInsecureTls  Boolean          @default(false)
-  trafficApiBaseUrl String
-  trafficApiSecret  String
-  active            Boolean          @default(true)
-  speedUpMbps       Int
-  speedDownMbps     Int
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
-  planBindings      PlanBinding[]
-  subscriptions     Subscription[]
-  authEvents        AuthEvent[]
-  usageRollups      UsageRollup[]
-  onlineSnapshots   OnlineSnapshot[]
+  id                 String           @id @default(cuid())
+  protocol           NodeProtocol     @default(HYSTERIA2)
+  label              String           @unique
+  hostname           String
+  port               Int
+  obfsPassword       String?
+  sni                String?
+  pinSHA256          String?
+  allowInsecureTls   Boolean          @default(false)
+  realityPublicKey   String?
+  realityShortId     String?
+  realityFingerprint String?          @default("chrome")
+  realitySpiderX     String?
+  vlessFlow          String?          @default("xtls-rprx-vision")
+  trafficApiBaseUrl  String
+  trafficApiSecret   String
+  active             Boolean          @default(true)
+  speedUpMbps        Int
+  speedDownMbps      Int
+  lastSyncAt         DateTime?
+  lastSyncError      String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  planBindings       PlanBinding[]
+  subscriptions      Subscription[]
+  authEvents         AuthEvent[]
+  usageRollups       UsageRollup[]
+  onlineSnapshots    OnlineSnapshot[]
 
   @@unique([hostname, port])
 }

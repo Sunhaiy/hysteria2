@@ -31,7 +31,7 @@ export const portalNav: NavItem[] = [
 export const homeCopy = {
   title: "Hysteria 2 多用户控制台",
   description:
-    "面向运维的高密度工具界面，覆盖套餐、节点、订阅、流量与 Hysteria 2 接入信息。",
+    "面向运维的高密度工具界面，覆盖套餐、节点、订阅、流量与 Hysteria 2 / VLESS 接入信息。",
   adminHint: "本地开发 seed 管理员：ops@hysteria.local / admin123!",
   memberHint: "本地开发 seed 会员：lin@example.com / member123!",
 };

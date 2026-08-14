@@ -49,6 +49,7 @@ export const seedState: ControlPlaneState = {
       userId: 'usr_lin',
       label: 'Primary access token',
       token: 'hy2_live_lin_primary',
+      vlessUuid: '67fbc500-3f3c-4ab9-a076-3e17c56bb3a1',
       createdAt: minusDays(30),
       lastUsedAt: minusDays(1),
     },
@@ -57,6 +58,7 @@ export const seedState: ControlPlaneState = {
       userId: 'usr_zhou',
       label: 'Suspended account token',
       token: 'hy2_live_zhou_primary',
+      vlessUuid: '00f82c90-af12-44b7-a99e-e37f44b67daa',
       createdAt: minusDays(20),
       lastUsedAt: minusDays(3),
     },
@@ -98,6 +100,7 @@ export const seedState: ControlPlaneState = {
   nodes: [
     {
       id: 'node_hk_core',
+      protocol: 'hysteria2',
       label: 'HK-01 Core :4431',
       hostname: 'hk-01.example.net',
       port: 4431,
@@ -115,6 +118,7 @@ export const seedState: ControlPlaneState = {
     },
     {
       id: 'node_sg_core',
+      protocol: 'hysteria2',
       label: 'SG-01 Core :4432',
       hostname: 'sg-01.example.net',
       port: 4432,
@@ -132,6 +136,7 @@ export const seedState: ControlPlaneState = {
     },
     {
       id: 'node_hk_pro',
+      protocol: 'hysteria2',
       label: 'HK-02 Pro :5443',
       hostname: 'hk-02.example.net',
       port: 5443,

@@ -398,6 +398,10 @@ export class UpdateSubscriptionDto {
 }
 
 export class CreateNodeDto {
+  @IsOptional()
+  @IsIn(['hysteria2', 'vless_reality'])
+  protocol?: 'hysteria2' | 'vless_reality';
+
   @IsString()
   label!: string;
 
@@ -423,6 +427,26 @@ export class CreateNodeDto {
   @IsBoolean()
   allowInsecureTls!: boolean;
 
+  @IsOptional()
+  @IsString()
+  realityPublicKey?: string;
+
+  @IsOptional()
+  @IsString()
+  realityShortId?: string;
+
+  @IsOptional()
+  @IsString()
+  realityFingerprint?: string;
+
+  @IsOptional()
+  @IsString()
+  realitySpiderX?: string;
+
+  @IsOptional()
+  @IsString()
+  vlessFlow?: string;
+
   @IsString()
   trafficApiBaseUrl!: string;
 
@@ -442,6 +466,10 @@ export class CreateNodeDto {
 }
 
 export class UpdateNodeDto {
+  @IsOptional()
+  @IsIn(['hysteria2', 'vless_reality'])
+  protocol?: 'hysteria2' | 'vless_reality';
+
   @IsOptional()
   @IsString()
   label?: string;
@@ -470,6 +498,26 @@ export class UpdateNodeDto {
   @IsOptional()
   @IsBoolean()
   allowInsecureTls?: boolean;
+
+  @IsOptional()
+  @IsString()
+  realityPublicKey?: string;
+
+  @IsOptional()
+  @IsString()
+  realityShortId?: string;
+
+  @IsOptional()
+  @IsString()
+  realityFingerprint?: string;
+
+  @IsOptional()
+  @IsString()
+  realitySpiderX?: string;
+
+  @IsOptional()
+  @IsString()
+  vlessFlow?: string;
 
   @IsOptional()
   @IsString()

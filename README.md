@@ -2,7 +2,7 @@
 
 # Hysteria 2 Control Plane
 
-一个面向 Hysteria 2 的多用户会员管理系统单仓项目，覆盖管理后台、用户中心、HTTP 鉴权、流量同步和套餐节点分层。
+一个支持 Hysteria 2 与 VLESS + REALITY 的多用户会员管理系统单仓项目，覆盖管理后台、用户中心、节点鉴权/动态用户控制、流量同步和套餐节点分层。
 
 [![Next.js](https://img.shields.io/badge/Next.js-16-111111?style=flat-square&logo=next.js&logoColor=white)](https://nextjs.org/)
 [![NestJS](https://img.shields.io/badge/NestJS-API-E0234E?style=flat-square&logo=nestjs&logoColor=white)](https://nestjs.com/)
@@ -27,12 +27,12 @@ Hysteria 2 原生节点可以很快跑起来，但一旦进入多用户、套餐
 
 ## 一眼看懂
 
-| 模块 | 作用 | 当前状态 |
-| --- | --- | --- |
-| `apps/web` | 管理台 + 用户中心 | 已跑通 |
-| `apps/api` | 控制面 API、鉴权、同步任务 | 已跑通 |
-| `packages/ui` | 主题 token、SCSS 主题层、UI preset | 已落地 |
-| `ops/hysteria` | 多套餐端口 / 实例配置样例 | 已提供 |
+| 模块           | 作用                               | 当前状态 |
+| -------------- | ---------------------------------- | -------- |
+| `apps/web`     | 管理台 + 用户中心                  | 已跑通   |
+| `apps/api`     | 控制面 API、鉴权、同步任务         | 已跑通   |
+| `packages/ui`  | 主题 token、SCSS 主题层、UI preset | 已落地   |
+| `ops/hysteria` | 多套餐端口 / 实例配置样例          | 已提供   |
 
 ## 当前能力
 
@@ -55,6 +55,13 @@ Hysteria 2 原生节点可以很快跑起来，但一旦进入多用户、套餐
 - 支持按用户 token 做放行、封禁、剩余流量和设备数判断
 - 支持 Traffic Stats API 用量读取和在线会话读取
 
+### VLESS + REALITY 集成
+
+- 为每位会员签发独立 VLESS UUID，并生成标准 `vless://` REALITY 订阅节点
+- 通过 Xray `HandlerService` 动态增删有效用户
+- 通过 Xray `StatsService` 同步用户流量、在线 IP 数和节点健康状态
+- 支持后台手动同步、失效会员撤销和踢下线
+
 ## 架构概览
 
 ```mermaid
@@ -62,10 +69,13 @@ flowchart LR
   A["Admin Console<br/>Next.js"] --> B["Control Plane API<br/>NestJS"]
   C["Member Portal<br/>Next.js"] --> B
   D["Hysteria Server<br/>auth.type: http"] --> B
+  H["Xray VLESS + REALITY<br/>Node Agent"] --> B
   B --> E["PostgreSQL"]
   B --> F["Redis"]
   D --> G["Traffic Stats API"]
+  H --> I["Xray gRPC API"]
   B --> G
+  B --> H
 ```
 
 ## 技术栈
@@ -100,6 +110,8 @@ packages/
   ui/         主题 token、基础样式、UI preset
 ops/
   hysteria/   Hysteria 节点配置样例
+  xray/       VLESS + REALITY 服务端配置样例
+  xray-agent/ Xray 监控与控制代理
 ```
 
 ## 快速开始
@@ -186,6 +198,16 @@ pnpm --filter @hysteria/api prisma:seed
 - 每个用户使用独立 token，而不是共享单一口令
 - 套餐限速更适合通过不同端口 / 实例的固定 `bandwidth` 实现
 - Traffic Stats API 用于读取在线数和流量
+
+## VLESS + REALITY 接入说明
+
+节点侧部署和安全注意事项见 [`ops/xray-agent/README.md`](ops/xray-agent/README.md)。控制面启用统一节点同步任务：
+
+```dotenv
+NODE_SYNC_ENABLED=true
+```
+
+现有 `HYSTERIA_SYNC_ENABLED=true` 仍然兼容，但新部署建议使用协议无关的 `NODE_SYNC_ENABLED`。
 
 ## 公开仓库注意事项
 

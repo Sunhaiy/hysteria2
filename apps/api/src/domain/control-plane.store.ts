@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  NodeProtocol,
   OrderKind,
   OrderStatus,
   Plan,
@@ -85,6 +86,14 @@ type RedemptionCodeWithRelations = Prisma.RedemptionCodeGetPayload<{
 }>;
 
 type CdkKind = 'plan' | 'traffic_pack' | 'balance' | 'discount';
+type NodeProtocolInput = 'hysteria2' | 'vless_reality';
+
+type NodeConfigurationInput = {
+  protocol: NodeProtocolInput;
+  sni?: string | null;
+  realityPublicKey?: string | null;
+  realityShortId?: string | null;
+};
 
 @Injectable()
 export class ControlPlaneStoreService {
@@ -640,6 +649,7 @@ export class ControlPlaneStoreService {
   }
 
   async createNode(input: {
+    protocol?: NodeProtocolInput;
     label: string;
     hostname: string;
     port: number;
@@ -647,6 +657,11 @@ export class ControlPlaneStoreService {
     sni?: string;
     pinSHA256?: string;
     allowInsecureTls: boolean;
+    realityPublicKey?: string;
+    realityShortId?: string;
+    realityFingerprint?: string;
+    realitySpiderX?: string;
+    vlessFlow?: string;
     trafficApiBaseUrl: string;
     trafficApiSecret: string;
     active: boolean;
@@ -654,8 +669,11 @@ export class ControlPlaneStoreService {
     speedDownMbps: number;
   }) {
     try {
+      const protocol = input.protocol ?? 'hysteria2';
+      this.validateNodeConfiguration({ ...input, protocol });
       const node = await this.prisma.node.create({
         data: {
+          protocol: this.toDbNodeProtocol(protocol),
           label: input.label,
           hostname: input.hostname,
           port: input.port,
@@ -663,6 +681,11 @@ export class ControlPlaneStoreService {
           sni: input.sni,
           pinSHA256: input.pinSHA256,
           allowInsecureTls: input.allowInsecureTls,
+          realityPublicKey: input.realityPublicKey,
+          realityShortId: input.realityShortId,
+          realityFingerprint: input.realityFingerprint ?? 'chrome',
+          realitySpiderX: input.realitySpiderX,
+          vlessFlow: input.vlessFlow ?? 'xtls-rprx-vision',
           trafficApiBaseUrl: input.trafficApiBaseUrl,
           trafficApiSecret: input.trafficApiSecret,
           active: input.active,
@@ -680,6 +703,7 @@ export class ControlPlaneStoreService {
   async patchNode(
     nodeId: string,
     input: {
+      protocol?: NodeProtocolInput;
       label?: string;
       hostname?: string;
       port?: number;
@@ -687,6 +711,11 @@ export class ControlPlaneStoreService {
       sni?: string;
       pinSHA256?: string;
       allowInsecureTls?: boolean;
+      realityPublicKey?: string;
+      realityShortId?: string;
+      realityFingerprint?: string;
+      realitySpiderX?: string;
+      vlessFlow?: string;
       trafficApiBaseUrl?: string;
       trafficApiSecret?: string;
       active?: boolean;
@@ -695,9 +724,26 @@ export class ControlPlaneStoreService {
     },
   ) {
     try {
+      const current = await this.prisma.node.findUnique({ where: { id: nodeId } });
+      if (!current) throw new NotFoundException(`Unknown node: ${nodeId}`);
+      this.validateNodeConfiguration({
+        protocol: input.protocol ?? this.fromDbNodeProtocol(current.protocol),
+        sni: input.sni !== undefined ? input.sni : current.sni,
+        realityPublicKey:
+          input.realityPublicKey !== undefined
+            ? input.realityPublicKey
+            : current.realityPublicKey,
+        realityShortId:
+          input.realityShortId !== undefined
+            ? input.realityShortId
+            : current.realityShortId,
+      });
       const node = await this.prisma.node.update({
         where: { id: nodeId },
         data: this.withDefinedValues({
+          protocol: input.protocol
+            ? this.toDbNodeProtocol(input.protocol)
+            : undefined,
           label: input.label,
           hostname: input.hostname,
           port: input.port,
@@ -705,6 +751,11 @@ export class ControlPlaneStoreService {
           sni: input.sni,
           pinSHA256: input.pinSHA256,
           allowInsecureTls: input.allowInsecureTls,
+          realityPublicKey: input.realityPublicKey,
+          realityShortId: input.realityShortId,
+          realityFingerprint: input.realityFingerprint,
+          realitySpiderX: input.realitySpiderX,
+          vlessFlow: input.vlessFlow,
           trafficApiBaseUrl: input.trafficApiBaseUrl,
           trafficApiSecret: input.trafficApiSecret,
           active: input.active,
@@ -725,6 +776,71 @@ export class ControlPlaneStoreService {
     } catch (error) {
       this.handlePrismaError(error);
     }
+  }
+
+  async markNodeSyncSuccess(nodeId: string) {
+    await this.prisma.node.update({
+      where: { id: nodeId },
+      data: { lastSyncAt: new Date(), lastSyncError: null },
+    });
+  }
+
+  async markNodeSyncFailure(nodeId: string, cause: unknown) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    await this.prisma.node.update({
+      where: { id: nodeId },
+      data: { lastSyncError: message.slice(0, 1000) },
+    });
+  }
+
+  async getNodeProvisioningUsers(nodeId: string) {
+    const now = new Date();
+    const subscriptions = await this.prisma.subscription.findMany({
+      where: {
+        status: SubscriptionStatus.ACTIVE,
+        endsAt: { gt: now },
+        user: { status: UserStatus.ACTIVE },
+        plan: { bindings: { some: { nodeId } } },
+      },
+      include: {
+        user: {
+          include: {
+            accessTokens: {
+              where: { revokedAt: null },
+              orderBy: { createdAt: 'asc' },
+              take: 1,
+            },
+          },
+        },
+        trafficPacks: {
+          where: {
+            status: TrafficPackStatus.ACTIVE,
+            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+          },
+        },
+      },
+    });
+
+    const users = new Map<string, { userId: string; id: string }>();
+    for (const subscription of subscriptions) {
+      const baseRemaining =
+        subscription.includedTrafficBytes +
+        subscription.bonusTrafficBytes -
+        subscription.consumedTrafficBytes;
+      const packRemaining = subscription.trafficPacks.reduce(
+        (sum, pack) => sum + pack.remainingBytes,
+        BigInt(0),
+      );
+      const token = subscription.user.accessTokens[0];
+      if (token && baseRemaining + packRemaining > BigInt(0)) {
+        users.set(subscription.userId, {
+          userId: subscription.userId,
+          id: token.vlessUuid,
+        });
+      }
+    }
+
+    return [...users.values()];
   }
 
   async getUsageForUser(userId: string) {
@@ -1079,7 +1195,11 @@ export class ControlPlaneStoreService {
 
     const user = await this.mustGetUserRecord(token.userId);
 
-    if (!node || !node.active) {
+    if (
+      !node ||
+      !node.active ||
+      node.protocol !== NodeProtocol.HYSTERIA2
+    ) {
       return this.rejectAuth('node_unavailable', input, token.id, user.id, node?.id);
     }
 
@@ -2577,17 +2697,38 @@ export class ControlPlaneStoreService {
 
   private buildNodeView(
     node: Prisma.NodeGetPayload<object>,
-    snapshots: { userId: string; concurrentClients: number }[],
+    snapshots: {
+      userId: string;
+      concurrentClients: number;
+      capturedAt: Date;
+    }[],
   ) {
     const latestUsers = new Map<string, number>();
     for (const snapshot of snapshots) {
+      if (
+        snapshot.capturedAt.getTime() <
+        Date.now() - onlineSnapshotFreshnessMs
+      ) {
+        continue;
+      }
       if (!latestUsers.has(snapshot.userId)) {
         latestUsers.set(snapshot.userId, snapshot.concurrentClients);
       }
     }
 
+    const monitoringStatus = !node.active
+      ? 'disabled'
+      : node.lastSyncError
+        ? 'error'
+        : !node.lastSyncAt
+          ? 'unknown'
+          : node.lastSyncAt.getTime() >= Date.now() - onlineSnapshotFreshnessMs
+            ? 'online'
+            : 'stale';
+
     return {
       id: node.id,
+      protocol: this.fromDbNodeProtocol(node.protocol),
       label: node.label,
       hostname: node.hostname,
       port: node.port,
@@ -2595,11 +2736,19 @@ export class ControlPlaneStoreService {
       sni: node.sni,
       pinSHA256: node.pinSHA256,
       allowInsecureTls: node.allowInsecureTls,
+      realityPublicKey: node.realityPublicKey,
+      realityShortId: node.realityShortId,
+      realityFingerprint: node.realityFingerprint,
+      realitySpiderX: node.realitySpiderX,
+      vlessFlow: node.vlessFlow,
       trafficApiBaseUrl: node.trafficApiBaseUrl,
       trafficApiSecret: node.trafficApiSecret,
       active: node.active,
       speedUpMbps: node.speedUpMbps,
       speedDownMbps: node.speedDownMbps,
+      monitoringStatus,
+      lastSyncAt: node.lastSyncAt?.toISOString() ?? null,
+      lastSyncError: node.lastSyncError,
       concurrentUsers: [...latestUsers.values()].filter((value) => value > 0).length,
       createdAt: node.createdAt.toISOString(),
       updatedAt: node.updatedAt.toISOString(),
@@ -2868,6 +3017,37 @@ export class ControlPlaneStoreService {
 
   private toDbUserRole(role: 'admin' | 'member') {
     return role === 'admin' ? UserRole.ADMIN : UserRole.MEMBER;
+  }
+
+  private fromDbNodeProtocol(protocol: NodeProtocol): NodeProtocolInput {
+    return protocol === NodeProtocol.VLESS_REALITY
+      ? 'vless_reality'
+      : 'hysteria2';
+  }
+
+  private toDbNodeProtocol(protocol: NodeProtocolInput) {
+    return protocol === 'vless_reality'
+      ? NodeProtocol.VLESS_REALITY
+      : NodeProtocol.HYSTERIA2;
+  }
+
+  private validateNodeConfiguration(input: NodeConfigurationInput) {
+    if (input.protocol !== 'vless_reality') return;
+
+    if (!input.sni?.trim()) {
+      throw new BadRequestException('VLESS + REALITY node requires an SNI');
+    }
+    if (!input.realityPublicKey?.trim()) {
+      throw new BadRequestException(
+        'VLESS + REALITY node requires a REALITY public key',
+      );
+    }
+    const shortId = input.realityShortId?.trim() ?? '';
+    if (shortId && (!/^[0-9a-fA-F]+$/.test(shortId) || shortId.length > 16 || shortId.length % 2 !== 0)) {
+      throw new BadRequestException(
+        'REALITY short ID must be an even-length hexadecimal value up to 16 characters',
+      );
+    }
   }
 
   private fromDbUserStatus(status: UserStatus): 'active' | 'suspended' | 'banned' {

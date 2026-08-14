@@ -4,6 +4,7 @@ export type SubscriptionStatus = 'active' | 'expired' | 'paused' | 'canceled';
 export type TrafficPackStatus = 'active' | 'exhausted' | 'expired';
 export type ManualOrderStatus = 'pending' | 'applied' | 'void';
 export type ManualOrderKind = 'renewal' | 'traffic_pack' | 'manual_credit';
+export type NodeProtocol = 'hysteria2' | 'vless_reality';
 
 export interface User {
   id: string;
@@ -23,6 +24,7 @@ export interface AccessToken {
   userId: string;
   label: string;
   token: string;
+  vlessUuid: string;
   createdAt: string;
   lastUsedAt?: string;
   revokedAt?: string;
@@ -47,6 +49,7 @@ export interface Plan {
 
 export interface Node {
   id: string;
+  protocol: NodeProtocol;
   label: string;
   hostname: string;
   port: number;
@@ -54,11 +57,18 @@ export interface Node {
   sni?: string;
   pinSHA256?: string;
   allowInsecureTls: boolean;
+  realityPublicKey?: string;
+  realityShortId?: string;
+  realityFingerprint?: string;
+  realitySpiderX?: string;
+  vlessFlow?: string;
   trafficApiBaseUrl: string;
   trafficApiSecret: string;
   active: boolean;
   speedUpMbps: number;
   speedDownMbps: number;
+  lastSyncAt?: string;
+  lastSyncError?: string;
   createdAt: string;
   updatedAt: string;
 }

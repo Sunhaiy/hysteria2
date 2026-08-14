@@ -201,7 +201,7 @@ export default function AdminDashboardPage() {
           <div className="admin-quick-actions">
             <Link href="/admin/users"><Icon name="group" /><span><strong>新增用户</strong><small>创建账号并开通套餐</small></span><b>›</b></Link>
             <Link href="/admin/subscriptions"><Icon name="subscription" /><span><strong>新增订阅</strong><small>为现有会员开通服务</small></span><b>›</b></Link>
-            <Link href="/admin/nodes"><Icon name="hub" /><span><strong>新增节点</strong><small>接入 Hysteria 2 节点</small></span><b>›</b></Link>
+            <Link href="/admin/nodes"><Icon name="hub" /><span><strong>新增节点</strong><small>接入 Hysteria 2 / VLESS 节点</small></span><b>›</b></Link>
             <Link href="/admin/plans"><Icon name="stacks" /><span><strong>新增套餐</strong><small>配置价格、流量与速率</small></span><b>›</b></Link>
           </div>
         </Panel>

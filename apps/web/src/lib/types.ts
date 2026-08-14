@@ -78,6 +78,7 @@ export interface PlanBindingRecord {
 
 export interface NodeRecord {
   id: string;
+  protocol: "hysteria2" | "vless_reality";
   label: string;
   hostname: string;
   port: number;
@@ -85,11 +86,19 @@ export interface NodeRecord {
   sni?: string | null;
   pinSHA256?: string | null;
   allowInsecureTls: boolean;
+  realityPublicKey?: string | null;
+  realityShortId?: string | null;
+  realityFingerprint?: string | null;
+  realitySpiderX?: string | null;
+  vlessFlow?: string | null;
   trafficApiBaseUrl: string;
   trafficApiSecret: string;
   active: boolean;
   speedUpMbps: number;
   speedDownMbps: number;
+  monitoringStatus: "online" | "stale" | "error" | "unknown" | "disabled";
+  lastSyncAt?: string | null;
+  lastSyncError?: string | null;
   concurrentUsers: number;
   createdAt: string;
   updatedAt: string;
@@ -315,11 +324,13 @@ export interface PortalAccessResponse {
   qrCode: string;
   configSnippet: string;
   nodeLabel: string;
+  protocol: "hysteria2" | "vless_reality";
   expiresAt: string;
   trafficRemaining: number;
   nodes: Array<{
     id: string;
     label: string;
+    protocol: "hysteria2" | "vless_reality";
     uri: string;
   }>;
 }
