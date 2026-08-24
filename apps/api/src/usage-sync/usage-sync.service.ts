@@ -25,6 +25,9 @@ export class UsageSyncService {
 
   @Interval(60_000)
   async scheduledSync() {
+    if (process.env.NODE_SYNC_RUNNER === 'external') {
+      return;
+    }
     if (
       process.env.NODE_SYNC_ENABLED !== 'true' &&
       process.env.HYSTERIA_SYNC_ENABLED !== 'true'

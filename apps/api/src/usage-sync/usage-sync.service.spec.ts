@@ -266,4 +266,27 @@ describe('UsageSyncService', () => {
     expect(entitlements.getNodeAccess).toHaveBeenCalledTimes(3);
     expect(maxConcurrentAccessChecks).toBe(1);
   });
+
+  it('leaves scheduled synchronization to the external worker', async () => {
+    const previousRunner = process.env.NODE_SYNC_RUNNER;
+    process.env.NODE_SYNC_RUNNER = 'external';
+    const getNodesForControl = jest.fn();
+    const service = new UsageSyncService(
+      { getNodesForControl } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+
+    try {
+      await service.scheduledSync();
+      expect(getNodesForControl).not.toHaveBeenCalled();
+    } finally {
+      if (previousRunner === undefined) {
+        delete process.env.NODE_SYNC_RUNNER;
+      } else {
+        process.env.NODE_SYNC_RUNNER = previousRunner;
+      }
+    }
+  });
 });

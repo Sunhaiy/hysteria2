@@ -4,8 +4,10 @@ Install these units after the release symlink points to a fully built release:
 
 ```bash
 install -m 0644 ops/systemd/hysteria2-api.service /etc/systemd/system/
+install -m 0644 ops/systemd/hysteria2-sync-worker.service /etc/systemd/system/
 install -m 0644 ops/systemd/hysteria2-web.service /etc/systemd/system/
 systemctl daemon-reload
+systemctl enable --now hysteria2-sync-worker.service
 systemctl restart hysteria2-api.service hysteria2-web.service
 ```
 
@@ -16,6 +18,7 @@ working directory:
 release="$(readlink -f /opt/hysteria2-control-plane/current)"
 test "$(readlink -f /proc/$(systemctl show -p MainPID --value hysteria2-api.service)/cwd)" = "$release/apps/api"
 test "$(readlink -f /proc/$(systemctl show -p MainPID --value hysteria2-web.service)/cwd)" = "$release/apps/web"
+test "$(readlink -f /proc/$(systemctl show -p MainPID --value hysteria2-sync-worker.service)/cwd)" = "$release/apps/api"
 curl --fail http://127.0.0.1:4000/api/health/ready
 curl --fail http://127.0.0.1:3001/admin/users
 ```

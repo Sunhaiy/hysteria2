@@ -1,5 +1,5 @@
 [Unit]
-Description=Hysteria 2 Control Plane API
+Description=Hysteria 2 Control Plane Node Sync Worker
 After=network-online.target postgresql.service redis-server.service
 Wants=network-online.target
 
@@ -9,8 +9,7 @@ User=hysteria2
 Group=hysteria2
 WorkingDirectory=/opt/hysteria2-control-plane/current/apps/api
 EnvironmentFile=/opt/hysteria2-control-plane/shared/app.env
-Environment=NODE_SYNC_RUNNER=external
-ExecStart=/usr/local/bin/node dist/main.js
+ExecStart=/usr/local/bin/node dist/sync-worker.js
 Restart=always
 RestartSec=5
 
