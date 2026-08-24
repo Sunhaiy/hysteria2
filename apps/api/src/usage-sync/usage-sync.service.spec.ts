@@ -149,4 +149,62 @@ describe('UsageSyncService', () => {
       provisionedUsers: 1,
     });
   });
+
+  it('serializes node syncs to preserve database capacity for user requests', async () => {
+    const nodes = ['node_a', 'node_b', 'node_c'].map((id) => ({
+      id,
+      protocol: 'hysteria2',
+      trafficApiBaseUrl: `mock://${id}`,
+      trafficApiSecret: 'secret',
+      active: true,
+    }));
+    let activeDatabaseWrites = 0;
+    let maxConcurrentDatabaseWrites = 0;
+    const store = {
+      getNodesForControl: jest.fn().mockResolvedValue(nodes),
+      acknowledgeTrafficBatch: jest.fn().mockResolvedValue(undefined),
+      applyOnlineSnapshot: jest.fn().mockResolvedValue(undefined),
+      markNodeSyncSuccess: jest.fn().mockResolvedValue(undefined),
+      markNodeSyncFailure: jest.fn().mockResolvedValue(undefined),
+    };
+    const nodeClient = {
+      claimTrafficBatch: jest.fn((node: { id: string }) =>
+        Promise.resolve({
+          id: `batch-${node.id}`,
+          claimedAt: '2026-08-24T00:00:00.000Z',
+          traffic: {},
+        }),
+      ),
+      acknowledgeTrafficBatch: jest.fn().mockResolvedValue({ ok: true }),
+      fetchOnline: jest.fn().mockResolvedValue({}),
+      syncUsers: jest
+        .fn()
+        .mockResolvedValue({ added: 0, removed: 0, total: 0 }),
+    };
+    const entitlements = {
+      applyTrafficBatch: jest.fn(async () => {
+        activeDatabaseWrites += 1;
+        maxConcurrentDatabaseWrites = Math.max(
+          maxConcurrentDatabaseWrites,
+          activeDatabaseWrites,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        activeDatabaseWrites -= 1;
+        return { replayed: false, impactedUsers: [] };
+      }),
+      getNodeAccess: jest.fn().mockResolvedValue({ allowed: true }),
+      getNodeProvisioningUsers: jest.fn().mockResolvedValue([]),
+    };
+    const service = new UsageSyncService(
+      store as never,
+      nodeClient as never,
+      { kickUserEverywhere: jest.fn() } as never,
+      entitlements as never,
+    );
+
+    const result = await service.syncAllNodes();
+
+    expect(result).toHaveLength(nodes.length);
+    expect(maxConcurrentDatabaseWrites).toBe(1);
+  });
 });

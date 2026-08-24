@@ -48,21 +48,19 @@ export class UsageSyncService {
       (node) => node.active,
     );
 
-    const settled = await Promise.allSettled(
-      nodes.map((node) =>
-        this.withNodeLock(node.id, () => this.syncNodeRecord(node)),
-      ),
-    );
-
-    return settled.map((result, i) => {
-      if (result.status === 'fulfilled') {
-        return result.value;
+    const results = [];
+    for (const node of nodes) {
+      try {
+        results.push(
+          await this.withNodeLock(node.id, () => this.syncNodeRecord(node)),
+        );
+      } catch (error) {
+        this.logger.warn(`Failed to sync node ${node.id}: ${String(error)}`);
+        results.push({ nodeId: node.id, error: String(error) });
       }
-      this.logger.warn(
-        `Failed to sync node ${nodes[i].id}: ${String(result.reason)}`,
-      );
-      return { nodeId: nodes[i].id, error: String(result.reason) };
-    });
+    }
+
+    return results;
   }
 
   async syncNode(nodeId: string) {
