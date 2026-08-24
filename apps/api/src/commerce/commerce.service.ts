@@ -336,6 +336,7 @@ export class CommerceService {
       tx.catalogOffer.findUnique({
         where: { id: input.offerId },
         include: {
+          legacyPlanOffer: true,
           product: {
             include: { accessProfile: true, legacyPlan: true },
           },
@@ -349,12 +350,22 @@ export class CommerceService {
     if (!offer || offer.archivedAt) {
       throw new NotFoundException('Catalog offer not found');
     }
+    const legacyDurationDays =
+      offer.billingPeriod === BillingPeriod.LEGACY
+        ? (offer.legacyPlanOffer?.legacyDurationDays ??
+          offer.product.legacyPlan?.durationDays ??
+          null)
+        : null;
+    const hasValidDuration =
+      offer.billingPeriod === BillingPeriod.LEGACY
+        ? Boolean(legacyDurationDays && legacyDurationDays > 0)
+        : Boolean(offer.intervalMonths && offer.intervalMonths > 0);
     if (
       !offer.active ||
       offer.product.status !== CatalogProductStatus.ACTIVE ||
       !offer.product.accessProfileId ||
       !offer.product.accessProfile?.active ||
-      !offer.intervalMonths
+      !hasValidDuration
     ) {
       throw new BadRequestException('Catalog offer is not purchasable');
     }
@@ -386,10 +397,12 @@ export class CommerceService {
     }
 
     const purchasedAt = new Date();
-    const entitlementExpiresAt = this.addMonthsClamped(
-      purchasedAt,
-      offer.intervalMonths,
-    );
+    const expiryOffer = {
+      billingPeriod: offer.billingPeriod,
+      intervalMonths: offer.intervalMonths,
+      legacyDurationDays,
+    };
+    const entitlementExpiresAt = this.offerExpiry(purchasedAt, expiryOffer);
     const account = await tx.accessAccount.upsert({
       where: { userId },
       create: { userId },
@@ -415,10 +428,7 @@ export class CommerceService {
       if (existing && existing.planId === plan.id) {
         const extensionBase =
           existing.endsAt > purchasedAt ? existing.endsAt : purchasedAt;
-        const extendedEndsAt = this.addMonthsClamped(
-          extensionBase,
-          offer.intervalMonths,
-        );
+        const extendedEndsAt = this.offerExpiry(extensionBase, expiryOffer);
         const updated = await tx.subscription.update({
           where: { id: existing.id },
           data: {

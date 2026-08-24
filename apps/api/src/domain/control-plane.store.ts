@@ -998,22 +998,18 @@ export class ControlPlaneStoreService {
 
     if (nodes.length === 0) return [];
 
-    const nodeIds = nodes.map((n) => n.id);
-    const allSnapshots = await this.prisma.onlineSnapshot.findMany({
-      where: { nodeId: { in: nodeIds } },
-      orderBy: { capturedAt: 'desc' },
-      take: 200 * nodes.length,
-    });
+    const snapshotsByNode = await Promise.all(
+      nodes.map((node) =>
+        this.prisma.onlineSnapshot.findMany({
+          where: { nodeId: node.id },
+          orderBy: { capturedAt: 'desc' },
+          take: 200,
+        }),
+      ),
+    );
 
-    const snapshotsByNode = new Map<string, typeof allSnapshots>();
-    for (const snap of allSnapshots) {
-      const list = snapshotsByNode.get(snap.nodeId) ?? [];
-      list.push(snap);
-      snapshotsByNode.set(snap.nodeId, list);
-    }
-
-    return nodes.map((node) =>
-      this.buildNodeView(node, snapshotsByNode.get(node.id) ?? []),
+    return nodes.map((node, index) =>
+      this.buildNodeView(node, snapshotsByNode[index]),
     );
   }
 
@@ -3171,7 +3167,7 @@ export class ControlPlaneStoreService {
     const fourteenDaysAgo = new Date(now.getTime() - 13 * 24 * 60 * 60 * 1000);
     fourteenDaysAgo.setUTCHours(0, 0, 0, 0);
 
-    const [totals, last24Hours, last7Days, nodeGroups, userGroups, recent] =
+    const [totals, last24Hours, last7Days, nodeGroups, userGroups, dailyRows] =
       await Promise.all([
         this.prisma.usageRollup.aggregate({
           _sum: { txBytes: true, rxBytes: true },
@@ -3197,11 +3193,18 @@ export class ControlPlaneStoreService {
           _count: { _all: true },
           _max: { bucketStart: true },
         }),
-        this.prisma.usageRollup.findMany({
-          where: { bucketStart: { gte: fourteenDaysAgo } },
-          select: { bucketStart: true, txBytes: true, rxBytes: true },
-          orderBy: { bucketStart: 'asc' },
-        }),
+        this.prisma.$queryRaw<
+          Array<{ date: string; txBytes: bigint; rxBytes: bigint }>
+        >(Prisma.sql`
+          SELECT
+            to_char(date_trunc('day', "bucketStart"), 'YYYY-MM-DD') AS "date",
+            COALESCE(SUM("txBytes"), 0)::bigint AS "txBytes",
+            COALESCE(SUM("rxBytes"), 0)::bigint AS "rxBytes"
+          FROM "UsageRollup"
+          WHERE "bucketStart" >= ${fourteenDaysAgo}
+          GROUP BY date_trunc('day', "bucketStart")
+          ORDER BY date_trunc('day', "bucketStart") ASC
+        `),
       ]);
 
     const [nodes, users] = await Promise.all([
@@ -3231,8 +3234,8 @@ export class ControlPlaneStoreService {
       date.setUTCDate(date.getUTCDate() + index);
       dailyMap.set(date.toISOString().slice(0, 10), { txBytes: 0, rxBytes: 0 });
     }
-    for (const item of recent) {
-      const key = item.bucketStart.toISOString().slice(0, 10);
+    for (const item of dailyRows) {
+      const key = item.date;
       const current = dailyMap.get(key) ?? { txBytes: 0, rxBytes: 0 };
       current.txBytes += Number(item.txBytes);
       current.rxBytes += Number(item.rxBytes);

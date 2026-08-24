@@ -571,7 +571,10 @@ export class CatalogService {
     const products = await this.prisma.catalogProduct.findMany({
       where: id ? { id } : undefined,
       include: {
-        offers: { orderBy: { intervalMonths: 'asc' } },
+        offers: {
+          include: { legacyPlanOffer: true },
+          orderBy: { intervalMonths: 'asc' },
+        },
         accessProfile: {
           include: {
             poolBindings: {
@@ -643,6 +646,7 @@ export class CatalogService {
         name: offer.name,
         billingPeriod: offer.billingPeriod.toLowerCase(),
         intervalMonths: offer.intervalMonths,
+        legacyDurationDays: offer.legacyPlanOffer?.legacyDurationDays ?? null,
         trafficBytes: Number(offer.trafficBytes),
         priceCents: offer.priceCents,
         currency: offer.currency,

@@ -11,13 +11,19 @@ import { apiRequest, ApiError } from "@/lib/api";
 import { portalNav } from "@/lib/copy";
 import { formatBytes, formatMoney } from "@/lib/format";
 
-type Offer = { id: string; name: string; billingPeriod: "monthly" | "quarterly" | "yearly"; intervalMonths: number; trafficBytes: number; priceCents: number; currency: string; active: boolean; isDefault: boolean; archivedAt?: string | null };
+type Offer = { id: string; name: string; billingPeriod: "monthly" | "quarterly" | "yearly" | "legacy"; intervalMonths: number | null; legacyDurationDays: number | null; trafficBytes: number; priceCents: number; currency: string; active: boolean; isDefault: boolean; archivedAt?: string | null };
 type Product = { id: string; kind: "plan" | "traffic_pack"; status: string; name: string; description?: string | null; trafficReset: "monthly" | "never"; access: { profileName?: string | null; speedUpMbps: number; speedDownMbps: number; deviceLimit: number; nodePools: Array<{ id: string; name: string; region?: string | null; nodes: Array<{ id: string; label: string; serviceable: boolean }> }> }; offers: Offer[] };
 type Catalog = { products: Product[] };
 type Quote = { productName: string; basePriceCents: number; discountCents: number; discountLabel?: string | null; finalPriceCents: number; balanceCents: number; sufficient: boolean };
 type Wallet = { balanceCents: number };
 
-const periodName = { monthly: "月付", quarterly: "季付", yearly: "年付" } as const;
+const periodName = { monthly: "月付", quarterly: "季付", yearly: "年付", legacy: "固定期" } as const;
+
+function durationName(offer: Offer) {
+  return offer.billingPeriod === "legacy"
+    ? `${offer.legacyDurationDays ?? "-"} 天`
+    : `${offer.intervalMonths ?? "-"} 个月`;
+}
 
 export default function PortalPlansPage() {
   const { token } = useAuth();
@@ -95,7 +101,7 @@ export default function PortalPlansPage() {
               <label className="field"><span className="fine-print">规格</span><CustomSelect value={offer?.id ?? ""} onChange={(value) => setSelected((current) => ({ ...current, [product.id]: value }))} options={offers.map((item) => ({ value: item.id, label: `${item.name} · ${formatMoney(item.priceCents)}` }))} /></label>
               {offer ? <div className="plan-benefit-list">
                 <div><span className="plan-benefit-icon"><Icon name="network_node" /></span><span>{product.kind === "plan" ? "每月额度" : "一次性总量"}</span><strong>{formatBytes(offer.trafficBytes)}</strong></div>
-                <div><span className="plan-benefit-icon"><Icon name="calendar_month" /></span><span>有效期</span><strong>{offer.intervalMonths} 个月</strong></div>
+                <div><span className="plan-benefit-icon"><Icon name="calendar_month" /></span><span>有效期</span><strong>{durationName(offer)}</strong></div>
                 <div><span className="plan-benefit-icon"><Icon name="globe" /></span><span>节点池</span><strong>{product.access.nodePools.map((pool) => pool.name).join(" · ")}</strong></div>
               </div> : null}
               <div className="plan-card-footer"><button className="action-button" type="button" disabled={!offer} onClick={() => offer && openCheckout(product, offer)}>{product.kind === "plan" ? "选择套餐" : "购买流量包"}</button><span className="badge info">{product.kind === "plan" ? "按月重置" : "独立接入"}</span></div>
@@ -123,7 +129,7 @@ export default function PortalPlansPage() {
           {error ? <div className="feedback error">{error}</div> : null}
           <div className="checkout-facts">
             <div><span>流量规则</span><strong>{checkout.product.kind === "plan" ? `每月重置 ${formatBytes(checkout.offer.trafficBytes)}` : `一次性总量 ${formatBytes(checkout.offer.trafficBytes)}`}</strong></div>
-            <div><span>有效期</span><strong>{checkout.offer.intervalMonths} 个月</strong></div>
+            <div><span>有效期</span><strong>{durationName(checkout.offer)}</strong></div>
             <div><span>节点范围</span><strong>{checkout.product.access.nodePools.map((pool) => pool.name).join(" · ")}</strong></div>
             <div><span>速率 / 设备</span><strong>{checkout.product.access.speedDownMbps} Mbps · {checkout.product.access.deviceLimit} 台</strong></div>
           </div>

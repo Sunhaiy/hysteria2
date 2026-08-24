@@ -556,4 +556,118 @@ describe('CommerceService checkout', () => {
       },
     });
   });
+
+  it('checks out a migrated legacy catalog offer using its day duration', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2027-01-31T08:00:00.000Z'));
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest
+          .fn()
+          .mockImplementation(({ data }) =>
+            Promise.resolve({ id: 'order_plan_legacy', ...data }),
+          ),
+      },
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'user_1',
+          status: 'ACTIVE',
+          balanceCents: 5000,
+        }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      catalogOffer: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'catalog_offer_legacy',
+          slug: 'core-30d',
+          name: '30 天',
+          billingPeriod: 'LEGACY',
+          intervalMonths: null,
+          trafficBytes: 100n,
+          priceCents: 1200,
+          currency: 'CNY',
+          active: true,
+          archivedAt: null,
+          legacyPlanOfferId: 'offer_legacy',
+          legacyPlanOffer: { legacyDurationDays: 30 },
+          product: {
+            id: 'catalog_core',
+            name: 'Core',
+            kind: 'PLAN',
+            status: 'ACTIVE',
+            accessProfileId: 'profile_core',
+            legacyPlanId: 'plan_core',
+            legacyTrafficPackProductId: null,
+            legacyPlan: { id: 'plan_core' },
+            accessProfile: {
+              active: true,
+              speedUpMbps: 20,
+              speedDownMbps: 100,
+              deviceLimit: 3,
+            },
+          },
+        }),
+      },
+      accessProfilePool: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ pool: { members: [{ nodeId: 'node_1' }] } }]),
+      },
+      accessProfileNode: { findFirst: jest.fn() },
+      accessAccount: {
+        upsert: jest.fn().mockResolvedValue({ id: 'account_1' }),
+      },
+      subscription: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        updateMany: jest.fn(),
+        create: jest.fn().mockResolvedValue({ id: 'sub_legacy' }),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          endsAt: new Date('2027-03-02T08:00:00.000Z'),
+        }),
+      },
+      walletTransaction: {
+        create: jest.fn().mockResolvedValue({ id: 'wallet_legacy' }),
+      },
+      walletLedgerEntry: { create: jest.fn().mockResolvedValue({}) },
+      paymentRecord: { create: jest.fn().mockResolvedValue({}) },
+      redemptionUse: { create: jest.fn() },
+    };
+    const entitlements = { grantFromOrder: jest.fn().mockResolvedValue({}) };
+    const prisma = {
+      $transaction: jest.fn((callback: (client: typeof tx) => unknown) =>
+        callback(tx),
+      ),
+    };
+    const service = new CommerceService(
+      prisma as never,
+      {} as never,
+      entitlements as never,
+    );
+
+    const result = await service.checkout(
+      'user_1',
+      { offerId: 'catalog_offer_legacy' },
+      'offer-plan-legacy',
+    );
+
+    expect(result.entitlementExpiresAt).toBe('2027-03-02T08:00:00.000Z');
+    const [subscriptionCreate] = tx.subscription.create.mock
+      .calls[0] as unknown as [
+      {
+        data: {
+          endsAt: Date;
+          cycles: { create: { endsAt: Date } };
+        };
+      },
+    ];
+    expect(subscriptionCreate.data).toMatchObject({
+      endsAt: new Date('2027-03-02T08:00:00.000Z'),
+      cycles: {
+        create: {
+          endsAt: new Date('2027-02-28T08:00:00.000Z'),
+        },
+      },
+    });
+    jest.useRealTimers();
+  });
 });

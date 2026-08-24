@@ -746,6 +746,7 @@ model OnlineSnapshot {
 
   @@index([userId, capturedAt])
   @@index([nodeId, capturedAt])
+  @@index([capturedAt])
 }
 
 // Simple key-value store for admin-editable runtime settings (SMTP, feature
