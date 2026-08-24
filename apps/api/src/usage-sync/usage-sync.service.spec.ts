@@ -207,4 +207,63 @@ describe('UsageSyncService', () => {
     expect(result).toHaveLength(nodes.length);
     expect(maxConcurrentDatabaseWrites).toBe(1);
   });
+
+  it('serializes post-import access checks to avoid flooding the database pool', async () => {
+    const node = {
+      id: 'node_hk_core',
+      protocol: 'hysteria2',
+      trafficApiBaseUrl: 'mock://hk-core',
+      trafficApiSecret: 'secret',
+      active: true,
+    };
+    let activeAccessChecks = 0;
+    let maxConcurrentAccessChecks = 0;
+    const store = {
+      getNodesForControl: jest.fn().mockResolvedValue([node]),
+      acknowledgeTrafficBatch: jest.fn().mockResolvedValue(undefined),
+      applyOnlineSnapshot: jest.fn().mockResolvedValue(undefined),
+      markNodeSyncSuccess: jest.fn().mockResolvedValue(undefined),
+      markNodeSyncFailure: jest.fn().mockResolvedValue(undefined),
+    };
+    const nodeClient = {
+      claimTrafficBatch: jest.fn().mockResolvedValue({
+        id: 'batch-access-checks',
+        claimedAt: '2026-08-24T00:00:00.000Z',
+        traffic: {},
+      }),
+      acknowledgeTrafficBatch: jest.fn().mockResolvedValue({ ok: true }),
+      fetchOnline: jest.fn().mockResolvedValue({}),
+      syncUsers: jest
+        .fn()
+        .mockResolvedValue({ added: 0, removed: 0, total: 0 }),
+    };
+    const entitlements = {
+      applyTrafficBatch: jest.fn().mockResolvedValue({
+        replayed: false,
+        impactedUsers: ['user_a', 'user_b', 'user_c'],
+      }),
+      getNodeAccess: jest.fn(async () => {
+        activeAccessChecks += 1;
+        maxConcurrentAccessChecks = Math.max(
+          maxConcurrentAccessChecks,
+          activeAccessChecks,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        activeAccessChecks -= 1;
+        return { allowed: true };
+      }),
+      getNodeProvisioningUsers: jest.fn().mockResolvedValue([]),
+    };
+    const service = new UsageSyncService(
+      store as never,
+      nodeClient as never,
+      { kickUserEverywhere: jest.fn() } as never,
+      entitlements as never,
+    );
+
+    await service.syncAllNodes();
+
+    expect(entitlements.getNodeAccess).toHaveBeenCalledTimes(3);
+    expect(maxConcurrentAccessChecks).toBe(1);
+  });
 });

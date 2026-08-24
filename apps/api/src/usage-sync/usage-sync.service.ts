@@ -104,13 +104,14 @@ export class UsageSyncService {
       const online = await this.nodeClient.fetchOnline(node);
       await this.store.applyOnlineSnapshot(node.id, online);
 
-      const restrictionChecks = await Promise.all(
-        impactedUsers.map(async (userId) => ({
+      const restrictionChecks = [];
+      for (const userId of impactedUsers) {
+        restrictionChecks.push({
           userId,
           restricted: !(await this.entitlements.getNodeAccess(userId, node.id))
             .allowed,
-        })),
-      );
+        });
+      }
 
       await Promise.all(
         restrictionChecks
