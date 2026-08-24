@@ -1,0 +1,21 @@
+[Unit]
+Description=Hysteria2 control-plane destination telemetry agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/hysteria2-destination-agent.env
+ExecStart=/usr/local/bin/hysteria2-destination-agent
+Restart=always
+RestartSec=3
+DynamicUser=yes
+SupplementaryGroups=systemd-journal
+StateDirectory=hysteria2-destination-agent
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

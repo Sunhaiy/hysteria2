@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { SecretCipherService } from '../security/secret-cipher.service';
+import { secretSettingKeys } from '../security/secret-migration.service';
 
 export interface SmtpConfig {
   host?: string;
@@ -59,7 +61,10 @@ const TUTORIAL_DEFAULTS = {
 export class SettingsService {
   private cache: Map<string, string> | null = null;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cipher: SecretCipherService,
+  ) {}
 
   private async all(): Promise<Map<string, string>> {
     if (this.cache) {
@@ -78,8 +83,17 @@ export class SettingsService {
     for (const [key, value] of Object.entries(updates)) {
       await this.prisma.setting.upsert({
         where: { key },
-        create: { key, value },
-        update: { value },
+        create: {
+          key,
+          value: secretSettingKeys.includes(key)
+            ? this.cipher.encrypt(value)
+            : value,
+        },
+        update: {
+          value: secretSettingKeys.includes(key)
+            ? this.cipher.encrypt(value)
+            : value,
+        },
       });
     }
     this.cache = null; // invalidate so the next read reflects the change
@@ -162,7 +176,10 @@ export class SettingsService {
 
     const host = pick('smtp.host', 'SMTP_HOST');
     const user = pick('smtp.user', 'SMTP_USER');
-    const pass = pick('smtp.pass', 'SMTP_PASS');
+    const storedPass = map.get('smtp.pass');
+    const pass = storedPass
+      ? this.cipher.decrypt(storedPass)
+      : process.env.SMTP_PASS || undefined;
     const from = pick('smtp.from', 'SMTP_FROM') || user;
     const port = Number(pick('smtp.port', 'SMTP_PORT') || 465);
 
@@ -214,13 +231,19 @@ export class SettingsService {
     const pick = (key: string, envKey: string) =>
       map.get(key) || process.env[envKey] || undefined;
 
+    const googleSecret = map.get('oauth.google.secret');
+    const githubSecret = map.get('oauth.github.secret');
     const google = {
       clientId: pick('oauth.google.id', 'GOOGLE_CLIENT_ID'),
-      clientSecret: pick('oauth.google.secret', 'GOOGLE_CLIENT_SECRET'),
+      clientSecret: googleSecret
+        ? this.cipher.decrypt(googleSecret)
+        : process.env.GOOGLE_CLIENT_SECRET || undefined,
     };
     const github = {
       clientId: pick('oauth.github.id', 'GITHUB_CLIENT_ID'),
-      clientSecret: pick('oauth.github.secret', 'GITHUB_CLIENT_SECRET'),
+      clientSecret: githubSecret
+        ? this.cipher.decrypt(githubSecret)
+        : process.env.GITHUB_CLIENT_SECRET || undefined,
     };
     return {
       google: {

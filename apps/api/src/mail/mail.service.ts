@@ -43,6 +43,25 @@ export class MailService {
     });
   }
 
+  async sendOperationalAlert(input: {
+    to: string;
+    title: string;
+    message: string;
+    state: 'opened' | 'resolved';
+  }) {
+    const stateLabel = input.state === 'opened' ? '已开启' : '已恢复';
+    await this.send({
+      to: input.to,
+      subject: `[Hysteria 2 告警${stateLabel}] ${input.title}`,
+      text: `${input.title}\n${input.message}\n状态：${stateLabel}`,
+      html:
+        `<div style="font-family:system-ui,sans-serif;font-size:15px;color:#1a1a1a">` +
+        `<h2>${input.title}</h2><p>${input.message}</p>` +
+        `<p><b>状态：</b>${stateLabel}</p></div>`,
+      devNote: `[DEV] Alert ${input.state} for ${input.to}: ${input.title}`,
+    });
+  }
+
   private async send(input: {
     to: string;
     subject: string;

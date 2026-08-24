@@ -14,6 +14,7 @@ import { formatBytes, formatDateTime } from "@/lib/format";
 import type {
   AdminUser,
   NodeRecord,
+  PaginatedResponse,
   PlanBindingRecord,
   PlanRecord,
   SubscriptionRecord,
@@ -75,21 +76,34 @@ export default function AdminSubscriptionsPage() {
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [planFilter, setPlanFilter] = useState("");
+  const [nodeFilter, setNodeFilter] = useState("");
+  const [quotaFilter, setQuotaFilter] = useState("");
+  const [totalSubscriptions, setTotalSubscriptions] = useState(0);
 
   const load = useCallback(async () => {
     if (!token) return;
     setLoading(true);
     try {
+      const params = new URLSearchParams({ limit: "200" });
+      if (search.trim()) params.set("q", search.trim());
+      if (statusFilter) params.set("status", statusFilter);
+      if (planFilter) params.set("planId", planFilter);
+      if (nodeFilter) params.set("nodeId", nodeFilter);
+      if (quotaFilter) params.set("quotaState", quotaFilter);
       const [nextSubscriptions, nextUsers, nextPlans, nextNodes, nextBindings] =
         await Promise.all([
-          apiRequest<SubscriptionRecord[]>("/api/admin/subscriptions", { token }),
-          apiRequest<AdminUser[]>("/api/admin/users", { token }),
+          apiRequest<PaginatedResponse<SubscriptionRecord>>(`/api/admin/subscriptions?${params}`, { token }),
+          apiRequest<PaginatedResponse<AdminUser>>("/api/admin/users?limit=200", { token }),
           apiRequest<PlanRecord[]>("/api/admin/plans", { token }),
           apiRequest<NodeRecord[]>("/api/admin/nodes", { token }),
           apiRequest<PlanBindingRecord[]>("/api/admin/plan-bindings", { token }),
         ]);
-      setSubscriptions(nextSubscriptions);
-      setUsers(nextUsers.filter((u) => u.role === "member"));
+      setSubscriptions(nextSubscriptions.items);
+      setTotalSubscriptions(nextSubscriptions.total);
+      setUsers(nextUsers.items.filter((u) => u.role === "member"));
       setPlans(nextPlans);
       setNodes(nextNodes);
       setBindings(nextBindings);
@@ -98,10 +112,10 @@ export default function AdminSubscriptionsPage() {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [nodeFilter, planFilter, quotaFilter, search, statusFilter, token]);
 
   useEffect(() => {
-    const id = window.setTimeout(() => void load(), 0);
+    const id = window.setTimeout(() => void load(), 250);
     return () => window.clearTimeout(id);
   }, [load]);
 
@@ -270,7 +284,7 @@ export default function AdminSubscriptionsPage() {
       requireRole="admin"
       toolbarMeta={
         <span className="badge info">
-          {loading ? "加载中..." : `${subscriptions.length} 条订阅`}
+          {loading ? "加载中..." : `${totalSubscriptions} 条订阅`}
         </span>
       }
       toolbarActions={
@@ -290,6 +304,36 @@ export default function AdminSubscriptionsPage() {
         title="订阅列表"
         copy="点击订阅行编辑状态、到期时间和节点；「新建订阅」为会员开通一条新订阅。"
       >
+        <div className="admin-filter-bar">
+          <label className="field grow-field">
+            <span className="fine-print">搜索订阅</span>
+            <input className="control" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="用户邮箱、名称或订阅 ID" />
+          </label>
+          <label className="field">
+            <span className="fine-print">状态</span>
+            <select className="control" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              <option value="">全部</option><option value="active">生效</option><option value="paused">暂停</option><option value="expired">过期</option><option value="canceled">取消</option>
+            </select>
+          </label>
+          <label className="field">
+            <span className="fine-print">套餐</span>
+            <select className="control" value={planFilter} onChange={(event) => setPlanFilter(event.target.value)}>
+              <option value="">全部</option>{plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            <span className="fine-print">节点</span>
+            <select className="control" value={nodeFilter} onChange={(event) => setNodeFilter(event.target.value)}>
+              <option value="">全部</option>{nodes.map((node) => <option key={node.id} value={node.id}>{node.label}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            <span className="fine-print">额度</span>
+            <select className="control" value={quotaFilter} onChange={(event) => setQuotaFilter(event.target.value)}>
+              <option value="">全部</option><option value="available">充足</option><option value="low">偏低</option><option value="exhausted">耗尽</option>
+            </select>
+          </label>
+        </div>
         {loading && subscriptions.length === 0 ? (
           <div className="skeleton-rows">
             {Array.from({ length: 5 }, (_, i) => (
@@ -300,7 +344,7 @@ export default function AdminSubscriptionsPage() {
 
         {subscriptions.length > 0 ? (
           <DataTable
-            headers={["用户", "套餐", "节点", "状态", "剩余流量", "到期时间"]}
+            headers={["用户", "套餐 / 周期", "节点", "状态", "倍率", "剩余流量", "到期时间"]}
             rows={subscriptions.map((sub) => [
               <button
                 key={sub.id}
@@ -311,11 +355,12 @@ export default function AdminSubscriptionsPage() {
                 <span>{sub.userDisplayName}</span>
                 <span className="muted">{sub.userEmail}</span>
               </button>,
-              sub.planName,
+              <div key={`${sub.id}-offer`}><strong>{sub.planName}</strong><span className="muted">{sub.offerName ?? sub.billingPeriod ?? "legacy"}</span></div>,
               sub.nodeLabel,
               <span key={`${sub.id}-st`} className={`badge ${statusTone(sub.status)}`}>
                 {sub.status}
               </span>,
+              `${(sub.trafficMultiplier ?? 1).toFixed(2)}x`,
               formatBytes(sub.trafficRemainingBytes),
               formatDateTime(sub.endsAt),
             ])}

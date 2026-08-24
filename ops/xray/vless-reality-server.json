@@ -1,5 +1,6 @@
 {
   "log": {
+    "access": "/var/log/xray/access.log",
     "loglevel": "warning"
   },
   "api": {
@@ -26,6 +27,11 @@
       "settings": {
         "users": [],
         "decryption": "none"
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"],
+        "routeOnly": true
       },
       "streamSettings": {
         "network": "tcp",

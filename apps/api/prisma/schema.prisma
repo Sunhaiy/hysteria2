@@ -48,6 +48,46 @@ enum OrderKind {
   MANUAL_CREDIT
 }
 
+enum OrderSource {
+  LEGACY
+  ADMIN
+  WALLET
+  CDK
+  PAYMENT
+}
+
+enum UsageImportBatchStatus {
+  APPLIED
+  ACKED
+}
+
+enum BillingPeriod {
+  MONTHLY
+  QUARTERLY
+  YEARLY
+  LEGACY
+}
+
+enum QuotaAdjustmentMode {
+  DELTA
+  SET_REMAINING
+}
+
+enum DestinationTransport {
+  TCP
+  UDP
+}
+
+enum DestinationTargetType {
+  DOMAIN
+  IP
+}
+
+enum AdminPermission {
+  DESTINATION_AUDIT_READ
+  ADMIN_PERMISSIONS_MANAGE
+}
+
 enum RedemptionCodeKind {
   PLAN
   TRAFFIC_PACK
@@ -69,30 +109,196 @@ enum RedemptionCodeStatus {
   EXPIRED
 }
 
+enum CatalogProductKind {
+  PLAN
+  TRAFFIC_PACK
+}
+
+enum CatalogProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum QuotaCadence {
+  MONTHLY_RESET
+  ONE_TIME
+}
+
+enum EntitlementGrantKind {
+  PLAN
+  TRAFFIC_PACK
+}
+
+enum EntitlementGrantStatus {
+  ACTIVE
+  EXPIRED
+  CANCELED
+}
+
+enum QuotaBucketKind {
+  PLAN_CYCLE
+  TRAFFIC_PACK
+}
+
+enum NodeLifecycleStatus {
+  ACTIVE
+  DRAINING
+  MAINTENANCE
+  DISABLED
+}
+
+enum PaymentRecordSource {
+  WALLET
+  CDK
+  MANUAL
+}
+
+enum PaymentRecordStatus {
+  PENDING
+  SETTLED
+  VOID
+}
+
+enum RefundMethod {
+  WALLET
+  MANUAL
+}
+
+enum RefundStatus {
+  PENDING
+  APPLIED
+  VOID
+}
+
+enum MonitorAlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum MonitorAlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
 model User {
-  id              String              @id @default(cuid())
-  email           String              @unique
-  displayName     String
-  passwordHash    String
-  plainPassword   String?
-  role            UserRole            @default(MEMBER)
-  status          UserStatus          @default(ACTIVE)
-  notes           String?
-  balanceCents    Int                 @default(0)
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
-  accessTokens    AccessToken[]
-  subscriptions   Subscription[]
+  id                String                   @id @default(cuid())
+  email             String                   @unique
+  displayName       String
+  passwordHash      String
+  sessionVersion    Int                      @default(1)
+  role              UserRole                 @default(MEMBER)
+  status            UserStatus               @default(ACTIVE)
+  notes             String?
+  balanceCents      Int                      @default(0)
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+  accessTokens      AccessToken[]
+  subscriptions     Subscription[]
+  trafficPacks      TrafficPack[]
+  manualOrders      ManualOrder[]            @relation("ManualOrderTargetUser")
+  processedOrders   ManualOrder[]            @relation("ManualOrderProcessedBy")
+  createdCodes      RedemptionCode[]         @relation("RedemptionCodeCreatedBy")
+  redeemedCodes     RedemptionCode[]         @relation("RedemptionCodeRedeemedBy")
+  redemptionUses    RedemptionUse[]
+  walletTxns        WalletTransaction[]
+  authEvents        AuthEvent[]
+  usageRollups      UsageRollup[]
+  onlineSnapshots   OnlineSnapshot[]
+  passwordResets    PasswordResetToken[]     @relation("PasswordResetTargetUser")
+  createdResets     PasswordResetToken[]     @relation("PasswordResetCreatedBy")
+  auditLogs         AuditLog[]               @relation("AuditLogActor")
+  accessAccount     AccessAccount?
+  quotaAdjustments  QuotaAdjustment[]        @relation("QuotaAdjustmentActor")
+  destinationVisits DestinationVisitRollup[]
+  adminPermissions  AdminPermissionGrant[]
+  entitlementGrants EntitlementGrant[]
+  paymentRecords    PaymentRecord[]
+  walletLedger      WalletLedgerEntry[]      @relation("WalletLedgerTargetUser")
+  walletActions     WalletLedgerEntry[]      @relation("WalletLedgerActor")
+  processedRefunds  Refund[]                 @relation("RefundProcessedBy")
+  acknowledgedAlerts MonitorAlert[]          @relation("MonitorAlertAcknowledgedBy")
+}
+
+model AccessAccount {
+  id                           String            @id @default(cuid())
+  userId                       String            @unique
+  trafficMultiplierBasisPoints Int               @default(10000)
+  trafficMultiplierRemainder   Int               @default(0)
+  createdAt                    DateTime          @default(now())
+  updatedAt                    DateTime          @updatedAt
+  user                         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptions                Subscription[]
+  trafficPacks                 TrafficPack[]
+  quotaAdjustments             QuotaAdjustment[]
+  entitlementGrants            EntitlementGrant[]
+}
+
+model AdminPermissionGrant {
+  id         String          @id @default(cuid())
+  userId     String
+  permission AdminPermission
+  createdAt  DateTime        @default(now())
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, permission])
+  @@index([permission, userId])
+}
+
+model AccessProfile {
+  id                  String               @id @default(cuid())
+  slug                String               @unique
+  name                String
+  description         String?
+  active              Boolean              @default(true)
+  speedUpMbps         Int
+  speedDownMbps       Int
+  deviceLimit         Int
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  plans               Plan[]
+  trafficPackProducts TrafficPackProduct[]
+  trafficPacks        TrafficPack[]
+  nodeBindings        AccessProfileNode[]
+  poolBindings        AccessProfilePool[]
+  catalogProducts     CatalogProduct[]
+  entitlementGrants   EntitlementGrant[]
+}
+
+model AccessProfileNode {
+  id              String        @id @default(cuid())
+  accessProfileId String
+  nodeId          String
+  priority        Int           @default(0)
+  createdAt       DateTime      @default(now())
+  accessProfile   AccessProfile @relation(fields: [accessProfileId], references: [id], onDelete: Cascade)
+  node            Node          @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@unique([accessProfileId, nodeId])
+  @@index([nodeId, priority])
+}
+
+model TrafficPackProduct {
+  id              String           @id @default(cuid())
+  slug            String           @unique
+  name            String
+  description     String?
+  active          Boolean          @default(true)
+  trafficBytes    BigInt
+  validityDays    Int?
+  priceCents      Int
+  accent          String           @default("teal")
+  accessProfileId String?
+  archivedAt      DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  orders          ManualOrder[]
+  redemptionCodes RedemptionCode[]
+  accessProfile   AccessProfile?   @relation(fields: [accessProfileId], references: [id], onDelete: Restrict)
   trafficPacks    TrafficPack[]
-  manualOrders    ManualOrder[]       @relation("ManualOrderTargetUser")
-  processedOrders ManualOrder[]       @relation("ManualOrderProcessedBy")
-  createdCodes    RedemptionCode[]    @relation("RedemptionCodeCreatedBy")
-  redeemedCodes   RedemptionCode[]    @relation("RedemptionCodeRedeemedBy")
-  redemptionUses  RedemptionUse[]
-  walletTxns      WalletTransaction[]
-  authEvents      AuthEvent[]
-  usageRollups    UsageRollup[]
-  onlineSnapshots OnlineSnapshot[]
+  catalogProduct  CatalogProduct?
 }
 
 model AccessToken {
@@ -121,45 +327,106 @@ model Plan {
   deviceLimit     Int
   priceCents      Int
   accent          String           @default("green")
+  accessProfileId String?
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   subscriptions   Subscription[]
   bindings        PlanBinding[]
   manualOrders    ManualOrder[]
   redemptionCodes RedemptionCode[]
+  accessProfile   AccessProfile?   @relation(fields: [accessProfileId], references: [id], onDelete: Restrict)
+  offers          PlanOffer[]
+  catalogProduct  CatalogProduct?
+}
+
+model PlanOffer {
+  id                 String         @id @default(cuid())
+  planId             String
+  slug               String         @unique
+  name               String
+  active             Boolean        @default(true)
+  isDefault          Boolean        @default(false)
+  billingPeriod      BillingPeriod
+  intervalMonths     Int?
+  legacyDurationDays Int?
+  priceCents         Int
+  archivedAt         DateTime?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  plan               Plan           @relation(fields: [planId], references: [id], onDelete: Restrict)
+  subscriptions      Subscription[]
+  orders             ManualOrder[]
+  catalogOffer       CatalogOffer?
+
+  @@index([planId, active, archivedAt])
+}
+
+model NodeServer {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  hostname  String   @unique
+  region    String?
+  provider  String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  endpoints Node[]
+
+  @@index([active, createdAt])
 }
 
 model Node {
-  id                 String           @id @default(cuid())
-  protocol           NodeProtocol     @default(HYSTERIA2)
-  label              String           @unique
-  hostname           String
-  port               Int
-  obfsPassword       String?
-  sni                String?
-  pinSHA256          String?
-  allowInsecureTls   Boolean          @default(false)
-  realityPublicKey   String?
-  realityShortId     String?
-  realityFingerprint String?          @default("chrome")
-  realitySpiderX     String?
-  vlessFlow          String?          @default("xtls-rprx-vision")
-  trafficApiBaseUrl  String
-  trafficApiSecret   String
-  active             Boolean          @default(true)
-  speedUpMbps        Int
-  speedDownMbps      Int
-  lastSyncAt         DateTime?
-  lastSyncError      String?
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
-  planBindings       PlanBinding[]
-  subscriptions      Subscription[]
-  authEvents         AuthEvent[]
-  usageRollups       UsageRollup[]
-  onlineSnapshots    OnlineSnapshot[]
+  id                          String                   @id @default(cuid())
+  serverId                    String?
+  protocol                    NodeProtocol             @default(HYSTERIA2)
+  label                       String                   @unique
+  hostname                    String
+  port                        Int
+  obfsPassword                String?
+  sni                         String?
+  pinSHA256                   String?
+  allowInsecureTls            Boolean                  @default(false)
+  realityPublicKey            String?
+  realityShortId              String?
+  realityFingerprint          String?                  @default("chrome")
+  realitySpiderX              String?
+  vlessFlow                   String?                  @default("xtls-rprx-vision")
+  trafficApiBaseUrl           String
+  trafficApiSecret            String
+  active                      Boolean                  @default(true)
+  lifecycleStatus             NodeLifecycleStatus      @default(ACTIVE)
+  region                      String?
+  provider                    String?
+  tags                        String[]                  @default([])
+  capacityUsers               Int?
+  speedUpMbps                 Int
+  speedDownMbps               Int
+  lastSyncAt                  DateTime?
+  lastSyncError               String?
+  destinationTelemetryEnabled Boolean                  @default(false)
+  destinationTelemetryVersion String?
+  destinationTelemetryLastAt  DateTime?
+  destinationTelemetryError   String?
+  createdAt                   DateTime                 @default(now())
+  updatedAt                   DateTime                 @updatedAt
+  planBindings                PlanBinding[]
+  subscriptions               Subscription[]
+  authEvents                  AuthEvent[]
+  usageRollups                UsageRollup[]
+  onlineSnapshots             OnlineSnapshot[]
+  usageImportBatches          UsageImportBatch[]
+  accessProfileBindings       AccessProfileNode[]
+  destinationBatches          DestinationImportBatch[]
+  destinationVisits           DestinationVisitRollup[]
+  poolMemberships             NodePoolMember[]
+  costs                       NodeCost[]
+  serviceChecks               NodeServiceCheck[]
+  monitorAlerts               MonitorAlert[]
+  server                      NodeServer?              @relation(fields: [serverId], references: [id], onDelete: SetNull)
 
   @@unique([hostname, port])
+  @@index([serverId, active])
 }
 
 model PlanBinding {
@@ -175,85 +442,170 @@ model PlanBinding {
 }
 
 model Subscription {
-  id                    String             @id @default(cuid())
+  id                    String              @id @default(cuid())
   userId                String
   planId                String
   nodeId                String
-  status                SubscriptionStatus @default(ACTIVE)
+  accessAccountId       String?
+  planOfferId           String?
+  status                SubscriptionStatus  @default(ACTIVE)
   startsAt              DateTime
   endsAt                DateTime
   includedTrafficBytes  BigInt
-  bonusTrafficBytes     BigInt             @default(0)
-  consumedTrafficBytes  BigInt             @default(0)
+  bonusTrafficBytes     BigInt              @default(0)
+  consumedTrafficBytes  BigInt              @default(0)
   speedUpMbpsSnapshot   Int
   speedDownMbpsSnapshot Int
   deviceLimitSnapshot   Int
-  createdAt             DateTime           @default(now())
-  updatedAt             DateTime           @updatedAt
-  user                  User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  plan                  Plan               @relation(fields: [planId], references: [id], onDelete: Restrict)
-  node                  Node               @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  user                  User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan                  Plan                @relation(fields: [planId], references: [id], onDelete: Restrict)
+  node                  Node                @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  accessAccount         AccessAccount?      @relation(fields: [accessAccountId], references: [id], onDelete: Cascade)
+  planOffer             PlanOffer?          @relation(fields: [planOfferId], references: [id], onDelete: Restrict)
   trafficPacks          TrafficPack[]
   usageRollups          UsageRollup[]
+  cycles                SubscriptionCycle[]
+  entitlementGrant      EntitlementGrant?
+}
+
+model SubscriptionCycle {
+  id              String            @id @default(cuid())
+  subscriptionId  String
+  startsAt        DateTime
+  endsAt          DateTime
+  grantedBytes    BigInt
+  adjustmentBytes BigInt            @default(0)
+  consumedBytes   BigInt            @default(0)
+  overageBytes    BigInt            @default(0)
+  legacy          Boolean           @default(false)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  subscription    Subscription      @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  adjustments     QuotaAdjustment[]
+  usageRollups    UsageRollup[]
+
+  @@unique([subscriptionId, startsAt])
+  @@index([endsAt, subscriptionId])
 }
 
 model TrafficPack {
-  id             String            @id @default(cuid())
-  userId         String
-  subscriptionId String
-  label          String
-  totalBytes     BigInt
-  remainingBytes BigInt
-  status         TrafficPackStatus @default(ACTIVE)
-  expiresAt      DateTime?
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
-  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  subscription   Subscription      @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  id                   String              @id @default(cuid())
+  userId               String
+  subscriptionId       String?
+  accessAccountId      String?
+  trafficPackProductId String?
+  accessProfileId      String?
+  label                String
+  totalBytes           BigInt
+  remainingBytes       BigInt
+  status               TrafficPackStatus   @default(ACTIVE)
+  expiresAt            DateTime?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  user                 User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription         Subscription?       @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  accessAccount        AccessAccount?      @relation(fields: [accessAccountId], references: [id], onDelete: Cascade)
+  trafficPackProduct   TrafficPackProduct? @relation(fields: [trafficPackProductId], references: [id], onDelete: SetNull)
+  accessProfile        AccessProfile?      @relation(fields: [accessProfileId], references: [id], onDelete: Restrict)
+  adjustments          QuotaAdjustment[]
+  entitlementGrant     EntitlementGrant?
+
+  @@index([accessAccountId, status, expiresAt])
+}
+
+model QuotaAdjustment {
+  id                   String              @id @default(cuid())
+  accessAccountId      String
+  subscriptionCycleId  String?
+  trafficPackId        String?
+  actorId              String?
+  mode                 QuotaAdjustmentMode
+  deltaBytes           BigInt
+  beforeRemainingBytes BigInt
+  afterRemainingBytes  BigInt
+  reason               String
+  createdAt            DateTime            @default(now())
+  accessAccount        AccessAccount       @relation(fields: [accessAccountId], references: [id], onDelete: Cascade)
+  subscriptionCycle    SubscriptionCycle?  @relation(fields: [subscriptionCycleId], references: [id], onDelete: Cascade)
+  trafficPack          TrafficPack?        @relation(fields: [trafficPackId], references: [id], onDelete: Cascade)
+  actor                User?               @relation("QuotaAdjustmentActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([accessAccountId, createdAt])
+  @@index([subscriptionCycleId, createdAt])
+  @@index([trafficPackId, createdAt])
 }
 
 model ManualOrder {
-  id            String      @id @default(cuid())
-  userId        String
-  processedById String?
-  planId        String?
-  status        OrderStatus @default(PENDING)
-  kind          OrderKind
-  amountCents   Int
-  durationDays  Int?
-  trafficBytes  BigInt?
-  note          String?
-  createdAt     DateTime    @default(now())
-  processedAt   DateTime?
-  user          User        @relation("ManualOrderTargetUser", fields: [userId], references: [id], onDelete: Cascade)
-  processedBy   User?       @relation("ManualOrderProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
-  plan          Plan?       @relation(fields: [planId], references: [id], onDelete: SetNull)
+  id                      String              @id @default(cuid())
+  userId                  String
+  processedById           String?
+  planId                  String?
+  trafficPackProductId    String?
+  planOfferId             String?
+  catalogOfferId          String?
+  status                  OrderStatus         @default(PENDING)
+  kind                    OrderKind
+  source                  OrderSource         @default(LEGACY)
+  amountCents             Int
+  basePriceCents          Int?
+  discountCents           Int                 @default(0)
+  currency                String              @default("CNY")
+  productSlugSnapshot     String?
+  productNameSnapshot     String?
+  durationDays            Int?
+  validityDays            Int?
+  trafficBytes            BigInt?
+  entitlementExpiresAt    DateTime?
+  billingPeriodSnapshot   BillingPeriod?
+  intervalMonthsSnapshot  Int?
+  accessProfileIdSnapshot String?
+  idempotencyKey          String?
+  note                    String?
+  createdAt               DateTime            @default(now())
+  processedAt             DateTime?
+  user                    User                @relation("ManualOrderTargetUser", fields: [userId], references: [id], onDelete: Cascade)
+  processedBy             User?               @relation("ManualOrderProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
+  plan                    Plan?               @relation(fields: [planId], references: [id], onDelete: SetNull)
+  trafficPackProduct      TrafficPackProduct? @relation(fields: [trafficPackProductId], references: [id], onDelete: SetNull)
+  planOffer               PlanOffer?          @relation(fields: [planOfferId], references: [id], onDelete: SetNull)
+  catalogOffer            CatalogOffer?        @relation(fields: [catalogOfferId], references: [id], onDelete: SetNull)
+  paymentRecords          PaymentRecord[]
+  refunds                 Refund[]
+  walletLedger            WalletLedgerEntry[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([trafficPackProductId, createdAt])
+  @@index([planOfferId, createdAt])
 }
 
 model RedemptionCode {
-  id              String               @id @default(cuid())
-  code            String               @unique
-  label           String
-  kind            RedemptionCodeKind
-  status          RedemptionCodeStatus @default(ACTIVE)
-  planId          String?
-  trafficBytes    BigInt?
-  amountCents     Int                  @default(0)
-  discountPercent Int?
-  discountCents   Int?
-  maxUses         Int                  @default(1)
-  usedCount       Int                  @default(0)
-  note            String?
-  expiresAt       DateTime?
-  createdById     String?
-  redeemedById    String?
-  redeemedAt      DateTime?
-  createdAt       DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
-  plan            Plan?                @relation(fields: [planId], references: [id], onDelete: SetNull)
-  createdBy       User?                @relation("RedemptionCodeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  redeemedBy      User?                @relation("RedemptionCodeRedeemedBy", fields: [redeemedById], references: [id], onDelete: SetNull)
-  uses            RedemptionUse[]
+  id                   String               @id @default(cuid())
+  code                 String               @unique
+  label                String
+  kind                 RedemptionCodeKind
+  status               RedemptionCodeStatus @default(ACTIVE)
+  planId               String?
+  trafficPackProductId String?
+  trafficBytes         BigInt?
+  amountCents          Int                  @default(0)
+  discountPercent      Int?
+  discountCents        Int?
+  maxUses              Int                  @default(1)
+  usedCount            Int                  @default(0)
+  note                 String?
+  expiresAt            DateTime?
+  createdById          String?
+  redeemedById         String?
+  redeemedAt           DateTime?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  plan                 Plan?                @relation(fields: [planId], references: [id], onDelete: SetNull)
+  trafficPackProduct   TrafficPackProduct?  @relation(fields: [trafficPackProductId], references: [id], onDelete: SetNull)
+  createdBy            User?                @relation("RedemptionCodeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  redeemedBy           User?                @relation("RedemptionCodeRedeemedBy", fields: [redeemedById], references: [id], onDelete: SetNull)
+  uses                 RedemptionUse[]
 
   @@index([status, createdAt])
 }
@@ -303,20 +655,84 @@ model AuthEvent {
 }
 
 model UsageRollup {
-  id             String       @id @default(cuid())
-  userId         String
-  subscriptionId String
-  nodeId         String
-  bucketStart    DateTime
-  txBytes        BigInt
-  rxBytes        BigInt
-  source         String
-  createdAt      DateTime     @default(now())
-  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-  node           Node         @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  id                  String             @id @default(cuid())
+  userId              String
+  subscriptionId      String?
+  nodeId              String
+  importBatchId       String?
+  subscriptionCycleId String?
+  bucketStart         DateTime
+  txBytes             BigInt
+  rxBytes             BigInt
+  accountedBytes      BigInt?
+  overageBytes        BigInt             @default(0)
+  source              String
+  createdAt           DateTime           @default(now())
+  user                User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription        Subscription?      @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  node                Node               @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  importBatch         UsageImportBatch?  @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  subscriptionCycle   SubscriptionCycle? @relation(fields: [subscriptionCycleId], references: [id], onDelete: SetNull)
+  allocations         UsageAllocation[]
+
+  @@unique([importBatchId, userId])
+  @@index([userId, bucketStart])
+}
+
+model DestinationImportBatch {
+  id         String                   @id @default(cuid())
+  nodeId     String
+  externalId String
+  observedAt DateTime
+  receivedAt DateTime                 @default(now())
+  eventCount Int
+  node       Node                     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  visits     DestinationVisitRollup[]
+
+  @@unique([nodeId, externalId])
+  @@index([receivedAt])
+}
+
+model DestinationVisitRollup {
+  id              String                 @id @default(cuid())
+  dedupeKey       String                 @unique
+  batchId         String
+  nodeId          String
+  userId          String
+  bucketStart     DateTime
+  target          String
+  targetType      DestinationTargetType
+  port            Int
+  transport       DestinationTransport
+  connectionCount Int
+  firstSeenAt     DateTime
+  lastSeenAt      DateTime
+  createdAt       DateTime               @default(now())
+  batch           DestinationImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  node            Node                   @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, bucketStart])
+  @@index([target, bucketStart])
+  @@index([nodeId, bucketStart])
+}
+
+model UsageImportBatch {
+  id           String                 @id @default(cuid())
+  nodeId       String
+  externalId   String
+  status       UsageImportBatchStatus @default(APPLIED)
+  claimedAt    DateTime
+  appliedAt    DateTime               @default(now())
+  ackedAt      DateTime?
+  totalTxBytes BigInt
+  totalRxBytes BigInt
+  recordCount  Int
+  node         Node                   @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  rollups      UsageRollup[]
+
+  @@unique([nodeId, externalId])
+  @@index([status, appliedAt])
 }
 
 model OnlineSnapshot {
@@ -338,4 +754,309 @@ model Setting {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+model PasswordResetToken {
+  id          String    @id @default(cuid())
+  tokenHash   String    @unique
+  userId      String
+  createdById String?
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+  user        User      @relation("PasswordResetTargetUser", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy   User?     @relation("PasswordResetCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([userId, expiresAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  targetType String
+  targetId   String?
+  metadata   Json?
+  remoteAddr String?
+  createdAt  DateTime @default(now())
+  actor      User?    @relation("AuditLogActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([targetType, targetId, createdAt])
+}
+
+model CatalogProduct {
+  id                         String               @id @default(cuid())
+  legacyPlanId               String?              @unique
+  legacyTrafficPackProductId String?              @unique
+  slug                       String               @unique
+  kind                       CatalogProductKind
+  status                     CatalogProductStatus @default(DRAFT)
+  name                       String
+  description                String?
+  quotaCadence               QuotaCadence
+  accessProfileId            String?
+  accent                     String               @default("green")
+  sortOrder                  Int                  @default(0)
+  createdAt                  DateTime             @default(now())
+  updatedAt                  DateTime             @updatedAt
+  legacyPlan                 Plan?                @relation(fields: [legacyPlanId], references: [id], onDelete: SetNull)
+  legacyTrafficPackProduct   TrafficPackProduct?  @relation(fields: [legacyTrafficPackProductId], references: [id], onDelete: SetNull)
+  accessProfile              AccessProfile?       @relation(fields: [accessProfileId], references: [id], onDelete: Restrict)
+  offers                     CatalogOffer[]
+  entitlementGrants          EntitlementGrant[]
+
+  @@index([kind, status, sortOrder])
+  @@index([accessProfileId, status])
+}
+
+model CatalogOffer {
+  id                  String              @id @default(cuid())
+  productId           String
+  legacyPlanOfferId   String?             @unique
+  slug                String              @unique
+  name                String
+  billingPeriod       BillingPeriod
+  intervalMonths      Int?
+  trafficBytes        BigInt
+  priceCents          Int
+  currency            String              @default("CNY")
+  active              Boolean             @default(true)
+  isDefault           Boolean             @default(false)
+  archivedAt          DateTime?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  product             CatalogProduct      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  legacyPlanOffer     PlanOffer?           @relation(fields: [legacyPlanOfferId], references: [id], onDelete: SetNull)
+  orders              ManualOrder[]
+  entitlementGrants   EntitlementGrant[]
+
+  @@unique([productId, billingPeriod])
+  @@index([productId, active, archivedAt])
+}
+
+model EntitlementGrant {
+  id                       String                 @id @default(cuid())
+  userId                   String
+  accessAccountId          String
+  productId                String
+  offerId                  String?
+  legacySubscriptionId     String?                @unique
+  legacyTrafficPackId      String?                @unique
+  kind                     EntitlementGrantKind
+  status                   EntitlementGrantStatus @default(ACTIVE)
+  startsAt                 DateTime
+  endsAt                   DateTime
+  accessProfileId          String
+  speedUpMbpsSnapshot      Int
+  speedDownMbpsSnapshot    Int
+  deviceLimitSnapshot      Int
+  createdAt                DateTime               @default(now())
+  updatedAt                DateTime               @updatedAt
+  user                     User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessAccount            AccessAccount          @relation(fields: [accessAccountId], references: [id], onDelete: Cascade)
+  product                  CatalogProduct         @relation(fields: [productId], references: [id], onDelete: Restrict)
+  offer                    CatalogOffer?          @relation(fields: [offerId], references: [id], onDelete: SetNull)
+  accessProfile            AccessProfile          @relation(fields: [accessProfileId], references: [id], onDelete: Restrict)
+  legacySubscription       Subscription?          @relation(fields: [legacySubscriptionId], references: [id], onDelete: SetNull)
+  legacyTrafficPack        TrafficPack?           @relation(fields: [legacyTrafficPackId], references: [id], onDelete: SetNull)
+  quotaBuckets             QuotaBucket[]
+
+  @@index([userId, kind, status, endsAt])
+  @@index([accessAccountId, status, endsAt])
+  @@index([accessProfileId, status])
+}
+
+model QuotaBucket {
+  id            String          @id @default(cuid())
+  grantId       String
+  kind          QuotaBucketKind
+  startsAt      DateTime
+  endsAt        DateTime
+  grantedBytes  BigInt
+  consumedBytes BigInt          @default(0)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  grant         EntitlementGrant @relation(fields: [grantId], references: [id], onDelete: Cascade)
+  allocations   UsageAllocation[]
+
+  @@unique([grantId, startsAt])
+  @@index([endsAt, grantId])
+}
+
+model UsageAllocation {
+  id              String      @id @default(cuid())
+  usageRollupId   String
+  quotaBucketId   String
+  accountedBytes  BigInt
+  createdAt       DateTime    @default(now())
+  usageRollup     UsageRollup @relation(fields: [usageRollupId], references: [id], onDelete: Cascade)
+  quotaBucket     QuotaBucket @relation(fields: [quotaBucketId], references: [id], onDelete: Restrict)
+
+  @@unique([usageRollupId, quotaBucketId])
+  @@index([quotaBucketId, createdAt])
+}
+
+model NodePool {
+  id          String              @id @default(cuid())
+  slug        String              @unique
+  name        String
+  description String?
+  region      String?
+  active      Boolean             @default(true)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  members     NodePoolMember[]
+  profiles    AccessProfilePool[]
+}
+
+model NodePoolMember {
+  id        String   @id @default(cuid())
+  poolId    String
+  nodeId    String
+  priority  Int      @default(0)
+  weight    Int      @default(100)
+  createdAt DateTime @default(now())
+  pool      NodePool @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  node      Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@unique([poolId, nodeId])
+  @@index([nodeId, priority])
+}
+
+model AccessProfilePool {
+  id              String        @id @default(cuid())
+  accessProfileId String
+  poolId          String
+  priority        Int           @default(0)
+  createdAt       DateTime      @default(now())
+  accessProfile   AccessProfile @relation(fields: [accessProfileId], references: [id], onDelete: Cascade)
+  pool            NodePool      @relation(fields: [poolId], references: [id], onDelete: Cascade)
+
+  @@unique([accessProfileId, poolId])
+  @@index([poolId, priority])
+}
+
+model PaymentRecord {
+  id          String              @id @default(cuid())
+  orderId     String
+  userId      String
+  source      PaymentRecordSource
+  status      PaymentRecordStatus @default(SETTLED)
+  amountCents Int
+  currency    String              @default("CNY")
+  externalRef String?
+  paidAt      DateTime?
+  reconciledAt DateTime?
+  createdAt   DateTime            @default(now())
+  order       ManualOrder         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status, paidAt])
+  @@index([userId, createdAt])
+}
+
+model WalletLedgerEntry {
+  id                 String        @id @default(cuid())
+  legacyTransactionId String?       @unique
+  userId             String
+  actorId            String?
+  orderId            String?
+  amountCents        Int
+  beforeBalanceCents Int?
+  afterBalanceCents  Int?
+  kind               WalletTxnKind
+  idempotencyKey     String?
+  note               String?
+  createdAt          DateTime      @default(now())
+  user               User          @relation("WalletLedgerTargetUser", fields: [userId], references: [id], onDelete: Cascade)
+  actor              User?         @relation("WalletLedgerActor", fields: [actorId], references: [id], onDelete: SetNull)
+  order              ManualOrder?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+  @@index([orderId, createdAt])
+}
+
+model Refund {
+  id            String       @id @default(cuid())
+  orderId       String
+  processedById String?
+  method        RefundMethod
+  status        RefundStatus @default(PENDING)
+  amountCents   Int
+  reason        String
+  processedAt   DateTime?
+  createdAt     DateTime     @default(now())
+  order         ManualOrder  @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  processedBy   User?        @relation("RefundProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([orderId, createdAt])
+}
+
+model NodeCost {
+  id                 String   @id @default(cuid())
+  nodeId             String
+  amountCents        Int
+  currency           String   @default("CNY")
+  effectiveFrom      DateTime
+  effectiveTo        DateTime?
+  providerReference  String?
+  note               String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  node               Node     @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+
+  @@index([nodeId, effectiveFrom, effectiveTo])
+}
+
+model NodeServiceCheck {
+  id               String   @id @default(cuid())
+  nodeId           String
+  healthy          Boolean
+  latencyMs        Int?
+  onlineUsers      Int      @default(0)
+  syncDelaySeconds Int?
+  error            String?
+  checkedAt        DateTime @default(now())
+  node             Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([nodeId, checkedAt])
+}
+
+model MonitorAlert {
+  id               String               @id @default(cuid())
+  fingerprint      String               @unique
+  kind             String
+  severity         MonitorAlertSeverity
+  status           MonitorAlertStatus   @default(OPEN)
+  title            String
+  message          String
+  nodeId           String?
+  acknowledgedById String?
+  failureCount     Int                  @default(0)
+  successCount     Int                  @default(0)
+  firstSeenAt      DateTime             @default(now())
+  lastSeenAt       DateTime             @default(now())
+  acknowledgedAt   DateTime?
+  resolvedAt       DateTime?
+  metadata         Json?
+  node             Node?                @relation(fields: [nodeId], references: [id], onDelete: SetNull)
+  acknowledgedBy   User?                @relation("MonitorAlertAcknowledgedBy", fields: [acknowledgedById], references: [id], onDelete: SetNull)
+  events           MonitorAlertEvent[]
+
+  @@index([status, severity, lastSeenAt])
+  @@index([nodeId, status])
+}
+
+model MonitorAlertEvent {
+  id        String       @id @default(cuid())
+  alertId   String
+  status    MonitorAlertStatus
+  message   String
+  createdAt DateTime     @default(now())
+  alert     MonitorAlert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  @@index([alertId, createdAt])
 }

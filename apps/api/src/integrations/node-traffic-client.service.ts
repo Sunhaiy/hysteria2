@@ -4,35 +4,89 @@ import { firstValueFrom } from 'rxjs';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
-interface TrafficNode {
+export interface TrafficNode {
   id: string;
   protocol: 'hysteria2' | 'vless_reality';
   trafficApiBaseUrl: string;
   trafficApiSecret: string;
 }
 
-interface ProvisionedUser {
+export interface ProvisionedUser {
   userId: string;
   id: string;
   email: string;
   flow: string;
 }
 
+export interface ClaimedTrafficBatch {
+  id: string;
+  claimedAt: string;
+  traffic: Record<string, { tx: number; rx: number }>;
+}
+
 @Injectable()
 export class NodeTrafficClientService {
   constructor(private readonly httpService: HttpService) {}
 
-  async fetchTraffic(node: TrafficNode) {
+  async claimTrafficBatch(node: TrafficNode): Promise<ClaimedTrafficBatch> {
     if (node.trafficApiBaseUrl.startsWith('mock://')) {
-      if (node.id === 'node_hk_core') {
-        return { usr_lin: { tx: 128 * 1024 * 1024, rx: 512 * 1024 * 1024 } };
-      }
-      return {};
+      return {
+        id: `mock-${node.id}-${Date.now()}`,
+        claimedAt: new Date().toISOString(),
+        traffic:
+          node.id === 'node_hk_core'
+            ? {
+                usr_lin: {
+                  tx: 128 * 1024 * 1024,
+                  rx: 512 * 1024 * 1024,
+                },
+              }
+            : {},
+      };
     }
 
+    try {
+      const { data } = await firstValueFrom(
+        this.httpService.post<ClaimedTrafficBatch>(
+          `${node.trafficApiBaseUrl}/traffic/claim`,
+          {},
+          {
+            headers: { Authorization: node.trafficApiSecret },
+            timeout: REQUEST_TIMEOUT_MS,
+          },
+        ),
+      );
+      return data;
+    } catch (error) {
+      if (node.protocol === 'vless_reality') throw error;
+
+      // Compatibility for Hysteria Traffic Stats API. This is a single
+      // read-and-reset call, which avoids the old read/apply/reset gap.
+      const { data } = await firstValueFrom(
+        this.httpService.get<Record<string, { tx: number; rx: number }>>(
+          `${node.trafficApiBaseUrl}/traffic?clear=1`,
+          {
+            headers: { Authorization: node.trafficApiSecret },
+            timeout: REQUEST_TIMEOUT_MS,
+          },
+        ),
+      );
+      return {
+        id: `legacy-${node.id}-${Date.now()}`,
+        claimedAt: new Date().toISOString(),
+        traffic: data,
+      };
+    }
+  }
+
+  async acknowledgeTrafficBatch(node: TrafficNode, batchId: string) {
+    if (node.trafficApiBaseUrl.startsWith('mock://')) return { ok: true };
+    if (batchId.startsWith(`legacy-${node.id}-`)) return { ok: true };
+
     const { data } = await firstValueFrom(
-      this.httpService.get<Record<string, { tx: number; rx: number }>>(
-        `${node.trafficApiBaseUrl}/traffic`,
+      this.httpService.post<{ ok: boolean }>(
+        `${node.trafficApiBaseUrl}/traffic/ack`,
+        { id: batchId },
         {
           headers: { Authorization: node.trafficApiSecret },
           timeout: REQUEST_TIMEOUT_MS,
@@ -54,23 +108,6 @@ export class NodeTrafficClientService {
       this.httpService.put<{ added: number; removed: number; total: number }>(
         `${node.trafficApiBaseUrl}/users`,
         users,
-        {
-          headers: { Authorization: node.trafficApiSecret },
-          timeout: REQUEST_TIMEOUT_MS,
-        },
-      ),
-    );
-    return response.data;
-  }
-
-  async clearTraffic(node: TrafficNode) {
-    if (node.trafficApiBaseUrl.startsWith('mock://')) {
-      return {};
-    }
-
-    const response = await firstValueFrom(
-      this.httpService.get<Record<string, { tx: number; rx: number }>>(
-        `${node.trafficApiBaseUrl}/traffic?clear=1`,
         {
           headers: { Authorization: node.trafficApiSecret },
           timeout: REQUEST_TIMEOUT_MS,

@@ -1,25 +1,143 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 import QRCode from 'qrcode';
+import {
+  CommerceService,
+  type CheckoutInput,
+} from '../commerce/commerce.service';
 import { ControlPlaneStoreService } from '../domain/control-plane.store';
 import { SettingsService } from '../settings/settings.service';
+import { buildPortalAlerts } from './portal-alerts';
+import { EntitlementService } from '../entitlement/entitlement.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { buildMihomoProfile } from './mihomo-profile';
 
 @Injectable()
 export class PortalService {
   constructor(
     private readonly store: ControlPlaneStoreService,
     private readonly settings: SettingsService,
+    private readonly commerce: CommerceService,
+    @Optional() private readonly entitlements?: EntitlementService,
+    @Optional() private readonly prisma?: PrismaService,
   ) {}
 
   getBranding() {
     return this.settings.getPortalBranding();
   }
 
-  getSubscription(userId: string) {
-    return this.store.getPortalOverview(userId);
+  async getSubscription(userId: string) {
+    try {
+      const overview = await this.store.getPortalOverview(userId);
+      return { ...overview, alerts: buildPortalAlerts(overview) };
+    } catch (error) {
+      if (!this.entitlements || !this.prisma) throw error;
+      const access = await this.entitlements.resolveAccess(userId);
+      if (!access.allowed) throw error;
+      const [user, grants] = await Promise.all([
+        this.prisma.user.findUniqueOrThrow({ where: { id: userId } }),
+        this.prisma.entitlementGrant.findMany({
+          where: {
+            userId,
+            status: 'ACTIVE',
+            startsAt: { lte: new Date() },
+            endsAt: { gt: new Date() },
+          },
+          include: {
+            product: true,
+            quotaBuckets: { orderBy: { endsAt: 'asc' } },
+          },
+          orderBy: { endsAt: 'asc' },
+        }),
+      ]);
+      const primary =
+        grants.find((grant) => grant.kind === 'PLAN') ?? grants[0];
+      if (!primary) throw error;
+      const primaryRemaining = primary.quotaBuckets.reduce(
+        (sum, bucket) =>
+          sum +
+          Number(
+            bucket.grantedBytes > bucket.consumedBytes
+              ? bucket.grantedBytes - bucket.consumedBytes
+              : BigInt(0),
+          ),
+        0,
+      );
+      const overview = {
+        user: {
+          id: user.id,
+          email: user.email,
+          displayName: user.displayName,
+          role: user.role.toLowerCase(),
+          status: user.status.toLowerCase(),
+        },
+        subscription: {
+          id: primary.id,
+          userId,
+          planId: primary.productId,
+          planName: primary.product.name,
+          status: 'active' as const,
+          startsAt: primary.startsAt.toISOString(),
+          endsAt: primary.endsAt.toISOString(),
+          includedTrafficBytes:
+            primary.kind === 'PLAN'
+              ? primary.quotaBuckets.reduce(
+                  (sum, bucket) => sum + Number(bucket.grantedBytes),
+                  0,
+                )
+              : 0,
+          bonusTrafficBytes: 0,
+          consumedTrafficBytes:
+            primary.kind === 'PLAN'
+              ? primary.quotaBuckets.reduce(
+                  (sum, bucket) => sum + Number(bucket.consumedBytes),
+                  0,
+                )
+              : 0,
+          speedUpMbpsSnapshot: access.speedUpMbps,
+          speedDownMbpsSnapshot: access.speedDownMbps,
+          deviceLimitSnapshot: access.deviceLimit,
+        },
+        plan: {
+          id: primary.productId,
+          name: primary.kind === 'PLAN' ? primary.product.name : '独立流量权益',
+        },
+        nodeLabel: access.nodes[0]?.label ?? null,
+        remainingBytes: access.remainingBytes ?? 0,
+        balanceCents: user.balanceCents,
+        online: 0,
+        packs: grants
+          .filter((grant) => grant.kind === 'TRAFFIC_PACK')
+          .map((grant) => ({
+            id: grant.id,
+            label: grant.product.name,
+            totalBytes: grant.quotaBuckets.reduce(
+              (sum, bucket) => sum + Number(bucket.grantedBytes),
+              0,
+            ),
+            remainingBytes:
+              grant.id === primary.id
+                ? primaryRemaining
+                : grant.quotaBuckets.reduce(
+                    (sum, bucket) =>
+                      sum + Number(bucket.grantedBytes - bucket.consumedBytes),
+                    0,
+                  ),
+            status: 'active' as const,
+            expiresAt: grant.endsAt.toISOString(),
+            createdAt: grant.createdAt.toISOString(),
+            updatedAt: grant.updatedAt.toISOString(),
+          })),
+      };
+      return { ...overview, alerts: buildPortalAlerts(overview) };
+    }
   }
 
   getPlans() {
     return this.store.getPurchasablePlans();
+  }
+
+  getTrafficPackProducts() {
+    return this.store.getPurchasableTrafficPackProducts();
   }
 
   getUsage(userId: string) {
@@ -38,8 +156,16 @@ export class PortalService {
     });
   }
 
-  async redeemCode(userId: string, code: string) {
-    const result = await this.store.redeemRedemptionCode(userId, code);
+  async redeemCode(
+    userId: string,
+    code: string,
+    expectedTrafficPackProductId?: string,
+  ) {
+    const result = await this.commerce.redeem(
+      userId,
+      code,
+      expectedTrafficPackProductId,
+    );
 
     // A balance top-up may leave the user without an active subscription, so
     // overview/access can legitimately be unavailable — degrade gracefully.
@@ -55,11 +181,57 @@ export class PortalService {
   }
 
   quotePurchase(userId: string, planId: string, discountCode?: string) {
-    return this.store.quotePurchase(userId, planId, discountCode);
+    return this.commerce.quoteCheckout(userId, {
+      kind: 'plan',
+      productId: planId,
+      discountCode,
+    });
   }
 
-  purchase(userId: string, planId: string, discountCode?: string) {
-    return this.store.purchaseWithBalance(userId, planId, discountCode);
+  purchase(
+    userId: string,
+    planId: string,
+    discountCode: string | undefined,
+    idempotencyKey: string,
+  ) {
+    return this.commerce.checkout(
+      userId,
+      { kind: 'plan', productId: planId, discountCode },
+      idempotencyKey,
+    );
+  }
+
+  quoteTrafficPackPurchase(
+    userId: string,
+    productId: string,
+    discountCode?: string,
+  ) {
+    return this.commerce.quoteCheckout(userId, {
+      kind: 'traffic_pack',
+      productId,
+      discountCode,
+    });
+  }
+
+  purchaseTrafficPack(
+    userId: string,
+    productId: string,
+    discountCode: string | undefined,
+    idempotencyKey: string,
+  ) {
+    return this.commerce.checkout(
+      userId,
+      { kind: 'traffic_pack', productId, discountCode },
+      idempotencyKey,
+    );
+  }
+
+  quoteCheckout(userId: string, input: CheckoutInput) {
+    return this.commerce.quoteCheckout(userId, input);
+  }
+
+  checkout(userId: string, input: CheckoutInput, idempotencyKey: string) {
+    return this.commerce.checkout(userId, input, idempotencyKey);
   }
 
   private async safe<T>(fn: () => Promise<T>): Promise<T | null> {
@@ -71,7 +243,13 @@ export class PortalService {
   }
 
   async getAccess(userId: string) {
-    const bundle = await this.store.getAccessBundle(userId);
+    const hasV2 =
+      this.entitlements &&
+      this.prisma &&
+      (await this.prisma.entitlementGrant.count({ where: { userId } })) > 0;
+    const bundle = hasV2
+      ? await this.getV2AccessBundle(userId)
+      : await this.store.getAccessBundle(userId);
     const uri = this.buildNodeUri(bundle.token, bundle.node);
     const nodes = bundle.nodes.map((node) => ({
       id: node.id,
@@ -85,8 +263,8 @@ export class PortalService {
       width: 256,
     });
     const configSnippet = this.buildConfigSnippet(bundle.token, bundle.node, {
-      up: bundle.subscription.speedUpMbpsSnapshot,
-      down: bundle.subscription.speedDownMbpsSnapshot,
+      up: bundle.subscription.speedUpMbpsSnapshot ?? 0,
+      down: bundle.subscription.speedDownMbpsSnapshot ?? 0,
     });
 
     return {
@@ -102,6 +280,58 @@ export class PortalService {
       expiresAt: bundle.subscription.endsAt,
       trafficRemaining: bundle.trafficRemaining,
       nodes,
+      subscriptionPath: `/subscribe/${bundle.token.token}/clash`,
+      subscriptionStatus: 'active' as const,
+    };
+  }
+
+  private async getV2AccessBundle(
+    userId: string,
+    preferredToken?: {
+      token: string;
+      vlessUuid: string;
+    },
+  ) {
+    if (!this.entitlements || !this.prisma) {
+      throw new NotFoundException('Entitlement service unavailable');
+    }
+    const access = await this.entitlements.resolveAccess(userId);
+    if (!access.allowed || !access.nodes.length) {
+      throw new NotFoundException('No active access entitlement');
+    }
+    const [token, rawNodes] = await Promise.all([
+      preferredToken
+        ? Promise.resolve(preferredToken)
+        : this.prisma.accessToken.findFirst({
+            where: { userId, revokedAt: null },
+            orderBy: { createdAt: 'asc' },
+          }),
+      this.prisma.node.findMany({
+        where: { id: { in: access.nodes.map((node) => node.id) } },
+      }),
+    ]);
+    if (!token) throw new NotFoundException('No active access identity');
+    const byId = new Map(rawNodes.map((node) => [node.id, node]));
+    const nodes = access.nodes
+      .map((node) => byId.get(node.id))
+      .filter((node): node is NonNullable<typeof node> => Boolean(node));
+    const primary = nodes[0];
+    if (!primary) throw new NotFoundException('No serviceable access node');
+    const accessGrants = access.grants ?? [];
+    const endsAt = accessGrants.reduce(
+      (latest, grant) => (grant.endsAt > latest ? grant.endsAt : latest),
+      accessGrants[0]?.endsAt ?? new Date().toISOString(),
+    );
+    return {
+      token,
+      node: primary,
+      nodes,
+      subscription: {
+        speedUpMbpsSnapshot: access.speedUpMbps ?? 0,
+        speedDownMbpsSnapshot: access.speedDownMbps ?? 0,
+        endsAt,
+      },
+      trafficRemaining: access.remainingBytes ?? 0,
     };
   }
 
@@ -142,7 +372,7 @@ export class PortalService {
                 realitySettings: {
                   serverName: node.sni,
                   fingerprint: node.realityFingerprint ?? 'chrome',
-                  password: node.realityPublicKey,
+                  publicKey: node.realityPublicKey,
                   shortId: node.realityShortId ?? '',
                   spiderX: node.realitySpiderX ?? '',
                 },
@@ -187,11 +417,7 @@ export class PortalService {
   }
 
   async getClientSubscription(tokenValue: string) {
-    if (!/^hy2_[a-f0-9]{24}$/.test(tokenValue)) {
-      throw new NotFoundException('Subscription not found');
-    }
-
-    const bundle = await this.store.getAccessBundleByToken(tokenValue);
+    const bundle = await this.getSubscriptionAccessBundle(tokenValue);
     if (bundle.nodes.length === 0) {
       throw new NotFoundException('No active nodes are bound to this plan');
     }
@@ -205,11 +431,58 @@ export class PortalService {
       content: Buffer.from(uris.join('\n'), 'utf8').toString('base64'),
       title: site.name,
       expiresAt: new Date(bundle.subscription.endsAt).getTime(),
-      consumedBytes: bundle.subscription.consumedTrafficBytes,
+      consumedBytes: this.getConsumedBytes(bundle.subscription),
       totalBytes:
-        bundle.subscription.consumedTrafficBytes + bundle.trafficRemaining,
+        this.getConsumedBytes(bundle.subscription) + bundle.trafficRemaining,
       nodeCount: uris.length,
     };
+  }
+
+  async getMihomoSubscription(tokenValue: string) {
+    const bundle = await this.getSubscriptionAccessBundle(tokenValue);
+    if (bundle.nodes.length === 0) {
+      throw new NotFoundException('No active nodes are bound to this plan');
+    }
+
+    const site = await this.settings.getSiteInfo();
+    const consumedBytes = this.getConsumedBytes(bundle.subscription);
+    return {
+      content: buildMihomoProfile(bundle.token, bundle.nodes),
+      title: site.name,
+      expiresAt: new Date(bundle.subscription.endsAt).getTime(),
+      consumedBytes,
+      totalBytes: consumedBytes + bundle.trafficRemaining,
+      nodeCount: bundle.nodes.length,
+    };
+  }
+
+  private async getSubscriptionAccessBundle(tokenValue: string) {
+    if (!/^hy2_[a-f0-9]{24}$/.test(tokenValue)) {
+      throw new NotFoundException('Subscription not found');
+    }
+
+    if (this.entitlements && this.prisma) {
+      const token = await this.prisma.accessToken.findUnique({
+        where: { token: tokenValue },
+      });
+      if (!token || token.revokedAt) {
+        throw new NotFoundException('Subscription not found');
+      }
+      const hasV2 =
+        (await this.prisma.entitlementGrant.count({
+          where: { userId: token.userId },
+        })) > 0;
+      if (hasV2) return this.getV2AccessBundle(token.userId, token);
+    }
+
+    return this.store.getAccessBundleByToken(tokenValue);
+  }
+
+  private getConsumedBytes(subscription: object) {
+    return 'consumedTrafficBytes' in subscription &&
+      typeof subscription.consumedTrafficBytes === 'number'
+      ? subscription.consumedTrafficBytes
+      : 0;
   }
 
   private buildNodeUri(

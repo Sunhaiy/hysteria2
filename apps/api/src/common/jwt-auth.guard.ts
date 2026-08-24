@@ -7,6 +7,12 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import type { Request } from 'express';
 import { CacheService } from '../cache/cache.service';
+import { ControlPlaneStoreService } from '../domain/control-plane.store';
+import {
+  hasValidCsrfToken,
+  readCookie,
+  sessionCookieName,
+} from '../auth/session-cookie';
 import type { SessionPrincipal } from './auth.types';
 
 @Injectable()
@@ -14,6 +20,7 @@ export class JwtAuthGuard implements CanActivate {
   constructor(
     private readonly jwtService: JwtService,
     private readonly cache: CacheService,
+    private readonly store: ControlPlaneStoreService,
   ) {}
 
   async canActivate(context: ExecutionContext) {
@@ -26,11 +33,22 @@ export class JwtAuthGuard implements CanActivate {
     >;
     const headerValue = headers.authorization;
     const header = Array.isArray(headerValue) ? headerValue[0] : headerValue;
-    if (!header?.startsWith('Bearer ')) {
+    const bearerToken = header?.startsWith('Bearer ')
+      ? header.slice('Bearer '.length)
+      : undefined;
+    const cookieToken = readCookie(request, sessionCookieName);
+    const token = bearerToken ?? cookieToken;
+    if (!token) {
       throw new UnauthorizedException('Missing bearer token');
     }
-
-    const token = header.slice('Bearer '.length);
+    if (
+      cookieToken &&
+      !bearerToken &&
+      !['GET', 'HEAD', 'OPTIONS'].includes(request.method) &&
+      !hasValidCsrfToken(request)
+    ) {
+      throw new UnauthorizedException('Invalid CSRF token');
+    }
     let principal: SessionPrincipal;
     try {
       principal = this.jwtService.verify<SessionPrincipal>(token, {
@@ -50,6 +68,23 @@ export class JwtAuthGuard implements CanActivate {
     if (!session) {
       throw new UnauthorizedException('Session expired or revoked');
     }
+
+    const current = await this.store.getSessionIdentity(principal.sub);
+    if (
+      !current ||
+      current.status !== 'active' ||
+      current.sessionVersion !== principal.sessionVersion
+    ) {
+      await this.cache.del(`session:${principal.jti}`);
+      throw new UnauthorizedException('Session is no longer valid');
+    }
+
+    principal = {
+      ...principal,
+      role: current.role,
+      email: current.email,
+      displayName: current.displayName,
+    };
 
     request.principal = principal;
     return true;

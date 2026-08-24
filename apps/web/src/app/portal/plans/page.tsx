@@ -1,479 +1,137 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
+import { CustomSelect } from "@/components/custom-select";
 import { Drawer } from "@/components/drawer";
 import { Icon } from "@/components/icon";
-import { ShaderAnimation } from "@/components/ui/shader-lines";
 import { useAuth } from "@/components/auth-provider";
-import { Toast, useToast } from "@/components/toast";
 import { apiRequest, ApiError } from "@/lib/api";
 import { portalNav } from "@/lib/copy";
 import { formatBytes, formatMoney } from "@/lib/format";
-import { normalizePlanAccent, planAccentColor } from "@/lib/plan-accents";
 
-const UNLIMITED_TRAFFIC = Number.MAX_SAFE_INTEGER;
-import type {
-  ManualOrderRecord,
-  PlanRecord,
-  PortalOverviewResponse,
-  PortalRedeemResponse,
-  PurchaseQuote,
-  WalletResponse,
-} from "@/lib/types";
+type Offer = { id: string; name: string; billingPeriod: "monthly" | "quarterly" | "yearly"; intervalMonths: number; trafficBytes: number; priceCents: number; currency: string; active: boolean; isDefault: boolean; archivedAt?: string | null };
+type Product = { id: string; kind: "plan" | "traffic_pack"; status: string; name: string; description?: string | null; trafficReset: "monthly" | "never"; access: { profileName?: string | null; speedUpMbps: number; speedDownMbps: number; deviceLimit: number; nodePools: Array<{ id: string; name: string; region?: string | null; nodes: Array<{ id: string; label: string; serviceable: boolean }> }> }; offers: Offer[] };
+type Catalog = { products: Product[] };
+type Quote = { productName: string; basePriceCents: number; discountCents: number; discountLabel?: string | null; finalPriceCents: number; balanceCents: number; sufficient: boolean };
+type Wallet = { balanceCents: number };
+
+const periodName = { monthly: "月付", quarterly: "季付", yearly: "年付" } as const;
 
 export default function PortalPlansPage() {
   const { token } = useAuth();
-  const [plans, setPlans] = useState<PlanRecord[]>([]);
-  const [orders, setOrders] = useState<ManualOrderRecord[]>([]);
-  const [overview, setOverview] = useState<PortalOverviewResponse | null>(null);
-  const [balanceCents, setBalanceCents] = useState(0);
-  const [branding, setBranding] = useState({
-    purchaseMode: "balance" as "balance" | "cdk",
-    buyButtonText: "购买",
-    cdkButtonText: "cdk充值",
-    cdkButtonUrl: "/portal/redeem",
-  });
-
-  // CDK-purchase mode state
-  const [cdkPlan, setCdkPlan] = useState<PlanRecord | null>(null);
-  const [cdkInput, setCdkInput] = useState("");
-  const [cdkRedeeming, setCdkRedeeming] = useState(false);
-  const [cdkError, setCdkError] = useState<string | null>(null);
-  const [cdkSuccess, setCdkSuccess] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const { toast, showToast } = useToast();
-
-  // Self-serve checkout state
-  const [checkoutPlan, setCheckoutPlan] = useState<PlanRecord | null>(null);
+  const [catalog, setCatalog] = useState<Catalog>({ products: [] });
+  const [wallet, setWallet] = useState<Wallet>({ balanceCents: 0 });
+  const [selected, setSelected] = useState<Record<string, string>>({});
+  const [checkout, setCheckout] = useState<{ product: Product; offer: Offer } | null>(null);
+  const [quote, setQuote] = useState<Quote | null>(null);
   const [discountCode, setDiscountCode] = useState("");
-  const [quote, setQuote] = useState<PurchaseQuote | null>(null);
-  const [quoting, setQuoting] = useState(false);
-  const [purchasing, setPurchasing] = useState(false);
-  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [idempotencyKey, setIdempotencyKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!token) {
-      return;
-    }
-
-    setLoading(true);
+    if (!token) return;
     setError(null);
     try {
-      const [nextPlans, nextOrders] = await Promise.all([
-        apiRequest<PlanRecord[]>("/api/portal/plans", { token }),
-        apiRequest<ManualOrderRecord[]>("/api/portal/orders", { token }),
+      const [nextCatalog, nextWallet] = await Promise.all([
+        apiRequest<Catalog>("/api/portal/catalog", { token }),
+        apiRequest<Wallet>("/api/portal/wallet", { token }),
       ]);
-
-      let nextOverview: PortalOverviewResponse | null = null;
-      try {
-        nextOverview = await apiRequest<PortalOverviewResponse>("/api/portal/subscription", {
-          token,
-        });
-      } catch (cause) {
-        if (!(cause instanceof ApiError) || cause.status !== 404) {
-          throw cause;
-        }
-      }
-
-      let wallet: WalletResponse | null = null;
-      try {
-        wallet = await apiRequest<WalletResponse>("/api/portal/wallet", { token });
-      } catch {
-        wallet = null;
-      }
-
-      try {
-        const b = await apiRequest<typeof branding>("/api/portal/branding", { token });
-        if (b) setBranding(b);
-      } catch {
-        // keep defaults
-      }
-
-      setPlans(nextPlans);
-      setOrders(nextOrders);
-      setOverview(nextOverview);
-      setBalanceCents(wallet?.balanceCents ?? nextOverview?.balanceCents ?? 0);
-    } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "套餐列表加载失败。");
-    } finally {
-      setLoading(false);
-    }
+      setCatalog(nextCatalog); setWallet(nextWallet);
+      setSelected((current) => {
+        const next = { ...current };
+        for (const product of nextCatalog.products) next[product.id] ||= product.offers.find((offer) => offer.isDefault)?.id ?? product.offers[0]?.id ?? "";
+        return next;
+      });
+    } catch (cause) { setError(cause instanceof ApiError ? cause.message : "商城加载失败。"); }
   }, [token]);
+  useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
 
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      void load();
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
-  }, [load]);
+  const groups = useMemo(() => ({ plans: catalog.products.filter((product) => product.kind === "plan"), packs: catalog.products.filter((product) => product.kind === "traffic_pack") }), [catalog.products]);
 
-  const pendingRenewal = orders.find((order) => order.status === "pending" && order.kind === "renewal");
-
-  const refreshQuote = useCallback(
-    async (plan: PlanRecord, code: string) => {
-      if (!token) return;
-      setQuoting(true);
-      setCheckoutError(null);
-      try {
-        const next = await apiRequest<PurchaseQuote>("/api/portal/purchase/quote", {
-          method: "POST",
-          token,
-          body: { planId: plan.id, discountCode: code.trim() || undefined },
-        });
-        setQuote(next);
-      } catch (cause) {
-        setQuote(null);
-        setCheckoutError(cause instanceof ApiError ? cause.message : "报价失败。");
-      } finally {
-        setQuoting(false);
-      }
-    },
-    [token],
-  );
-
-  function openCheckout(plan: PlanRecord) {
-    setCheckoutPlan(plan);
-    setDiscountCode("");
-    setQuote(null);
-    setCheckoutError(null);
-    void refreshQuote(plan, "");
+  async function fetchQuote(offer: Offer, code = "") {
+    if (!token) return;
+    setBusy(true); setError(null);
+    try { setQuote(await apiRequest<Quote>("/api/portal/commerce/quote", { method: "POST", token, body: { offerId: offer.id, discountCode: code.trim() || undefined } })); }
+    catch (cause) { setQuote(null); setError(cause instanceof ApiError ? cause.message : "报价失败。"); }
+    finally { setBusy(false); }
   }
 
-  async function confirmPurchase() {
-    if (!token || !checkoutPlan) return;
-    const renewing = overview?.subscription.planId === checkoutPlan.id;
-    setPurchasing(true);
-    setCheckoutError(null);
+  function openCheckout(product: Product, offer: Offer) {
+    setCheckout({ product, offer }); setQuote(null); setDiscountCode(""); setError(null); setIdempotencyKey(crypto.randomUUID()); void fetchQuote(offer);
+  }
+
+  async function confirm() {
+    if (!token || !checkout) return;
+    setBusy(true); setError(null);
     try {
-      await apiRequest<PortalOverviewResponse>("/api/portal/purchase", {
-        method: "POST",
-        token,
-        body: {
-          planId: checkoutPlan.id,
-          discountCode: discountCode.trim() || undefined,
-        },
-      });
-      setCheckoutPlan(null);
-      showToast(renewing ? "续费成功，套餐周期已延长" : "购买成功，套餐已生效");
-      await load();
-    } catch (cause) {
-      setCheckoutError(cause instanceof ApiError ? cause.message : "购买失败。");
-    } finally {
-      setPurchasing(false);
-    }
+      await apiRequest("/api/portal/commerce/checkout", { method: "POST", token, headers: { "Idempotency-Key": idempotencyKey }, body: { offerId: checkout.offer.id, discountCode: discountCode.trim() || undefined } });
+      setCheckout(null); setFeedback(checkout.product.kind === "plan" ? "套餐已立即生效。" : "流量包已发放，可独立接入节点。"); await load();
+    } catch (cause) { setError(cause instanceof ApiError ? cause.message : "结算失败。"); }
+    finally { setBusy(false); }
   }
 
-  function openCdkPurchase(plan: PlanRecord) {
-    setCdkPlan(plan);
-    setCdkInput("");
-    setCdkError(null);
-    setCdkSuccess(null);
-  }
-
-  async function redeemForPlan() {
-    if (!token || !cdkInput.trim()) return;
-    setCdkRedeeming(true);
-    setCdkError(null);
-    try {
-      const result = await apiRequest<PortalRedeemResponse>("/api/portal/redeem", {
-        method: "POST",
-        token,
-        body: { code: cdkInput.trim() },
-      });
-      const planName =
-        result.overview?.subscription.planName ??
-        result.code.planName ??
-        cdkPlan?.name ??
-        "套餐";
-      setCdkSuccess(`🎉 恭喜！已成功开通「${planName}」`);
-      await load();
-    } catch (cause) {
-      setCdkError(cause instanceof ApiError ? cause.message : "兑换失败，请检查 CDK。");
-    } finally {
-      setCdkRedeeming(false);
-    }
-  }
-
-  function handleBuy(plan: PlanRecord) {
-    if (branding.purchaseMode === "cdk") {
-      openCdkPurchase(plan);
-    } else {
-      openCheckout(plan);
-    }
-  }
-
-  const shopIsExternal = branding.cdkButtonUrl.startsWith("http");
-  const checkoutIsRenewal = Boolean(
-    checkoutPlan && overview?.subscription.planId === checkoutPlan.id,
+  const renderProducts = (products: Product[]) => (
+    <section className="plan-grid">
+      {products.map((product) => {
+        const offers = product.offers.filter((offer) => offer.active && !offer.archivedAt);
+        const offer = offers.find((item) => item.id === selected[product.id]) ?? offers[0];
+        const nodes = product.access.nodePools.flatMap((pool) => pool.nodes.filter((node) => node.serviceable));
+        return (
+          <article className="plan-card premium-plan-card" key={product.id}>
+            <div className="plan-card-head">
+              <div className="plan-card-copy"><h2 className="panel-title plan-card-title">{product.name}</h2><span className="panel-copy">{product.description}</span></div>
+              <div className="plan-price-block"><div className="price-line">{offer ? formatMoney(offer.priceCents) : "暂不可售"}</div><span className="fine-print">{offer ? periodName[offer.billingPeriod] : "-"}</span></div>
+            </div>
+            <div className="panel-body">
+              <div className="plan-spec-grid">
+                <div className="plan-spec-item"><Icon name="bolt" /><span>下行<strong>{product.access.speedDownMbps || "不限"} Mbps</strong></span></div>
+                <div className="plan-spec-item"><Icon name="devices" /><span>设备<strong>{product.access.deviceLimit} 台</strong></span></div>
+                <div className="plan-spec-item"><Icon name="hub" /><span>节点<strong>{nodes.length} 个</strong></span></div>
+              </div>
+              <label className="field"><span className="fine-print">规格</span><CustomSelect value={offer?.id ?? ""} onChange={(value) => setSelected((current) => ({ ...current, [product.id]: value }))} options={offers.map((item) => ({ value: item.id, label: `${item.name} · ${formatMoney(item.priceCents)}` }))} /></label>
+              {offer ? <div className="plan-benefit-list">
+                <div><span className="plan-benefit-icon"><Icon name="network_node" /></span><span>{product.kind === "plan" ? "每月额度" : "一次性总量"}</span><strong>{formatBytes(offer.trafficBytes)}</strong></div>
+                <div><span className="plan-benefit-icon"><Icon name="calendar_month" /></span><span>有效期</span><strong>{offer.intervalMonths} 个月</strong></div>
+                <div><span className="plan-benefit-icon"><Icon name="globe" /></span><span>节点池</span><strong>{product.access.nodePools.map((pool) => pool.name).join(" · ")}</strong></div>
+              </div> : null}
+              <div className="plan-card-footer"><button className="action-button" type="button" disabled={!offer} onClick={() => offer && openCheckout(product, offer)}>{product.kind === "plan" ? "选择套餐" : "购买流量包"}</button><span className="badge info">{product.kind === "plan" ? "按月重置" : "独立接入"}</span></div>
+            </div>
+          </article>
+        );
+      })}
+    </section>
   );
-  const cdkIsRenewal = Boolean(cdkPlan && overview?.subscription.planId === cdkPlan.id);
 
   return (
-    <ConsoleShell
-      title="套餐选择"
-      subtitle="像商品页一样浏览套餐，提交待支付订单，后台确认后自动开通到你的会员账号"
-      scope="Member"
-      navItems={portalNav}
-      requireRole="member"
-    >
-      {error ? <div className="feedback error">{error}</div> : null}
-
-      {pendingRenewal ? (
-        <div className="feedback warn">
-          你已经提交过一笔待处理套餐订单：{pendingRenewal.planName ?? pendingRenewal.note ?? "未命名订单"}。
-          后台确认到账前，暂不建议重复提交。
-        </div>
-      ) : null}
-
-      {loading ? (
-        <section className="plan-grid">
-          {Array.from({ length: 3 }, (_, i) => (
-            <div
-              key={i}
-              className="skeleton"
-              style={{ height: 260, borderRadius: "var(--radius-md)" }}
-            />
-          ))}
-        </section>
-      ) : null}
-
-      {!loading ? (
-      <section className="plan-grid">
-        {plans.map((plan) => {
-          const isCurrent = overview?.subscription.planId === plan.id;
-          const isPending = pendingRenewal?.planId === plan.id;
-          const accent = normalizePlanAccent(plan.accent);
-
-          return (
-            <article
-              className={`plan-card premium-plan-card${isCurrent ? " current" : ""}${isPending ? " pending" : ""}`}
-              data-plan-accent={accent}
-              key={plan.id}
-            >
-              <ShaderAnimation color={planAccentColor(accent)} className="plan-card-shader" />
-              <div className="plan-card-head">
-                <div className="plan-card-copy">
-                  <h2 className="panel-title plan-card-title"><span aria-hidden="true" />{plan.name}</h2>
-                  <span className="panel-copy">{plan.description ?? "标准会员套餐"}</span>
-                </div>
-                <div className="plan-price-block">
-                  <div className="price-line">{formatMoney(plan.priceCents)}</div>
-                  <span className="fine-print">每 {plan.durationDays} 天</span>
-                </div>
-              </div>
-
-              <div className="panel-body">
-                <div className="plan-spec-grid">
-                  <div className="plan-spec-item">
-                    <Icon name="bolt" />
-                    <span>上行<strong>{plan.speedUpMbps === 0 ? "不限速" : `${plan.speedUpMbps} Mbps`}</strong></span>
-                  </div>
-                  <div className="plan-spec-item">
-                    <Icon name="monitoring" />
-                    <span>下行<strong>{plan.speedDownMbps === 0 ? "不限速" : `${plan.speedDownMbps} Mbps`}</strong></span>
-                  </div>
-                  <div className="plan-spec-item">
-                    <Icon name="account_circle" />
-                    <span>设备<strong>{plan.deviceLimit} 台</strong></span>
-                  </div>
-                </div>
-
-                <div className="plan-benefit-list">
-                  <div>
-                    <span className="plan-benefit-icon"><Icon name="globe" /></span>
-                    <span>可用节点</span>
-                    <strong>{plan.boundNodes.join(" · ") || "未绑定"}</strong>
-                  </div>
-                  <div>
-                    <span className="plan-benefit-icon"><Icon name="network_node" /></span>
-                    <span>周期流量</span>
-                    <strong>{plan.trafficBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(plan.trafficBytes)}</strong>
-                  </div>
-                </div>
-
-                <div className="plan-card-footer">
-                  <button
-                    className="action-button"
-                    type="button"
-                    onClick={() => handleBuy(plan)}
-                  >
-                    {isCurrent ? "续费套餐" : branding.buyButtonText}
-                  </button>
-                  <div className="plan-card-status">
-                    {isCurrent ? <span className="badge success">当前套餐</span> : null}
-                    {!isCurrent && isPending ? <span className="badge warn">待处理</span> : null}
-                  </div>
-                </div>
-              </div>
-            </article>
-          );
-        })}
-      </section>
-      ) : null}
-
-      <Toast toast={toast} />
-
-      <Drawer
-        open={Boolean(cdkPlan)}
-        onClose={() => setCdkPlan(null)}
-        title={cdkPlan ? `${cdkIsRenewal ? "续费" : "购买"} · ${cdkPlan.name}` : "购买"}
-        footer={
-          cdkSuccess ? (
-            <div className="toolbar-actions">
-              <button className="action-button" type="button" onClick={() => setCdkPlan(null)}>
-                完成
-              </button>
-            </div>
-          ) : (
-            <div className="toolbar-actions">
-              <button
-                className="action-button"
-                type="button"
-                disabled={cdkRedeeming || !cdkInput.trim()}
-                onClick={() => void redeemForPlan()}
-              >
-                {cdkRedeeming ? "兑换中..." : cdkIsRenewal ? "兑换续费" : "兑换开通"}
-              </button>
-              <button className="ghost-button" type="button" onClick={() => setCdkPlan(null)}>
-                取消
-              </button>
-            </div>
-          )
-        }
-      >
-        {cdkSuccess ? (
-          <div className="feedback success" style={{ fontSize: 16, padding: "16px 18px" }}>
-            {cdkSuccess}
+    <ConsoleShell title="套餐与流量包" subtitle="统一权益商城" scope="Member" navItems={portalNav} requireRole="member" toolbarMeta={<span className="badge info">余额 {formatMoney(wallet.balanceCents)}</span>}>
+      {error && !checkout ? <div className="feedback error">{error}</div> : null}
+      {feedback ? <div className="feedback success">{feedback}</div> : null}
+      <div className="page-stack">
+        <div className="shop-section-heading"><div><h2 className="section-title">会员套餐</h2><span className="panel-copy">月付、季付与年付均按月重置套餐额度。</span></div></div>
+        {renderProducts(groups.plans)}
+        <div className="shop-section-heading"><div><h2 className="section-title">独立流量包</h2><span className="panel-copy">无需先购买套餐，一次性总量在有效期内按最早到期顺序使用。</span></div><span className="badge success">可独立接入</span></div>
+        {renderProducts(groups.packs)}
+        {!catalog.products.length ? <div className="empty-state"><div className="empty-state-title">当前没有可售商品</div></div> : null}
+      </div>
+      <Drawer open={Boolean(checkout)} onClose={() => setCheckout(null)} title={checkout ? `结算：${checkout.product.name}` : "结算"}
+        footer={<div className="toolbar-actions"><button className="action-button" disabled={busy || !quote?.sufficient} type="button" onClick={() => void confirm()}>{busy ? "处理中..." : `支付 ${formatMoney(quote?.finalPriceCents ?? 0)}`}</button><button className="ghost-button" type="button" onClick={() => setCheckout(null)}>取消</button></div>}>
+        {checkout ? <div className="form-grid">
+          {error ? <div className="feedback error">{error}</div> : null}
+          <div className="checkout-facts">
+            <div><span>流量规则</span><strong>{checkout.product.kind === "plan" ? `每月重置 ${formatBytes(checkout.offer.trafficBytes)}` : `一次性总量 ${formatBytes(checkout.offer.trafficBytes)}`}</strong></div>
+            <div><span>有效期</span><strong>{checkout.offer.intervalMonths} 个月</strong></div>
+            <div><span>节点范围</span><strong>{checkout.product.access.nodePools.map((pool) => pool.name).join(" · ")}</strong></div>
+            <div><span>速率 / 设备</span><strong>{checkout.product.access.speedDownMbps} Mbps · {checkout.product.access.deviceLimit} 台</strong></div>
           </div>
-        ) : (
-          <>
-            {cdkError ? <div className="feedback error">{cdkError}</div> : null}
-
-            <div className="feedback info">
-              在店铺购买对应套餐的 CDK，然后把卡密粘贴到下方兑换即可立即开通。
-            </div>
-
-            {shopIsExternal ? (
-              <a
-                className="action-button"
-                href={branding.cdkButtonUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ display: "inline-flex", marginBottom: 12 }}
-              >
-                前往店铺购买 CDK
-              </a>
-            ) : (
-              <Link
-                className="action-button"
-                href={branding.cdkButtonUrl}
-                style={{ display: "inline-flex", marginBottom: 12 }}
-              >
-                前往店铺购买 CDK
-              </Link>
-            )}
-
-            <label className="field">
-              <span className="fine-print">输入 CDK 卡密</span>
-              <input
-                className="control mono"
-                value={cdkInput}
-                onChange={(event) => setCdkInput(event.target.value.toUpperCase())}
-                placeholder="HY2-XXXX-XXXX-XXXX"
-              />
-            </label>
-          </>
-        )}
-      </Drawer>
-
-      <Drawer
-        open={Boolean(checkoutPlan)}
-        onClose={() => setCheckoutPlan(null)}
-        title={
-          checkoutPlan
-            ? `用余额${checkoutIsRenewal ? "续费" : "购买"} · ${checkoutPlan.name}`
-            : "用余额购买"
-        }
-        footer={
-          <div className="toolbar-actions">
-            <button
-              className="action-button"
-              type="button"
-              disabled={purchasing || quoting || !quote || !quote.sufficient}
-              onClick={() => void confirmPurchase()}
-            >
-              {purchasing
-                ? checkoutIsRenewal ? "续费中..." : "购买中..."
-                : quote && !quote.sufficient
-                  ? "余额不足"
-                  : checkoutIsRenewal ? "确认续费" : "确认购买"}
-            </button>
-            <button className="ghost-button" type="button" onClick={() => setCheckoutPlan(null)}>
-              取消
-            </button>
-          </div>
-        }
-      >
-        {checkoutError ? <div className="feedback error">{checkoutError}</div> : null}
-
-        <div className="feedback info">
-          {checkoutIsRenewal
-            ? "续费会从当前到期日继续延长套餐周期，并叠加本周期流量，不会清空现有剩余。"
-            : "切换套餐后立即生效：速度、流量与周期按新套餐重新计算，附加流量包不受影响。"}
-        </div>
-
-        <label className="field">
-          <span className="fine-print">折扣码（可选）</span>
-          <div className="toolbar-actions" style={{ gap: 8 }}>
-            <input
-              className="control mono"
-              style={{ flex: 1 }}
-              value={discountCode}
-              onChange={(event) => setDiscountCode(event.target.value.toUpperCase())}
-              placeholder="HY2-XXXX-XXXX-XXXX"
-            />
-            <button
-              className="toolbar-button"
-              type="button"
-              disabled={quoting || !checkoutPlan}
-              onClick={() => checkoutPlan && void refreshQuote(checkoutPlan, discountCode)}
-            >
-              {quoting ? "计算中..." : "应用"}
-            </button>
-          </div>
-        </label>
-
-        <div className="kpi-list">
-          <div className="list-row">
-            <span className="muted">套餐原价</span>
-            <strong>{quote ? formatMoney(quote.basePriceCents) : "—"}</strong>
-          </div>
-          <div className="list-row">
-            <span className="muted">折扣减免</span>
-            <strong>
-              {quote && quote.discountCents > 0
-                ? `- ${formatMoney(quote.discountCents)}${quote.discountLabel ? `（${quote.discountLabel}）` : ""}`
-                : "—"}
-            </strong>
-          </div>
-          <div className="list-row">
-            <span className="muted">应付金额</span>
-            <strong>{quote ? formatMoney(quote.finalPriceCents) : "—"}</strong>
-          </div>
-          <div className="list-row">
-            <span className="muted">当前余额</span>
-            <strong>{formatMoney(quote ? quote.balanceCents : balanceCents)}</strong>
-          </div>
-          {quote && !quote.sufficient ? (
-            <div className="list-row">
-              <span className="muted">余额不足</span>
-              <strong>请先到兑换中心使用余额充值码</strong>
-            </div>
-          ) : null}
-        </div>
+          {checkout.product.kind === "plan" ? <div className="feedback warn">套餐切换立即生效，旧套餐会取消且不补偿剩余价值；已有流量包不受影响。</div> : <div className="feedback info">该流量包提供独立节点权限，不要求已有套餐。</div>}
+          <label className="field"><span className="fine-print">优惠码</span><div className="inline-form"><input className="control mono" value={discountCode} onChange={(event) => setDiscountCode(event.target.value)} /><button className="ghost-button" type="button" onClick={() => void fetchQuote(checkout.offer, discountCode)}>应用</button></div></label>
+          {quote ? <div className="checkout-facts"><div><span>商品原价</span><strong>{formatMoney(quote.basePriceCents)}</strong></div><div><span>优惠</span><strong>-{formatMoney(quote.discountCents)}</strong></div><div><span>钱包余额</span><strong>{formatMoney(quote.balanceCents)}</strong></div><div><span>应付</span><strong>{formatMoney(quote.finalPriceCents)}</strong></div></div> : null}
+          <Link className="ghost-button" href="/portal/redeem"><Icon name="redeem" />使用 CDK 兑换</Link>
+        </div> : null}
       </Drawer>
     </ConsoleShell>
   );

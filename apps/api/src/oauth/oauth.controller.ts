@@ -11,6 +11,7 @@ import {
 import type { Response } from 'express';
 import { OAuthExchangeDto } from '../contracts/http.dto';
 import { OAuthService } from './oauth.service';
+import { setSessionCookies } from '../auth/session-cookie';
 
 @Controller('api/auth/oauth')
 export class OAuthController {
@@ -22,10 +23,7 @@ export class OAuthController {
   }
 
   @Get(':provider/start')
-  async start(
-    @Param('provider') provider: string,
-    @Res() res: Response,
-  ) {
+  async start(@Param('provider') provider: string, @Res() res: Response) {
     try {
       const url = await this.oauth.buildAuthorizeUrl(provider);
       res.redirect(url);
@@ -57,7 +55,14 @@ export class OAuthController {
 
   @Post('exchange')
   @HttpCode(200)
-  exchange(@Body() body: OAuthExchangeDto) {
-    return this.oauth.exchange(body.code);
+  async exchange(
+    @Body() body: OAuthExchangeDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const session = await this.oauth.exchange(body.code);
+    setSessionCookies(response, session.accessToken);
+    const { accessToken, ...payload } = session;
+    void accessToken;
+    return payload;
   }
 }

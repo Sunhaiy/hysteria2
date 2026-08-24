@@ -1,9 +1,9 @@
 import { UsageSyncService } from './usage-sync.service';
 
 describe('UsageSyncService', () => {
-  it('syncs traffic, clears counters afterward, and kicks restricted users', async () => {
+  it('applies and acknowledges one durable traffic batch', async () => {
     const store = {
-      getNodes: jest.fn().mockResolvedValue([
+      getNodesForControl: jest.fn().mockResolvedValue([
         {
           id: 'node_hk_core',
           protocol: 'hysteria2',
@@ -12,7 +12,11 @@ describe('UsageSyncService', () => {
           active: true,
         },
       ]),
-      applyTrafficSnapshot: jest.fn().mockResolvedValue(['usr_lin']),
+      applyTrafficBatch: jest.fn().mockResolvedValue({
+        replayed: false,
+        impactedUsers: ['usr_lin'],
+      }),
+      acknowledgeTrafficBatch: jest.fn().mockResolvedValue(undefined),
       applyOnlineSnapshot: jest.fn().mockResolvedValue(undefined),
       validateUserIsRestricted: jest.fn().mockResolvedValue(true),
       markNodeSyncSuccess: jest.fn().mockResolvedValue(undefined),
@@ -20,10 +24,12 @@ describe('UsageSyncService', () => {
     };
 
     const nodeClient = {
-      fetchTraffic: jest.fn((node: { id: string }) =>
-        node.id === 'node_hk_core' ? { usr_lin: { tx: 2, rx: 40 } } : {},
-      ),
-      clearTraffic: jest.fn(() => ({})),
+      claimTrafficBatch: jest.fn().mockResolvedValue({
+        id: 'batch-1',
+        claimedAt: '2026-08-14T00:00:00.000Z',
+        traffic: { usr_lin: { tx: 2, rx: 40 } },
+      }),
+      acknowledgeTrafficBatch: jest.fn().mockResolvedValue({ ok: true }),
       fetchOnline: jest.fn(() => ({})),
       syncUsers: jest.fn(() => ({ added: 0, removed: 0, total: 0 })),
     };
@@ -31,11 +37,20 @@ describe('UsageSyncService', () => {
     const kickService = {
       kickUserEverywhere: jest.fn(() => ({ ok: true })),
     };
+    const entitlements = {
+      applyTrafficBatch: jest.fn().mockResolvedValue({
+        replayed: false,
+        impactedUsers: ['usr_lin'],
+      }),
+      getNodeAccess: jest.fn().mockResolvedValue({ allowed: false }),
+      getNodeProvisioningUsers: jest.fn().mockResolvedValue([]),
+    };
 
     const service = new UsageSyncService(
       store as never,
       nodeClient as never,
       kickService as never,
+      entitlements as never,
     );
 
     const result = await service.syncAllNodes();
@@ -44,11 +59,17 @@ describe('UsageSyncService', () => {
       nodeId: 'node_hk_core',
       impactedUsers: 1,
     });
-    expect(store.applyTrafficSnapshot).toHaveBeenCalledWith('node_hk_core', {
-      usr_lin: { tx: 2, rx: 40 },
-    });
-    expect(nodeClient.fetchTraffic.mock.invocationCallOrder[0]).toBeLessThan(
-      nodeClient.clearTraffic.mock.invocationCallOrder[0],
+    expect(entitlements.applyTrafficBatch).toHaveBeenCalledWith(
+      'node_hk_core',
+      {
+        id: 'batch-1',
+        claimedAt: '2026-08-14T00:00:00.000Z',
+        traffic: { usr_lin: { tx: 2, rx: 40 } },
+      },
+    );
+    expect(nodeClient.acknowledgeTrafficBatch).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'node_hk_core' }),
+      'batch-1',
     );
     expect(kickService.kickUserEverywhere).toHaveBeenCalledWith(
       'usr_lin',
@@ -67,13 +88,17 @@ describe('UsageSyncService', () => {
       active: true,
     };
     const store = {
-      getNodes: jest.fn().mockResolvedValue([node]),
+      getNodesForControl: jest.fn().mockResolvedValue([node]),
       getNodeProvisioningUsers: jest
         .fn()
         .mockResolvedValue([
           { userId: 'usr_lin', id: '67fbc500-3f3c-4ab9-a076-3e17c56bb3a1' },
         ]),
-      applyTrafficSnapshot: jest.fn().mockResolvedValue([]),
+      applyTrafficBatch: jest.fn().mockResolvedValue({
+        replayed: false,
+        impactedUsers: [],
+      }),
+      acknowledgeTrafficBatch: jest.fn().mockResolvedValue(undefined),
       applyOnlineSnapshot: jest.fn().mockResolvedValue(undefined),
       markNodeSyncSuccess: jest.fn().mockResolvedValue(undefined),
       markNodeSyncFailure: jest.fn().mockResolvedValue(undefined),
@@ -82,14 +107,31 @@ describe('UsageSyncService', () => {
       syncUsers: jest
         .fn()
         .mockResolvedValue({ added: 1, removed: 0, total: 1 }),
-      fetchTraffic: jest.fn().mockResolvedValue({}),
-      clearTraffic: jest.fn().mockResolvedValue({}),
+      claimTrafficBatch: jest.fn().mockResolvedValue({
+        id: 'batch-vless',
+        claimedAt: '2026-08-14T00:00:00.000Z',
+        traffic: {},
+      }),
+      acknowledgeTrafficBatch: jest.fn().mockResolvedValue({ ok: true }),
       fetchOnline: jest.fn().mockResolvedValue({}),
+    };
+    const entitlements = {
+      getNodeProvisioningUsers: jest
+        .fn()
+        .mockResolvedValue([
+          { userId: 'usr_lin', id: '67fbc500-3f3c-4ab9-a076-3e17c56bb3a1' },
+        ]),
+      applyTrafficBatch: jest.fn().mockResolvedValue({
+        replayed: false,
+        impactedUsers: [],
+      }),
+      getNodeAccess: jest.fn().mockResolvedValue({ allowed: true }),
     };
     const service = new UsageSyncService(
       store as never,
       nodeClient as never,
       { kickUserEverywhere: jest.fn() } as never,
+      entitlements as never,
     );
 
     const result = await service.syncAllNodes();

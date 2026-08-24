@@ -5,13 +5,14 @@ import { ConsoleShell } from "@/components/console-shell";
 import { CustomSelect } from "@/components/custom-select";
 import { DataTable } from "@/components/data-table";
 import { Drawer } from "@/components/drawer";
+import { Icon } from "@/components/icon";
 import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
-import { apiRequest, ApiError } from "@/lib/api";
+import { apiDownload, apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
 import { clearDraft, getDraft } from "@/lib/draft";
 import { formatBytes, formatDateTime, formatMoney } from "@/lib/format";
-import type { AdminUser, ManualOrderRecord, PlanRecord } from "@/lib/types";
+import type { AdminUser, ManualOrderRecord, PaginatedResponse, PlanRecord } from "@/lib/types";
 import { humanizeOrderKind, statusTone } from "@/lib/ui";
 
 const emptyForm = {
@@ -52,6 +53,7 @@ export default function AdminOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [actingOrderId, setActingOrderId] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [drawerError, setDrawerError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ msg: string; kind: "success" | "error" } | null>(null);
 
@@ -64,11 +66,11 @@ export default function AdminOrdersPage() {
     try {
       const [nextOrders, nextUsers, nextPlans] = await Promise.all([
         apiRequest<ManualOrderRecord[]>("/api/admin/orders", { token }),
-        apiRequest<AdminUser[]>("/api/admin/users", { token }),
+        apiRequest<PaginatedResponse<AdminUser>>("/api/admin/users?limit=200", { token }),
         apiRequest<PlanRecord[]>("/api/admin/plans", { token }),
       ]);
       setOrders(nextOrders);
-      setUsers(nextUsers.filter((u) => u.role === "member"));
+      setUsers(nextUsers.items.filter((u) => u.role === "member"));
       setPlans(nextPlans.filter((p) => p.active));
     } catch {
       // keep stale
@@ -178,6 +180,23 @@ export default function AdminOrdersPage() {
     }
   }
 
+  async function handleExport() {
+    if (!token) return;
+    setExporting(true);
+    setFeedback(null);
+    try {
+      await apiDownload("/api/admin/reporting/orders.csv", "orders.csv");
+      setFeedback({ msg: "订单流水 CSV 已导出。", kind: "success" });
+    } catch (cause) {
+      setFeedback({
+        msg: cause instanceof ApiError ? cause.message : "订单流水导出失败。",
+        kind: "error",
+      });
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <ConsoleShell
       title="人工订单"
@@ -197,6 +216,15 @@ export default function AdminOrdersPage() {
       }
       toolbarActions={
         <>
+          <button
+            className="toolbar-button"
+            type="button"
+            disabled={exporting}
+            onClick={() => void handleExport()}
+            title="导出订单流水 CSV"
+          >
+            <Icon name="download" />{exporting ? "导出中" : "导出 CSV"}
+          </button>
           <button className="action-button" type="button" onClick={openCreate}>
             创建订单
           </button>

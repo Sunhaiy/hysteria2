@@ -34,7 +34,13 @@ export function Drawer({
   return (
     <>
       {open ? <div className="drawer-backdrop" onClick={onClose} /> : null}
-      <div className={`drawer${open ? " open" : ""}`} role="dialog" aria-modal="true">
+      <div
+        className={`drawer${open ? " open" : ""}`}
+        role="dialog"
+        aria-modal={open ? "true" : undefined}
+        aria-hidden={!open}
+        inert={!open}
+      >
         <div className="drawer-header">
           <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -47,7 +53,12 @@ export function Drawer({
             </div>
             {subtitle ? <span className="fine-print muted">{subtitle}</span> : null}
           </div>
-          <button type="button" className="ghost-button compact" onClick={onClose}>
+          <button
+            type="button"
+            className="ghost-button compact"
+            onClick={onClose}
+            aria-label="关闭"
+          >
             ✕
           </button>
         </div>

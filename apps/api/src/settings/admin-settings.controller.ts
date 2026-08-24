@@ -32,7 +32,7 @@ export class AdminSettingsController {
     const callbackBase =
       process.env.OAUTH_CALLBACK_BASE ||
       process.env.API_PUBLIC_URL ||
-      'http://212.103.62.228:4000';
+      'http://localhost:4000';
     return {
       smtp: {
         host: smtp.host ?? '',

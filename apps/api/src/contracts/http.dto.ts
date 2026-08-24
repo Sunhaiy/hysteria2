@@ -224,10 +224,6 @@ export class UpdateUserDto {
   displayName?: string;
 
   @IsOptional()
-  @IsString()
-  password?: string;
-
-  @IsOptional()
   @IsIn(['admin', 'member'])
   role?: 'admin' | 'member';
 
@@ -333,6 +329,85 @@ export class UpdatePlanDto {
   accent?: string;
 }
 
+export class CreateTrafficPackProductDto {
+  @IsString()
+  @IsNotEmpty()
+  slug!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  name!: string;
+
+  @IsString()
+  description!: string;
+
+  @IsBoolean()
+  active!: boolean;
+
+  @IsNumber()
+  @Min(1)
+  trafficBytes!: number;
+
+  @IsInt()
+  @Min(1)
+  validityDays!: number;
+
+  @IsString()
+  @IsNotEmpty()
+  accessProfileId!: string;
+
+  @IsInt()
+  @Min(0)
+  priceCents!: number;
+
+  @IsString()
+  accent!: string;
+}
+
+export class UpdateTrafficPackProductDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  slug?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  trafficBytes?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  validityDays?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  accessProfileId?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  priceCents?: number;
+
+  @IsOptional()
+  @IsString()
+  accent?: string;
+}
+
 export class CreateSubscriptionDto {
   @IsString()
   userId!: string;
@@ -402,6 +477,10 @@ export class CreateNodeDto {
   @IsIn(['hysteria2', 'vless_reality'])
   protocol?: 'hysteria2' | 'vless_reality';
 
+  @IsOptional()
+  @IsString()
+  serverId?: string;
+
   @IsString()
   label!: string;
 
@@ -469,6 +548,10 @@ export class UpdateNodeDto {
   @IsOptional()
   @IsIn(['hysteria2', 'vless_reality'])
   protocol?: 'hysteria2' | 'vless_reality';
+
+  @IsOptional()
+  @IsString()
+  serverId?: string;
 
   @IsOptional()
   @IsString()
@@ -624,6 +707,10 @@ export class CreateRedemptionCodeDto {
   planId?: string;
 
   @IsOptional()
+  @IsString()
+  trafficPackProductId?: string;
+
+  @IsOptional()
   @IsNumber()
   @Min(1)
   trafficBytes?: number;
@@ -682,6 +769,16 @@ export class PurchasePlanDto {
   discountCode?: string;
 }
 
+export class PurchaseTrafficPackDto {
+  @IsString()
+  @IsNotEmpty()
+  productId!: string;
+
+  @IsOptional()
+  @IsString()
+  discountCode?: string;
+}
+
 export class UpdateRedemptionCodeDto {
   @IsOptional()
   @IsIn(['active', 'void'])
@@ -692,6 +789,10 @@ export class RedeemCodeDto {
   @IsString()
   @IsNotEmpty()
   code!: string;
+
+  @IsOptional()
+  @IsString()
+  expectedTrafficPackProductId?: string;
 }
 
 export class RequestPlanOrderDto {

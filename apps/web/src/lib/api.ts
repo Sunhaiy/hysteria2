@@ -17,6 +17,16 @@ interface RequestOptions extends Omit<RequestInit, "body"> {
   token?: string | null;
 }
 
+function readCookie(name: string) {
+  if (typeof document === "undefined") return null;
+  const prefix = `${name}=`;
+  const part = document.cookie
+    .split(";")
+    .map((value) => value.trim())
+    .find((value) => value.startsWith(prefix));
+  return part ? decodeURIComponent(part.slice(prefix.length)) : null;
+}
+
 export async function apiRequest<T>(
   path: string,
   options: RequestOptions = {},
@@ -29,7 +39,11 @@ export async function apiRequest<T>(
     headers.set("Content-Type", "application/json");
   }
   if (options.token) {
-    headers.set("Authorization", `Bearer ${options.token}`);
+    const method = (options.method ?? "GET").toUpperCase();
+    if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+      const csrf = readCookie("hysteria2-csrf");
+      if (csrf) headers.set("X-CSRF-Token", csrf);
+    }
   }
 
   const response = await fetch(`${apiBaseUrl}${path}`, {
@@ -42,6 +56,7 @@ export async function apiRequest<T>(
           ? (options.body as FormData)
           : JSON.stringify(options.body),
     cache: "no-store",
+    credentials: "include",
   });
 
   const text = await response.text();
@@ -58,4 +73,31 @@ export async function apiRequest<T>(
   }
 
   return payload as T;
+}
+
+export async function apiDownload(path: string, fallbackFilename: string) {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    method: "GET",
+    cache: "no-store",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    const message =
+      payload?.message && typeof payload.message === "string"
+        ? payload.message
+        : response.statusText || "Download failed";
+    throw new ApiError(message, response.status, payload);
+  }
+
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const matchedFilename = disposition.match(/filename="?([^";]+)"?/i)?.[1];
+  const url = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = matchedFilename ?? fallbackFilename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }

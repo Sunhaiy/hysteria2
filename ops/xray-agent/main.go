@@ -2,15 +2,19 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	statscommand "github.com/xtls/xray-core/app/stats/command"
@@ -38,6 +42,19 @@ type agent struct {
 	inboundTag string
 	stats      statscommand.StatsServiceClient
 	handler    proxymancommand.HandlerServiceClient
+	stateFile  string
+	mu         sync.Mutex
+	pending    *trafficBatch
+}
+
+type trafficBatch struct {
+	ID        string                      `json:"id"`
+	ClaimedAt time.Time                   `json:"claimedAt"`
+	Traffic   map[string]map[string]int64 `json:"traffic"`
+}
+
+type acknowledgeRequest struct {
+	ID string `json:"id"`
 }
 
 func main() {
@@ -49,6 +66,10 @@ func main() {
 	listen := envOr("XRAY_AGENT_LISTEN", "127.0.0.1:9010")
 	xrayAPI := envOr("XRAY_API_ADDRESS", "127.0.0.1:10085")
 	inboundTag := envOr("XRAY_INBOUND_TAG", "vless-reality")
+	stateFile := envOr(
+		"XRAY_AGENT_STATE_FILE",
+		"/var/lib/hysteria2-xray-agent/traffic-batch.json",
+	)
 
 	conn, err := grpc.NewClient(
 		xrayAPI,
@@ -64,11 +85,17 @@ func main() {
 		inboundTag: inboundTag,
 		stats:      statscommand.NewStatsServiceClient(conn),
 		handler:    proxymancommand.NewHandlerServiceClient(conn),
+		stateFile:  stateFile,
+	}
+	if err := a.loadPendingBatch(); err != nil {
+		log.Fatalf("load traffic batch state: %v", err)
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", a.authorize(a.health))
 	mux.HandleFunc("GET /traffic", a.authorize(a.traffic))
+	mux.HandleFunc("POST /traffic/claim", a.authorize(a.claimTraffic))
+	mux.HandleFunc("POST /traffic/ack", a.authorize(a.acknowledgeTraffic))
 	mux.HandleFunc("GET /online", a.authorize(a.online))
 	mux.HandleFunc("PUT /users", a.authorize(a.syncUsers))
 	mux.HandleFunc("POST /kick", a.authorize(a.kickUsers))
@@ -120,14 +147,72 @@ func (a *agent) traffic(w http.ResponseWriter, r *http.Request) {
 	clear, _ := strconv.ParseBool(r.URL.Query().Get("clear"))
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
-
-	result, err := a.stats.QueryStats(ctx, &statscommand.QueryStatsRequest{
-		Pattern: "user>>>",
-		Reset_:  clear,
-	})
+	traffic, err := a.collectTraffic(ctx, clear)
 	if err != nil {
 		writeGRPCError(w, err)
 		return
+	}
+	writeJSON(w, http.StatusOK, traffic)
+}
+
+func (a *agent) claimTraffic(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.pending != nil {
+		writeJSON(w, http.StatusOK, a.pending)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	traffic, err := a.collectTraffic(ctx, true)
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+	batch := &trafficBatch{
+		ID:        randomID(),
+		ClaimedAt: time.Now().UTC(),
+		Traffic:   traffic,
+	}
+	if err := a.persistPendingBatch(batch); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.pending = batch
+	writeJSON(w, http.StatusOK, batch)
+}
+
+func (a *agent) acknowledgeTraffic(w http.ResponseWriter, r *http.Request) {
+	var input acknowledgeRequest
+	if err := decodeJSON(w, r, &input); err != nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.pending == nil || input.ID != a.pending.ID {
+		writeError(w, http.StatusConflict, "traffic batch is not pending")
+		return
+	}
+	if err := os.Remove(a.stateFile); err != nil && !os.IsNotExist(err) {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.pending = nil
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (a *agent) collectTraffic(
+	ctx context.Context,
+	reset bool,
+) (map[string]map[string]int64, error) {
+
+	result, err := a.stats.QueryStats(ctx, &statscommand.QueryStatsRequest{
+		Pattern: "user>>>",
+		Reset_:  reset,
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	traffic := make(map[string]map[string]int64)
@@ -152,7 +237,49 @@ func (a *agent) traffic(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, traffic)
+	return traffic, nil
+}
+
+func (a *agent) loadPendingBatch() error {
+	raw, err := os.ReadFile(a.stateFile)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var batch trafficBatch
+	if err := json.Unmarshal(raw, &batch); err != nil {
+		return err
+	}
+	if batch.ID == "" || batch.Traffic == nil {
+		return errors.New("invalid persisted traffic batch")
+	}
+	a.pending = &batch
+	return nil
+}
+
+func (a *agent) persistPendingBatch(batch *trafficBatch) error {
+	if err := os.MkdirAll(filepath.Dir(a.stateFile), 0o700); err != nil {
+		return err
+	}
+	raw, err := json.Marshal(batch)
+	if err != nil {
+		return err
+	}
+	temporary := a.stateFile + ".tmp"
+	if err := os.WriteFile(temporary, raw, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(temporary, a.stateFile)
+}
+
+func randomID() string {
+	value := make([]byte, 16)
+	if _, err := rand.Read(value); err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(value)
 }
 
 func (a *agent) online(w http.ResponseWriter, r *http.Request) {

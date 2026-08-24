@@ -10,7 +10,10 @@ function OAuthCallbackBody() {
   const { adoptSession } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [error, setError] = useState<string | null>(null);
+  const code = searchParams.get("code");
+  const [error, setError] = useState<string | null>(() =>
+    code ? null : "缺少登录凭证，请重新登录。",
+  );
   const handled = useRef(false);
 
   useEffect(() => {
@@ -19,9 +22,7 @@ function OAuthCallbackBody() {
     }
     handled.current = true;
 
-    const code = searchParams.get("code");
     if (!code) {
-      setError("缺少登录凭证，请重新登录。");
       return;
     }
 
@@ -37,7 +38,7 @@ function OAuthCallbackBody() {
         setError(cause instanceof ApiError ? cause.message : "第三方登录失败，请重试。");
       }
     })();
-  }, [adoptSession, router, searchParams]);
+  }, [adoptSession, code, router, searchParams]);
 
   return (
     <main className="auth-page">

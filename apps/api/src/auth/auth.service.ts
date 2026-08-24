@@ -7,7 +7,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { randomInt, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import { compare, hash } from 'bcryptjs';
 import { CacheService } from '../cache/cache.service';
 import { type SessionPrincipal } from '../common/auth.types';
@@ -37,6 +37,9 @@ export class AuthService {
     const isValid = await compare(password, user.passwordHash);
     if (!isValid) {
       throw new UnauthorizedException('Invalid credentials');
+    }
+    if (user.status !== 'active') {
+      throw new UnauthorizedException('Account is not active');
     }
 
     return this.issueSession(user);
@@ -150,6 +153,9 @@ export class AuthService {
     if (!user) {
       throw new BadRequestException('第三方登录失败，请重试');
     }
+    if (user.status !== 'active') {
+      throw new UnauthorizedException('Account is not active');
+    }
 
     return this.issueSession(user);
   }
@@ -159,13 +165,47 @@ export class AuthService {
     return { success: true };
   }
 
+  async issuePasswordReset(userId: string, createdById: string) {
+    const rawToken = randomBytes(32).toString('base64url');
+    const tokenHash = this.hashResetToken(rawToken);
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    await this.store.issuePasswordResetToken({
+      userId,
+      createdById,
+      tokenHash,
+      expiresAt,
+    });
+    const webBaseUrl = (
+      process.env.WEB_PUBLIC_URL ?? 'http://localhost:3001'
+    ).replace(/\/$/, '');
+    return {
+      resetUrl: `${webBaseUrl}/reset-password?token=${encodeURIComponent(rawToken)}`,
+      expiresAt: expiresAt.toISOString(),
+    };
+  }
+
+  async resetPassword(rawToken: string, password: string) {
+    const passwordHash = await hash(password, 10);
+    const consumed = await this.store.consumePasswordResetToken(
+      this.hashResetToken(rawToken),
+      passwordHash,
+    );
+    if (!consumed) {
+      throw new BadRequestException('Reset link is invalid or expired');
+    }
+    return { success: true };
+  }
+
   async me(userId: string) {
     const user = await this.store.getUserById(userId);
     if (!user) {
       throw new UnauthorizedException('Unknown session subject');
     }
 
-    const { passwordHash: _pw, ...safeUser } = user;
+    if (user.status !== 'active') {
+      throw new UnauthorizedException('Account is not active');
+    }
+    const safeUser = this.publicUser(user);
     return {
       user: safeUser,
       role: user.role,
@@ -176,16 +216,22 @@ export class AuthService {
   private async issueSession(user: {
     id: string;
     role: 'admin' | 'member';
+    status: 'active' | 'suspended' | 'banned';
     email: string;
     displayName: string;
     passwordHash: string;
+    sessionVersion: number;
   }) {
+    if (user.status !== 'active') {
+      throw new UnauthorizedException('Account is not active');
+    }
     const principal: SessionPrincipal = {
       sub: user.id,
       role: user.role,
       email: user.email,
       displayName: user.displayName,
       jti: randomUUID(),
+      sessionVersion: user.sessionVersion,
     };
 
     const accessToken = await this.jwtService.signAsync(principal, {
@@ -199,12 +245,20 @@ export class AuthService {
       12 * 60 * 60,
     );
 
-    const { passwordHash: _pw, ...safeUser } = user;
+    const safeUser = this.publicUser(user);
     return {
       accessToken,
       principal,
       user: safeUser,
     };
+  }
+
+  private publicUser<T extends { passwordHash?: string }>(
+    user: T,
+  ): Omit<T, 'passwordHash'> {
+    const { passwordHash, ...safeUser } = user;
+    void passwordHash;
+    return safeUser;
   }
 
   private normalizeEmail(email: string) {
@@ -214,5 +268,9 @@ export class AuthService {
   private generateNumericCode() {
     // 6-digit, zero-padded, cryptographically random.
     return String(randomInt(0, 1_000_000)).padStart(6, '0');
+  }
+
+  private hashResetToken(token: string) {
+    return createHash('sha256').update(token).digest('hex');
   }
 }

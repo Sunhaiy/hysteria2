@@ -1,8 +1,8 @@
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import Redis from 'ioredis';
 
 @Injectable()
-export class CacheService implements OnModuleDestroy {
+export class CacheService implements OnModuleInit, OnModuleDestroy {
   private readonly memory = new Map<string, string>();
   private redis: Redis | null = process.env.REDIS_URL
     ? new Redis(process.env.REDIS_URL, {
@@ -11,12 +11,32 @@ export class CacheService implements OnModuleDestroy {
       })
     : null;
 
-  constructor() {
-    if (this.redis) {
-      void this.redis.connect().catch(() => {
-        this.redis?.disconnect();
-        this.redis = null;
-      });
+  async onModuleInit() {
+    const production = process.env.NODE_ENV === 'production';
+    if (!this.redis) {
+      if (production) {
+        throw new Error('REDIS_URL is required in production');
+      }
+      return;
+    }
+    try {
+      await this.redis.connect();
+      await this.redis.ping();
+    } catch (error) {
+      this.redis.disconnect();
+      this.redis = null;
+      if (production) throw error;
+    }
+  }
+
+  async health() {
+    if (!this.redis) {
+      return { ok: process.env.NODE_ENV !== 'production', adapter: 'memory' };
+    }
+    try {
+      return { ok: (await this.redis.ping()) === 'PONG', adapter: 'redis' };
+    } catch {
+      return { ok: false, adapter: 'redis' };
     }
   }
 

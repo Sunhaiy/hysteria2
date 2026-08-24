@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { AdminGuard } from '../common/admin.guard';
@@ -14,15 +15,22 @@ import {
   UpdateSubscriptionDto,
 } from '../contracts/http.dto';
 import { ControlPlaneStoreService } from '../domain/control-plane.store';
+import {
+  CustomerAdminService,
+  type SubscriptionQuery,
+} from '../customer-admin/customer-admin.service';
 
 @Controller('api/admin/subscriptions')
 @UseGuards(JwtAuthGuard, AdminGuard)
 export class SubscriptionsController {
-  constructor(private readonly store: ControlPlaneStoreService) {}
+  constructor(
+    private readonly store: ControlPlaneStoreService,
+    private readonly customers: CustomerAdminService,
+  ) {}
 
   @Get()
-  listSubscriptions() {
-    return this.store.getSubscriptions();
+  listSubscriptions(@Query() query: SubscriptionQuery) {
+    return this.customers.listSubscriptions(query);
   }
 
   @Post()

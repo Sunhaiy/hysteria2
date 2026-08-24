@@ -4,4 +4,5 @@ export interface SessionPrincipal {
   email: string;
   displayName: string;
   jti: string;
+  sessionVersion: number;
 }

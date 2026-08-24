@@ -1,20 +1,43 @@
 import { HysteriaAuthService } from './hysteria-auth.service';
 
 describe('HysteriaAuthService', () => {
-  const authorizeHysteriaAccess = jest.fn();
   let service: HysteriaAuthService;
+  const store = {
+    findAccessToken: jest.fn(),
+    getNodeForControl: jest.fn(),
+    getSessionIdentity: jest.fn(),
+    getCurrentOnlineCount: jest.fn(),
+    isRecentReconnect: jest.fn(),
+    markTokenUsed: jest.fn(),
+    recordAuthEvent: jest.fn(),
+    previewToken: jest.fn(() => 'hy2_li...mary'),
+  };
+  const entitlements = { getNodeAccess: jest.fn() };
 
   beforeEach(() => {
-    authorizeHysteriaAccess.mockReset();
-    service = new HysteriaAuthService({
-      authorizeHysteriaAccess,
-    } as never);
+    jest.clearAllMocks();
+    service = new HysteriaAuthService(store as never, entitlements as never);
   });
 
   it('delegates Hysteria HTTP auth payloads to the control plane service', async () => {
-    authorizeHysteriaAccess.mockResolvedValue({
-      ok: true,
+    store.findAccessToken.mockResolvedValue({
+      id: 'token_1',
+      userId: 'usr_lin',
+    });
+    store.getNodeForControl.mockResolvedValue({
+      id: 'node_hk_core',
+      active: true,
+      protocol: 'hysteria2',
+    });
+    store.getSessionIdentity.mockResolvedValue({
       id: 'usr_lin',
+      status: 'active',
+    });
+    store.getCurrentOnlineCount.mockResolvedValue(0);
+    store.isRecentReconnect.mockResolvedValue(false);
+    entitlements.getNodeAccess.mockResolvedValue({
+      allowed: true,
+      deviceLimit: 2,
     });
 
     const payload = {
@@ -29,6 +52,12 @@ describe('HysteriaAuthService', () => {
       ok: true,
       id: 'usr_lin',
     });
-    expect(authorizeHysteriaAccess).toHaveBeenCalledWith(payload);
+    expect(entitlements.getNodeAccess).toHaveBeenCalledWith(
+      'usr_lin',
+      'node_hk_core',
+    );
+    expect(store.recordAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ granted: true, reason: 'ok' }),
+    );
   });
 });

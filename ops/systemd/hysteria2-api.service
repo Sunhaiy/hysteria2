@@ -1,0 +1,17 @@
+[Unit]
+Description=Hysteria 2 Control Plane API
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hysteria2
+Group=hysteria2
+WorkingDirectory=/opt/hysteria2-control-plane/current/apps/api
+EnvironmentFile=/opt/hysteria2-control-plane/shared/app.env
+ExecStart=/usr/local/bin/node dist/main.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

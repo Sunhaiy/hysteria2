@@ -11,6 +11,7 @@ Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
+StateDirectory=hysteria2-xray-agent
 ProtectSystem=strict
 ProtectHome=true
 

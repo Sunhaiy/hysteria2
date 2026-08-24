@@ -38,16 +38,20 @@ Hysteria 2 原生节点可以很快跑起来，但一旦进入多用户、套餐
 
 ### 管理台
 
-- 用户、节点组、节点、套餐、套餐绑定、订阅、人工订单的真实 CRUD
+- 用户、节点、套餐、套餐绑定、订阅、订单和审计日志的真实 CRUD
+- 独立维护会员套餐和流量包商品，支持上下架、定价与有效期配置
 - 新建用户后自动签发主访问令牌
 - 开通套餐后自动生成专属 URI、二维码和推荐配置片段
 - 支持管理员查看接入信息、踢线和用量观察
+- 提供余额成交/CDK 权益价值、订单完成率、节点同步健康度和财务 CSV 导出
 
 ### 用户中心
 
 - 查看当前套餐状态、到期时间和剩余流量
 - 查看接入信息、二维码和配置片段
 - 查看订单记录和流量使用情况
+- 使用余额或 CDK 自助购买套餐，并在有效套餐上叠加流量包
+- 在流量使用达到 80%/95%/100% 或套餐三天内到期时显示分级提醒
 
 ### Hysteria 集成
 
@@ -93,12 +97,13 @@ flowchart LR
 - `subscriptions`
 - `traffic_packs`
 - `manual_orders`
-- `node_groups`
 - `nodes`
 - `plan_bindings`
 - `auth_events`
 - `usage_rollups`
+- `usage_import_batches`
 - `online_snapshots`
+- `audit_logs`
 
 ## 仓库结构
 
@@ -157,6 +162,7 @@ pnpm dev
 - Web：`http://127.0.0.1:3001/login`
 - API：`http://127.0.0.1:4000`
 - Health：`http://127.0.0.1:4000/api/health`
+- Readiness：`http://127.0.0.1:4000/api/health/ready`
 
 ## 本地 seed 账号
 
@@ -186,6 +192,7 @@ pnpm --filter @hysteria/api prisma:seed
 - 新建节点组、节点、套餐和套餐绑定
 - 新建订阅并自动展开套餐快照
 - 新建人工订单并叠加流量包
+- 上架流量包商品并通过余额购买即时到账
 - 会员登录并查看接入信息、订单和剩余流量
 - 新建会员令牌通过 Hysteria 鉴权接口放行
 
@@ -209,6 +216,10 @@ NODE_SYNC_ENABLED=true
 
 现有 `HYSTERIA_SYNC_ENABLED=true` 仍然兼容，但新部署建议使用协议无关的 `NODE_SYNC_ENABLED`。
 
+## 生产运营
+
+公网部署前必须配置 Redis、生产密钥、HTTPS 来源、迁移、备份和 readiness 探针。完整上线清单、交易接口、持久化流量批次协议、订单导出与恢复演练见 [`docs/PUBLIC_OPERATIONS.md`](docs/PUBLIC_OPERATIONS.md)。
+
 ## 公开仓库注意事项
 
 - 当前仓库未附带正式开源许可证，发布前请确认你的授权方式
@@ -217,7 +228,6 @@ NODE_SYNC_ENABLED=true
 
 ## 后续可扩展方向
 
-- 真实节点同步任务和失败重试
-- 更完整的审计日志和告警
-- 在线支付、续费和套餐变更
-- 自动化 CI、构建检查和发布流程
+- 真实支付网关、退款、回调验签与对账
+- 持久化邮件/短信通知与通知去重
+- 多实例分布式节点同步锁

@@ -18,6 +18,7 @@ import type {
   AdminCreateUserResponse,
   AdminUser,
   AdminUserAccessResponse,
+  PaginatedResponse,
   PlanRecord,
   SubscriptionRecord,
   UsageRollupRecord,
@@ -124,7 +125,6 @@ export default function AdminUsersPage() {
   const [loadingDelivery, setLoadingDelivery] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
   const [drawerError, setDrawerError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [deliveryError, setDeliveryError] = useState<string | null>(null);
@@ -137,6 +137,15 @@ export default function AdminUsersPage() {
   const [statsWallet, setStatsWallet] = useState<WalletResponse | null>(null);
   const [balanceInput, setBalanceInput] = useState("");
   const [savingBalance, setSavingBalance] = useState(false);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [roleFilter, setRoleFilter] = useState("");
+  const [quotaFilter, setQuotaFilter] = useState("");
+  const [totalUsers, setTotalUsers] = useState(0);
+  const [multiplierInput, setMultiplierInput] = useState("1");
+  const [quotaGbInput, setQuotaGbInput] = useState("");
+  const [quotaReason, setQuotaReason] = useState("");
+  const [savingEntitlement, setSavingEntitlement] = useState(false);
 
   const syncProvisionForDraft = useCallback(
     (nextRole: UserFormState["role"], nextPlans: PlanRecord[]) => {
@@ -152,25 +161,31 @@ export default function AdminUsersPage() {
     if (!token) return null;
     setLoading(true);
     try {
+      const params = new URLSearchParams({ limit: "200" });
+      if (search.trim()) params.set("q", search.trim());
+      if (statusFilter) params.set("status", statusFilter);
+      if (roleFilter) params.set("role", roleFilter);
+      if (quotaFilter) params.set("quotaState", quotaFilter);
       const [nextUsers, nextPlans] = await Promise.all([
-        apiRequest<AdminUser[]>("/api/admin/users", { token }),
+        apiRequest<PaginatedResponse<AdminUser>>(`/api/admin/users?${params}`, { token }),
         apiRequest<PlanRecord[]>("/api/admin/plans", { token }),
       ]);
-      setUsers(nextUsers);
+      setUsers(nextUsers.items);
+      setTotalUsers(nextUsers.total);
       setPlans(nextPlans);
       if (!editingUser) {
         syncProvisionForDraft(form.role, nextPlans);
       }
-      return { nextUsers, nextPlans };
+      return { nextUsers: nextUsers.items, nextPlans };
     } catch {
       return null;
     } finally {
       setLoading(false);
     }
-  }, [editingUser, form.role, syncProvisionForDraft, token]);
+  }, [editingUser, form.role, quotaFilter, roleFilter, search, statusFilter, syncProvisionForDraft, token]);
 
   useEffect(() => {
-    const id = window.setTimeout(() => void load(), 0);
+    const id = window.setTimeout(() => void load(), 250);
     return () => window.clearTimeout(id);
   }, [load]);
 
@@ -244,7 +259,6 @@ export default function AdminUsersPage() {
       status: user.status,
       notes: user.notes ?? "",
     });
-    setShowPassword(false);
     setHasDraftBanner(false);
     setDelivery(null);
     setDeliveryError(null);
@@ -278,6 +292,9 @@ export default function AdminUsersPage() {
 
   async function openStats(user: AdminUser) {
     setStatsUser(user);
+    setMultiplierInput(String(user.trafficMultiplier ?? 1));
+    setQuotaGbInput("");
+    setQuotaReason("");
     setStatsDrawerOpen(true);
     setStatsSubscription(null);
     setStatsUsage([]);
@@ -299,6 +316,41 @@ export default function AdminUsersPage() {
       // keep empty
     } finally {
       setLoadingStats(false);
+    }
+  }
+
+  async function saveEntitlementPolicy() {
+    if (!token || !statsUser) return;
+    const multiplier = Number(multiplierInput);
+    if (!Number.isFinite(multiplier) || multiplier < 0.1 || multiplier > 100) {
+      showToast("倍率必须在 0.1 到 100 之间。", "error");
+      return;
+    }
+    setSavingEntitlement(true);
+    try {
+      await apiRequest(`/api/admin/access-accounts/${statsUser.id}/policy`, {
+        method: "PATCH",
+        token,
+        body: { trafficMultiplier: multiplier },
+      });
+      if (statsSubscription && quotaGbInput.trim()) {
+        const remainingBytes = Math.round(Number(quotaGbInput) * 1024 * 1024 * 1024);
+        if (!Number.isSafeInteger(remainingBytes) || remainingBytes < 0 || quotaReason.trim().length < 3) {
+          throw new Error("设置剩余流量时必须填写有效 GB 数和至少 3 个字的原因。");
+        }
+        await apiRequest(`/api/admin/subscriptions/${statsSubscription.id}/quota-adjustments`, {
+          method: "POST",
+          token,
+          body: { mode: "set_remaining", remainingBytes, reason: quotaReason.trim() },
+        });
+      }
+      showToast("流量策略已保存。", "success");
+      await openStats({ ...statsUser, trafficMultiplier: multiplier });
+      await load();
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : "流量策略保存失败。", "error");
+    } finally {
+      setSavingEntitlement(false);
     }
   }
 
@@ -362,7 +414,6 @@ export default function AdminUsersPage() {
           token,
           body: {
             displayName: form.displayName,
-            password: form.password || undefined,
             role: form.role,
             status: form.status,
             notes: form.notes || undefined,
@@ -434,6 +485,27 @@ export default function AdminUsersPage() {
     }
   }
 
+  async function issuePasswordReset(user: AdminUser) {
+    if (!token) return;
+    setFeedback(null);
+    try {
+      const result = await apiRequest<{ resetUrl: string; expiresAt: string }>(
+        `/api/admin/users/${user.id}/password-reset`,
+        { method: "POST", token },
+      );
+      await copyText(result.resetUrl);
+      setFeedback({
+        msg: `已生成 ${user.displayName} 的一次性重置链接并复制，30 分钟内有效。`,
+        kind: "success",
+      });
+    } catch (cause) {
+      setFeedback({
+        msg: cause instanceof ApiError ? cause.message : "生成密码重置链接失败。",
+        kind: "error",
+      });
+    }
+  }
+
   return (
     <ConsoleShell
       title="用户管理"
@@ -442,7 +514,7 @@ export default function AdminUsersPage() {
       navItems={adminNav}
       requireRole="admin"
       toolbarMeta={
-        <span className="badge info">{loading ? "加载中..." : `${users.length} 个用户`}</span>
+        <span className="badge info">{loading ? "加载中..." : `${totalUsers} 个用户`}</span>
       }
       toolbarActions={
         <>
@@ -463,6 +535,30 @@ export default function AdminUsersPage() {
         copy="点击行编辑用户；创建会员时可顺手开通首个套餐并交付专属 URI。"
         action={<span className="fine-print">{loading ? "同步中..." : `${users.length} 条`}</span>}
       >
+        <div className="admin-filter-bar">
+          <label className="field grow-field">
+            <span className="fine-print">搜索用户</span>
+            <input className="control" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="邮箱、名称或用户 ID" />
+          </label>
+          <label className="field">
+            <span className="fine-print">状态</span>
+            <select className="control" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              <option value="">全部</option><option value="active">正常</option><option value="suspended">暂停</option><option value="banned">封禁</option>
+            </select>
+          </label>
+          <label className="field">
+            <span className="fine-print">角色</span>
+            <select className="control" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
+              <option value="">全部</option><option value="member">会员</option><option value="admin">管理员</option>
+            </select>
+          </label>
+          <label className="field">
+            <span className="fine-print">额度</span>
+            <select className="control" value={quotaFilter} onChange={(event) => setQuotaFilter(event.target.value)}>
+              <option value="">全部</option><option value="available">充足</option><option value="low">偏低</option><option value="exhausted">耗尽</option>
+            </select>
+          </label>
+        </div>
         {loading && users.length === 0 ? (
           <div className="skeleton-rows">
             {Array.from({ length: 5 }, (_, i) => (
@@ -472,7 +568,7 @@ export default function AdminUsersPage() {
         ) : null}
         {users.length > 0 ? (
           <DataTable
-            headers={["用户", "角色", "状态", "访问令牌", "最近使用", "操作"]}
+            headers={["用户", "角色", "状态", "倍率", "可用流量", "最近使用", "操作"]}
             rows={users.map((user) => [
               <button
                 key={`${user.id}-select`}
@@ -487,9 +583,8 @@ export default function AdminUsersPage() {
               <span key={`${user.id}-status`} className={`badge ${statusTone(user.status)}`}>
                 {user.status}
               </span>,
-              <span className="mono" key={`${user.id}-token`}>
-                {user.primaryAccessTokenPreview ?? "未签发"}
-              </span>,
+              `${(user.trafficMultiplier ?? 1).toFixed(2)}x`,
+              formatBytes(user.remainingBytes ?? 0),
               user.primaryAccessTokenLastUsedAt
                 ? formatDateTime(user.primaryAccessTokenLastUsedAt)
                 : "从未使用",
@@ -507,6 +602,13 @@ export default function AdminUsersPage() {
                   onClick={() => void handleKick(user.id)}
                 >
                   踢线
+                </button>
+                <button
+                  className="ghost-button compact"
+                  type="button"
+                  onClick={() => void issuePasswordReset(user)}
+                >
+                  重置密码
                 </button>
               </div>,
             ])}
@@ -716,38 +818,19 @@ export default function AdminUsersPage() {
             </label>
           </div>
 
-          {editingUser ? (
-            <div className="field">
-              <span className="fine-print">当前密码</span>
-              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                <input
-                  className="control mono"
-                  type={showPassword ? "text" : "password"}
-                  value={editingUser.plainPassword ?? ""}
-                  readOnly
-                  placeholder={editingUser.plainPassword ? undefined : "未记录"}
-                />
-                <button
-                  type="button"
-                  className="ghost-button compact"
-                  onClick={() => setShowPassword((v) => !v)}
-                >
-                  {showPassword ? "隐藏" : "显示"}
-                </button>
-              </div>
-            </div>
+          {!editingUser ? (
+            <label className="field">
+              <span className="fine-print">初始密码</span>
+              <input
+                className="control"
+                type="password"
+                value={form.password}
+                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                placeholder="首次登录密码"
+                autoComplete="new-password"
+              />
+            </label>
           ) : null}
-
-          <label className="field">
-            <span className="fine-print">{editingUser ? "重置密码" : "密码"}</span>
-            <input
-              className="control"
-              type="password"
-              value={form.password}
-              onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-              placeholder={editingUser ? "输入新密码以重置，留空不改" : "首次登录密码"}
-            />
-          </label>
 
           <label className="field">
             <span className="fine-print">备注</span>
@@ -914,6 +997,29 @@ export default function AdminUsersPage() {
             ) : (
               <div className="fine-print">该用户还没有订阅记录。</div>
             )}
+
+            <div className="kpi-list">
+              <div className="field-section-label">计费策略</div>
+              <label className="field">
+                <span className="fine-print">流量倍率（0.1x - 100x）</span>
+                <input className="control" type="number" min="0.1" max="100" step="0.1" value={multiplierInput} onChange={(event) => setMultiplierInput(event.target.value)} />
+              </label>
+              {statsSubscription ? (
+                <>
+                  <label className="field">
+                    <span className="fine-print">将当前周期剩余流量设为（GB，留空则不调整）</span>
+                    <input className="control" type="number" min="0" step="0.1" value={quotaGbInput} onChange={(event) => setQuotaGbInput(event.target.value)} />
+                  </label>
+                  <label className="field">
+                    <span className="fine-print">调整原因</span>
+                    <input className="control" value={quotaReason} onChange={(event) => setQuotaReason(event.target.value)} placeholder="退款补偿、运营赠送等" />
+                  </label>
+                </>
+              ) : null}
+              <button className="action-button" type="button" disabled={savingEntitlement} onClick={() => void saveEntitlementPolicy()}>
+                {savingEntitlement ? "保存中..." : "保存流量策略"}
+              </button>
+            </div>
 
             {statsUsage.length > 0 ? (
               <div>

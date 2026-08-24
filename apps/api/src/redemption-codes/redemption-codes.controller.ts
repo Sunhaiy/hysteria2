@@ -37,6 +37,7 @@ export class RedemptionCodesController {
       code: body.code,
       kind: body.kind,
       planId: body.planId,
+      trafficPackProductId: body.trafficPackProductId,
       trafficBytes: body.trafficBytes,
       amountCents: body.amountCents,
       discountPercent: body.discountPercent,

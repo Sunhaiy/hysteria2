@@ -11,7 +11,6 @@ import {
   type ReactNode,
 } from "react";
 import { apiRequest, ApiError } from "@/lib/api";
-import { clearStoredToken, getStoredToken, setStoredToken } from "@/lib/auth-storage";
 import type { LoginResponse, SessionPayload } from "@/lib/types";
 
 interface AuthContextValue {
@@ -32,27 +31,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
-    const nextToken = getStoredToken();
-    if (!nextToken) {
-      startTransition(() => {
-        setToken(null);
-        setSession(null);
-        setLoading(false);
-      });
-      return;
-    }
-
     try {
-      const me = await apiRequest<SessionPayload>("/api/me", {
-        token: nextToken,
-      });
+      const me = await apiRequest<SessionPayload>("/api/me");
       startTransition(() => {
-        setToken(nextToken);
+        setToken("cookie-session");
         setSession(me);
         setLoading(false);
       });
     } catch (error) {
-      clearStoredToken();
       startTransition(() => {
         setToken(null);
         setSession(null);
@@ -77,9 +63,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       scope: response.principal.role === "admin" ? "admin" : "portal",
     };
 
-    setStoredToken(response.accessToken);
     startTransition(() => {
-      setToken(response.accessToken);
+      setToken("cookie-session");
       setSession(nextSession);
       setLoading(false);
     });
@@ -99,21 +84,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
-    const currentToken = getStoredToken();
-    if (currentToken) {
+    if (token) {
       // Best-effort server-side revocation; never block the UI on it.
       void apiRequest("/api/auth/logout", {
         method: "POST",
-        token: currentToken,
+        token,
       }).catch(() => undefined);
     }
-    clearStoredToken();
     startTransition(() => {
       setToken(null);
       setSession(null);
       setLoading(false);
     });
-  }, []);
+  }, [token]);
 
   const value = useMemo(
     () => ({

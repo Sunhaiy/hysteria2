@@ -15,6 +15,11 @@ bandwidth:
   down: 240 mbps
 ignoreClientBandwidth: true
 
+sniff:
+  enable: true
+  timeout: 2s
+  rewriteDomain: false
+
 auth:
   type: http
   http:

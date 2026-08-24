@@ -7,17 +7,20 @@ import {
 } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { ControlPlaneStoreService } from '../domain/control-plane.store';
-import { NodeTrafficClientService } from '../integrations/node-traffic-client.service';
+import { EntitlementService } from '../entitlement/entitlement.service';
+import { NodeAdapterRegistry } from '../integrations/node.adapter';
 import { KickService } from '../kick-service/kick-service.service';
 
 @Injectable()
 export class UsageSyncService {
   private readonly logger = new Logger(UsageSyncService.name);
+  private readonly activeNodeSyncs = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly store: ControlPlaneStoreService,
-    private readonly nodeClient: NodeTrafficClientService,
+    private readonly nodeClient: NodeAdapterRegistry,
     private readonly kickService: KickService,
+    private readonly entitlements: EntitlementService,
   ) {}
 
   @Interval(60_000)
@@ -41,10 +44,14 @@ export class UsageSyncService {
   }
 
   async syncAllNodes() {
-    const nodes = (await this.store.getNodes()).filter((node) => node.active);
+    const nodes = (await this.store.getNodesForControl()).filter(
+      (node) => node.active,
+    );
 
     const settled = await Promise.allSettled(
-      nodes.map((node) => this.syncNodeRecord(node)),
+      nodes.map((node) =>
+        this.withNodeLock(node.id, () => this.syncNodeRecord(node)),
+      ),
     );
 
     return settled.map((result, i) => {
@@ -59,13 +66,13 @@ export class UsageSyncService {
   }
 
   async syncNode(nodeId: string) {
-    const node = await this.store.getNodeById(nodeId);
+    const node = await this.store.getNodeForControl(nodeId);
     if (!node) throw new NotFoundException(`Unknown node: ${nodeId}`);
     if (!node.active) {
       throw new BadRequestException(`Node is disabled: ${nodeId}`);
     }
     try {
-      return await this.syncNodeRecord(node);
+      return await this.withNodeLock(node.id, () => this.syncNodeRecord(node));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new BadGatewayException(`Node sync failed: ${message}`);
@@ -73,12 +80,13 @@ export class UsageSyncService {
   }
 
   private async syncNodeRecord(
-    node: Awaited<ReturnType<ControlPlaneStoreService['getNodeById']>> & object,
+    node: Awaited<ReturnType<ControlPlaneStoreService['getNodeForControl']>> &
+      object,
   ) {
     try {
       let provisionedUsers = 0;
       if (node.protocol === 'vless_reality') {
-        const users = await this.store.getNodeProvisioningUsers(node.id);
+        const users = await this.entitlements.getNodeProvisioningUsers(node.id);
         await this.nodeClient.syncUsers(
           node,
           users.map((user) => ({
@@ -90,19 +98,19 @@ export class UsageSyncService {
         provisionedUsers = users.length;
       }
 
-      const traffic = await this.nodeClient.fetchTraffic(node);
-      const impactedUsers = await this.store.applyTrafficSnapshot(
-        node.id,
-        traffic,
-      );
-      await this.nodeClient.clearTraffic(node);
+      const batch = await this.nodeClient.claimTrafficBatch(node);
+      const applied = await this.entitlements.applyTrafficBatch(node.id, batch);
+      await this.nodeClient.acknowledgeTrafficBatch(node, batch.id);
+      await this.store.acknowledgeTrafficBatch(node.id, batch.id);
+      const impactedUsers = applied.impactedUsers;
       const online = await this.nodeClient.fetchOnline(node);
       await this.store.applyOnlineSnapshot(node.id, online);
 
       const restrictionChecks = await Promise.all(
         impactedUsers.map(async (userId) => ({
           userId,
-          restricted: await this.store.validateUserIsRestricted(userId),
+          restricted: !(await this.entitlements.getNodeAccess(userId, node.id))
+            .allowed,
         })),
       );
 
@@ -132,5 +140,18 @@ export class UsageSyncService {
       }
       throw error;
     }
+  }
+
+  private withNodeLock<T>(nodeId: string, operation: () => Promise<T>) {
+    const existing = this.activeNodeSyncs.get(nodeId);
+    if (existing) return existing as Promise<T>;
+
+    const running = operation().finally(() => {
+      if (this.activeNodeSyncs.get(nodeId) === running) {
+        this.activeNodeSyncs.delete(nodeId);
+      }
+    });
+    this.activeNodeSyncs.set(nodeId, running);
+    return running;
   }
 }

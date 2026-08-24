@@ -6,21 +6,20 @@ export interface NavItem {
 }
 
 export const adminNav: NavItem[] = [
-  { href: "/admin", label: "仪表盘", icon: "space_dashboard", meta: "OPS" },
-  { href: "/admin/users", label: "用户", icon: "group", meta: "USER" },
-  { href: "/admin/plans", label: "套餐", icon: "stacks", meta: "PLAN" },
-  { href: "/admin/subscriptions", label: "订阅", icon: "subscription", meta: "SUB" },
-  { href: "/admin/nodes", label: "节点", icon: "hub", meta: "NODE" },
-  { href: "/admin/redemption-codes", label: "兑换码", icon: "redeem", meta: "CDK" },
-  { href: "/admin/orders", label: "人工订单", icon: "receipt_long", meta: "BILL" },
-  { href: "/admin/usage", label: "用量日志", icon: "monitoring", meta: "STAT" },
-  { href: "/admin/sessions", label: "会话控制", icon: "shield_person", meta: "LIVE" },
-  { href: "/admin/settings", label: "系统设置", icon: "settings", meta: "CONF" },
+  { href: "/admin", label: "总览", icon: "space_dashboard", meta: "OPS" },
+  { href: "/admin/customers", label: "客户", icon: "group", meta: "CRM" },
+  { href: "/admin/catalog", label: "商品中心", icon: "stacks", meta: "SKU" },
+  { href: "/admin/finance", label: "财务中心", icon: "payments", meta: "FIN" },
+  { href: "/admin/traffic", label: "流量分析", icon: "monitoring", meta: "FLOW" },
+  { href: "/admin/monitoring", label: "监控告警", icon: "notifications", meta: "ALERT" },
+  { href: "/admin/nodes", label: "节点资源池", icon: "hub", meta: "POOL" },
+  { href: "/admin/audit", label: "审计", icon: "shield", meta: "AUDIT" },
+  { href: "/admin/settings", label: "设置", icon: "settings", meta: "CONF" },
 ];
 
 export const portalNav: NavItem[] = [
   { href: "/portal", label: "总览", icon: "account_circle", meta: "HOME" },
-  { href: "/portal/plans", label: "套餐选择", icon: "stacks", meta: "PLAN" },
+  { href: "/portal/plans", label: "套餐与流量包", icon: "stacks", meta: "SHOP" },
   { href: "/portal/redeem", label: "兑换中心", icon: "redeem", meta: "CDK" },
   { href: "/portal/access", label: "接入信息", icon: "qr_code_2", meta: "HY2" },
   { href: "/portal/tutorial", label: "使用教程", icon: "book", meta: "GUIDE" },

@@ -34,7 +34,7 @@ describe('PortalService VLESS + REALITY access', () => {
         trafficRemaining: 1024,
       }),
     };
-    const service = new PortalService(store as never, {} as never);
+    const service = new PortalService(store as never, {} as never, {} as never);
 
     const access = await service.getAccess('usr_lin');
     const uri = new URL(access.uri);
@@ -47,5 +47,34 @@ describe('PortalService VLESS + REALITY access', () => {
     expect(uri.searchParams.get('sid')).toBe('0123456789abcdef');
     expect(access.protocol).toBe('vless_reality');
     expect(access.configSnippet).toContain('"security": "reality"');
+    expect(access.configSnippet).toContain('"publicKey": "reality-public-key"');
+    expect(access.configSnippet).not.toContain('"password"');
+    expect(access.subscriptionPath).toBe(
+      '/subscribe/hy2_0123456789abcdef01234567/clash',
+    );
+  });
+
+  it('adds threshold alerts to the subscription overview', async () => {
+    const store = {
+      getPortalOverview: jest.fn().mockResolvedValue({
+        remainingBytes: 0,
+        subscription: {
+          includedTrafficBytes: 100,
+          bonusTrafficBytes: 0,
+          endsAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
+        },
+        packs: [],
+      }),
+    };
+    const service = new PortalService(store as never, {} as never, {} as never);
+
+    const overview = await service.getSubscription('usr_lin');
+
+    expect(overview.alerts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'traffic_100' }),
+        expect.objectContaining({ id: 'subscription_expiry' }),
+      ]),
+    );
   });
 });

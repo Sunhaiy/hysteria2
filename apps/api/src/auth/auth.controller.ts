@@ -4,8 +4,10 @@ import {
   Get,
   HttpCode,
   Post,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { CurrentPrincipal } from '../common/current-principal.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
@@ -16,6 +18,8 @@ import {
   RequestRegisterCodeDto,
 } from '../contracts/http.dto';
 import { AuthService } from './auth.service';
+import { ResetPasswordDto } from './auth.dto';
+import { clearSessionCookies, setSessionCookies } from './session-cookie';
 
 @Controller('api')
 export class AuthController {
@@ -25,8 +29,13 @@ export class AuthController {
   @Post('auth/login')
   @UseGuards(ThrottlerGuard)
   @Throttle({ default: { limit: 8, ttl: 60_000 } })
-  login(@Body() body: LoginDto) {
-    return this.authService.login(body.email, body.password);
+  async login(
+    @Body() body: LoginDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const session = await this.authService.login(body.email, body.password);
+    setSessionCookies(response, session.accessToken);
+    return this.withoutAccessToken(session);
   }
 
   // Sending verification codes is the abuse-prone step: 5 / minute / IP, on top
@@ -42,25 +51,49 @@ export class AuthController {
   @Post('auth/register')
   @UseGuards(ThrottlerGuard)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  register(@Body() body: RegisterDto) {
-    return this.authService.register({
+  async register(
+    @Body() body: RegisterDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const session = await this.authService.register({
       email: body.email,
       code: body.code,
       password: body.password,
       displayName: body.displayName,
     });
+    setSessionCookies(response, session.accessToken);
+    return this.withoutAccessToken(session);
   }
 
   @Post('auth/logout')
   @HttpCode(200)
   @UseGuards(JwtAuthGuard)
-  logout(@CurrentPrincipal() principal: SessionPrincipal) {
-    return this.authService.logout(principal.jti);
+  async logout(
+    @CurrentPrincipal() principal: SessionPrincipal,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    await this.authService.logout(principal.jti);
+    clearSessionCookies(response);
+    return { success: true };
+  }
+
+  @Post('auth/reset-password')
+  @HttpCode(200)
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 8, ttl: 60_000 } })
+  resetPassword(@Body() body: ResetPasswordDto) {
+    return this.authService.resetPassword(body.token, body.password);
   }
 
   @Get('me')
   @UseGuards(JwtAuthGuard)
   me(@CurrentPrincipal() principal: SessionPrincipal) {
     return this.authService.me(principal.sub);
+  }
+
+  private withoutAccessToken<T extends { accessToken: string }>(session: T) {
+    const { accessToken, ...payload } = session;
+    void accessToken;
+    return payload;
   }
 }

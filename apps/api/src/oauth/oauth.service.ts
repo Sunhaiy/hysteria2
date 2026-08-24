@@ -26,12 +26,12 @@ export class OAuthService {
     return (
       process.env.OAUTH_CALLBACK_BASE ||
       process.env.API_PUBLIC_URL ||
-      'http://212.103.62.228:4000'
+      'http://localhost:4000'
     );
   }
 
   webBase() {
-    return process.env.WEB_PUBLIC_URL || 'http://212.103.62.228:3001';
+    return process.env.WEB_PUBLIC_URL || 'http://localhost:3001';
   }
 
   private redirectUri(provider: Provider) {
@@ -119,7 +119,9 @@ export class OAuthService {
     return oneTime;
   }
 
-  async exchange(oneTime: string) {
+  async exchange(
+    oneTime: string,
+  ): Promise<Awaited<ReturnType<AuthService['oauthLogin']>>> {
     if (!oneTime) {
       throw new BadRequestException('缺少交换码');
     }
@@ -128,7 +130,16 @@ export class OAuthService {
       throw new BadRequestException('登录已过期，请重新登录');
     }
     await this.cache.del(`oauth-code:${oneTime}`);
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      !('accessToken' in parsed) ||
+      typeof parsed.accessToken !== 'string'
+    ) {
+      throw new BadRequestException('Invalid OAuth exchange payload');
+    }
+    return parsed as Awaited<ReturnType<AuthService['oauthLogin']>>;
   }
 
   private async fetchGoogleProfile(code: string): Promise<OAuthProfile> {

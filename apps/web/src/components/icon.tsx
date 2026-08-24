@@ -34,7 +34,10 @@ type IconName =
   | "book"
   | "add"
   | "edit"
-  | "refresh";
+  | "refresh"
+  | "warning"
+  | "schedule"
+  | "download";
 
 function BaseIcon(props: SVGProps<SVGSVGElement>) {
   return (
@@ -296,6 +299,26 @@ const icons: Record<IconName, ReactElement> = {
     <BaseIcon>
       <path d="M20 12a8 8 0 1 1-2.3-5.7" />
       <path d="M20 5v5h-5" />
+    </BaseIcon>
+  ),
+  warning: (
+    <BaseIcon>
+      <path d="M10.3 4.2 2.8 17a2 2 0 0 0 1.7 3h15a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0Z" />
+      <path d="M12 9v4" />
+      <path d="M12 17h.01" />
+    </BaseIcon>
+  ),
+  schedule: (
+    <BaseIcon>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </BaseIcon>
+  ),
+  download: (
+    <BaseIcon>
+      <path d="M12 3v12" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M5 21h14" />
     </BaseIcon>
   ),
 };

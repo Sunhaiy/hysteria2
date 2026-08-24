@@ -12,12 +12,14 @@ import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
-import { formatBytes, formatDateTime } from "@/lib/format";
+import { formatBytes, formatDateTime, formatMoney } from "@/lib/format";
 import type {
   AdminUser,
   AuthEventRecord,
   NodeRecord,
+  PaginatedResponse,
   PlanRecord,
+  ReportingSummaryResponse,
   SubscriptionRecord,
   UsageSummaryResponse,
 } from "@/lib/types";
@@ -33,6 +35,7 @@ export default function AdminDashboardPage() {
   const [nodes, setNodes] = useState<NodeRecord[]>([]);
   const [authEvents, setAuthEvents] = useState<AuthEventRecord[]>([]);
   const [usage, setUsage] = useState<UsageSummaryResponse | null>(null);
+  const [reporting, setReporting] = useState<ReportingSummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,20 +44,22 @@ export default function AdminDashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      const [nextUsers, nextPlans, nextSubscriptions, nextNodes, nextEvents, nextUsage] = await Promise.all([
-        apiRequest<AdminUser[]>("/api/admin/users", { token }),
+      const [nextUsers, nextPlans, nextSubscriptions, nextNodes, nextEvents, nextUsage, nextReporting] = await Promise.all([
+        apiRequest<PaginatedResponse<AdminUser>>("/api/admin/users?limit=200", { token }),
         apiRequest<PlanRecord[]>("/api/admin/plans", { token }),
-        apiRequest<SubscriptionRecord[]>("/api/admin/subscriptions", { token }),
+        apiRequest<PaginatedResponse<SubscriptionRecord>>("/api/admin/subscriptions?limit=200", { token }),
         apiRequest<NodeRecord[]>("/api/admin/nodes", { token }),
         apiRequest<AuthEventRecord[]>("/api/admin/auth-events", { token }),
         apiRequest<UsageSummaryResponse>("/api/admin/usage/summary", { token }),
+        apiRequest<ReportingSummaryResponse>("/api/admin/reporting/summary", { token }),
       ]);
-      setUsers(nextUsers);
+      setUsers(nextUsers.items);
       setPlans(nextPlans);
-      setSubscriptions(nextSubscriptions);
+      setSubscriptions(nextSubscriptions.items);
       setNodes(nextNodes);
       setAuthEvents(nextEvents);
       setUsage(nextUsage);
+      setReporting(nextReporting);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "管理台数据加载失败。");
     } finally {
@@ -181,6 +186,29 @@ export default function AdminDashboardPage() {
         <MetricCard label="当前在线设备" value={String(totalConcurrent)} footnote={`${activeNodes.length} 个活跃节点承载`} />
       </section>
 
+      <section className="metric-grid admin-primary-metrics">
+        <MetricCard
+          label="余额成交额"
+          value={formatMoney(reporting?.commerce.walletRevenueCents ?? 0)}
+          footnote={`${reporting?.commerce.appliedOrders ?? 0} 笔已生效订单`}
+        />
+        <MetricCard
+          label="CDK 权益价值"
+          value={formatMoney(reporting?.commerce.cdkEntitlementValueCents ?? 0)}
+          footnote={`累计优惠 ${formatMoney(reporting?.commerce.discountCents ?? 0)}`}
+        />
+        <MetricCard
+          label="订单完成率"
+          value={`${reporting?.commerce.completionRatePercent ?? 0}%`}
+          footnote={`${reporting?.commerce.pendingOrders ?? 0} 笔待处理 · ${reporting?.commerce.voidOrders ?? 0} 笔作废`}
+        />
+        <MetricCard
+          label="节点同步健康度"
+          value={`${reporting?.nodes.availabilityPercent ?? 0}%`}
+          footnote={`${reporting?.nodes.healthy ?? 0}/${reporting?.nodes.active ?? 0} 健康 · ${reporting?.nodes.pendingUsageBatches ?? 0} 批待确认`}
+        />
+      </section>
+
       <section className="admin-chart-grid">
         <Panel title="近 14 天流量趋势" copy="按日汇总全部节点上传和下载流量。">
           <EChart option={trafficOption} height={320} ariaLabel="近十四天上传下载流量趋势" />
@@ -199,10 +227,10 @@ export default function AdminDashboardPage() {
         </Panel>
         <Panel title="快捷操作" copy="常用管理入口集中到这里。">
           <div className="admin-quick-actions">
-            <Link href="/admin/users"><Icon name="group" /><span><strong>新增用户</strong><small>创建账号并开通套餐</small></span><b>›</b></Link>
-            <Link href="/admin/subscriptions"><Icon name="subscription" /><span><strong>新增订阅</strong><small>为现有会员开通服务</small></span><b>›</b></Link>
+            <Link href="/admin/customers"><Icon name="group" /><span><strong>客户管理</strong><small>查看客户与服务状态</small></span><b>›</b></Link>
+            <Link href="/admin/customers"><Icon name="subscription" /><span><strong>权益调整</strong><small>切换套餐或调整额度</small></span><b>›</b></Link>
             <Link href="/admin/nodes"><Icon name="hub" /><span><strong>新增节点</strong><small>接入 Hysteria 2 / VLESS 节点</small></span><b>›</b></Link>
-            <Link href="/admin/plans"><Icon name="stacks" /><span><strong>新增套餐</strong><small>配置价格、流量与速率</small></span><b>›</b></Link>
+            <Link href="/admin/catalog"><Icon name="stacks" /><span><strong>商品管理</strong><small>配置套餐与流量包</small></span><b>›</b></Link>
           </div>
         </Panel>
       </section>

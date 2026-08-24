@@ -17,7 +17,7 @@ export function AuthShell({
   active,
   children,
 }: {
-  active: "login" | "register";
+  active: "login" | "register" | "reset";
   children: ReactNode;
 }) {
   const site = useSite();

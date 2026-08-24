@@ -218,12 +218,15 @@ export default function PortalPage() {
       {overview
         ? (() => {
             const unlimited = overview.remainingBytes >= UNLIMITED_TRAFFIC;
+            const currentPacks = overview.packs.filter(
+              (pack) => pack.status !== "expired",
+            );
             const totalQuota =
               overview.subscription.includedTrafficBytes +
               overview.subscription.bonusTrafficBytes +
-              overview.packs.reduce((sum, pack) => sum + pack.totalBytes, 0);
+              currentPacks.reduce((sum, pack) => sum + pack.totalBytes, 0);
             const consumed = Math.max(0, totalQuota - overview.remainingBytes);
-            const usedBytes = usage?.consumedBytes ?? consumed;
+            const usedBytes = consumed;
             const daysRemaining = Math.max(
               0,
               Math.ceil(
@@ -271,6 +274,24 @@ export default function PortalPage() {
 
             return (
               <div className="portal-analytics">
+                {overview.alerts?.length ? (
+                  <section className="portal-alerts" aria-label="套餐提醒">
+                    {overview.alerts.map((alert) => (
+                      <div
+                        className={`portal-alert ${alert.severity}`}
+                        key={alert.id}
+                        role="status"
+                      >
+                        <Icon name={alert.kind === "traffic" ? "warning" : "schedule"} />
+                        <span>
+                          <strong>{alert.title}</strong>
+                          <small>{alert.message}</small>
+                        </span>
+                        <Link href={alert.actionHref}>立即处理</Link>
+                      </div>
+                    ))}
+                  </section>
+                ) : null}
                 <section className="metric-grid admin-primary-metrics">
                   <MetricCard
                     label="剩余总流量"

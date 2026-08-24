@@ -17,6 +17,7 @@ import type {
   PlanRecord,
   RedemptionCodeRecord,
   RedemptionUseRecord,
+  TrafficPackProductRecord,
 } from "@/lib/types";
 import {
   fromDateTimeLocal,
@@ -25,8 +26,6 @@ import {
   statusTone,
 } from "@/lib/ui";
 
-const GB = 1024 * 1024 * 1024;
-
 type CdkKind = "plan" | "traffic_pack" | "balance" | "discount";
 
 function describeCodeValue(item: RedemptionCodeRecord) {
@@ -34,7 +33,8 @@ function describeCodeValue(item: RedemptionCodeRecord) {
     case "plan":
       return item.planName ?? "套餐开通";
     case "traffic_pack":
-      return item.trafficBytes ? formatBytes(item.trafficBytes) : "流量包";
+      return item.trafficPackProductName ??
+        (item.trafficBytes ? formatBytes(item.trafficBytes) : "流量包");
     case "balance":
       return `充值 ${formatMoney(item.amountCents)}`;
     case "discount":
@@ -52,7 +52,7 @@ function emptyForm(planId = "") {
     customCode: "",
     kind: "plan" as CdkKind,
     planId,
-    trafficBytes: 50 * GB,
+    trafficPackProductId: "",
     amountCents: 1800,
     discountMode: "percent" as "percent" | "fixed",
     discountPercent: 20,
@@ -68,6 +68,7 @@ export default function AdminRedemptionCodesPage() {
   const { token } = useAuth();
   const [codes, setCodes] = useState<RedemptionCodeRecord[]>([]);
   const [plans, setPlans] = useState<PlanRecord[]>([]);
+  const [trafficPacks, setTrafficPacks] = useState<TrafficPackProductRecord[]>([]);
   const [form, setForm] = useState(() => emptyForm());
   const [latestCode, setLatestCode] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -113,13 +114,24 @@ export default function AdminRedemptionCodesPage() {
     if (!token) return;
     setLoading(true);
     try {
-      const [nextCodes, nextPlans] = await Promise.all([
+      const [nextCodes, nextPlans, nextTrafficPacks] = await Promise.all([
         apiRequest<RedemptionCodeRecord[]>("/api/admin/redemption-codes", { token }),
         apiRequest<PlanRecord[]>("/api/admin/plans", { token }),
+        apiRequest<TrafficPackProductRecord[]>("/api/admin/traffic-pack-products", {
+          token,
+        }),
       ]);
       setCodes(nextCodes);
       setPlans(nextPlans);
-      setForm((f) => (!f.planId && nextPlans.length ? { ...f, planId: nextPlans[0].id } : f));
+      setTrafficPacks(nextTrafficPacks);
+      setForm((current) => ({
+        ...current,
+        planId: current.planId || nextPlans[0]?.id || "",
+        trafficPackProductId:
+          current.trafficPackProductId ||
+          nextTrafficPacks.find((product) => !product.archivedAt)?.id ||
+          "",
+      }));
     } catch {
       // keep stale
     } finally {
@@ -188,7 +200,8 @@ export default function AdminRedemptionCodesPage() {
           code: form.count > 1 ? undefined : form.customCode.trim() || undefined,
           kind: form.kind,
           planId: form.kind === "plan" ? form.planId : undefined,
-          trafficBytes: form.kind === "traffic_pack" ? form.trafficBytes : undefined,
+          trafficPackProductId:
+            form.kind === "traffic_pack" ? form.trafficPackProductId : undefined,
           amountCents: form.amountCents,
           discountPercent:
             form.kind === "discount" && form.discountMode === "percent"
@@ -475,7 +488,7 @@ export default function AdminRedemptionCodesPage() {
                 submitting ||
                 !form.label.trim() ||
                 (form.kind === "plan" && !form.planId) ||
-                (form.kind === "traffic_pack" && !form.trafficBytes) ||
+                (form.kind === "traffic_pack" && !form.trafficPackProductId) ||
                 (form.kind === "balance" && form.amountCents <= 0)
               }
             >
@@ -569,17 +582,28 @@ export default function AdminRedemptionCodesPage() {
 
           {form.kind === "traffic_pack" ? (
             <label className="field">
-              <span className="fine-print">流量（GB）</span>
-              <input
-                className="control"
-                type="number"
-                min="1"
-                value={Math.round((form.trafficBytes / GB) * 100) / 100}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, trafficBytes: Math.round(Number(e.target.value) * GB) }))
+              <span className="fine-print">绑定流量包商品</span>
+              <CustomSelect
+                value={form.trafficPackProductId}
+                onChange={(value) =>
+                  setForm((current) => ({
+                    ...current,
+                    trafficPackProductId: value,
+                  }))
                 }
+                options={[
+                  { value: "", label: "请选择流量包商品" },
+                  ...trafficPacks
+                    .filter((product) => !product.archivedAt)
+                    .map((product) => ({
+                      value: product.id,
+                      label: `${product.name} · ${formatBytes(product.trafficBytes)} · ${formatMoney(product.priceCents)}`,
+                    })),
+                ]}
               />
-              <span className="field-hint">{formatBytes(form.trafficBytes)}</span>
+              <span className="field-hint">
+                CDK 的流量、价格和有效期来自所选商品快照。
+              </span>
             </label>
           ) : null}
 
