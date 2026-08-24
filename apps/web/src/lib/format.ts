@@ -7,6 +7,14 @@ export function formatBytes(bytes: number) {
   return `${(bytes / gb).toFixed(1)} GB`;
 }
 
+export function formatTrafficLimit(bytes: number) {
+  return bytes >= Number.MAX_SAFE_INTEGER ? "无限流量" : formatBytes(bytes);
+}
+
+export function formatSpeedLimit(mbps: number) {
+  return mbps <= 0 ? "不限速" : `${mbps} Mbps`;
+}
+
 export function formatMoney(cents: number) {
   return new Intl.NumberFormat("zh-CN", {
     style: "currency",
