@@ -645,7 +645,7 @@ func (a *agent) kickUsers(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if err := a.removeUser(ctx, email); err != nil {
-			if status.Code(err) == codes.NotFound {
+			if isMissingUserError(err) {
 				continue
 			}
 			writeGRPCError(w, err)
@@ -655,6 +655,16 @@ func (a *agent) kickUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]int{"kicked": kicked})
+}
+
+func isMissingUserError(err error) bool {
+	if status.Code(err) == codes.NotFound {
+		return true
+	}
+	message := strings.ToLower(status.Convert(err).Message())
+	return status.Code(err) == codes.Unknown &&
+		strings.Contains(message, "user ") &&
+		strings.Contains(message, " not found")
 }
 
 func (a *agent) addUser(ctx context.Context, user provisionedUser) error {

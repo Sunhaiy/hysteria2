@@ -100,9 +100,18 @@ export class UsageSyncService {
       await Promise.all(
         restrictionChecks
           .filter((item) => item.restricted)
-          .map((item) =>
-            this.kickService.kickUserEverywhere(item.userId, 'usage-sync'),
-          ),
+          .map(async (item) => {
+            try {
+              await this.kickService.kickUserEverywhere(
+                item.userId,
+                'usage-sync',
+              );
+            } catch (error) {
+              this.logger.warn(
+                `Failed to kick restricted user ${item.userId} after traffic sync: ${String(error)}`,
+              );
+            }
+          }),
       );
 
       return {

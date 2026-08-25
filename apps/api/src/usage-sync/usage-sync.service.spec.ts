@@ -276,6 +276,63 @@ describe('UsageSyncService', () => {
     expect(maxConcurrentAccessChecks).toBe(1);
   });
 
+  it('keeps an acknowledged traffic sync healthy when best-effort kicking fails', async () => {
+    const node = {
+      id: 'node_hysteria',
+      protocol: 'hysteria2',
+      trafficApiBaseUrl: 'mock://hysteria',
+      trafficApiSecret: 'secret',
+      active: true,
+    };
+    const store = {
+      getNodesForControl: jest.fn().mockResolvedValue([node]),
+      acknowledgeTrafficBatch: jest.fn().mockResolvedValue(undefined),
+      markUserSyncSuccess: jest.fn().mockResolvedValue(undefined),
+      markTrafficSyncSuccess: jest.fn().mockResolvedValue(undefined),
+      markSyncFailure: jest.fn().mockResolvedValue(undefined),
+    };
+    const nodeClient = {
+      claimTrafficBatch: jest.fn().mockResolvedValue({
+        id: 'batch-kick-failure',
+        claimedAt: '2026-08-25T00:00:00.000Z',
+        traffic: { user_restricted: { tx: 1, rx: 2 } },
+      }),
+      acknowledgeTrafficBatch: jest.fn().mockResolvedValue({ ok: true }),
+    };
+    const entitlements = {
+      applyTrafficBatch: jest.fn().mockResolvedValue({
+        replayed: false,
+        impactedUsers: ['user_restricted'],
+      }),
+      getNodeAccess: jest.fn().mockResolvedValue({ allowed: false }),
+    };
+    const kickService = {
+      kickUserEverywhere: jest
+        .fn()
+        .mockRejectedValue(new Error('Request failed with status code 502')),
+    };
+    const service = new UsageSyncService(
+      store as never,
+      nodeClient as never,
+      kickService as never,
+      entitlements as never,
+      store as never,
+    );
+
+    await expect(service.syncAllNodes()).resolves.toEqual([
+      expect.objectContaining({
+        nodeId: 'node_hysteria',
+        impactedUsers: 1,
+      }),
+    ]);
+    expect(nodeClient.acknowledgeTrafficBatch).toHaveBeenCalledWith(
+      node,
+      'batch-kick-failure',
+    );
+    expect(store.markTrafficSyncSuccess).toHaveBeenCalledWith('node_hysteria');
+    expect(store.markSyncFailure).not.toHaveBeenCalled();
+  });
+
   it('exposes cleanup for the external worker without scheduling it in the API', async () => {
     const cleanupOldData = jest.fn().mockResolvedValue({
       deletedSnapshots: 2,
