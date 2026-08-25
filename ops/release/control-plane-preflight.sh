@@ -109,21 +109,25 @@ while IFS='|' read -r label base_url secret service expected_status; do
   echo "agent_${label}_pid=$main_pid" >>"$current"
 
   if [[ "$service" == "xray" ]]; then
-    online_file="$temporary_dir/agent-${index}-online.json"
-    users_file="$temporary_dir/agent-${index}-users.json"
-    agent_get "$base_url" "$secret" "/online" "$online_file"
-    agent_get "$base_url" "$secret" "/users/count" "$users_file"
-    online="$($node_bin -e '
-      const fs = require("fs");
-      const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-      process.stdout.write(String(Object.values(value).reduce((sum, item) => sum + Number(item || 0), 0)));
-    ' "$online_file")"
-    users="$($node_bin -e '
-      const fs = require("fs");
-      const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-      if (!Number.isInteger(value.total) || value.total < 0) process.exit(3);
-      process.stdout.write(String(value.total));
-    ' "$users_file")"
+    online=0
+    users=0
+    if [[ "$status" == "active" ]]; then
+      online_file="$temporary_dir/agent-${index}-online.json"
+      users_file="$temporary_dir/agent-${index}-users.json"
+      agent_get "$base_url" "$secret" "/online" "$online_file"
+      agent_get "$base_url" "$secret" "/users/count" "$users_file"
+      online="$($node_bin -e '
+        const fs = require("fs");
+        const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+        process.stdout.write(String(Object.values(value).reduce((sum, item) => sum + Number(item || 0), 0)));
+      ' "$online_file")"
+      users="$($node_bin -e '
+        const fs = require("fs");
+        const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+        if (!Number.isInteger(value.total) || value.total < 0) process.exit(3);
+        process.stdout.write(String(value.total));
+      ' "$users_file")"
+    fi
     echo "agent_${label}_online=$online" >>"$current"
     echo "agent_${label}_users=$users" >>"$current"
   fi
