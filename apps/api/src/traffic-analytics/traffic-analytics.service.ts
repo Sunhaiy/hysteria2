@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { pageResponse, parsePage } from '../common/pagination';
 
 export interface TrafficQuery {
   from?: string;
@@ -8,7 +9,6 @@ export interface TrafficQuery {
   userId?: string;
   productId?: string;
   nodeId?: string;
-  poolId?: string;
   page?: string;
   pageSize?: string;
 }
@@ -40,9 +40,8 @@ export class TrafficAnalyticsService {
 
   async overview(query: TrafficQuery) {
     const where = this.sqlWhere(query);
-    const [totalRows, trendRows, users, products, nodes, pools] =
-      await Promise.all([
-        this.prisma.$queryRaw<TrafficTotalsRow[]>(Prisma.sql`
+    const [totalRows, trendRows, users, products, nodes] = await Promise.all([
+      this.prisma.$queryRaw<TrafficTotalsRow[]>(Prisma.sql`
           SELECT
             COALESCE(SUM(r."txBytes" + r."rxBytes"), 0)::bigint AS "physicalBytes",
             COALESCE(SUM(COALESCE(r."accountedBytes", r."txBytes" + r."rxBytes")), 0)::bigint AS "accountedBytes",
@@ -56,7 +55,7 @@ export class TrafficAnalyticsService {
           FROM "UsageRollup" r
           ${where}
         `),
-        this.prisma.$queryRaw<TrafficTrendRow[]>(Prisma.sql`
+      this.prisma.$queryRaw<TrafficTrendRow[]>(Prisma.sql`
           SELECT
             to_char(
               date_trunc(
@@ -83,7 +82,7 @@ export class TrafficAnalyticsService {
             r."bucketStart" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Shanghai'
           ) ASC
         `),
-        this.prisma.$queryRaw<TrafficRankingRow[]>(Prisma.sql`
+      this.prisma.$queryRaw<TrafficRankingRow[]>(Prisma.sql`
           SELECT
             u."id" AS "id",
             u."email" AS "name",
@@ -95,7 +94,7 @@ export class TrafficAnalyticsService {
           ORDER BY "bytes" DESC
           LIMIT 10
         `),
-        this.prisma.$queryRaw<TrafficRankingRow[]>(Prisma.sql`
+      this.prisma.$queryRaw<TrafficRankingRow[]>(Prisma.sql`
           SELECT
             product."id" AS "id",
             product."name" AS "name",
@@ -114,7 +113,7 @@ export class TrafficAnalyticsService {
           ORDER BY "bytes" DESC
           LIMIT 10
         `),
-        this.prisma.$queryRaw<TrafficRankingRow[]>(Prisma.sql`
+      this.prisma.$queryRaw<TrafficRankingRow[]>(Prisma.sql`
           SELECT
             node."id" AS "id",
             node."label" AS "name",
@@ -126,20 +125,7 @@ export class TrafficAnalyticsService {
           ORDER BY "bytes" DESC
           LIMIT 10
         `),
-        this.prisma.$queryRaw<TrafficRankingRow[]>(Prisma.sql`
-          SELECT
-            pool."id" AS "id",
-            pool."name" AS "name",
-            COALESCE(SUM(r."txBytes" + r."rxBytes"), 0)::bigint AS "bytes"
-          FROM "UsageRollup" r
-          JOIN "NodePoolMember" member ON member."nodeId" = r."nodeId"
-          JOIN "NodePool" pool ON pool."id" = member."poolId"
-          ${where}
-          GROUP BY pool."id", pool."name"
-          ORDER BY "bytes" DESC
-          LIMIT 10
-        `),
-      ]);
+    ]);
     const totals = totalRows[0] ?? {
       physicalBytes: 0n,
       accountedBytes: 0n,
@@ -166,18 +152,16 @@ export class TrafficAnalyticsService {
         users: this.presentRanking(users),
         products: this.presentRanking(products),
         nodes: this.presentRanking(nodes),
-        pools: this.presentRanking(pools),
       },
     };
   }
 
   async details(query: TrafficQuery) {
     const where = this.where(query);
-    const page = Math.max(Number.parseInt(query.page ?? '1', 10) || 1, 1);
-    const pageSize = Math.min(
-      Math.max(Number.parseInt(query.pageSize ?? '50', 10) || 50, 1),
-      5000,
-    );
+    const { page, pageSize, skip } = parsePage(query, {
+      defaultPageSize: 20,
+      maxPageSize: 100,
+    });
     const [rows, total] = await Promise.all([
       this.prisma.usageRollup.findMany({
         where,
@@ -192,14 +176,14 @@ export class TrafficAnalyticsService {
             },
           },
         },
-        orderBy: { bucketStart: 'desc' },
-        skip: (page - 1) * pageSize,
+        orderBy: [{ bucketStart: 'desc' }, { id: 'desc' }],
+        skip,
         take: pageSize,
       }),
       this.prisma.usageRollup.count({ where }),
     ]);
-    return {
-      items: rows.map((row) => ({
+    return pageResponse(
+      rows.map((row) => ({
         id: row.id,
         bucketStart: row.bucketStart.toISOString(),
         userId: row.userId,
@@ -226,15 +210,23 @@ export class TrafficAnalyticsService {
       total,
       page,
       pageSize,
-    };
+    );
   }
 
   async exportCsv(query: TrafficQuery) {
-    const details = await this.details({
-      ...query,
-      page: '1',
-      pageSize: '5000',
-    });
+    const items: Awaited<ReturnType<this['details']>>['items'] = [];
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const details = await this.details({
+        ...query,
+        page: String(page),
+        pageSize: '100',
+      });
+      items.push(...details.items);
+      totalPages = details.totalPages;
+      page += 1;
+    } while (page <= totalPages);
     const header = [
       '时间',
       '用户',
@@ -247,7 +239,7 @@ export class TrafficAnalyticsService {
       '超额流量',
       '商品分摊',
     ];
-    const rows = details.items.map((item) => [
+    const rows = items.map((item) => [
       item.bucketStart,
       item.userEmail,
       item.nodeLabel,
@@ -275,9 +267,6 @@ export class TrafficAnalyticsService {
       bucketStart: { gte: from, lt: to },
       userId: query.userId,
       nodeId: query.nodeId,
-      node: query.poolId
-        ? { poolMemberships: { some: { poolId: query.poolId } } }
-        : undefined,
       allocations: query.productId
         ? {
             some: {
@@ -299,16 +288,6 @@ export class TrafficAnalyticsService {
     }
     if (query.nodeId) {
       conditions.push(Prisma.sql`r."nodeId" = ${query.nodeId}`);
-    }
-    if (query.poolId) {
-      conditions.push(Prisma.sql`
-        EXISTS (
-          SELECT 1
-          FROM "NodePoolMember" selected_pool
-          WHERE selected_pool."nodeId" = r."nodeId"
-            AND selected_pool."poolId" = ${query.poolId}
-        )
-      `);
     }
     if (query.productId) {
       conditions.push(Prisma.sql`

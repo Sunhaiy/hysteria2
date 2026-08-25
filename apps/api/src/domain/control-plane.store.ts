@@ -14,6 +14,7 @@ import {
   Plan,
   Prisma,
   RedemptionCodeKind,
+  RedemptionPlanMode,
   RedemptionCodeStatus,
   SubscriptionStatus,
   TrafficPackStatus,
@@ -21,10 +22,11 @@ import {
   UserStatus,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { SecretCipherService } from '../security/secret-cipher.service';
+import { pageResponse, parsePage, type PageQuery } from '../common/pagination';
+import { OnlinePresenceService } from './online-presence.service';
+import { resolvePlanRedemptionWindow } from '../commerce/plan-redemption-policy';
 
 const bytesInGiB = 1024 * 1024 * 1024;
-const onlineSnapshotFreshnessMs = 150_000;
 const reconnectGraceMs = 2 * 60_000;
 const rejectedAuthDedupeMs = 15 * 60_000;
 
@@ -84,6 +86,9 @@ type OrderWithRelations = Prisma.ManualOrderGetPayload<{
 type RedemptionCodeWithRelations = Prisma.RedemptionCodeGetPayload<{
   include: {
     plan: true;
+    catalogOffer: {
+      include: { product: { include: { legacyPlan: true } } };
+    };
     createdBy: true;
     redeemedBy: true;
     trafficPackProduct: true;
@@ -91,20 +96,24 @@ type RedemptionCodeWithRelations = Prisma.RedemptionCodeGetPayload<{
 }>;
 
 type CdkKind = 'plan' | 'traffic_pack' | 'balance' | 'discount';
-type NodeProtocolInput = 'hysteria2' | 'vless_reality';
 
-type NodeConfigurationInput = {
-  protocol: NodeProtocolInput;
-  sni?: string | null;
-  realityPublicKey?: string | null;
-  realityShortId?: string | null;
-};
+export interface ManualOrderQuery extends PageQuery {
+  q?: string;
+  status?: string;
+  source?: string;
+}
+
+export interface RedemptionCodeQuery extends PageQuery {
+  q?: string;
+  status?: string;
+  kind?: string;
+}
 
 @Injectable()
 export class ControlPlaneStoreService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly cipher?: SecretCipherService,
+    private readonly presence: OnlinePresenceService,
   ) {}
 
   async health() {
@@ -320,7 +329,7 @@ export class ControlPlaneStoreService {
 
   async issuePasswordResetToken(input: {
     userId: string;
-    createdById: string;
+    createdById: string | null;
     tokenHash: string;
     expiresAt: Date;
   }) {
@@ -991,201 +1000,6 @@ export class ControlPlaneStoreService {
     }
   }
 
-  async getNodes() {
-    const nodes = await this.prisma.node.findMany({
-      orderBy: { createdAt: 'desc' },
-    });
-
-    if (nodes.length === 0) return [];
-
-    const snapshotsByNode = await Promise.all(
-      nodes.map((node) =>
-        this.prisma.onlineSnapshot.findMany({
-          where: { nodeId: node.id },
-          orderBy: { capturedAt: 'desc' },
-          take: 200,
-        }),
-      ),
-    );
-
-    return nodes.map((node, index) =>
-      this.buildNodeView(node, snapshotsByNode[index]),
-    );
-  }
-
-  async getNodeById(nodeId: string) {
-    const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
-    return node ? this.presentNode(node) : undefined;
-  }
-
-  async getNodesForControl() {
-    const nodes = await this.prisma.node.findMany({
-      orderBy: { createdAt: 'desc' },
-    });
-    return Promise.all(nodes.map((node) => this.presentNodeForControl(node)));
-  }
-
-  async getNodeForControl(nodeId: string) {
-    const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
-    return node ? this.presentNodeForControl(node) : undefined;
-  }
-
-  async createNode(input: {
-    protocol?: NodeProtocolInput;
-    serverId?: string;
-    label: string;
-    hostname: string;
-    port: number;
-    obfsPassword?: string;
-    sni?: string;
-    pinSHA256?: string;
-    allowInsecureTls: boolean;
-    realityPublicKey?: string;
-    realityShortId?: string;
-    realityFingerprint?: string;
-    realitySpiderX?: string;
-    vlessFlow?: string;
-    trafficApiBaseUrl: string;
-    trafficApiSecret: string;
-    active: boolean;
-    speedUpMbps: number;
-    speedDownMbps: number;
-  }) {
-    try {
-      const protocol = input.protocol ?? 'hysteria2';
-      this.validateNodeConfiguration({ ...input, protocol });
-      const node = await this.prisma.node.create({
-        data: {
-          serverId: input.serverId,
-          protocol: this.toDbNodeProtocol(protocol),
-          label: input.label,
-          hostname: input.hostname,
-          port: input.port,
-          obfsPassword: input.obfsPassword,
-          sni: input.sni,
-          pinSHA256: input.pinSHA256,
-          allowInsecureTls: input.allowInsecureTls,
-          realityPublicKey: input.realityPublicKey,
-          realityShortId: input.realityShortId,
-          realityFingerprint: input.realityFingerprint ?? 'chrome',
-          realitySpiderX: input.realitySpiderX,
-          vlessFlow: input.vlessFlow ?? 'xtls-rprx-vision',
-          trafficApiBaseUrl: input.trafficApiBaseUrl,
-          trafficApiSecret:
-            this.cipher?.encrypt(input.trafficApiSecret) ??
-            input.trafficApiSecret,
-          active: input.active,
-          speedUpMbps: input.speedUpMbps,
-          speedDownMbps: input.speedDownMbps,
-        },
-      });
-
-      return this.presentNode(node);
-    } catch (error) {
-      this.handlePrismaError(error);
-    }
-  }
-
-  async patchNode(
-    nodeId: string,
-    input: {
-      protocol?: NodeProtocolInput;
-      serverId?: string;
-      label?: string;
-      hostname?: string;
-      port?: number;
-      obfsPassword?: string;
-      sni?: string;
-      pinSHA256?: string;
-      allowInsecureTls?: boolean;
-      realityPublicKey?: string;
-      realityShortId?: string;
-      realityFingerprint?: string;
-      realitySpiderX?: string;
-      vlessFlow?: string;
-      trafficApiBaseUrl?: string;
-      trafficApiSecret?: string;
-      active?: boolean;
-      speedUpMbps?: number;
-      speedDownMbps?: number;
-    },
-  ) {
-    try {
-      const current = await this.prisma.node.findUnique({
-        where: { id: nodeId },
-      });
-      if (!current) throw new NotFoundException(`Unknown node: ${nodeId}`);
-      this.validateNodeConfiguration({
-        protocol: input.protocol ?? this.fromDbNodeProtocol(current.protocol),
-        sni: input.sni !== undefined ? input.sni : current.sni,
-        realityPublicKey:
-          input.realityPublicKey !== undefined
-            ? input.realityPublicKey
-            : current.realityPublicKey,
-        realityShortId:
-          input.realityShortId !== undefined
-            ? input.realityShortId
-            : current.realityShortId,
-      });
-      const node = await this.prisma.node.update({
-        where: { id: nodeId },
-        data: this.withDefinedValues({
-          serverId: input.serverId,
-          protocol: input.protocol
-            ? this.toDbNodeProtocol(input.protocol)
-            : undefined,
-          label: input.label,
-          hostname: input.hostname,
-          port: input.port,
-          obfsPassword: input.obfsPassword,
-          sni: input.sni,
-          pinSHA256: input.pinSHA256,
-          allowInsecureTls: input.allowInsecureTls,
-          realityPublicKey: input.realityPublicKey,
-          realityShortId: input.realityShortId,
-          realityFingerprint: input.realityFingerprint,
-          realitySpiderX: input.realitySpiderX,
-          vlessFlow: input.vlessFlow,
-          trafficApiBaseUrl: input.trafficApiBaseUrl,
-          trafficApiSecret: input.trafficApiSecret
-            ? (this.cipher?.encrypt(input.trafficApiSecret) ??
-              input.trafficApiSecret)
-            : undefined,
-          active: input.active,
-          speedUpMbps: input.speedUpMbps,
-          speedDownMbps: input.speedDownMbps,
-        }),
-      });
-
-      return this.presentNode(node);
-    } catch (error) {
-      this.handlePrismaError(error);
-    }
-  }
-
-  async deleteNode(nodeId: string) {
-    try {
-      await this.prisma.node.delete({ where: { id: nodeId } });
-    } catch (error) {
-      this.handlePrismaError(error);
-    }
-  }
-
-  async markNodeSyncSuccess(nodeId: string) {
-    await this.prisma.node.update({
-      where: { id: nodeId },
-      data: { lastSyncAt: new Date(), lastSyncError: null },
-    });
-  }
-
-  async markNodeSyncFailure(nodeId: string, cause: unknown) {
-    const message = cause instanceof Error ? cause.message : String(cause);
-    await this.prisma.node.update({
-      where: { id: nodeId },
-      data: { lastSyncError: message.slice(0, 1000) },
-    });
-  }
-
   async getNodeProvisioningUsers(nodeId: string) {
     const now = new Date();
     const subscriptions = await this.prisma.subscription.findMany({
@@ -1327,7 +1141,7 @@ export class ControlPlaneStoreService {
       orderBy: { endsAt: 'desc' },
     });
     const usage = await this.getUsageForUser(userId);
-    const online = await this.getCurrentOnlineCount(userId);
+    const online = await this.presence.countForUser(userId);
     const packs = await this.prisma.trafficPack.findMany({
       where: { userId },
       include: {
@@ -1897,7 +1711,7 @@ export class ControlPlaneStoreService {
       );
     }
 
-    const onlineCount = await this.getCurrentOnlineCount(user.id);
+    const onlineCount = await this.presence.countForUser(user.id);
     const reconnecting = await this.isRecentReconnect(
       user.id,
       input.remoteAddr,
@@ -2144,64 +1958,6 @@ export class ControlPlaneStoreService {
     return userId;
   }
 
-  async applyOnlineSnapshot(nodeId: string, onlineMap: Record<string, number>) {
-    const previous = await this.prisma.onlineSnapshot.findMany({
-      where: {
-        nodeId,
-        capturedAt: {
-          gte: new Date(Date.now() - onlineSnapshotFreshnessMs),
-        },
-      },
-      orderBy: { capturedAt: 'desc' },
-      include: { user: true },
-    });
-
-    const latestUsers = new Set<string>();
-    const latestByUser = new Map<string, number>();
-    for (const snapshot of previous) {
-      if (!latestUsers.has(snapshot.userId)) {
-        latestUsers.add(snapshot.userId);
-        latestByUser.set(snapshot.userId, snapshot.concurrentClients);
-      }
-    }
-
-    const mergedUsers = new Set([
-      ...Object.keys(onlineMap),
-      ...latestByUser.keys(),
-    ]);
-    if (mergedUsers.size === 0) return;
-
-    await this.prisma.onlineSnapshot.createMany({
-      data: [...mergedUsers].map((userId) => ({
-        userId,
-        nodeId,
-        concurrentClients: onlineMap[userId] ?? 0,
-        capturedAt: new Date(),
-      })),
-    });
-  }
-
-  async getCurrentOnlineCount(userId: string) {
-    const snapshots = await this.prisma.onlineSnapshot.findMany({
-      where: {
-        userId,
-        capturedAt: {
-          gte: new Date(Date.now() - onlineSnapshotFreshnessMs),
-        },
-      },
-      orderBy: { capturedAt: 'desc' },
-    });
-
-    const latestByNode = new Map<string, number>();
-    for (const snapshot of snapshots) {
-      if (!latestByNode.has(snapshot.nodeId)) {
-        latestByNode.set(snapshot.nodeId, snapshot.concurrentClients);
-      }
-    }
-
-    return [...latestByNode.values()].reduce((sum, value) => sum + value, 0);
-  }
-
   async isRecentReconnect(userId: string, remoteAddr?: string) {
     const host = remoteHost(remoteAddr);
     if (!host) return false;
@@ -2257,18 +2013,48 @@ export class ControlPlaneStoreService {
     return bindings.filter((b) => b.node.active).map((b) => b.node.id);
   }
 
-  async getManualOrders() {
-    const orders = await this.prisma.manualOrder.findMany({
-      include: {
-        user: true,
-        processedBy: true,
-        plan: true,
-        trafficPackProduct: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+  async getManualOrders(query: ManualOrderQuery = {}) {
+    const { page, pageSize, skip } = parsePage(query);
+    const q = query.q?.trim();
+    const where: Prisma.ManualOrderWhereInput = {
+      status: query.status ? (query.status.toUpperCase() as never) : undefined,
+      source: query.source ? (query.source.toUpperCase() as never) : undefined,
+      OR: q
+        ? [
+            { id: { contains: q, mode: 'insensitive' } },
+            { user: { email: { contains: q, mode: 'insensitive' } } },
+            { user: { displayName: { contains: q, mode: 'insensitive' } } },
+            {
+              productNameSnapshot: {
+                contains: q,
+                mode: 'insensitive',
+              },
+            },
+          ]
+        : undefined,
+    };
+    const [orders, total] = await Promise.all([
+      this.prisma.manualOrder.findMany({
+        where,
+        include: {
+          user: true,
+          processedBy: true,
+          plan: true,
+          trafficPackProduct: true,
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.manualOrder.count({ where }),
+    ]);
 
-    return orders.map((order) => this.presentManualOrder(order));
+    return pageResponse(
+      orders.map((order) => this.presentManualOrder(order)),
+      total,
+      page,
+      pageSize,
+    );
   }
 
   async getManualOrdersForUser(userId: string) {
@@ -2286,20 +2072,47 @@ export class ControlPlaneStoreService {
     return orders.map((order) => this.presentManualOrder(order));
   }
 
-  async getRedemptionCodes() {
+  async getRedemptionCodes(query: RedemptionCodeQuery = {}) {
     await this.expireRedemptionCodes();
+    const { page, pageSize, skip } = parsePage(query);
+    const q = query.q?.trim();
+    const where: Prisma.RedemptionCodeWhereInput = {
+      status: query.status ? (query.status.toUpperCase() as never) : undefined,
+      kind: query.kind
+        ? this.toDbRedemptionCodeKind(query.kind as CdkKind)
+        : undefined,
+      OR: q
+        ? [
+            { code: { contains: q, mode: 'insensitive' } },
+            { label: { contains: q, mode: 'insensitive' } },
+          ]
+        : undefined,
+    };
+    const [codes, total] = await Promise.all([
+      this.prisma.redemptionCode.findMany({
+        where,
+        include: {
+          plan: true,
+          catalogOffer: {
+            include: { product: { include: { legacyPlan: true } } },
+          },
+          createdBy: true,
+          redeemedBy: true,
+          trafficPackProduct: true,
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.redemptionCode.count({ where }),
+    ]);
 
-    const codes = await this.prisma.redemptionCode.findMany({
-      include: {
-        plan: true,
-        createdBy: true,
-        redeemedBy: true,
-        trafficPackProduct: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    return codes.map((code) => this.presentRedemptionCode(code));
+    return pageResponse(
+      codes.map((code) => this.presentRedemptionCode(code)),
+      total,
+      page,
+      pageSize,
+    );
   }
 
   async createRedemptionCode(input: {
@@ -2307,6 +2120,8 @@ export class ControlPlaneStoreService {
     code?: string;
     kind: CdkKind;
     planId?: string;
+    catalogOfferId?: string;
+    planMode?: 'renew' | 'replace';
     trafficPackProductId?: string;
     trafficBytes?: number;
     amountCents?: number;
@@ -2318,8 +2133,8 @@ export class ControlPlaneStoreService {
     expiresAt?: string;
     createdById?: string;
   }) {
-    if (input.kind === 'plan' && !input.planId) {
-      throw new BadRequestException('套餐兑换码需要选择套餐');
+    if (input.kind === 'plan' && !input.catalogOfferId && !input.planId) {
+      throw new BadRequestException('套餐兑换码需要选择套餐周期');
     }
 
     if (input.kind === 'traffic_pack' && !input.trafficPackProductId) {
@@ -2359,7 +2174,30 @@ export class ControlPlaneStoreService {
       throw new BadRequestException('批量生成不支持自定义兑换码');
     }
 
-    if (input.planId) {
+    let catalogOffer = input.catalogOfferId
+      ? await this.prisma.catalogOffer.findUnique({
+          where: { id: input.catalogOfferId },
+          include: { product: true },
+        })
+      : null;
+    if (!catalogOffer && input.kind === 'plan' && input.planId) {
+      catalogOffer = await this.prisma.catalogOffer.findFirst({
+        where: {
+          product: { legacyPlanId: input.planId },
+          active: true,
+          archivedAt: null,
+        },
+        include: { product: true },
+        orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+      });
+    }
+    if (
+      input.kind === 'plan' &&
+      (!catalogOffer || catalogOffer.product.kind !== 'PLAN')
+    ) {
+      throw new BadRequestException('套餐兑换码需要有效的套餐周期');
+    }
+    if (input.planId && !catalogOffer) {
       await this.mustGetPlanRecord(input.planId);
     }
 
@@ -2399,7 +2237,15 @@ export class ControlPlaneStoreService {
     const sharedData = {
       label: input.label,
       kind: this.toDbRedemptionCodeKind(input.kind),
-      planId: input.kind === 'plan' ? input.planId : undefined,
+      planId:
+        input.kind === 'plan'
+          ? (catalogOffer?.product.legacyPlanId ?? input.planId)
+          : undefined,
+      catalogOfferId: input.kind === 'plan' ? catalogOffer?.id : undefined,
+      planMode:
+        input.kind === 'plan' && input.planMode === 'replace'
+          ? RedemptionPlanMode.REPLACE
+          : RedemptionPlanMode.RENEW,
       trafficPackProductId:
         input.kind === 'traffic_pack' ? input.trafficPackProductId : undefined,
       trafficBytes:
@@ -2407,9 +2253,11 @@ export class ControlPlaneStoreService {
           ? trafficPackProduct.trafficBytes
           : undefined,
       amountCents:
-        input.kind === 'traffic_pack' && trafficPackProduct
-          ? trafficPackProduct.priceCents
-          : (input.amountCents ?? 0),
+        input.kind === 'plan' && catalogOffer
+          ? catalogOffer.priceCents
+          : input.kind === 'traffic_pack' && trafficPackProduct
+            ? trafficPackProduct.priceCents
+            : (input.amountCents ?? 0),
       discountPercent:
         input.kind === 'discount' ? (input.discountPercent ?? null) : null,
       discountCents:
@@ -2428,6 +2276,9 @@ export class ControlPlaneStoreService {
         where: { code: { in: codeValues } },
         include: {
           plan: true,
+          catalogOffer: {
+            include: { product: { include: { legacyPlan: true } } },
+          },
           createdBy: true,
           redeemedBy: true,
           trafficPackProduct: true,
@@ -2440,20 +2291,32 @@ export class ControlPlaneStoreService {
     }
   }
 
-  async getRedemptionCodeUses(codeId: string) {
-    const uses = await this.prisma.redemptionUse.findMany({
-      where: { codeId },
-      include: { user: true },
-      orderBy: { redeemedAt: 'desc' },
-    });
-    return uses.map((use) => ({
-      id: use.id,
-      userId: use.userId,
-      userEmail: use.user?.email ?? null,
-      userDisplayName: use.user?.displayName ?? null,
-      orderId: use.orderId,
-      redeemedAt: use.redeemedAt.toISOString(),
-    }));
+  async getRedemptionCodeUses(codeId: string, query: PageQuery = {}) {
+    const { page, pageSize, skip } = parsePage(query);
+    const where = { codeId };
+    const [uses, total] = await Promise.all([
+      this.prisma.redemptionUse.findMany({
+        where,
+        include: { user: true },
+        orderBy: [{ redeemedAt: 'desc' }, { id: 'desc' }],
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.redemptionUse.count({ where }),
+    ]);
+    return pageResponse(
+      uses.map((use) => ({
+        id: use.id,
+        userId: use.userId,
+        userEmail: use.user?.email ?? null,
+        userDisplayName: use.user?.displayName ?? null,
+        orderId: use.orderId,
+        redeemedAt: use.redeemedAt.toISOString(),
+      })),
+      total,
+      page,
+      pageSize,
+    );
   }
 
   async patchRedemptionCode(
@@ -2464,6 +2327,9 @@ export class ControlPlaneStoreService {
       where: { id: codeId },
       include: {
         plan: true,
+        catalogOffer: {
+          include: { product: { include: { legacyPlan: true } } },
+        },
         createdBy: true,
         redeemedBy: true,
         trafficPackProduct: true,
@@ -2500,6 +2366,9 @@ export class ControlPlaneStoreService {
         }),
         include: {
           plan: true,
+          catalogOffer: {
+            include: { product: { include: { legacyPlan: true } } },
+          },
           createdBy: true,
           redeemedBy: true,
           trafficPackProduct: true,
@@ -2527,6 +2396,9 @@ export class ControlPlaneStoreService {
       where: { code: codeValue },
       include: {
         plan: true,
+        catalogOffer: {
+          include: { product: { include: { legacyPlan: true } } },
+        },
         createdBy: true,
         redeemedBy: true,
         trafficPackProduct: true,
@@ -2569,6 +2441,9 @@ export class ControlPlaneStoreService {
           where: { id: existing.id },
           include: {
             plan: true,
+            catalogOffer: {
+              include: { product: { include: { legacyPlan: true } } },
+            },
             createdBy: true,
             redeemedBy: true,
             trafficPackProduct: true,
@@ -2653,6 +2528,9 @@ export class ControlPlaneStoreService {
           },
           include: {
             plan: true,
+            catalogOffer: {
+              include: { product: { include: { legacyPlan: true } } },
+            },
             createdBy: true,
             redeemedBy: true,
             trafficPackProduct: true,
@@ -3374,20 +3252,57 @@ export class ControlPlaneStoreService {
       redeemedAt: Date;
     },
   ) {
-    if (!input.code.planId) {
-      throw new BadRequestException('Plan redemption code is missing a plan');
+    const offer =
+      input.code.catalogOffer ??
+      (input.code.planId
+        ? await tx.catalogOffer.findFirst({
+            where: {
+              product: { legacyPlanId: input.code.planId },
+              active: true,
+              archivedAt: null,
+            },
+            include: { product: { include: { legacyPlan: true } } },
+            orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+          })
+        : null);
+    const plan = offer?.product.legacyPlan ?? input.code.plan;
+    if (!offer || !plan) {
+      throw new BadRequestException(
+        'Plan redemption code is missing a valid offer',
+      );
     }
-
-    const plan = await this.mustGetPlanRecord(input.code.planId);
+    const redemptionWindow = resolvePlanRedemptionWindow({
+      mode: input.code.planMode,
+      currentPlanId: input.openSubscription?.planId,
+      targetPlanId: plan.id,
+      currentEndsAt: input.openSubscription?.endsAt,
+      redeemedAt: input.redeemedAt,
+      intervalMonths: offer.intervalMonths,
+      durationDays: plan.durationDays,
+    });
+    const entitlementExpiresAt = redemptionWindow.endsAt;
 
     const order = await tx.manualOrder.create({
       data: {
         userId: input.userId,
         planId: plan.id,
+        planOfferId: offer.legacyPlanOfferId,
+        catalogOfferId: offer.id,
         status: OrderStatus.APPLIED,
         kind: OrderKind.RENEWAL,
-        amountCents: input.code.amountCents,
+        source: OrderSource.CDK,
+        amountCents: offer.priceCents,
+        basePriceCents: offer.priceCents,
+        discountCents: 0,
+        currency: offer.currency,
+        productSlugSnapshot: offer.slug,
+        productNameSnapshot: `${offer.product.name} · ${offer.name}`,
         durationDays: plan.durationDays,
+        trafficBytes: offer.trafficBytes,
+        entitlementExpiresAt,
+        billingPeriodSnapshot: offer.billingPeriod,
+        intervalMonthsSnapshot: offer.intervalMonths,
+        accessProfileIdSnapshot: offer.product.accessProfileId,
         note: input.code.note || `Redeemed ${input.code.code}`,
         processedAt: input.redeemedAt,
       },
@@ -3404,6 +3319,10 @@ export class ControlPlaneStoreService {
       planId: plan.id,
       grantedAt: input.redeemedAt,
       openSubscription: input.openSubscription,
+      durationMonths: offer.intervalMonths ?? undefined,
+      planOfferId: offer.legacyPlanOfferId ?? undefined,
+      trafficBytes: offer.trafficBytes,
+      forceReplace: redemptionWindow.forceReplace,
     });
 
     return order;
@@ -3505,6 +3424,10 @@ export class ControlPlaneStoreService {
       planId: string;
       grantedAt: Date;
       openSubscription?: Prisma.SubscriptionGetPayload<object> | null;
+      durationMonths?: number;
+      planOfferId?: string;
+      trafficBytes?: bigint;
+      forceReplace?: boolean;
     },
   ) {
     const existingSubscription =
@@ -3527,24 +3450,26 @@ export class ControlPlaneStoreService {
     if (existingSubscription) {
       const isSamePlan = existingSubscription.planId === plan.id;
 
-      if (isSamePlan) {
+      if (isSamePlan && !input.forceReplace) {
         // Renewal of the current plan: extend the cycle and stack the plan's
         // traffic allotment onto the remaining balance.
         const extensionBase =
           existingSubscription.endsAt.getTime() > input.grantedAt.getTime()
             ? new Date(existingSubscription.endsAt)
             : new Date(input.grantedAt);
-        extensionBase.setUTCDate(
-          extensionBase.getUTCDate() + plan.durationDays,
-        );
+        const extendedEndsAt = input.durationMonths
+          ? this.addUtcMonthsClamped(extensionBase, input.durationMonths)
+          : this.buildSubscriptionEndDate(extensionBase, plan.durationDays);
 
         await tx.subscription.update({
           where: { id: existingSubscription.id },
           data: {
             nodeId,
+            planOfferId: input.planOfferId,
             status: SubscriptionStatus.ACTIVE,
-            endsAt: extensionBase,
+            endsAt: extendedEndsAt,
             includedTrafficBytes:
+              input.trafficBytes ??
               existingSubscription.includedTrafficBytes + plan.trafficBytes,
             speedUpMbpsSnapshot: plan.speedUpMbps,
             speedDownMbpsSnapshot: plan.speedDownMbps,
@@ -3564,13 +3489,13 @@ export class ControlPlaneStoreService {
         data: {
           planId: plan.id,
           nodeId,
+          planOfferId: input.planOfferId,
           status: SubscriptionStatus.ACTIVE,
           startsAt: input.grantedAt,
-          endsAt: this.buildSubscriptionEndDate(
-            input.grantedAt,
-            plan.durationDays,
-          ),
-          includedTrafficBytes: plan.trafficBytes,
+          endsAt: input.durationMonths
+            ? this.addUtcMonthsClamped(input.grantedAt, input.durationMonths)
+            : this.buildSubscriptionEndDate(input.grantedAt, plan.durationDays),
+          includedTrafficBytes: input.trafficBytes ?? plan.trafficBytes,
           bonusTrafficBytes: BigInt(0),
           consumedTrafficBytes: BigInt(0),
           speedUpMbpsSnapshot: plan.speedUpMbps,
@@ -3586,13 +3511,13 @@ export class ControlPlaneStoreService {
         userId: input.userId,
         planId: plan.id,
         nodeId,
+        planOfferId: input.planOfferId,
         status: SubscriptionStatus.ACTIVE,
         startsAt: input.grantedAt,
-        endsAt: this.buildSubscriptionEndDate(
-          input.grantedAt,
-          plan.durationDays,
-        ),
-        includedTrafficBytes: plan.trafficBytes,
+        endsAt: input.durationMonths
+          ? this.addUtcMonthsClamped(input.grantedAt, input.durationMonths)
+          : this.buildSubscriptionEndDate(input.grantedAt, plan.durationDays),
+        includedTrafficBytes: input.trafficBytes ?? plan.trafficBytes,
         bonusTrafficBytes: BigInt(0),
         consumedTrafficBytes: BigInt(0),
         speedUpMbpsSnapshot: plan.speedUpMbps,
@@ -3829,85 +3754,6 @@ export class ControlPlaneStoreService {
     };
   }
 
-  private async presentNode(node: Prisma.NodeGetPayload<object>) {
-    const snapshots = await this.prisma.onlineSnapshot.findMany({
-      where: { nodeId: node.id },
-      orderBy: { capturedAt: 'desc' },
-      take: 200,
-    });
-    return this.buildNodeView(node, snapshots);
-  }
-
-  private async presentNodeForControl(node: Prisma.NodeGetPayload<object>) {
-    return {
-      ...(await this.presentNode(node)),
-      trafficApiSecret:
-        this.cipher?.decrypt(node.trafficApiSecret) ?? node.trafficApiSecret,
-    };
-  }
-
-  private buildNodeView(
-    node: Prisma.NodeGetPayload<object>,
-    snapshots: {
-      userId: string;
-      concurrentClients: number;
-      capturedAt: Date;
-    }[],
-  ) {
-    const latestUsers = new Map<string, number>();
-    for (const snapshot of snapshots) {
-      if (
-        snapshot.capturedAt.getTime() <
-        Date.now() - onlineSnapshotFreshnessMs
-      ) {
-        continue;
-      }
-      if (!latestUsers.has(snapshot.userId)) {
-        latestUsers.set(snapshot.userId, snapshot.concurrentClients);
-      }
-    }
-
-    const monitoringStatus = !node.active
-      ? 'disabled'
-      : node.lastSyncError
-        ? 'error'
-        : !node.lastSyncAt
-          ? 'unknown'
-          : node.lastSyncAt.getTime() >= Date.now() - onlineSnapshotFreshnessMs
-            ? 'online'
-            : 'stale';
-
-    return {
-      id: node.id,
-      serverId: node.serverId,
-      protocol: this.fromDbNodeProtocol(node.protocol),
-      label: node.label,
-      hostname: node.hostname,
-      port: node.port,
-      obfsPassword: node.obfsPassword,
-      sni: node.sni,
-      pinSHA256: node.pinSHA256,
-      allowInsecureTls: node.allowInsecureTls,
-      realityPublicKey: node.realityPublicKey,
-      realityShortId: node.realityShortId,
-      realityFingerprint: node.realityFingerprint,
-      realitySpiderX: node.realitySpiderX,
-      vlessFlow: node.vlessFlow,
-      trafficApiBaseUrl: node.trafficApiBaseUrl,
-      trafficApiSecretSet: Boolean(node.trafficApiSecret),
-      active: node.active,
-      speedUpMbps: node.speedUpMbps,
-      speedDownMbps: node.speedDownMbps,
-      monitoringStatus,
-      lastSyncAt: node.lastSyncAt?.toISOString() ?? null,
-      lastSyncError: node.lastSyncError,
-      concurrentUsers: [...latestUsers.values()].filter((value) => value > 0)
-        .length,
-      createdAt: node.createdAt.toISOString(),
-      updatedAt: node.updatedAt.toISOString(),
-    };
-  }
-
   private presentTrafficPack(pack: Prisma.TrafficPackGetPayload<object>) {
     return {
       id: pack.id,
@@ -3953,6 +3799,7 @@ export class ControlPlaneStoreService {
       processedByEmail: order.processedBy?.email ?? null,
       planId: order.planId ?? null,
       planName: order.plan?.name ?? null,
+      catalogOfferId: order.catalogOfferId ?? null,
       trafficPackProductId: order.trafficPackProductId ?? null,
       trafficPackProductName: order.trafficPackProduct?.name ?? null,
       status: this.fromDbOrderStatus(order.status),
@@ -3987,6 +3834,10 @@ export class ControlPlaneStoreService {
       status: this.fromDbRedemptionCodeStatus(code.status),
       planId: code.planId,
       planName: code.plan?.name ?? null,
+      catalogOfferId: code.catalogOfferId,
+      catalogOfferName: code.catalogOffer
+        ? `${code.catalogOffer.product.name} · ${code.catalogOffer.name}`
+        : null,
       trafficPackProductId: code.trafficPackProductId,
       trafficPackProductName: code.trafficPackProduct?.name ?? null,
       trafficBytes:
@@ -3996,6 +3847,7 @@ export class ControlPlaneStoreService {
       amountCents: code.amountCents,
       discountPercent: code.discountPercent,
       discountCents: code.discountCents,
+      planMode: code.planMode.toLowerCase(),
       maxUses: code.maxUses,
       usedCount: code.usedCount,
       note: code.note,
@@ -4190,6 +4042,25 @@ export class ControlPlaneStoreService {
     return endsAt;
   }
 
+  private addUtcMonthsClamped(anchor: Date, months: number) {
+    const first = new Date(
+      Date.UTC(
+        anchor.getUTCFullYear(),
+        anchor.getUTCMonth() + months,
+        1,
+        anchor.getUTCHours(),
+        anchor.getUTCMinutes(),
+        anchor.getUTCSeconds(),
+        anchor.getUTCMilliseconds(),
+      ),
+    );
+    const lastDay = new Date(
+      Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0),
+    ).getUTCDate();
+    first.setUTCDate(Math.min(anchor.getUTCDate(), lastDay));
+    return first;
+  }
+
   private buildTrafficPackExpiry(
     purchasedAt: Date,
     subscriptionEndsAt: Date,
@@ -4261,42 +4132,6 @@ export class ControlPlaneStoreService {
 
   private toDbUserRole(role: 'admin' | 'member') {
     return role === 'admin' ? UserRole.ADMIN : UserRole.MEMBER;
-  }
-
-  private fromDbNodeProtocol(protocol: NodeProtocol): NodeProtocolInput {
-    return protocol === NodeProtocol.VLESS_REALITY
-      ? 'vless_reality'
-      : 'hysteria2';
-  }
-
-  private toDbNodeProtocol(protocol: NodeProtocolInput) {
-    return protocol === 'vless_reality'
-      ? NodeProtocol.VLESS_REALITY
-      : NodeProtocol.HYSTERIA2;
-  }
-
-  private validateNodeConfiguration(input: NodeConfigurationInput) {
-    if (input.protocol !== 'vless_reality') return;
-
-    if (!input.sni?.trim()) {
-      throw new BadRequestException('VLESS + REALITY node requires an SNI');
-    }
-    if (!input.realityPublicKey?.trim()) {
-      throw new BadRequestException(
-        'VLESS + REALITY node requires a REALITY public key',
-      );
-    }
-    const shortId = input.realityShortId?.trim() ?? '';
-    if (
-      shortId &&
-      (!/^[0-9a-fA-F]+$/.test(shortId) ||
-        shortId.length > 16 ||
-        shortId.length % 2 !== 0)
-    ) {
-      throw new BadRequestException(
-        'REALITY short ID must be an even-length hexadecimal value up to 16 characters',
-      );
-    }
   }
 
   private fromDbUserStatus(

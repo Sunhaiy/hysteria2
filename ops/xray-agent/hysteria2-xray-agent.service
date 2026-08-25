@@ -1,5 +1,5 @@
 [Unit]
-Description=Hysteria2 Control Plane Xray Agent
+Description=Hysteria2 Control Plane Node Agent
 After=network-online.target xray.service
 Wants=network-online.target
 
@@ -14,6 +14,9 @@ PrivateTmp=true
 StateDirectory=hysteria2-xray-agent
 ProtectSystem=strict
 ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
 
 [Install]
 WantedBy=multi-user.target

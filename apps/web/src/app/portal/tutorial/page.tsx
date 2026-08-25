@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
@@ -9,103 +10,150 @@ import { apiRequest } from "@/lib/api";
 import { apiBaseUrl } from "@/lib/config";
 import { portalNav } from "@/lib/copy";
 
-type PlatformId = "windows" | "android" | "ios";
-
-interface TutorialPlatform {
-  id: PlatformId;
+type PlatformId = "windows" | "macos" | "android" | "ios";
+type TutorialImage = {
+  id: string;
+  originalName: string;
+  width?: number | null;
+  height?: number | null;
+  url: string;
+  thumbnailUrl: string;
+};
+type TutorialStep = {
+  id: string;
+  title: string;
+  body: string;
+  sortOrder: number;
+  image?: TutorialImage | null;
+};
+type TutorialPlatform = {
+  id: string;
+  platform: PlatformId;
   name: string;
   meta: string;
-  client: string;
-  steps: string[];
-  externalUrl: string;
-  asset: {
-    originalName: string;
-    size: number;
-    uploadedAt: string;
-    downloadUrl: string;
-  } | null;
-}
+  clientName: string;
+  externalUrl?: string | null;
+  asset?: { originalName: string; size: number; downloadUrl: string } | null;
+  revision?: { id: string; version: number; steps: TutorialStep[] } | null;
+};
 
-const FALLBACK_PLATFORMS: TutorialPlatform[] = [
+const platformOrder: Record<PlatformId, number> = {
+  windows: 0,
+  android: 1,
+  macos: 2,
+  ios: 3,
+};
+
+const defaultSteps = (clientName: string): TutorialStep[] => [
   {
-    id: "windows",
-    name: "Windows",
-    meta: "电脑",
-    client: "v2rayN",
-    steps: [
-      "下载并安装 v2rayN 客户端",
-      "复制一键订阅链接",
-      "在订阅分组中添加订阅",
-      "更新订阅并启用系统代理",
-    ],
-    externalUrl: "",
-    asset: null,
+    id: "install",
+    title: `安装 ${clientName}`,
+    body: `从可信渠道安装 ${clientName}。`,
+    sortOrder: 0,
   },
   {
-    id: "android",
-    name: "Android",
-    meta: "手机 / 平板",
-    client: "Hiddify",
-    steps: [
-      "下载并安装 Hiddify 客户端",
-      "复制一键订阅链接",
-      "从剪贴板添加配置",
-      "允许 VPN 权限并开始连接",
-    ],
-    externalUrl: "",
-    asset: null,
+    id: "copy",
+    title: "复制 Mihomo 订阅链接",
+    body: "在接入信息页复制专属订阅链接，请勿分享给他人。",
+    sortOrder: 1,
   },
   {
-    id: "ios",
-    name: "iOS",
-    meta: "iPhone / iPad",
-    client: "sing-box",
-    steps: [
-      "从 App Store 安装 sing-box",
-      "复制订阅或配置地址",
-      "添加远程配置",
-      "允许 VPN 权限并启动连接",
-    ],
-    externalUrl: "",
-    asset: null,
+    id: "import",
+    title: "添加并更新订阅",
+    body: `在 ${clientName} 中添加远程订阅并完成首次更新。`,
+    sortOrder: 2,
+  },
+  {
+    id: "connect",
+    title: "启用自动节点",
+    body: "选择自动节点策略并启用系统代理或 VPN 权限。",
+    sortOrder: 3,
   },
 ];
 
-function formatFileSize(bytes: number) {
-  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-}
+const FALLBACK: TutorialPlatform[] = [
+  {
+    id: "windows",
+    platform: "windows",
+    name: "Windows",
+    meta: "电脑",
+    clientName: "Clash Verge Rev",
+    revision: {
+      id: "windows",
+      version: 1,
+      steps: defaultSteps("Clash Verge Rev"),
+    },
+  },
+  {
+    id: "android",
+    platform: "android",
+    name: "Android",
+    meta: "手机 / 平板",
+    clientName: "FlClash",
+    revision: { id: "android", version: 1, steps: defaultSteps("FlClash") },
+  },
+  {
+    id: "macos",
+    platform: "macos",
+    name: "macOS",
+    meta: "Mac",
+    clientName: "Clash Verge Rev",
+    revision: {
+      id: "macos",
+      version: 1,
+      steps: defaultSteps("Clash Verge Rev"),
+    },
+  },
+  {
+    id: "ios",
+    platform: "ios",
+    name: "iOS",
+    meta: "iPhone / iPad",
+    clientName: "Stash",
+    revision: { id: "ios", version: 1, steps: defaultSteps("Stash") },
+  },
+];
+
+const absoluteApiUrl = (path: string) =>
+  `${apiBaseUrl.replace(/\/$/, "")}${path}`;
 
 export default function TutorialPage() {
-  const [platforms, setPlatforms] = useState(FALLBACK_PLATFORMS);
+  const [platforms, setPlatforms] = useState(FALLBACK);
   const [platformId, setPlatformId] = useState<PlatformId>("windows");
   const [loading, setLoading] = useState(true);
   const platform =
-    platforms.find((item) => item.id === platformId) ?? platforms[0];
+    platforms.find((item) => item.platform === platformId) ?? platforms[0];
 
   useEffect(() => {
-    let active = true;
-    void apiRequest<{ platforms: TutorialPlatform[] }>("/api/tutorial-assets")
+    const controller = new AbortController();
+    void apiRequest<{ platforms: TutorialPlatform[] }>("/api/tutorials", {
+      signal: controller.signal,
+    })
       .then((data) => {
-        if (active && data.platforms.length) setPlatforms(data.platforms);
+        if (data.platforms.length) {
+          setPlatforms(
+            [...data.platforms].sort(
+              (left, right) =>
+                platformOrder[left.platform] - platformOrder[right.platform],
+            ),
+          );
+        }
       })
       .catch(() => undefined)
       .finally(() => {
-        if (active) setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       });
-    return () => {
-      active = false;
-    };
+    return () => controller.abort();
   }, []);
 
   const downloadUrl = platform.asset
-    ? `${apiBaseUrl}${platform.asset.downloadUrl}`
+    ? absoluteApiUrl(platform.asset.downloadUrl)
     : platform.externalUrl;
 
   return (
     <ConsoleShell
-      title="使用教程"
-      subtitle="选择设备，下载客户端并按步骤导入订阅"
+      title="Clash 使用教程"
+      subtitle="选择设备并导入 Mihomo YAML 订阅"
       scope="Member"
       navItems={portalNav}
       requireRole="member"
@@ -114,50 +162,49 @@ export default function TutorialPage() {
         <div className="tutorial-tabs" role="tablist" aria-label="选择设备平台">
           {platforms.map((item) => (
             <button
-              key={item.id}
+              key={item.platform}
               type="button"
               role="tab"
-              aria-selected={item.id === platformId}
-              className={`tutorial-tab${item.id === platformId ? " active" : ""}`}
-              onClick={() => setPlatformId(item.id)}
+              aria-selected={item.platform === platformId}
+              className={`tutorial-tab${item.platform === platformId ? " active" : ""}`}
+              onClick={() => setPlatformId(item.platform)}
             >
               <span className="tutorial-platform-mark" aria-hidden="true">
-                {item.id === "windows"
+                {item.platform === "windows"
                   ? "W"
-                  : item.id === "android"
-                    ? "A"
-                    : "i"}
+                  : item.platform === "macos"
+                    ? "M"
+                    : item.platform === "android"
+                      ? "A"
+                      : "i"}
               </span>
               <span>
                 <strong>{item.name}</strong>
                 <small>
-                  {item.client} · {item.meta}
+                  {item.clientName} · {item.meta}
                 </small>
               </span>
             </button>
           ))}
         </div>
-
         <Panel
-          title={`${platform.name} · ${platform.client}`}
-          copy={`使用 ${platform.client} 完成配置导入和连接。`}
+          title={`${platform.name} · ${platform.clientName}`}
           action={
-            platform.asset ? (
-              <span className="badge success">安装包已就绪</span>
-            ) : null
+            loading ? (
+              <span className="badge neutral">同步中</span>
+            ) : (
+              <span className="badge success">
+                已发布 v{platform.revision?.version ?? 1}
+              </span>
+            )
           }
         >
           <div className="tutorial-download-card">
             <div>
               <span className="fine-print">客户端</span>
-              <strong>{platform.asset?.originalName ?? platform.client}</strong>
-              <p>
-                {platform.asset
-                  ? `${formatFileSize(platform.asset.size)} · 由站点提供`
-                  : platform.id === "ios"
-                    ? "通过 App Store 或管理员指定渠道安装"
-                    : "管理员暂未上传安装包"}
-              </p>
+              <strong>
+                {platform.asset?.originalName ?? platform.clientName}
+              </strong>
             </div>
             {downloadUrl ? (
               <a
@@ -166,39 +213,38 @@ export default function TutorialPage() {
                 target={platform.asset ? undefined : "_blank"}
                 rel="noreferrer"
               >
-                <Icon name="add" />
-                {platform.asset
-                  ? "下载安装包"
-                  : platform.id === "ios"
-                    ? "前往安装"
-                    : "外部下载"}
+                <Icon name="download" />
+                下载安装
               </a>
             ) : (
-              <button className="action-button" type="button" disabled>
-                {loading ? "正在获取下载信息" : "下载暂未开放"}
-              </button>
+              <span className="badge neutral">请从官方应用商店安装</span>
             )}
             <Link className="ghost-button" href="/portal/access">
               <Icon name="qr_code_2" />
-              获取接入信息
+              打开订阅
             </Link>
           </div>
-
           <ol className="tutorial-steps">
-            {platform.steps.map((step, index) => (
-              <li key={`${index}-${step}`} className="tutorial-step">
+            {(platform.revision?.steps ?? []).map((step, index) => (
+              <li key={step.id} className="tutorial-step">
                 <span className="tutorial-step-number">
                   {String(index + 1).padStart(2, "0")}
                 </span>
-                <div>
-                  <strong>{step}</strong>
-                  <p>
-                    {index === 0
-                      ? `先准备好 ${platform.client} 客户端。`
-                      : index === 1
-                        ? "接入信息页面提供订阅链接、URI 与二维码。"
-                        : "按客户端提示完成操作即可。"}
-                  </p>
+                <div className="tutorial-step-content">
+                  <strong>{step.title}</strong>
+                  <p>{step.body}</p>
+                  {step.image ? (
+                    <Image
+                      src={absoluteApiUrl(step.image.thumbnailUrl)}
+                      alt={step.title}
+                      width={step.image.width ?? 720}
+                      height={step.image.height ?? 480}
+                      sizes="(max-width: 720px) 88vw, 720px"
+                      loading="lazy"
+                      unoptimized
+                      className="tutorial-step-image"
+                    />
+                  ) : null}
                 </div>
               </li>
             ))}

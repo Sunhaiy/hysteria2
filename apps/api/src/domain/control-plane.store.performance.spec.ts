@@ -1,9 +1,13 @@
 import { NodeProtocol } from '@prisma/client';
 import { ControlPlaneStoreService } from './control-plane.store';
+import { NodeControlService } from './node-control.service';
 
 describe('ControlPlaneStoreService performance-sensitive reads', () => {
-  it('loads recent online snapshots per node so the composite index can be used', async () => {
+  afterEach(() => jest.useRealTimers());
+
+  it('loads current online presence once instead of scanning history per node', async () => {
     const now = new Date('2026-08-24T05:30:00.000Z');
+    jest.useFakeTimers().setSystemTime(now);
     const nodes = ['node_a', 'node_b'].map((id) => ({
       id,
       serverId: null,
@@ -23,6 +27,7 @@ describe('ControlPlaneStoreService performance-sensitive reads', () => {
       trafficApiBaseUrl: `https://${id}.example.com`,
       trafficApiSecret: 'encrypted',
       active: true,
+      lifecycleStatus: 'ACTIVE',
       speedUpMbps: 20,
       speedDownMbps: 100,
       lastSyncAt: now,
@@ -35,34 +40,32 @@ describe('ControlPlaneStoreService performance-sensitive reads', () => {
       onlineSnapshot: {
         findMany: jest
           .fn()
-          .mockImplementation(({ where }: { where: { nodeId: string } }) =>
-            Promise.resolve([
-              {
-                userId: `user_${where.nodeId}`,
-                nodeId: where.nodeId,
-                concurrentClients: 1,
-                capturedAt: now,
-              },
-            ]),
-          ),
+          .mockRejectedValue(new Error('node lists must not scan history')),
+      },
+      onlinePresence: {
+        findMany: jest.fn().mockResolvedValue(
+          nodes.map((node) => ({
+            userId: `user_${node.id}`,
+            nodeId: node.id,
+            concurrentClients: 1,
+            observedAt: now,
+          })),
+        ),
       },
     };
-    const service = new ControlPlaneStoreService(prisma as never);
+    const service = new NodeControlService(
+      prisma as never,
+      {
+        decrypt: jest.fn((value: string) => value),
+      } as never,
+    );
 
     const result = await service.getNodes();
 
     expect(result).toHaveLength(2);
-    expect(prisma.onlineSnapshot.findMany).toHaveBeenCalledTimes(2);
-    expect(prisma.onlineSnapshot.findMany).toHaveBeenNthCalledWith(1, {
-      where: { nodeId: 'node_a' },
-      orderBy: { capturedAt: 'desc' },
-      take: 200,
-    });
-    expect(prisma.onlineSnapshot.findMany).toHaveBeenNthCalledWith(2, {
-      where: { nodeId: 'node_b' },
-      orderBy: { capturedAt: 'desc' },
-      take: 200,
-    });
+    expect(prisma.onlineSnapshot.findMany).not.toHaveBeenCalled();
+    expect(prisma.onlinePresence.findMany).toHaveBeenCalledTimes(1);
+    expect(result.map((node) => node.concurrentUsers)).toEqual([1, 1]);
   });
 
   it('aggregates the 14-day chart in PostgreSQL instead of loading rollup rows', async () => {
@@ -88,7 +91,12 @@ describe('ControlPlaneStoreService performance-sensitive reads', () => {
         .fn()
         .mockResolvedValue([{ date: '2026-08-24', txBytes: 2n, rxBytes: 3n }]),
     };
-    const service = new ControlPlaneStoreService(prisma as never);
+    const service = new ControlPlaneStoreService(
+      prisma as never,
+      {
+        countForUser: jest.fn().mockResolvedValue(0),
+      } as never,
+    );
 
     const result = await service.getUsageSummary();
 

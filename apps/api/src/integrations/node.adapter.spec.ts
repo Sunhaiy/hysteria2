@@ -32,6 +32,8 @@ describe('NodeAdapterRegistry', () => {
       protocol: 'hysteria2',
       trafficApiBaseUrl: 'https://node.example.test',
       trafficApiSecret: 'secret',
+      hostname: 'node.example.test',
+      port: 443,
     });
 
     expect(client.claimTrafficBatch).toHaveBeenCalledTimes(1);

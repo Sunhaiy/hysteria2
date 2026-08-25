@@ -4,6 +4,7 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -17,9 +18,16 @@ import { SettingsService } from '../settings/settings.service';
 
 const REGISTER_CODE_TTL_SECONDS = 10 * 60;
 const REGISTER_COOLDOWN_SECONDS = 60;
+const PASSWORD_RESET_COOLDOWN_SECONDS = 60;
+const PASSWORD_RESET_RESPONSE = {
+  success: true,
+  message: '如果该邮箱已注册，重置链接将在几分钟内发送。',
+} as const;
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly store: ControlPlaneStoreService,
     private readonly jwtService: JwtService,
@@ -166,6 +174,34 @@ export class AuthService {
   }
 
   async issuePasswordReset(userId: string, createdById: string) {
+    return this.createPasswordReset(userId, createdById);
+  }
+
+  async requestPasswordReset(rawEmail: string) {
+    const email = this.normalizeEmail(rawEmail);
+    const cooldownKey = `password-reset-cooldown:${email}`;
+    if (await this.cache.get(cooldownKey)) return PASSWORD_RESET_RESPONSE;
+
+    await this.cache.set(cooldownKey, '1', PASSWORD_RESET_COOLDOWN_SECONDS);
+    const user = await this.store.findUserByEmail(email);
+    if (!user || user.status !== 'active') return PASSWORD_RESET_RESPONSE;
+
+    const reset = await this.createPasswordReset(user.id, null);
+    try {
+      await this.mail.sendPasswordReset(email, reset.resetUrl);
+    } catch (error) {
+      this.logger.error(
+        `Password reset email failed for user ${user.id}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+    return PASSWORD_RESET_RESPONSE;
+  }
+
+  private async createPasswordReset(
+    userId: string,
+    createdById: string | null,
+  ) {
     const rawToken = randomBytes(32).toString('base64url');
     const tokenHash = this.hashResetToken(rawToken);
     const expiresAt = new Date(Date.now() + 30 * 60 * 1000);

@@ -1,0 +1,117 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+const source = (path) =>
+  readFile(new URL(`../src/${path}`, import.meta.url), "utf8");
+
+test("customer controls are immediate and expose subscription-link lifecycle", async () => {
+  const detail = await source("app/admin/customers/[id]/page.tsx");
+
+  assert.doesNotMatch(detail, /placeholder="调整原因"/);
+  assert.match(detail, /订阅链接/);
+  assert.match(detail, /重新创建/);
+  assert.match(detail, /销毁/);
+  assert.match(detail, /identity\.mihomoSubscriptionUrl/);
+  assert.match(detail, /v2rayN \/ Hiddify/);
+  assert.match(detail, /Clash \/ Mihomo/);
+});
+
+test("catalog offers expose period-specific shop URLs and plan traffic policy", async () => {
+  const catalog = await source("app/admin/catalog/page.tsx");
+  const plans = await source("app/portal/plans/page.tsx");
+
+  assert.match(catalog, /storeUrl/);
+  assert.match(catalog, /该周期店铺链接/);
+  assert.match(plans, /offer\.storeUrl/);
+  assert.match(catalog, /默认倍率/);
+  assert.match(catalog, /上行限速/);
+  assert.match(catalog, /下行限速/);
+});
+
+test("node operations separate access and runtime service controls", async () => {
+  const nodes = await source("app/admin/nodes/page.tsx");
+
+  assert.match(nodes, /新增服务器/);
+  assert.match(nodes, /新增节点/);
+  assert.match(nodes, /停止接入/);
+  assert.match(nodes, /停止服务/);
+  assert.match(nodes, /当前连接会立即断开/);
+  assert.match(nodes, /runtime-commands/);
+  assert.match(nodes, /删除节点/);
+  assert.match(nodes, /node-endpoint-list/);
+});
+
+test("admin navigation keeps CDK management visible", async () => {
+  const copy = await source("lib/copy.ts");
+
+  assert.match(copy, /\/admin\/redemption-codes/);
+});
+
+test("customer list can filter everyone with subscription history", async () => {
+  const customers = await source("app/admin/customers/page.tsx");
+
+  assert.match(customers, /曾订阅/);
+  assert.match(customers, /subscriptionHistory/);
+});
+
+test("member access keeps v2rayN and Hiddify as the primary subscription", async () => {
+  const access = await source("app/portal/access/page.tsx");
+
+  assert.match(access, /v2rayN/);
+  assert.match(access, /Hiddify/);
+  assert.match(access, /access\.subscriptionUrl/);
+  assert.match(access, /access\.mihomoSubscriptionUrl/);
+  assert.match(access, /title="订阅链接"/);
+  assert.match(access, /subscription-method-grid/);
+});
+
+test("support tickets are available to members and administrators", async () => {
+  const [copy, memberTickets, adminTickets] = await Promise.all([
+    source("lib/copy.ts"),
+    source("app/portal/tickets/page.tsx"),
+    source("app/admin/tickets/page.tsx"),
+  ]);
+
+  assert.match(copy, /\/portal\/tickets/);
+  assert.match(copy, /\/admin\/tickets/);
+  assert.match(memberTickets, /\/api\/portal\/tickets/);
+  assert.match(memberTickets, /\/api\/portal\/announcement\/current/);
+  assert.match(memberTickets, /ticket-announcement/);
+  assert.match(adminTickets, /\/api\/admin\/tickets/);
+  assert.match(adminTickets, /关闭工单/);
+});
+
+test("layout guards keep panel titles and plan selectors visible", async () => {
+  const [styles, panel, customer] = await Promise.all([
+    source("app/globals.scss"),
+    source("components/panel.tsx"),
+    source("app/admin/customers/[id]/page.tsx"),
+  ]);
+
+  assert.match(styles, /\.panel-title\s*\{[^}]*white-space:\s*nowrap/s);
+  assert.match(panel, /allowOverflow/);
+  assert.match(customer, /title="套餐切换"[\s\S]*allowOverflow/);
+});
+
+test("CDKs expose renew and replace plan behavior", async () => {
+  const codes = await source("app/admin/redemption-codes/page.tsx");
+
+  assert.match(codes, /planMode/);
+  assert.match(codes, /同套餐自动续费/);
+  assert.match(codes, /立即覆盖当前套餐/);
+});
+
+test("tutorial management uploads installers and keeps the required platform order", async () => {
+  const [adminTutorials, memberTutorials] = await Promise.all([
+    source("app/admin/tutorials/page.tsx"),
+    source("app/portal/tutorial/page.tsx"),
+  ]);
+
+  assert.match(adminTutorials, /tutorial-assets/);
+  assert.match(adminTutorials, /客户端安装包/);
+  assert.match(
+    memberTutorials,
+    /windows:\s*0[\s\S]*android:\s*1[\s\S]*macos:\s*2[\s\S]*ios:\s*3/,
+  );
+});

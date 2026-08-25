@@ -351,14 +351,9 @@ describe('CommerceService checkout', () => {
           },
         }),
       },
-      accessProfilePool: {
-        findMany: jest
-          .fn()
-          .mockResolvedValue([
-            { pool: { members: [{ nodeId: 'node_hk_core' }] } },
-          ]),
+      accessProfileNode: {
+        findFirst: jest.fn().mockResolvedValue({ nodeId: 'node_hk_core' }),
       },
-      accessProfileNode: { findFirst: jest.fn() },
       accessAccount: {
         upsert: jest.fn().mockResolvedValue({ id: 'account_1' }),
       },
@@ -423,7 +418,7 @@ describe('CommerceService checkout', () => {
     );
   });
 
-  it('switches plans immediately and clamps the first monthly cycle', async () => {
+  it('grants a complimentary plan, switches immediately, and clamps the first monthly cycle', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2027-01-31T08:00:00.000Z'));
     const tx = {
       manualOrder: {
@@ -473,14 +468,9 @@ describe('CommerceService checkout', () => {
           },
         }),
       },
-      accessProfilePool: {
-        findMany: jest
-          .fn()
-          .mockResolvedValue([
-            { pool: { members: [{ nodeId: 'node_hk_pro' }] } },
-          ]),
+      accessProfileNode: {
+        findFirst: jest.fn().mockResolvedValue({ nodeId: 'node_hk_pro' }),
       },
-      accessProfileNode: { findFirst: jest.fn() },
       accessAccount: {
         upsert: jest.fn().mockResolvedValue({ id: 'account_1' }),
       },
@@ -502,6 +492,7 @@ describe('CommerceService checkout', () => {
       walletLedgerEntry: { create: jest.fn().mockResolvedValue({}) },
       paymentRecord: { create: jest.fn().mockResolvedValue({}) },
       redemptionUse: { create: jest.fn() },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
     };
     const entitlements = { grantFromOrder: jest.fn().mockResolvedValue({}) };
     const prisma = {
@@ -515,13 +506,37 @@ describe('CommerceService checkout', () => {
       entitlements as never,
     );
 
-    const result = await service.checkout(
+    const result = await service.grantComplimentaryPlan(
       'user_1',
-      { offerId: 'catalog_offer_pro_quarterly' },
-      'offer-plan-v2',
+      'catalog_offer_pro_quarterly',
+      'admin_1',
+      'complimentary-plan-v2',
     );
 
+    expect(result.chargedCents).toBe(0);
     expect(result.entitlementExpiresAt).toBe('2027-04-30T08:00:00.000Z');
+    expect(tx.user.updateMany).not.toHaveBeenCalled();
+    expect(tx.walletTransaction.create).not.toHaveBeenCalled();
+    expect(tx.walletLedgerEntry.create).not.toHaveBeenCalled();
+    expect(tx.paymentRecord.create).not.toHaveBeenCalled();
+    const [orderCreate] = tx.manualOrder.create.mock.calls[0] as unknown as [
+      { data: Record<string, unknown> },
+    ];
+    expect(orderCreate.data).toMatchObject({
+      source: 'ADMIN',
+      amountCents: 0,
+      basePriceCents: 8900,
+      discountCents: 8900,
+      idempotencyKey: 'complimentary-plan-v2',
+    });
+    const [auditCreate] = tx.auditLog.create.mock.calls[0] as unknown as [
+      { data: Record<string, unknown> },
+    ];
+    expect(auditCreate.data).toMatchObject({
+      actorId: 'admin_1',
+      action: 'COMPLIMENTARY_PLAN_GRANTED',
+      targetId: 'order_plan_v2',
+    });
     expect(tx.subscription.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: {
@@ -608,12 +623,9 @@ describe('CommerceService checkout', () => {
           },
         }),
       },
-      accessProfilePool: {
-        findMany: jest
-          .fn()
-          .mockResolvedValue([{ pool: { members: [{ nodeId: 'node_1' }] } }]),
+      accessProfileNode: {
+        findFirst: jest.fn().mockResolvedValue({ nodeId: 'node_1' }),
       },
-      accessProfileNode: { findFirst: jest.fn() },
       accessAccount: {
         upsert: jest.fn().mockResolvedValue({ id: 'account_1' }),
       },

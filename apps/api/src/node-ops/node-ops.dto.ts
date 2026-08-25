@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   Min,
+  MaxLength,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -91,4 +92,13 @@ export class SaveNodeServerDto {
 
   @IsBoolean()
   active!: boolean;
+}
+
+export class RequestNodeRuntimeCommandDto {
+  @IsIn(['start', 'stop', 'status'])
+  action!: 'start' | 'stop' | 'status';
+
+  @IsString()
+  @MaxLength(128)
+  idempotencyKey!: string;
 }

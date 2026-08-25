@@ -262,6 +262,24 @@ export class PortalService {
       margin: 1,
       width: 256,
     });
+    const subscriptionPath = `/subscribe/${bundle.token.token}`;
+    const mihomoSubscriptionPath = `${subscriptionPath}/clash`;
+    const publicBaseUrl = (
+      process.env.API_PUBLIC_URL ?? 'http://localhost:4000'
+    ).replace(/\/$/, '');
+    const subscriptionUrl = `${publicBaseUrl}${subscriptionPath}`;
+    const mihomoSubscriptionUrl = `${publicBaseUrl}${mihomoSubscriptionPath}`;
+    const subscriptionQrCode = await QRCode.toDataURL(subscriptionUrl, {
+      margin: 1,
+      width: 256,
+    });
+    const mihomoSubscriptionQrCode = await QRCode.toDataURL(
+      mihomoSubscriptionUrl,
+      {
+        margin: 1,
+        width: 256,
+      },
+    );
     const configSnippet = this.buildConfigSnippet(bundle.token, bundle.node, {
       up: bundle.subscription.speedUpMbpsSnapshot ?? 0,
       down: bundle.subscription.speedDownMbpsSnapshot ?? 0,
@@ -271,6 +289,10 @@ export class PortalService {
       token: bundle.token.token,
       uri,
       qrCode,
+      subscriptionUrl,
+      subscriptionQrCode,
+      mihomoSubscriptionUrl,
+      mihomoSubscriptionQrCode,
       configSnippet,
       nodeLabel: bundle.node.label,
       protocol:
@@ -280,7 +302,8 @@ export class PortalService {
       expiresAt: bundle.subscription.endsAt,
       trafficRemaining: bundle.trafficRemaining,
       nodes,
-      subscriptionPath: `/subscribe/${bundle.token.token}/clash`,
+      subscriptionPath,
+      mihomoSubscriptionPath,
       subscriptionStatus: 'active' as const,
     };
   }
@@ -457,7 +480,7 @@ export class PortalService {
   }
 
   private async getSubscriptionAccessBundle(tokenValue: string) {
-    if (!/^hy2_[a-f0-9]{24}$/.test(tokenValue)) {
+    if (tokenValue.length < 8 || tokenValue.length > 256) {
       throw new NotFoundException('Subscription not found');
     }
 

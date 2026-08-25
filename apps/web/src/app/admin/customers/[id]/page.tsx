@@ -13,76 +13,281 @@ import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
 import { formatBytes, formatDateTime, formatMoney } from "@/lib/format";
+import type { PaginatedResponse } from "@/lib/types";
 
-type Bucket = { id: string; kind: string; startsAt: string; endsAt: string; grantedBytes: number; consumedBytes: number; remainingBytes: number };
-type Grant = { id: string; kind: string; status: string; productName: string; offerName?: string | null; startsAt: string; endsAt: string; accessProfileName: string; speedUpMbps: number; speedDownMbps: number; deviceLimit: number; buckets: Bucket[] };
-type Customer = {
-  id: string; email: string; displayName: string; status: string; notes?: string | null; balanceCents: number; trafficMultiplier: number; createdAt: string;
-  summary: { activeGrantCount: number; remainingBytes: number; onlineClients: number; lifetimeOrderCents: number };
-  grants: Grant[];
-  accessIdentities: Array<{ id: string; label: string; tokenPreview: string; vlessUuid: string; revokedAt?: string | null; lastUsedAt?: string | null }>;
-  usage: Array<{ id: string; nodeLabel: string; bucketStart: string; physicalBytes: number; accountedBytes: number; allocations: Array<{ quotaBucketId: string; accountedBytes: number }> }>;
-  sessions: Array<{ nodeId: string; nodeLabel: string; concurrentClients: number; capturedAt: string }>;
-  orders: Array<{ id: string; status: string; source: string; productName?: string | null; amountCents: number; refundedCents: number; createdAt: string }>;
-  wallet: Array<{ id: string; kind: string; amountCents: number; beforeBalanceCents?: number | null; afterBalanceCents?: number | null; actorEmail?: string | null; note?: string | null; createdAt: string }>;
-  authEvents: Array<{ id: string; granted: boolean; reason: string; nodeLabel?: string | null; remoteAddr?: string | null; createdAt: string }>;
-  timeline: Array<{ id: string; action: string; actorEmail?: string | null; createdAt: string }>;
+type Bucket = {
+  id: string;
+  kind: string;
+  startsAt: string;
+  endsAt: string;
+  grantedBytes: number;
+  consumedBytes: number;
+  remainingBytes: number;
 };
-type Catalog = { products: Array<{ kind: string; status: string; name: string; offers: Array<{ id: string; name: string; active: boolean; archivedAt?: string | null }> }> };
+type Grant = {
+  id: string;
+  kind: string;
+  status: string;
+  productName: string;
+  offerName?: string | null;
+  startsAt: string;
+  endsAt: string;
+  accessProfileName: string;
+  speedUpMbps: number;
+  speedDownMbps: number;
+  deviceLimit: number;
+  buckets: Bucket[];
+};
+type Customer = {
+  id: string;
+  email: string;
+  displayName: string;
+  status: string;
+  notes?: string | null;
+  balanceCents: number;
+  trafficMultiplier: number;
+  createdAt: string;
+  summary: {
+    activeGrantCount: number;
+    remainingBytes: number;
+    onlineClients: number;
+    lifetimeOrderCents: number;
+  };
+};
+type Identity = {
+  id: string;
+  label: string;
+  tokenPreview: string;
+  subscriptionUrl: string;
+  mihomoSubscriptionUrl: string;
+  vlessUuid: string;
+  revokedAt?: string | null;
+  lastUsedAt?: string | null;
+};
+type Presence = {
+  id: string;
+  nodeLabel: string;
+  serverName: string;
+  protocol: string;
+  concurrentClients: number;
+  observedAt: string;
+};
+type AccessData = {
+  identities: Identity[];
+  presence: PaginatedResponse<Presence>;
+};
+type Usage = {
+  id: string;
+  nodeLabel: string;
+  bucketStart: string;
+  physicalBytes: number;
+  accountedBytes: number;
+  allocations: Array<{ quotaBucketId: string; accountedBytes: number }>;
+};
+type Order = {
+  id: string;
+  status: string;
+  source: string;
+  productName?: string | null;
+  amountCents: number;
+  refundedCents: number;
+  createdAt: string;
+};
+type Wallet = {
+  id: string;
+  kind: string;
+  amountCents: number;
+  beforeBalanceCents?: number | null;
+  afterBalanceCents?: number | null;
+  actorEmail?: string | null;
+  createdAt: string;
+};
+type Timeline = {
+  id: string;
+  action: string;
+  actorEmail?: string | null;
+  createdAt: string;
+};
+type Catalog = {
+  products: Array<{
+    kind: string;
+    status: string;
+    name: string;
+    offers: Array<{
+      id: string;
+      name: string;
+      active: boolean;
+      archivedAt?: string | null;
+    }>;
+  }>;
+};
 type View = "entitlements" | "access" | "traffic" | "finance" | "timeline";
+
+const emptyPage = <T,>(): PaginatedResponse<T> => ({
+  items: [],
+  page: 1,
+  pageSize: 20,
+  total: 0,
+  totalPages: 1,
+});
 
 export default function CustomerDetailPage() {
   const params = useParams<{ id: string }>();
   const { token } = useAuth();
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
+  const [grants, setGrants] = useState(emptyPage<Grant>);
+  const [access, setAccess] = useState<AccessData>({
+    identities: [],
+    presence: emptyPage<Presence>(),
+  });
+  const [usage, setUsage] = useState(emptyPage<Usage>);
+  const [orders, setOrders] = useState(emptyPage<Order>);
+  const [wallet, setWallet] = useState(emptyPage<Wallet>);
+  const [timeline, setTimeline] = useState(emptyPage<Timeline>);
   const [view, setView] = useState<View>("entitlements");
+  const [page, setPage] = useState(1);
+  const [reloadKey, setReloadKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [balanceDelta, setBalanceDelta] = useState("");
-  const [balanceNote, setBalanceNote] = useState("");
   const [offerId, setOfferId] = useState("");
+  const [multiplier, setMultiplier] = useState("1");
+  const [remainingGb, setRemainingGb] = useState("");
   const [resetUrl, setResetUrl] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    if (!token || !params.id) return;
-    setError(null);
-    try {
-      const [nextCustomer, nextCatalog] = await Promise.all([
-        apiRequest<Customer>(`/api/admin/customers/${params.id}`, { token }),
-        apiRequest<Catalog>("/api/admin/catalog", { token }),
-      ]);
-      setCustomer(nextCustomer);
-      setCatalog(nextCatalog);
-      const firstPlanOffer = nextCatalog.products
-        .filter((product) => product.kind === "plan" && product.status === "active")
-        .flatMap((product) => product.offers)
-        .find((offer) => offer.active && !offer.archivedAt);
-      setOfferId((current) => current || firstPlanOffer?.id || "");
-    } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "客户详情加载失败。");
-    }
-  }, [params.id, token]);
+  const loadSummary = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!token || !params.id) return;
+      setError(null);
+      try {
+        const [nextCustomer, nextCatalog] = await Promise.all([
+          apiRequest<Customer>(`/api/admin/customers/${params.id}`, {
+            token,
+            signal,
+          }),
+          catalog
+            ? Promise.resolve(catalog)
+            : apiRequest<Catalog>("/api/admin/catalog", { token, signal }),
+        ]);
+        setCustomer(nextCustomer);
+        setCatalog(nextCatalog);
+        setMultiplier(String(nextCustomer.trafficMultiplier));
+        const firstPlanOffer = nextCatalog.products
+          .filter(
+            (product) => product.kind === "plan" && product.status === "active",
+          )
+          .flatMap((product) => product.offers)
+          .find((offer) => offer.active && !offer.archivedAt);
+        setOfferId((current) => current || firstPlanOffer?.id || "");
+      } catch (cause) {
+        if (cause instanceof DOMException && cause.name === "AbortError")
+          return;
+        setError(
+          cause instanceof ApiError ? cause.message : "客户详情加载失败。",
+        );
+      }
+    },
+    [catalog, params.id, token],
+  );
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
-  }, [load]);
+    const controller = new AbortController();
+    const timer = window.setTimeout(
+      () => void loadSummary(controller.signal),
+      0,
+    );
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [loadSummary, reloadKey]);
+
+  useEffect(() => {
+    if (!token || !params.id) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      setError(null);
+      const suffix = `page=${page}&pageSize=20`;
+      const request =
+        view === "entitlements"
+          ? apiRequest<PaginatedResponse<Grant>>(
+              `/api/admin/customers/${params.id}/entitlements?${suffix}`,
+              { token, signal: controller.signal },
+            ).then(setGrants)
+          : view === "access"
+            ? apiRequest<AccessData>(
+                `/api/admin/customers/${params.id}/access?${suffix}`,
+                { token, signal: controller.signal },
+              ).then(setAccess)
+            : view === "traffic"
+              ? apiRequest<PaginatedResponse<Usage>>(
+                  `/api/admin/customers/${params.id}/traffic?${suffix}`,
+                  { token, signal: controller.signal },
+                ).then(setUsage)
+              : view === "finance"
+                ? Promise.all([
+                    apiRequest<PaginatedResponse<Order>>(
+                      `/api/admin/customers/${params.id}/finance?kind=orders&${suffix}`,
+                      { token, signal: controller.signal },
+                    ),
+                    apiRequest<PaginatedResponse<Wallet>>(
+                      `/api/admin/customers/${params.id}/finance?kind=wallet&${suffix}`,
+                      { token, signal: controller.signal },
+                    ),
+                  ]).then(([nextOrders, nextWallet]) => {
+                    setOrders(nextOrders);
+                    setWallet(nextWallet);
+                  })
+                : apiRequest<PaginatedResponse<Timeline>>(
+                    `/api/admin/customers/${params.id}/timeline?${suffix}`,
+                    { token, signal: controller.signal },
+                  ).then(setTimeline);
+      void request
+        .catch((cause) => {
+          if (cause instanceof DOMException && cause.name === "AbortError")
+            return;
+          setError(
+            cause instanceof ApiError
+              ? cause.message
+              : "客户标签数据加载失败。",
+          );
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLoading(false);
+        });
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [page, params.id, reloadKey, token, view]);
 
   const planOffers = useMemo(
     () =>
       catalog?.products
-        .filter((product) => product.kind === "plan" && product.status === "active")
+        .filter(
+          (product) => product.kind === "plan" && product.status === "active",
+        )
         .flatMap((product) =>
           product.offers
             .filter((offer) => offer.active && !offer.archivedAt)
-            .map((offer) => ({ value: offer.id, label: `${product.name} · ${offer.name}` })),
+            .map((offer) => ({
+              value: offer.id,
+              label: `${product.name} · ${offer.name}`,
+            })),
         ) ?? [],
     [catalog],
   );
 
-  async function act(path: string, method: "POST" | "PATCH", body?: unknown) {
+  async function act(
+    path: string,
+    method: "POST" | "PATCH" | "DELETE",
+    body?: unknown,
+  ) {
     if (!token) return null;
     setBusy(true);
     setError(null);
@@ -95,7 +300,7 @@ export default function CustomerDetailPage() {
         body,
       });
       setFeedback("操作已完成。");
-      await load();
+      setReloadKey((value) => value + 1);
       return result;
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "操作失败。");
@@ -106,24 +311,55 @@ export default function CustomerDetailPage() {
   }
 
   async function adjustBucket(bucket: Bucket) {
-    const value = window.prompt("调整后的剩余额度（GB）", (bucket.remainingBytes / 1024 ** 3).toFixed(2));
+    const value = window.prompt(
+      "调整后的剩余额度（GB）",
+      (bucket.remainingBytes / 1024 ** 3).toFixed(2),
+    );
     if (value === null) return;
     const bytes = Math.round(Number(value) * 1024 ** 3);
-    if (!Number.isSafeInteger(bytes) || bytes < 0) return setError("请输入有效的非负 GB 数值。");
+    if (!Number.isSafeInteger(bytes) || bytes < 0)
+      return setError("请输入有效的非负 GB 数值。");
     await act(
       `/api/admin/customers/${params.id}/quota-buckets/${bucket.id}/adjustments`,
       "POST",
-      { remainingBytes: bytes, reason: "客户 360 人工调整" },
+      { remainingBytes: bytes },
     );
   }
 
-  if (!customer) {
+  const currentPage =
+    view === "entitlements"
+      ? grants
+      : view === "access"
+        ? access.presence
+        : view === "traffic"
+          ? usage
+          : view === "finance"
+            ? orders
+            : timeline;
+  const pagination = {
+    page: currentPage.page,
+    pageSize: currentPage.pageSize,
+    total: currentPage.total,
+    totalPages: currentPage.totalPages,
+    onPageChange: setPage,
+  };
+
+  if (!customer)
     return (
-      <ConsoleShell title="客户详情" subtitle="客户 360" scope="CRM" navItems={adminNav} requireRole="admin">
-        {error ? <div className="feedback error">{error}</div> : <div className="skeleton" style={{ height: 320 }} />}
+      <ConsoleShell
+        title="客户详情"
+        subtitle="客户 360"
+        scope="CRM"
+        navItems={adminNav}
+        requireRole="admin"
+      >
+        {error ? (
+          <div className="feedback error">{error}</div>
+        ) : (
+          <div className="skeleton" style={{ height: 320 }} />
+        )}
       </ConsoleShell>
     );
-  }
 
   return (
     <ConsoleShell
@@ -132,16 +368,55 @@ export default function CustomerDetailPage() {
       scope="Customer 360"
       navItems={adminNav}
       requireRole="admin"
-      toolbarMeta={<span className={`badge ${customer.status === "active" ? "success" : "danger"}`}>{customer.status === "active" ? "正常" : "已停用"}</span>}
+      toolbarMeta={
+        <span
+          className={`badge ${customer.status === "active" ? "success" : "danger"}`}
+        >
+          {customer.status === "active" ? "正常" : "已停用"}
+        </span>
+      }
       toolbarActions={
         <>
-          <Link href="/admin/customers" className="toolbar-button"><Icon name="arrow_back" />返回</Link>
-          <button className="toolbar-button" disabled={busy} type="button" onClick={() => void act(`/api/admin/customers/${customer.id}/kick`, "POST")}><Icon name="logout" />踢线</button>
-          <button className="toolbar-button" disabled={busy} type="button" onClick={async () => {
-            const result = await act(`/api/admin/customers/${customer.id}/password-reset`, "POST");
-            if (result?.resetUrl) setResetUrl(result.resetUrl);
-          }}><Icon name="key" />重置密码</button>
-          <button className="action-button" disabled={busy} type="button" onClick={() => void act(`/api/admin/customers/${customer.id}/status`, "PATCH", { status: customer.status === "active" ? "suspended" : "active" })}>
+          <Link href="/admin/customers" className="toolbar-button">
+            <Icon name="arrow_back" />
+            返回
+          </Link>
+          <button
+            className="toolbar-button"
+            disabled={busy}
+            type="button"
+            onClick={() =>
+              void act(`/api/admin/customers/${customer.id}/kick`, "POST")
+            }
+          >
+            <Icon name="logout" />
+            踢线
+          </button>
+          <button
+            className="toolbar-button"
+            disabled={busy}
+            type="button"
+            onClick={async () => {
+              const result = await act(
+                `/api/admin/customers/${customer.id}/password-reset`,
+                "POST",
+              );
+              if (result?.resetUrl) setResetUrl(result.resetUrl);
+            }}
+          >
+            <Icon name="key" />
+            重置密码
+          </button>
+          <button
+            className="action-button"
+            disabled={busy}
+            type="button"
+            onClick={() =>
+              void act(`/api/admin/customers/${customer.id}/status`, "PATCH", {
+                status: customer.status === "active" ? "suspended" : "active",
+              })
+            }
+          >
             {customer.status === "active" ? "停用客户" : "恢复客户"}
           </button>
         </>
@@ -149,86 +424,412 @@ export default function CustomerDetailPage() {
     >
       {error ? <div className="feedback error">{error}</div> : null}
       {feedback ? <div className="feedback success">{feedback}</div> : null}
-      {resetUrl ? <div className="feedback info"><span className="mono">{resetUrl}</span></div> : null}
+      {resetUrl ? (
+        <div className="feedback info">
+          <span className="mono">{resetUrl}</span>
+        </div>
+      ) : null}
       <div className="page-stack">
         <div className="metric-grid">
-          <MetricCard label="有效权益" value={String(customer.summary.activeGrantCount)} footnote="套餐与独立流量包" />
-          <MetricCard label="剩余额度" value={formatBytes(customer.summary.remainingBytes)} footnote={`计费倍率 ${customer.trafficMultiplier}x`} />
-          <MetricCard label="在线设备" value={String(customer.summary.onlineClients)} footnote="最近三分钟" />
-          <MetricCard label="累计成交" value={formatMoney(customer.summary.lifetimeOrderCents)} footnote={`钱包余额 ${formatMoney(customer.balanceCents)}`} />
+          <MetricCard
+            label="有效权益"
+            value={String(customer.summary.activeGrantCount)}
+            footnote="套餐与独立流量包"
+          />
+          <MetricCard
+            label="剩余额度"
+            value={formatBytes(customer.summary.remainingBytes)}
+            footnote={`计费倍率 ${customer.trafficMultiplier}x`}
+          />
+          <MetricCard
+            label="在线设备"
+            value={String(customer.summary.onlineClients)}
+            footnote="45 秒内当前投影"
+          />
+          <MetricCard
+            label="累计成交"
+            value={formatMoney(customer.summary.lifetimeOrderCents)}
+            footnote={`钱包余额 ${formatMoney(customer.balanceCents)}`}
+          />
         </div>
         <div className="segmented-control" aria-label="客户详情视图">
-          {([['entitlements','权益与额度'],['access','接入与会话'],['traffic','流量'],['finance','订单与余额'],['timeline','操作时间线']] as Array<[View,string]>).map(([key, label]) => (
-            <button key={key} className={view === key ? "active" : ""} type="button" onClick={() => setView(key)}>{label}</button>
+          {(
+            [
+              ["entitlements", "权益与额度"],
+              ["access", "接入与会话"],
+              ["traffic", "流量"],
+              ["finance", "订单与余额"],
+              ["timeline", "操作时间线"],
+            ] as Array<[View, string]>
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              className={view === key ? "active" : ""}
+              type="button"
+              onClick={() => {
+                setView(key);
+                setPage(1);
+              }}
+            >
+              {label}
+            </button>
           ))}
         </div>
-
         {view === "entitlements" ? (
           <>
-            <Panel title="权益与额度" copy="权益叠加时节点取并集，速率和设备数取最高值。">
-              <DataTable headers={["商品", "类型", "有效期", "访问策略", "额度", "操作"]} rows={customer.grants.flatMap((grant) =>
-                grant.buckets.map((bucket) => [
-                  <span className="list" key={`${grant.id}-name`}><strong>{grant.productName}</strong><small>{grant.offerName ?? grant.status}</small></span>,
-                  grant.kind === "plan" ? "套餐月度额度" : "一次性流量包",
-                  `${formatDateTime(bucket.startsAt)} - ${formatDateTime(bucket.endsAt)}`,
-                  `${grant.accessProfileName} · ${grant.speedDownMbps} Mbps · ${grant.deviceLimit} 台`,
-                  `${formatBytes(bucket.remainingBytes)} / ${formatBytes(bucket.grantedBytes)}`,
-                  <button className="ghost-button compact" type="button" key={`${bucket.id}-adjust`} onClick={() => void adjustBucket(bucket)}>调整额度</button>,
-                ]),
-              )} />
-            </Panel>
-            <Panel title="套餐切换" copy="立即生效，旧套餐取消且不补偿剩余价值；已有流量包不受影响。">
+            <Panel title="流量策略与总额度">
               <div className="inline-form">
-                <CustomSelect value={offerId} onChange={setOfferId} options={planOffers} />
-                <button className="action-button" disabled={!offerId || busy} type="button" onClick={() => void act(`/api/admin/customers/${customer.id}/plan-switch`, "POST", { offerId })}>立即切换</button>
+                <label className="field">
+                  <span className="fine-print">计费倍率</span>
+                  <input
+                    className="control"
+                    type="number"
+                    min={0.1}
+                    max={100}
+                    step={0.1}
+                    value={multiplier}
+                    onChange={(event) => setMultiplier(event.target.value)}
+                  />
+                </label>
+                <button
+                  className="ghost-button"
+                  disabled={busy}
+                  type="button"
+                  onClick={() =>
+                    void act(
+                      `/api/admin/customers/${customer.id}/traffic-policy`,
+                      "PATCH",
+                      { trafficMultiplier: Number(multiplier) },
+                    )
+                  }
+                >
+                  保存倍率
+                </button>
+                <label className="field">
+                  <span className="fine-print">总剩余额度（GB）</span>
+                  <input
+                    className="control"
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={remainingGb}
+                    onChange={(event) => setRemainingGb(event.target.value)}
+                  />
+                </label>
+                <button
+                  className="action-button"
+                  disabled={busy || remainingGb === ""}
+                  type="button"
+                  onClick={() =>
+                    void act(
+                      `/api/admin/customers/${customer.id}/quota-adjustments`,
+                      "POST",
+                      {
+                        mode: "set_remaining",
+                        remainingBytes: Math.round(
+                          Number(remainingGb) * 1024 ** 3,
+                        ),
+                      },
+                    )
+                  }
+                >
+                  设置总额度
+                </button>
+              </div>
+            </Panel>
+            <Panel title="权益与额度">
+              <DataTable
+                loading={loading}
+                error={error}
+                onRetry={() => setReloadKey((value) => value + 1)}
+                pagination={pagination}
+                emptyText="暂无权益"
+                headers={["商品", "类型", "有效期", "访问策略", "额度", "操作"]}
+                rows={grants.items.flatMap((grant) =>
+                  grant.buckets.map((bucket) => [
+                    <span className="list" key={`${grant.id}-name`}>
+                      <strong>{grant.productName}</strong>
+                      <small>{grant.offerName ?? grant.status}</small>
+                    </span>,
+                    grant.kind === "plan" ? "套餐月度额度" : "一次性流量包",
+                    `${formatDateTime(bucket.startsAt)} - ${formatDateTime(bucket.endsAt)}`,
+                    `${grant.accessProfileName} · ${grant.speedDownMbps} Mbps · ${grant.deviceLimit} 台`,
+                    `${formatBytes(bucket.remainingBytes)} / ${formatBytes(bucket.grantedBytes)}`,
+                    <button
+                      className="ghost-button compact"
+                      type="button"
+                      key={`${bucket.id}-adjust`}
+                      onClick={() => void adjustBucket(bucket)}
+                    >
+                      调整额度
+                    </button>,
+                  ]),
+                )}
+              />
+            </Panel>
+            <Panel
+              title="套餐切换"
+              copy="选择具体计费周期后，将立即结束旧套餐并免费赠送新套餐。"
+              allowOverflow
+            >
+              <div className="plan-switch-form">
+                <CustomSelect
+                  value={offerId}
+                  onChange={setOfferId}
+                  options={planOffers}
+                />
+                <button
+                  className="action-button"
+                  disabled={!offerId || busy}
+                  type="button"
+                  onClick={() =>
+                    void act(
+                      `/api/admin/customers/${customer.id}/plan-switch`,
+                      "POST",
+                      { offerId },
+                    )
+                  }
+                >
+                  免费赠送并立即切换
+                </button>
               </div>
             </Panel>
           </>
         ) : null}
-
         {view === "access" ? (
           <>
-            <Panel title="接入身份">
-              <DataTable headers={["标签", "Token", "VLESS UUID", "最后使用", "状态"]} rows={customer.accessIdentities.map((identity) => [identity.label, <span className="mono" key={identity.id}>{identity.tokenPreview}</span>, <span className="mono" key={`${identity.id}-uuid`}>{identity.vlessUuid}</span>, identity.lastUsedAt ? formatDateTime(identity.lastUsedAt) : "从未", identity.revokedAt ? "已撤销" : "有效"])} />
+            <Panel
+              title="订阅链接"
+              action={
+                <button
+                  className="action-button"
+                  disabled={busy}
+                  type="button"
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        "重新创建后，所有旧订阅链接会立即失效。确认继续？",
+                      )
+                    ) {
+                      void act(
+                        `/api/admin/customers/${customer.id}/access-tokens/rotate`,
+                        "POST",
+                      );
+                    }
+                  }}
+                >
+                  <Icon name="refresh" />
+                  重新创建
+                </button>
+              }
+            >
+              {access.identities.length ? (
+                <div className="admin-access-identities">
+                  {access.identities.map((identity) => (
+                    <section className="admin-access-identity" key={identity.id}>
+                      <div className="admin-access-identity-head">
+                        <div className="split">
+                          <strong>{identity.label}</strong>
+                          <span className="fine-print">
+                            {identity.lastUsedAt
+                              ? `最后使用 ${formatDateTime(identity.lastUsedAt)}`
+                              : "尚未使用"}
+                          </span>
+                        </div>
+                        <span
+                          className={`badge ${identity.revokedAt ? "neutral" : "success"}`}
+                        >
+                          {identity.revokedAt ? "已撤销" : "有效"}
+                        </span>
+                      </div>
+                      <div className="admin-subscription-links">
+                        {[
+                          {
+                            label: "v2rayN / Hiddify",
+                            value: identity.subscriptionUrl,
+                          },
+                          {
+                            label: "Clash / Mihomo",
+                            value: identity.mihomoSubscriptionUrl,
+                          },
+                        ].map((link) => (
+                          <div className="admin-subscription-row" key={link.label}>
+                            <span className="fine-print">{link.label}</span>
+                            <span className="mono">{link.value}</span>
+                            <button
+                              className="ghost-button compact"
+                              type="button"
+                              title={`复制${link.label}订阅链接`}
+                              onClick={() => {
+                                void navigator.clipboard.writeText(link.value);
+                                setFeedback(`${link.label} 订阅链接已复制。`);
+                              }}
+                            >
+                              <Icon name="content_copy" />
+                              复制
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="admin-access-identity-foot">
+                        <span className="fine-print">
+                          VLESS UUID：
+                          <span className="mono">{identity.vlessUuid}</span>
+                        </span>
+                        {!identity.revokedAt ? (
+                          <button
+                            className="danger-button compact"
+                            type="button"
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  "销毁后这条订阅链接会立即失效。确认销毁？",
+                                )
+                              ) {
+                                void act(
+                                  `/api/admin/customers/${customer.id}/access-tokens/${identity.id}`,
+                                  "DELETE",
+                                );
+                              }
+                            }}
+                          >
+                            销毁订阅
+                          </button>
+                        ) : null}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state">暂无接入身份</div>
+              )}
             </Panel>
-            <Panel title="在线会话">
-              <DataTable headers={["节点", "连接数", "采集时间"]} rows={customer.sessions.map((session) => [session.nodeLabel, session.concurrentClients, formatDateTime(session.capturedAt)])} />
+            <Panel title="当前在线">
+              <DataTable
+                loading={loading}
+                error={error}
+                pagination={pagination}
+                emptyText="当前没有在线连接"
+                headers={["服务器", "协议端点", "连接数", "最后在线"]}
+                rows={access.presence.items.map((item) => [
+                  item.serverName,
+                  `${item.protocol === "vless_reality" ? "VLESS + Reality" : "Hysteria2"} · ${item.nodeLabel}`,
+                  item.concurrentClients,
+                  formatDateTime(item.observedAt),
+                ])}
+              />
             </Panel>
           </>
         ) : null}
-
         {view === "traffic" ? (
           <Panel title="流量与额度分摊">
-            <DataTable headers={["时间", "节点", "物理流量", "计费流量", "额度分摊"]} rows={customer.usage.map((item) => [formatDateTime(item.bucketStart), item.nodeLabel, formatBytes(item.physicalBytes), formatBytes(item.accountedBytes), item.allocations.map((allocation) => formatBytes(allocation.accountedBytes)).join(" + ") || "未分摊"])} />
+            <DataTable
+              loading={loading}
+              error={error}
+              pagination={pagination}
+              emptyText="暂无流量记录"
+              headers={["时间", "节点", "物理流量", "计费流量", "额度分摊"]}
+              rows={usage.items.map((item) => [
+                formatDateTime(item.bucketStart),
+                item.nodeLabel,
+                formatBytes(item.physicalBytes),
+                formatBytes(item.accountedBytes),
+                item.allocations
+                  .map((allocation) => formatBytes(allocation.accountedBytes))
+                  .join(" + ") || "未分摊",
+              ])}
+            />
           </Panel>
         ) : null}
-
         {view === "finance" ? (
           <>
             <Panel title="余额调整">
               <div className="inline-form">
-                <input className="control" inputMode="decimal" value={balanceDelta} onChange={(event) => setBalanceDelta(event.target.value)} placeholder="变更金额（元，可为负）" />
-                <input className="control" value={balanceNote} onChange={(event) => setBalanceNote(event.target.value)} placeholder="调整原因" />
-                <button className="action-button" disabled={busy || !balanceNote.trim()} type="button" onClick={async () => {
-                  const cents = Math.round(Number(balanceDelta) * 100);
-                  if (!Number.isSafeInteger(cents) || cents === 0) return setError("请输入非零金额。");
-                  await act(`/api/admin/customers/${customer.id}/balance-adjustments`, "POST", { deltaCents: cents, note: balanceNote.trim() });
-                  setBalanceDelta(""); setBalanceNote("");
-                }}>调整余额</button>
+                <input
+                  className="control"
+                  inputMode="decimal"
+                  value={balanceDelta}
+                  onChange={(event) => setBalanceDelta(event.target.value)}
+                  placeholder="变更金额（元，可为负）"
+                />
+                <button
+                  className="action-button"
+                  disabled={busy || balanceDelta === ""}
+                  type="button"
+                  onClick={async () => {
+                    const cents = Math.round(Number(balanceDelta) * 100);
+                    if (!Number.isSafeInteger(cents) || cents === 0)
+                      return setError("请输入非零金额。");
+                    await act(
+                      `/api/admin/customers/${customer.id}/balance-adjustments`,
+                      "POST",
+                      { deltaCents: cents },
+                    );
+                    setBalanceDelta("");
+                  }}
+                >
+                  调整余额
+                </button>
               </div>
             </Panel>
             <Panel title="订单">
-              <DataTable headers={["时间", "商品", "来源", "成交额", "退款", "状态"]} rows={customer.orders.map((order) => [formatDateTime(order.createdAt), order.productName ?? order.id, order.source, formatMoney(order.amountCents), formatMoney(order.refundedCents), order.status])} />
+              <DataTable
+                loading={loading}
+                pagination={pagination}
+                emptyText="暂无订单"
+                headers={["时间", "商品", "来源", "成交额", "退款", "状态"]}
+                rows={orders.items.map((order) => [
+                  formatDateTime(order.createdAt),
+                  order.productName ?? order.id,
+                  order.source,
+                  formatMoney(order.amountCents),
+                  formatMoney(order.refundedCents),
+                  order.status,
+                ])}
+              />
             </Panel>
             <Panel title="钱包流水">
-              <DataTable headers={["时间", "类型", "变更", "变更前", "变更后", "操作者"]} rows={customer.wallet.map((entry) => [formatDateTime(entry.createdAt), entry.kind, formatMoney(entry.amountCents), entry.beforeBalanceCents == null ? "-" : formatMoney(entry.beforeBalanceCents), entry.afterBalanceCents == null ? "-" : formatMoney(entry.afterBalanceCents), entry.actorEmail ?? "系统"])} />
+              <DataTable
+                loading={loading}
+                pagination={{
+                  page: wallet.page,
+                  pageSize: wallet.pageSize,
+                  total: wallet.total,
+                  totalPages: wallet.totalPages,
+                  onPageChange: setPage,
+                }}
+                emptyText="暂无钱包流水"
+                headers={["时间", "类型", "变更", "变更前", "变更后", "操作者"]}
+                rows={wallet.items.map((entry) => [
+                  formatDateTime(entry.createdAt),
+                  entry.kind,
+                  formatMoney(entry.amountCents),
+                  entry.beforeBalanceCents == null
+                    ? "-"
+                    : formatMoney(entry.beforeBalanceCents),
+                  entry.afterBalanceCents == null
+                    ? "-"
+                    : formatMoney(entry.afterBalanceCents),
+                  entry.actorEmail ?? "系统",
+                ])}
+              />
             </Panel>
           </>
         ) : null}
-
         {view === "timeline" ? (
           <Panel title="操作时间线">
-            <DataTable headers={["时间", "操作", "操作者"]} rows={customer.timeline.map((event) => [formatDateTime(event.createdAt), event.action, event.actorEmail ?? "系统"])} />
+            <DataTable
+              loading={loading}
+              error={error}
+              pagination={pagination}
+              emptyText="暂无操作记录"
+              headers={["时间", "操作", "操作者"]}
+              rows={timeline.items.map((event) => [
+                formatDateTime(event.createdAt),
+                event.action,
+                event.actorEmail ?? "系统",
+              ])}
+            />
           </Panel>
         ) : null}
       </div>

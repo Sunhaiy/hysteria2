@@ -3,7 +3,70 @@ import { EntitlementService } from './entitlement.service';
 describe('EntitlementService V2', () => {
   afterEach(() => jest.useRealTimers());
 
-  it('creates a clamped monthly bucket and resolves unioned access limits', async () => {
+  it('applies product speed and default multiplier when granting a plan', async () => {
+    const startsAt = new Date('2026-08-24T12:00:00.000Z');
+    const endsAt = new Date('2026-09-24T12:00:00.000Z');
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'order_1',
+          userId: 'user_1',
+          createdAt: startsAt,
+          processedAt: startsAt,
+          entitlementExpiresAt: endsAt,
+          catalogOffer: {
+            id: 'offer_1',
+            trafficBytes: 100n,
+            product: {
+              id: 'product_1',
+              kind: 'PLAN',
+              accessProfileId: 'profile_1',
+              speedUpMbps: 35,
+              speedDownMbps: 180,
+              defaultTrafficMultiplierBasisPoints: 15_000,
+            },
+          },
+        }),
+      },
+      user: { findUnique: jest.fn().mockResolvedValue({ id: 'user_1' }) },
+      accessAccount: {
+        upsert: jest.fn().mockResolvedValue({
+          id: 'account_1',
+          trafficMultiplierBasisPoints: 10_000,
+          trafficMultiplierOverrideBasisPoints: null,
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      accessProfile: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ deviceLimit: 4 }),
+      },
+      entitlementGrant: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        create: jest.fn().mockResolvedValue({
+          id: 'grant_1',
+          startsAt,
+        }),
+      },
+      quotaBucket: { upsert: jest.fn().mockResolvedValue({}) },
+    };
+    const service = new EntitlementService(tx as never);
+
+    await service.grantFromOrder({ orderId: 'order_1' }, tx as never);
+
+    expect(tx.accessAccount.update).toHaveBeenCalledWith({
+      where: { id: 'account_1' },
+      data: { trafficMultiplierBasisPoints: 15_000 },
+    });
+    const [grantCreate] = tx.entitlementGrant.create.mock
+      .calls[0] as unknown as [{ data: Record<string, unknown> }];
+    expect(grantCreate.data).toMatchObject({
+      speedUpMbpsSnapshot: 35,
+      speedDownMbpsSnapshot: 180,
+      deviceLimitSnapshot: 4,
+    });
+  });
+
+  it('creates a clamped monthly bucket and resolves directly bound access limits', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2027-03-30T08:00:00.000Z'));
     const anchor = new Date('2027-01-31T08:00:00.000Z');
     const entitlementEnd = new Date('2027-12-31T08:00:00.000Z');
@@ -19,27 +82,18 @@ describe('EntitlementService V2', () => {
       quotaBuckets: [{ grantedBytes: 100n, consumedBytes: 20n }],
       product: { name: 'Core 200' },
       accessProfile: {
-        poolBindings: [
+        nodeBindings: [
           {
-            priority: 0,
-            pool: {
+            priority: 10,
+            node: {
+              id: 'node_core',
+              label: 'Core node',
               active: true,
-              members: [
-                {
-                  priority: 10,
-                  node: {
-                    id: 'node_core',
-                    label: 'Core node',
-                    active: true,
-                    lifecycleStatus: 'ACTIVE',
-                    region: 'HK',
-                  },
-                },
-              ],
+              lifecycleStatus: 'ACTIVE',
+              region: 'HK',
             },
           },
         ],
-        nodeBindings: [],
       },
     };
     const packGrant = {
@@ -54,7 +108,6 @@ describe('EntitlementService V2', () => {
       quotaBuckets: [{ grantedBytes: 50n, consumedBytes: 0n }],
       product: { name: 'Flex pack' },
       accessProfile: {
-        poolBindings: [],
         nodeBindings: [
           {
             priority: 1,
@@ -181,20 +234,24 @@ describe('EntitlementService V2', () => {
         where: {
           grant: {
             accessProfile: {
-              OR: Array<{
-                nodeBindings?: { some: { nodeId: string } };
-              }>;
+              nodeBindings: {
+                some: {
+                  nodeId: string;
+                  node: { active: boolean; lifecycleStatus: string };
+                };
+              };
             };
           };
         };
         orderBy: Array<Record<string, string>>;
       },
     ];
-    expect(
-      bucketQuery.where.grant.accessProfile.OR.some(
-        (entry) => entry.nodeBindings?.some.nodeId === 'node_core',
-      ),
-    ).toBe(true);
+    expect(bucketQuery.where.grant.accessProfile.nodeBindings).toEqual({
+      some: {
+        nodeId: 'node_core',
+        node: { active: true, lifecycleStatus: 'ACTIVE' },
+      },
+    });
     expect(bucketQuery.orderBy).toEqual([
       { endsAt: 'asc' },
       { createdAt: 'asc' },

@@ -28,6 +28,7 @@ const MAX_APP_SIZE = 250 * 1024 * 1024;
 const allowedExtensions: Record<TutorialUploadPlatform, Set<string>> = {
   windows: new Set(['.exe', '.msi', '.zip']),
   android: new Set(['.apk']),
+  macos: new Set(['.dmg', '.pkg', '.zip']),
 };
 
 function assetDirectory() {
@@ -38,8 +39,10 @@ function assetDirectory() {
 }
 
 function parsePlatform(value: string): TutorialUploadPlatform {
-  if (value !== 'windows' && value !== 'android') {
-    throw new BadRequestException('仅支持上传 Windows 或 Android 客户端。');
+  if (value !== 'windows' && value !== 'android' && value !== 'macos') {
+    throw new BadRequestException(
+      '仅支持上传 Windows、Android 或 macOS 客户端。',
+    );
   }
   return value;
 }
@@ -93,9 +96,14 @@ export class AdminTutorialAssetsController {
     const extension = extname(file.originalname).toLowerCase();
     if (!allowedExtensions[platform].has(extension)) {
       await unlink(file.path).catch(() => undefined);
-      const expected = platform === 'windows' ? 'EXE、MSI 或 ZIP' : 'APK';
+      const expected =
+        platform === 'windows'
+          ? 'EXE、MSI 或 ZIP'
+          : platform === 'android'
+            ? 'APK'
+            : 'DMG、PKG 或 ZIP';
       throw new BadRequestException(
-        `文件格式不正确，${platform === 'windows' ? 'Windows' : 'Android'} 仅支持 ${expected}。`,
+        `文件格式不正确，${platform === 'windows' ? 'Windows' : platform === 'android' ? 'Android' : 'macOS'} 仅支持 ${expected}。`,
       );
     }
 

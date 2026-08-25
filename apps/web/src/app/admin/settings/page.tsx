@@ -64,6 +64,12 @@ interface SettingsResponse {
   };
   tutorial: TutorialSettings;
   registrationEnabled: boolean;
+  announcement: {
+    enabled: boolean;
+    title: string;
+    content: string;
+    version: string;
+  };
 }
 
 function formatFileSize(bytes: number) {
@@ -87,6 +93,10 @@ export default function AdminSettingsPage() {
   const [configured, setConfigured] = useState(false);
   const [registrationEnabled, setRegistrationEnabled] = useState(true);
   const [savingRegistration, setSavingRegistration] = useState(false);
+  const [announcementEnabled, setAnnouncementEnabled] = useState(false);
+  const [announcementTitle, setAnnouncementTitle] = useState("服务公告");
+  const [announcementContent, setAnnouncementContent] = useState("");
+  const [savingAnnouncement, setSavingAnnouncement] = useState(false);
   const [testTo, setTestTo] = useState("");
   const [testing, setTesting] = useState(false);
 
@@ -125,6 +135,9 @@ export default function AdminSettingsPage() {
     setPassSet(data.smtp.passSet);
     setConfigured(data.smtp.configured);
     setRegistrationEnabled(data.registrationEnabled);
+    setAnnouncementEnabled(data.announcement.enabled);
+    setAnnouncementTitle(data.announcement.title);
+    setAnnouncementContent(data.announcement.content);
     setPass("");
     setOauth(data.oauth);
     setGoogleId(data.oauth.google.clientId);
@@ -212,6 +225,31 @@ export default function AdminSettingsPage() {
       setError(cause instanceof ApiError ? cause.message : "保存失败。");
     } finally {
       setSavingRegistration(false);
+    }
+  }
+
+  async function saveAnnouncement() {
+    if (!token) return;
+    setSavingAnnouncement(true);
+    setError(null);
+    try {
+      const data = await apiRequest<SettingsResponse>("/api/admin/settings", {
+        method: "PATCH",
+        token,
+        body: {
+          announcementEnabled,
+          announcementTitle,
+          announcementContent,
+        },
+      });
+      applySettings(data);
+      showToast(
+        data.announcement.enabled ? "公告已发布" : "公告已暂停展示",
+      );
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "公告保存失败。");
+    } finally {
+      setSavingAnnouncement(false);
     }
   }
 
@@ -328,13 +366,14 @@ export default function AdminSettingsPage() {
         method: "PATCH",
         token,
         body: {
-          tutorialWindowsClient: platform("windows")?.client ?? "v2rayN",
+          tutorialWindowsClient:
+            platform("windows")?.client ?? "Clash Verge Rev",
           tutorialWindowsSteps: platform("windows")?.steps.join("\n") ?? "",
           tutorialWindowsUrl: platform("windows")?.externalUrl ?? "",
-          tutorialAndroidClient: platform("android")?.client ?? "Hiddify",
+          tutorialAndroidClient: platform("android")?.client ?? "FlClash",
           tutorialAndroidSteps: platform("android")?.steps.join("\n") ?? "",
           tutorialAndroidUrl: platform("android")?.externalUrl ?? "",
-          tutorialIosClient: platform("ios")?.client ?? "sing-box",
+          tutorialIosClient: platform("ios")?.client ?? "Stash",
           tutorialIosSteps: platform("ios")?.steps.join("\n") ?? "",
           tutorialIosUrl: platform("ios")?.externalUrl ?? "",
         },
@@ -570,8 +609,79 @@ export default function AdminSettingsPage() {
           </Panel>
 
           <Panel
+            title="会员公告"
+            copy="启用后，会员每次重新登录都会看到公告弹窗；点击我已知晓后，本次登录内不再重复显示。关闭后不显示公告。"
+          >
+            <div className="setting-toggle-row">
+              <div className="setting-toggle-copy">
+                <strong>
+                  {announcementEnabled ? "向会员展示公告" : "暂停公告展示"}
+                </strong>
+                <span>
+                  {announcementEnabled
+                    ? "每个新登录会话都需要确认一次。"
+                    : "会员端当前不会显示公告。"}
+                </span>
+              </div>
+              <label className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={announcementEnabled}
+                  onChange={(event) =>
+                    setAnnouncementEnabled(event.target.checked)
+                  }
+                />
+                <span className="toggle-track" aria-hidden="true">
+                  <span />
+                </span>
+                <span className="toggle-label">
+                  {announcementEnabled ? "已开启" : "已关闭"}
+                </span>
+              </label>
+            </div>
+            <div className="form-grid">
+              <label className="field">
+                <span className="fine-print">公告标题</span>
+                <input
+                  className="control"
+                  value={announcementTitle}
+                  onChange={(event) => setAnnouncementTitle(event.target.value)}
+                  maxLength={80}
+                  placeholder="服务公告"
+                />
+              </label>
+              <label className="field">
+                <span className="fine-print">公告正文</span>
+                <textarea
+                  className="control announcement-editor"
+                  value={announcementContent}
+                  onChange={(event) =>
+                    setAnnouncementContent(event.target.value)
+                  }
+                  maxLength={6000}
+                  placeholder="填写需要会员确认的重要内容"
+                  rows={7}
+                />
+              </label>
+            </div>
+            <div className="toolbar-actions">
+              <button
+                className="action-button"
+                type="button"
+                disabled={
+                  savingAnnouncement ||
+                  (announcementEnabled && !announcementContent.trim())
+                }
+                onClick={() => void saveAnnouncement()}
+              >
+                {savingAnnouncement ? "保存中..." : "保存公告"}
+              </button>
+            </div>
+          </Panel>
+
+          <Panel
             title="使用教程与客户端下载"
-            copy="Windows 使用 v2rayN，Android 使用 Hiddify，iOS 使用 sing-box。每行填写一个操作步骤；Windows 与 Android 安装包会保存到持久目录，部署后不会丢失。"
+            copy="客户端安装包设置保留兼容；图文步骤和发布请使用教程管理。Windows 使用 Clash Verge Rev，Android 使用 FlClash，iOS 使用 Stash。"
           >
             <div className="tutorial-admin-grid">
               {tutorial.platforms.map((platform) => (
@@ -595,10 +705,10 @@ export default function AdminSettingsPage() {
                       }
                       placeholder={
                         platform.id === "windows"
-                          ? "v2rayN"
+                          ? "Clash Verge Rev"
                           : platform.id === "android"
-                            ? "Hiddify"
-                            : "sing-box"
+                            ? "FlClash"
+                            : "Stash"
                       }
                     />
                   </label>

@@ -20,8 +20,10 @@ export interface SessionUser {
 
 export interface PaginatedResponse<T> {
   items: T[];
-  nextCursor: string | null;
+  page: number;
+  pageSize: number;
   total: number;
+  totalPages: number;
 }
 
 export interface SessionPayload {
@@ -144,9 +146,11 @@ export interface CatalogResponse {
     createdAt: string;
     updatedAt: string;
   }>;
-  trafficPacks: Array<TrafficPackProductRecord & {
-    accessProfileName?: string | null;
-  }>;
+  trafficPacks: Array<
+    TrafficPackProductRecord & {
+      accessProfileName?: string | null;
+    }
+  >;
   accessProfiles: AccessProfileRecord[];
 }
 
@@ -312,6 +316,9 @@ export interface RedemptionCodeRecord {
   status: "active" | "redeemed" | "void" | "expired";
   planId?: string | null;
   planName?: string | null;
+  catalogOfferId?: string | null;
+  catalogOfferName?: string | null;
+  planMode?: "renew" | "replace";
   trafficPackProductId?: string | null;
   trafficPackProductName?: string | null;
   trafficBytes?: number | null;
@@ -524,12 +531,17 @@ export interface PortalAccessResponse {
   token: string;
   uri: string;
   qrCode: string;
+  subscriptionUrl: string;
+  subscriptionQrCode: string;
+  mihomoSubscriptionUrl: string;
+  mihomoSubscriptionQrCode: string;
   configSnippet: string;
   nodeLabel: string;
   protocol: "hysteria2" | "vless_reality";
   expiresAt: string;
   trafficRemaining: number;
   subscriptionPath: string;
+  mihomoSubscriptionPath: string;
   subscriptionStatus: "active";
   nodes: Array<{
     id: string;

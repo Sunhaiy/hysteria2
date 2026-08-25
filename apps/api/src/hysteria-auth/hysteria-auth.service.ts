@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ControlPlaneStoreService } from '../domain/control-plane.store';
+import { NodeControlService } from '../domain/node-control.service';
+import { OnlinePresenceService } from '../domain/online-presence.service';
 import { EntitlementService } from '../entitlement/entitlement.service';
 
 @Injectable()
@@ -7,6 +9,8 @@ export class HysteriaAuthService {
   constructor(
     private readonly store: ControlPlaneStoreService,
     private readonly entitlements: EntitlementService,
+    private readonly nodes: NodeControlService,
+    private readonly presence: OnlinePresenceService,
   ) {}
 
   async authorize(input: {
@@ -17,7 +21,7 @@ export class HysteriaAuthService {
   }) {
     const [token, node] = await Promise.all([
       this.store.findAccessToken(input.tokenValue),
-      this.store.getNodeForControl(input.nodeId),
+      this.nodes.getNodeForControl(input.nodeId),
     ]);
     if (!token) {
       await this.store.recordAuthEvent({
@@ -66,7 +70,7 @@ export class HysteriaAuthService {
       return { ok: false as const, reason: access.reason };
     }
     const [onlineCount, reconnecting] = await Promise.all([
-      this.store.getCurrentOnlineCount(user.id),
+      this.presence.countForUser(user.id),
       this.store.isRecentReconnect(user.id, input.remoteAddr),
     ]);
     if (onlineCount >= (access.deviceLimit ?? 1) && !reconnecting) {

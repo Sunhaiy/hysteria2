@@ -1,0 +1,3 @@
+# label|agent-base-url|agent-secret|logical-service|expected-status
+us-reality|http://10.0.0.8:9010|replace-with-agent-secret|xray|active
+us-hysteria2|http://10.0.0.8:9010|replace-with-agent-secret|hysteria2|active

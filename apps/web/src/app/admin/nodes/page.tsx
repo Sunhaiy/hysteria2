@@ -3,7 +3,6 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { CustomSelect } from "@/components/custom-select";
-import { DataTable } from "@/components/data-table";
 import { Drawer } from "@/components/drawer";
 import { Icon } from "@/components/icon";
 import { MetricCard } from "@/components/metric-card";
@@ -11,126 +10,1169 @@ import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
+import { formatDateTime } from "@/lib/format";
 
-type Member = { memberId: string; nodeId: string; nodeLabel: string; priority: number; weight: number; lifecycleStatus: string; region?: string | null; provider?: string | null; tags: string[]; capacityUsers?: number | null; onlineUsers: number; capacityPercent?: number | null; healthy?: boolean | null; serviceable: boolean };
-type Pool = { id: string; slug: string; name: string; description?: string | null; region?: string | null; active: boolean; profileNames: string[]; serviceableNodes: number; totalNodes: number; onlineUsers: number; members: Member[] };
-type NodeItem = { id: string; label: string; protocol: string; lifecycleStatus: string; active: boolean; region?: string | null; provider?: string | null; tags: string[]; capacityUsers?: number | null; pools: string[]; healthy?: boolean | null; syncDelaySeconds?: number | null };
-type Overview = { pools: Pool[]; nodes: NodeItem[] };
-type PoolForm = { slug: string; name: string; description: string; region: string; active: boolean; members: Array<{ nodeId: string; priority: number; weight: number }> };
+type Endpoint = {
+  id: string;
+  label: string;
+  protocol: "hysteria2" | "vless_reality";
+  hostname: string;
+  port: number;
+  lifecycleStatus: "active" | "draining" | "maintenance" | "disabled";
+  active: boolean;
+  tags: string[];
+  capacityUsers?: number | null;
+  onlineUsers: number;
+  capacityPercent?: number | null;
+  priority?: number | null;
+  accessProfiles: Array<{ id: string; name: string; priority: number }>;
+  healthy?: boolean | null;
+  latencyMs?: number | null;
+  lastCheckedAt?: string | null;
+  lastSyncAt?: string | null;
+  lastSyncError?: string | null;
+  controlApiBaseUrl?: string | null;
+  controlApiSecretSet: boolean;
+  runtimeControlConfigured: boolean;
+  runtimeState:
+    | "unknown"
+    | "active"
+    | "inactive"
+    | "activating"
+    | "deactivating"
+    | "failed";
+  runtimeStateObservedAt?: string | null;
+  runtimeError?: string | null;
+  latestRuntimeCommand?: {
+    id: string;
+    action: "start" | "stop" | "status";
+    status: "queued" | "running" | "succeeded" | "failed";
+    resultState?: Endpoint["runtimeState"] | null;
+    error?: string | null;
+    requestedAt: string;
+    startedAt?: string | null;
+    completedAt?: string | null;
+  } | null;
+};
+type Server = {
+  id: string;
+  slug: string;
+  name: string;
+  hostname: string;
+  region?: string | null;
+  provider?: string | null;
+  active: boolean;
+  onlineUsers: number;
+  healthyEndpoints: number;
+  endpoints: Endpoint[];
+};
+type Overview = { servers: Server[]; nodes: Endpoint[] };
+type ServerForm = {
+  slug: string;
+  name: string;
+  hostname: string;
+  region: string;
+  provider: string;
+};
+type NodeForm = {
+  serverId: string;
+  protocol: Endpoint["protocol"];
+  label: string;
+  hostname: string;
+  port: number;
+  obfsPassword: string;
+  sni: string;
+  realityPublicKey: string;
+  realityShortId: string;
+  trafficApiBaseUrl: string;
+  trafficApiSecret: string;
+  controlApiBaseUrl: string;
+  controlApiSecret: string;
+  allowInsecureTls: boolean;
+  speedUpMbps: number;
+  speedDownMbps: number;
+};
 
-const emptyPool = (): PoolForm => ({ slug: "", name: "", description: "", region: "", active: true, members: [] });
+const emptyServerForm: ServerForm = {
+  slug: "",
+  name: "",
+  hostname: "",
+  region: "",
+  provider: "",
+};
+const emptyNodeForm: NodeForm = {
+  serverId: "",
+  protocol: "vless_reality",
+  label: "",
+  hostname: "",
+  port: 443,
+  obfsPassword: "",
+  sni: "",
+  realityPublicKey: "",
+  realityShortId: "",
+  trafficApiBaseUrl: "",
+  trafficApiSecret: "",
+  controlApiBaseUrl: "",
+  controlApiSecret: "",
+  allowInsecureTls: false,
+  speedUpMbps: 0,
+  speedDownMbps: 0,
+};
 
-export default function NodeResourcesPage() {
+const protocolName = (protocol: Endpoint["protocol"]) =>
+  protocol === "vless_reality" ? "VLESS + Reality" : "Hysteria2";
+const lifecycleName = (status: Endpoint["lifecycleStatus"]) =>
+  ({
+    active: "启用",
+    draining: "排空中",
+    maintenance: "维护中",
+    disabled: "已停用",
+  })[status];
+const runtimeStateName = (state: Endpoint["runtimeState"]) =>
+  ({
+    unknown: "未知",
+    active: "运行中",
+    inactive: "已停止",
+    activating: "启动中",
+    deactivating: "停止中",
+    failed: "服务异常",
+  })[state];
+const runtimeStateBadge = (state: Endpoint["runtimeState"]) =>
+  state === "active"
+    ? "success"
+    : state === "inactive" || state === "unknown"
+      ? "neutral"
+      : state === "failed"
+        ? "danger"
+        : "warn";
+const runtimeStateDetail = (node: Endpoint) =>
+  node.latestRuntimeCommand?.status === "queued"
+    ? "命令排队中"
+    : node.latestRuntimeCommand?.status === "running"
+      ? "命令执行中"
+      : node.latestRuntimeCommand?.status === "failed"
+        ? (node.latestRuntimeCommand.error ?? "最近命令失败")
+        : node.runtimeError
+          ? node.runtimeError
+          : node.runtimeStateObservedAt
+            ? formatDateTime(node.runtimeStateObservedAt)
+            : node.runtimeControlConfigured
+              ? "等待状态采集"
+              : "未配置 Agent";
+
+export default function NodesPage() {
   const { token } = useAuth();
-  const [data, setData] = useState<Overview>({ pools: [], nodes: [] });
+  const [data, setData] = useState<Overview>({ servers: [], nodes: [] });
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [editing, setEditing] = useState<Pool | null>(null);
-  const [form, setForm] = useState<PoolForm>(() => emptyPool());
-  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [drawer, setDrawer] = useState<"server" | "node" | "runtime" | null>(
+    null,
+  );
+  const [serverForm, setServerForm] = useState<ServerForm>(emptyServerForm);
+  const [nodeForm, setNodeForm] = useState<NodeForm>(emptyNodeForm);
+  const [runtimeNode, setRuntimeNode] = useState<Endpoint | null>(null);
+  const [runtimeForm, setRuntimeForm] = useState({
+    controlApiBaseUrl: "",
+    controlApiSecret: "",
+  });
 
-  const load = useCallback(async () => {
+  const load = useCallback(
+    async (signal?: AbortSignal, showLoading = true) => {
+      if (!token) return;
+      if (showLoading) setLoading(true);
+      try {
+        setData(
+          await apiRequest<Overview>("/api/admin/node-ops", { token, signal }),
+        );
+        setError(null);
+      } catch (cause) {
+        if (cause instanceof DOMException && cause.name === "AbortError")
+          return;
+        setError(
+          cause instanceof ApiError ? cause.message : "节点数据加载失败。",
+        );
+      } finally {
+        if (!signal?.aborted && showLoading) setLoading(false);
+      }
+    },
+    [token],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => void load(controller.signal), 0);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [load]);
+
+  const hasPendingRuntimeCommand = data.nodes.some(
+    (node) =>
+      node.latestRuntimeCommand?.status === "queued" ||
+      node.latestRuntimeCommand?.status === "running",
+  );
+
+  useEffect(() => {
+    if (!hasPendingRuntimeCommand) return;
+    const timer = window.setInterval(() => void load(undefined, false), 2000);
+    return () => window.clearInterval(timer);
+  }, [hasPendingRuntimeCommand, load]);
+
+  async function setLifecycle(
+    node: Endpoint,
+    lifecycleStatus: Endpoint["lifecycleStatus"],
+  ) {
     if (!token) return;
-    try { setData(await apiRequest<Overview>("/api/admin/node-ops", { token })); setError(null); }
-    catch (cause) { setError(cause instanceof ApiError ? cause.message : "节点资源池加载失败。"); }
-  }, [token]);
-
-  useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
-
-  function openPool(pool?: Pool) {
-    setEditing(pool ?? null);
-    setForm(pool ? { slug: pool.slug, name: pool.name, description: pool.description ?? "", region: pool.region ?? "", active: pool.active, members: pool.members.map((member) => ({ nodeId: member.nodeId, priority: member.priority, weight: member.weight })) } : emptyPool());
-    setDrawerOpen(true); setError(null);
+    setBusyId(node.id);
+    setError(null);
+    try {
+      await apiRequest(`/api/admin/node-ops/nodes/${node.id}`, {
+        method: "PATCH",
+        token,
+        body: {
+          lifecycleStatus,
+          tags: node.tags,
+          capacityUsers: node.capacityUsers ?? undefined,
+        },
+      });
+      setFeedback(
+        lifecycleStatus === "active"
+          ? `${node.label} 已恢复接入，新订阅和鉴权会重新使用该节点。`
+          : `${node.label} 已停止接入，新订阅和鉴权不再使用该节点，已有连接保持不变。`,
+      );
+      await load();
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError ? cause.message : "节点状态更新失败。",
+      );
+    } finally {
+      setBusyId(null);
+    }
   }
 
-  function toggleNode(nodeId: string, checked: boolean) {
-    setForm((current) => ({ ...current, members: checked ? [...current.members, { nodeId, priority: current.members.length * 10, weight: 100 }] : current.members.filter((member) => member.nodeId !== nodeId) }));
+  async function requestRuntimeCommand(
+    node: Endpoint,
+    action: "start" | "stop" | "status",
+  ) {
+    if (!token) return;
+    if (
+      action === "stop" &&
+      !window.confirm(`确认停止“${node.label}”的运行服务？当前连接会立即断开。`)
+    )
+      return;
+    setBusyId(node.id);
+    setError(null);
+    try {
+      await apiRequest(
+        `/api/admin/node-ops/nodes/${node.id}/runtime-commands`,
+        {
+          method: "POST",
+          token,
+          body: { action, idempotencyKey: crypto.randomUUID() },
+        },
+      );
+      setFeedback(
+        `${node.label} 的${action === "start" ? "启动" : action === "stop" ? "停止" : "状态查询"}命令已进入执行队列。`,
+      );
+      await load(undefined, false);
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError ? cause.message : "运行服务命令提交失败。",
+      );
+    } finally {
+      setBusyId(null);
+    }
   }
 
-  async function savePool(event: FormEvent) {
+  function openRuntimeDrawer(node: Endpoint) {
+    setRuntimeNode(node);
+    setRuntimeForm({
+      controlApiBaseUrl: node.controlApiBaseUrl ?? "",
+      controlApiSecret: "",
+    });
+    setDrawer("runtime");
+    setError(null);
+  }
+
+  async function saveRuntimeAgent(event: FormEvent) {
+    event.preventDefault();
+    if (!token || !runtimeNode) return;
+    setBusyId(runtimeNode.id);
+    setError(null);
+    try {
+      await apiRequest(`/api/admin/nodes/${runtimeNode.id}`, {
+        method: "PATCH",
+        token,
+        body: {
+          controlApiBaseUrl: runtimeForm.controlApiBaseUrl.trim(),
+          controlApiSecret: runtimeForm.controlApiSecret || undefined,
+        },
+      });
+      setDrawer(null);
+      setRuntimeNode(null);
+      setFeedback(`${runtimeNode.label} 的运行控制 Agent 已更新。`);
+      await load();
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError ? cause.message : "运行控制配置保存失败。",
+      );
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function openServerDrawer() {
+    setServerForm(emptyServerForm);
+    setDrawer("server");
+    setError(null);
+  }
+
+  function openNodeDrawer(server?: Server) {
+    const availableServers = data.servers.filter(
+      (item) => item.id !== "unassigned",
+    );
+    setNodeForm({
+      ...emptyNodeForm,
+      serverId: server?.id ?? availableServers[0]?.id ?? "",
+      hostname: server?.hostname ?? availableServers[0]?.hostname ?? "",
+    });
+    setDrawer("node");
+    setError(null);
+  }
+
+  async function saveServer(event: FormEvent) {
     event.preventDefault();
     if (!token) return;
-    setBusy(true); setError(null);
+    setBusyId("new-server");
+    setError(null);
     try {
-      await apiRequest(editing ? `/api/admin/node-ops/pools/${editing.id}` : "/api/admin/node-ops/pools", {
-        method: editing ? "PUT" : "POST", token,
-        body: { ...form, slug: form.slug.trim(), name: form.name.trim(), description: form.description.trim() || undefined, region: form.region.trim() || undefined },
+      await apiRequest("/api/admin/node-ops/servers", {
+        method: "POST",
+        token,
+        body: {
+          ...serverForm,
+          slug: serverForm.slug.trim(),
+          name: serverForm.name.trim(),
+          hostname: serverForm.hostname.trim(),
+          region: serverForm.region.trim() || undefined,
+          provider: serverForm.provider.trim() || undefined,
+          active: true,
+        },
       });
-      setDrawerOpen(false); setFeedback(editing ? "资源池已更新。" : "资源池已创建。"); await load();
-    } catch (cause) { setError(cause instanceof ApiError ? cause.message : "资源池保存失败。"); }
-    finally { setBusy(false); }
+      setDrawer(null);
+      setFeedback("服务器已新增，可继续登记协议节点。");
+      await load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "服务器新增失败。");
+    } finally {
+      setBusyId(null);
+    }
   }
 
-  async function setLifecycle(node: NodeItem, lifecycleStatus: string) {
+  async function saveNode(event: FormEvent) {
+    event.preventDefault();
     if (!token) return;
-    setBusy(true); setError(null);
+    setBusyId("new-node");
+    setError(null);
     try {
-      await apiRequest(`/api/admin/node-ops/nodes/${node.id}`, { method: "PATCH", token, body: { lifecycleStatus, region: node.region ?? undefined, provider: node.provider ?? undefined, tags: node.tags, capacityUsers: node.capacityUsers ?? undefined } });
-      setFeedback(`${node.label} 已切换为 ${lifecycleStatus.toUpperCase()}。`); await load();
-    } catch (cause) { setError(cause instanceof ApiError ? cause.message : "节点状态更新失败。"); }
-    finally { setBusy(false); }
+      await apiRequest("/api/admin/nodes", {
+        method: "POST",
+        token,
+        body: {
+          serverId: nodeForm.serverId,
+          protocol: nodeForm.protocol,
+          label: nodeForm.label.trim(),
+          hostname: nodeForm.hostname.trim(),
+          port: nodeForm.port,
+          obfsPassword:
+            nodeForm.protocol === "hysteria2"
+              ? nodeForm.obfsPassword.trim() || undefined
+              : undefined,
+          sni: nodeForm.sni.trim() || undefined,
+          allowInsecureTls: nodeForm.allowInsecureTls,
+          realityPublicKey:
+            nodeForm.protocol === "vless_reality"
+              ? nodeForm.realityPublicKey.trim()
+              : undefined,
+          realityShortId:
+            nodeForm.protocol === "vless_reality"
+              ? nodeForm.realityShortId.trim() || undefined
+              : undefined,
+          realityFingerprint:
+            nodeForm.protocol === "vless_reality" ? "chrome" : undefined,
+          realitySpiderX:
+            nodeForm.protocol === "vless_reality" ? "/" : undefined,
+          vlessFlow:
+            nodeForm.protocol === "vless_reality"
+              ? "xtls-rprx-vision"
+              : undefined,
+          trafficApiBaseUrl: nodeForm.trafficApiBaseUrl.trim(),
+          trafficApiSecret: nodeForm.trafficApiSecret,
+          controlApiBaseUrl: nodeForm.controlApiBaseUrl.trim() || undefined,
+          controlApiSecret: nodeForm.controlApiSecret || undefined,
+          active: true,
+          speedUpMbps: nodeForm.speedUpMbps,
+          speedDownMbps: nodeForm.speedDownMbps,
+        },
+      });
+      setDrawer(null);
+      setFeedback("节点已新增并启用。");
+      await load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "节点新增失败。");
+    } finally {
+      setBusyId(null);
+    }
   }
 
-  const serviceable = data.nodes.filter((node) => node.lifecycleStatus === "active" && node.active).length;
-  const draining = data.nodes.filter((node) => node.lifecycleStatus === "draining").length;
-  const online = data.pools.reduce((sum, pool) => sum + pool.onlineUsers, 0);
+  async function deleteNode(node: Endpoint) {
+    if (!token || !window.confirm(`确认删除节点“${node.label}”？`)) return;
+    setBusyId(node.id);
+    setError(null);
+    try {
+      await apiRequest(`/api/admin/nodes/${node.id}`, {
+        method: "DELETE",
+        token,
+      });
+      setFeedback(`${node.label} 已删除。`);
+      await load();
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError
+          ? cause.message
+          : "节点仍有关联记录，无法删除。",
+      );
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  const activeEndpoints = data.nodes.filter(
+    (node) => node.lifecycleStatus === "active" && node.active,
+  ).length;
+  const healthyEndpoints = data.nodes.filter(
+    (node) => node.healthy === true,
+  ).length;
+  const onlineUsers = data.servers.reduce(
+    (total, server) => total + server.onlineUsers,
+    0,
+  );
+  const managedServers = data.servers.filter(
+    (server) => server.id !== "unassigned",
+  );
 
   return (
-    <ConsoleShell title="节点资源池" subtitle="节点生命周期、容量与访问策略资源池" scope="Node Ops" navItems={adminNav} requireRole="admin"
-      toolbarMeta={<span className="badge info">{data.pools.length} 个资源池 · {data.nodes.length} 个节点</span>}
-      toolbarActions={<button className="action-button" type="button" onClick={() => openPool()}><Icon name="add" />新建资源池</button>}>
-      {error && !drawerOpen ? <div className="feedback error">{error}</div> : null}
+    <ConsoleShell
+      title="服务器与协议端点"
+      subtitle="按物理服务器管理 Hysteria2 与 VLESS + Reality"
+      scope="Node Ops"
+      navItems={adminNav}
+      requireRole="admin"
+      toolbarMeta={
+        <span className="badge info">
+          {data.servers.length} 台服务器 · {data.nodes.length} 个端点
+        </span>
+      }
+      toolbarActions={
+        <>
+          <button
+            className="ghost-button"
+            type="button"
+            onClick={openServerDrawer}
+          >
+            <Icon name="add" />
+            新增服务器
+          </button>
+          <button
+            className="action-button"
+            type="button"
+            onClick={() => openNodeDrawer()}
+            disabled={!managedServers.length}
+          >
+            <Icon name="add" />
+            新增节点
+          </button>
+          <button
+            className="toolbar-button"
+            type="button"
+            onClick={() => void load()}
+          >
+            <Icon name="refresh" />
+            刷新
+          </button>
+        </>
+      }
+    >
+      {error ? <div className="feedback error">{error}</div> : null}
       {feedback ? <div className="feedback success">{feedback}</div> : null}
       <div className="page-stack">
         <div className="metric-grid">
-          <MetricCard label="可服务节点" value={String(serviceable)} footnote="ACTIVE 且已启用" />
-          <MetricCard label="排空中" value={String(draining)} footnote="不承接新连接" />
-          <MetricCard label="资源池" value={String(data.pools.length)} footnote="访问策略按池绑定" />
-          <MetricCard label="在线人数" value={String(online)} footnote="最新服务检查" />
+          <MetricCard
+            label="物理服务器"
+            value={String(data.servers.length)}
+            footnote="按主机归组"
+          />
+          <MetricCard
+            label="可服务端点"
+            value={String(activeEndpoints)}
+            footnote="ACTIVE 且启用"
+          />
+          <MetricCard
+            label="健康端点"
+            value={`${healthyEndpoints} / ${data.nodes.length}`}
+            footnote="最近一次协议探测"
+          />
+          <MetricCard
+            label="在线连接"
+            value={String(onlineUsers)}
+            footnote="45 秒内当前投影"
+          />
         </div>
-        <Panel title="资源池" copy="访问策略绑定资源池，接入配置按池和成员优先级排序。">
-          <DataTable headers={["资源池","策略","地区","节点","在线","状态","操作"]} rows={data.pools.map((pool) => [
-            <span className="list" key={pool.id}><strong>{pool.name}</strong><small className="mono">{pool.slug}</small></span>,
-            pool.profileNames.join(" · ") || "尚未绑定",
-            pool.region ?? "-",
-            `${pool.serviceableNodes} / ${pool.totalNodes} 可用`,
-            pool.onlineUsers,
-            <span className={`badge ${pool.active && pool.serviceableNodes ? "success" : "danger"}`} key={`${pool.id}-status`}>{pool.active ? (pool.serviceableNodes ? "正常" : "无可用节点") : "停用"}</span>,
-            <button className="ghost-button compact" type="button" key={`${pool.id}-edit`} onClick={() => openPool(pool)}><Icon name="edit" />编辑</button>,
-          ])} />
-        </Panel>
-        <Panel title="节点生命周期" copy="DRAINING 不再承接新连接，MAINTENANCE 与 DISABLED 不下发接入配置。">
-          <DataTable headers={["节点","协议","地区 / 供应商","标签","容量","资源池","健康","生命周期"]} rows={data.nodes.map((node) => [
-            node.label,
-            node.protocol === "vless_reality" ? "VLESS + REALITY" : "Hysteria 2",
-            `${node.region ?? "-"} / ${node.provider ?? "-"}`,
-            node.tags.join(" · ") || "-",
-            node.capacityUsers ? `${node.capacityUsers} 人` : "未设置",
-            node.pools.join(" · ") || "未入池",
-            <span className={`badge ${node.healthy === true ? "success" : node.healthy === false ? "danger" : "neutral"}`} key={`${node.id}-health`}>{node.healthy === true ? "正常" : node.healthy === false ? "异常" : "未知"}</span>,
-            <CustomSelect key={`${node.id}-lifecycle`} value={node.lifecycleStatus} onChange={(value) => void setLifecycle(node, value)} options={[
-              { value: "active", label: "ACTIVE" }, { value: "draining", label: "DRAINING" }, { value: "maintenance", label: "MAINTENANCE" }, { value: "disabled", label: "DISABLED" },
-            ]} />,
-          ])} />
-        </Panel>
+        {loading && data.servers.length === 0 ? (
+          <div className="skeleton" style={{ height: 320 }} />
+        ) : null}
+        {data.servers.map((server) => (
+          <Panel
+            key={server.id}
+            title={server.name}
+            copy={
+              [server.hostname, server.region, server.provider]
+                .filter(Boolean)
+                .join(" · ") || "未填写服务器信息"
+            }
+            action={
+              <div className="toolbar-actions">
+                <span
+                  className={`badge ${server.active ? "success" : "neutral"}`}
+                >
+                  {server.healthyEndpoints} / {server.endpoints.length} 健康 ·{" "}
+                  {server.onlineUsers} 在线
+                </span>
+                {server.id !== "unassigned" ? (
+                  <button
+                    className="ghost-button compact"
+                    type="button"
+                    onClick={() => openNodeDrawer(server)}
+                  >
+                    <Icon name="add" />
+                    新增节点
+                  </button>
+                ) : null}
+              </div>
+            }
+          >
+            <div className="node-endpoint-list">
+              {server.endpoints.length ? (
+                server.endpoints.map((node) => (
+                  <article className="node-endpoint-row" key={node.id}>
+                    <div className="node-endpoint-main">
+                      <div className="node-endpoint-heading">
+                        <strong>{node.label}</strong>
+                        <span className="badge neutral">
+                          {protocolName(node.protocol)}
+                        </span>
+                      </div>
+                      <span className="mono">
+                        {node.hostname}:{node.port}
+                      </span>
+                      <span className="fine-print">
+                        {node.accessProfiles.length
+                          ? node.accessProfiles
+                              .map(
+                                (profile) =>
+                                  `${profile.name} · P${profile.priority}`,
+                              )
+                              .join(" / ")
+                          : "未直接绑定访问策略"}
+                      </span>
+                    </div>
+                    <div className="node-endpoint-telemetry">
+                      <div className="node-endpoint-fact">
+                        <span className="fine-print">在线 / 容量</span>
+                        <strong>
+                          {node.capacityUsers
+                            ? `${node.onlineUsers} / ${node.capacityUsers}（${node.capacityPercent ?? 0}%）`
+                            : `${node.onlineUsers} / 未设置`}
+                        </strong>
+                      </div>
+                      <div className="node-endpoint-fact">
+                        <span className="fine-print">健康 / 同步</span>
+                        <div className="inline-stack">
+                          <span
+                            className={`badge ${node.healthy === true ? "success" : node.healthy === false ? "danger" : "neutral"}`}
+                            title={node.lastSyncError ?? undefined}
+                          >
+                            {node.healthy === true
+                              ? `${node.latencyMs ?? 0} ms`
+                              : node.healthy === false
+                                ? "异常"
+                                : "未知"}
+                          </span>
+                          <small>
+                            {node.lastSyncAt
+                              ? formatDateTime(node.lastSyncAt)
+                              : "尚未同步"}
+                          </small>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="node-endpoint-states">
+                      <div className="node-state-block">
+                        <span className="fine-print">接入状态</span>
+                        <span
+                          className={`badge ${node.lifecycleStatus === "active" ? "success" : node.lifecycleStatus === "disabled" ? "neutral" : "warn"}`}
+                        >
+                          {lifecycleName(node.lifecycleStatus)}
+                        </span>
+                      </div>
+                      <div className="node-state-block">
+                        <span className="fine-print">运行状态</span>
+                        <span
+                          className={`badge ${runtimeStateBadge(node.runtimeState)}`}
+                          title={node.runtimeError ?? undefined}
+                        >
+                          {runtimeStateName(node.runtimeState)}
+                        </span>
+                        <small title={runtimeStateDetail(node)}>
+                          {runtimeStateDetail(node)}
+                        </small>
+                      </div>
+                    </div>
+                    <div className="node-endpoint-actions">
+                      <button
+                        className="ghost-button compact"
+                        disabled={busyId === node.id}
+                        type="button"
+                        onClick={() =>
+                          void setLifecycle(
+                            node,
+                            node.lifecycleStatus === "active"
+                              ? "disabled"
+                              : "active",
+                          )
+                        }
+                      >
+                        {node.lifecycleStatus === "active"
+                          ? "停止接入"
+                          : "恢复接入"}
+                      </button>
+                      {node.runtimeControlConfigured ? (
+                        node.latestRuntimeCommand?.status === "queued" ||
+                        node.latestRuntimeCommand?.status === "running" ? (
+                          <button
+                            className="ghost-button compact"
+                            type="button"
+                            disabled
+                          >
+                            <Icon name="schedule" />
+                            执行中
+                          </button>
+                        ) : node.runtimeState === "active" ? (
+                          <button
+                            className="danger-button compact"
+                            disabled={busyId === node.id}
+                            type="button"
+                            onClick={() =>
+                              void requestRuntimeCommand(node, "stop")
+                            }
+                          >
+                            <Icon name="bolt" />
+                            停止服务
+                          </button>
+                        ) : node.runtimeState === "unknown" ? (
+                          <button
+                            className="ghost-button compact"
+                            disabled={busyId === node.id}
+                            type="button"
+                            onClick={() =>
+                              void requestRuntimeCommand(node, "status")
+                            }
+                          >
+                            <Icon name="refresh" />
+                            查询状态
+                          </button>
+                        ) : (
+                          <button
+                            className="action-button compact"
+                            disabled={busyId === node.id}
+                            type="button"
+                            onClick={() =>
+                              void requestRuntimeCommand(node, "start")
+                            }
+                          >
+                            <Icon name="bolt" />
+                            启动服务
+                          </button>
+                        )
+                      ) : (
+                        <button
+                          className="ghost-button compact"
+                          type="button"
+                          onClick={() => openRuntimeDrawer(node)}
+                        >
+                          配置 Agent
+                        </button>
+                      )}
+                      <button
+                        className="ghost-button compact"
+                        disabled={busyId === node.id}
+                        type="button"
+                        onClick={() => openRuntimeDrawer(node)}
+                      >
+                        <Icon name="settings" />
+                        运行配置
+                      </button>
+                      <button
+                        className="danger-button compact"
+                        disabled={busyId === node.id}
+                        type="button"
+                        onClick={() => void deleteNode(node)}
+                      >
+                        删除节点
+                      </button>
+                    </div>
+                  </article>
+                ))
+              ) : (
+                <div className="empty-state">该服务器还没有协议端点</div>
+              )}
+            </div>
+          </Panel>
+        ))}
       </div>
-      <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} title={editing ? `编辑资源池：${editing.name}` : "新建资源池"}
-        footer={<div className="toolbar-actions"><button className="action-button" disabled={busy || !form.name.trim() || !form.slug.trim() || !form.members.length} type="submit" form="pool-form">保存资源池</button><button className="ghost-button" type="button" onClick={() => setDrawerOpen(false)}>取消</button></div>}>
-        {drawerOpen && error ? <div className="feedback error">{error}</div> : null}
-        <form id="pool-form" className="form-grid" onSubmit={savePool}>
-          <label className="field"><span className="fine-print">名称</span><input className="control" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} /></label>
-          <label className="field"><span className="fine-print">Slug</span><input className="control mono" value={form.slug} onChange={(event) => setForm((current) => ({ ...current, slug: event.target.value }))} /></label>
-          <label className="field"><span className="fine-print">地区</span><input className="control" value={form.region} onChange={(event) => setForm((current) => ({ ...current, region: event.target.value }))} /></label>
-          <label className="field"><span className="fine-print">说明</span><textarea className="control" value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} /></label>
-          <label className="checkbox-field"><input type="checkbox" checked={form.active} onChange={(event) => setForm((current) => ({ ...current, active: event.target.checked }))} /><span>启用资源池</span></label>
-          <div className="list"><strong>成员与优先级</strong>{data.nodes.map((node) => {
-            const member = form.members.find((item) => item.nodeId === node.id);
-            return <div className="pool-member-editor" key={node.id}>
-              <label className="checkbox-field"><input type="checkbox" checked={Boolean(member)} onChange={(event) => toggleNode(node.id, event.target.checked)} /><span>{node.label}</span></label>
-              {member ? <input className="control compact-number" aria-label={`${node.label} 优先级`} type="number" min={0} value={member.priority} onChange={(event) => setForm((current) => ({ ...current, members: current.members.map((item) => item.nodeId === node.id ? { ...item, priority: Number(event.target.value) } : item) }))} /> : null}
-            </div>;
-          })}</div>
+      <Drawer
+        open={drawer === "server"}
+        onClose={() => setDrawer(null)}
+        title="新增服务器"
+        footer={
+          <div className="toolbar-actions">
+            <button
+              className="action-button"
+              type="submit"
+              form="server-form"
+              disabled={busyId === "new-server"}
+            >
+              保存服务器
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => setDrawer(null)}
+            >
+              取消
+            </button>
+          </div>
+        }
+      >
+        {drawer === "server" && error ? (
+          <div className="feedback error">{error}</div>
+        ) : null}
+        <form id="server-form" className="form-grid" onSubmit={saveServer}>
+          <label className="field">
+            <span className="fine-print">服务器名称</span>
+            <input
+              className="control"
+              required
+              value={serverForm.name}
+              onChange={(event) =>
+                setServerForm((current) => ({
+                  ...current,
+                  name: event.target.value,
+                }))
+              }
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">服务器标识</span>
+            <input
+              className="control mono"
+              required
+              value={serverForm.slug}
+              onChange={(event) =>
+                setServerForm((current) => ({
+                  ...current,
+                  slug: event.target.value,
+                }))
+              }
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">主机名或 IP</span>
+            <input
+              className="control mono"
+              required
+              value={serverForm.hostname}
+              onChange={(event) =>
+                setServerForm((current) => ({
+                  ...current,
+                  hostname: event.target.value,
+                }))
+              }
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">地区</span>
+            <input
+              className="control"
+              value={serverForm.region}
+              onChange={(event) =>
+                setServerForm((current) => ({
+                  ...current,
+                  region: event.target.value,
+                }))
+              }
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">服务商</span>
+            <input
+              className="control"
+              value={serverForm.provider}
+              onChange={(event) =>
+                setServerForm((current) => ({
+                  ...current,
+                  provider: event.target.value,
+                }))
+              }
+            />
+          </label>
+        </form>
+      </Drawer>
+      <Drawer
+        open={drawer === "node"}
+        onClose={() => setDrawer(null)}
+        title="新增节点"
+        footer={
+          <div className="toolbar-actions">
+            <button
+              className="action-button"
+              type="submit"
+              form="node-form"
+              disabled={busyId === "new-node"}
+            >
+              保存节点
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => setDrawer(null)}
+            >
+              取消
+            </button>
+          </div>
+        }
+      >
+        {drawer === "node" && error ? (
+          <div className="feedback error">{error}</div>
+        ) : null}
+        <form id="node-form" className="form-grid" onSubmit={saveNode}>
+          <label className="field">
+            <span className="fine-print">所属服务器</span>
+            <CustomSelect
+              value={nodeForm.serverId}
+              onChange={(value) => {
+                const server = managedServers.find((item) => item.id === value);
+                setNodeForm((current) => ({
+                  ...current,
+                  serverId: value,
+                  hostname: server?.hostname ?? current.hostname,
+                }));
+              }}
+              options={managedServers.map((server) => ({
+                value: server.id,
+                label: server.name,
+              }))}
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">协议</span>
+            <CustomSelect
+              value={nodeForm.protocol}
+              onChange={(value) =>
+                setNodeForm((current) => ({
+                  ...current,
+                  protocol: value as Endpoint["protocol"],
+                }))
+              }
+              options={[
+                { value: "vless_reality", label: "VLESS + Reality" },
+                { value: "hysteria2", label: "Hysteria2" },
+              ]}
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">节点名称</span>
+            <input
+              className="control"
+              required
+              value={nodeForm.label}
+              onChange={(event) =>
+                setNodeForm((current) => ({
+                  ...current,
+                  label: event.target.value,
+                }))
+              }
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">公网主机名或 IP</span>
+            <input
+              className="control mono"
+              required
+              value={nodeForm.hostname}
+              onChange={(event) =>
+                setNodeForm((current) => ({
+                  ...current,
+                  hostname: event.target.value,
+                }))
+              }
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">端口</span>
+            <input
+              className="control"
+              type="number"
+              min={1}
+              max={65535}
+              required
+              value={nodeForm.port}
+              onChange={(event) =>
+                setNodeForm((current) => ({
+                  ...current,
+                  port: Number(event.target.value),
+                }))
+              }
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">SNI</span>
+            <input
+              className="control mono"
+              required={nodeForm.protocol === "vless_reality"}
+              value={nodeForm.sni}
+              onChange={(event) =>
+                setNodeForm((current) => ({
+                  ...current,
+                  sni: event.target.value,
+                }))
+              }
+            />
+          </label>
+          {nodeForm.protocol === "vless_reality" ? (
+            <>
+              <label className="field">
+                <span className="fine-print">Reality 公钥</span>
+                <input
+                  className="control mono"
+                  required
+                  value={nodeForm.realityPublicKey}
+                  onChange={(event) =>
+                    setNodeForm((current) => ({
+                      ...current,
+                      realityPublicKey: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span className="fine-print">Reality Short ID</span>
+                <input
+                  className="control mono"
+                  value={nodeForm.realityShortId}
+                  onChange={(event) =>
+                    setNodeForm((current) => ({
+                      ...current,
+                      realityShortId: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+            </>
+          ) : (
+            <label className="field">
+              <span className="fine-print">混淆密码</span>
+              <input
+                className="control mono"
+                value={nodeForm.obfsPassword}
+                onChange={(event) =>
+                  setNodeForm((current) => ({
+                    ...current,
+                    obfsPassword: event.target.value,
+                  }))
+                }
+              />
+            </label>
+          )}
+          <label className="field">
+            <span className="fine-print">采集 API 地址</span>
+            <input
+              className="control mono"
+              required
+              value={nodeForm.trafficApiBaseUrl}
+              onChange={(event) =>
+                setNodeForm((current) => ({
+                  ...current,
+                  trafficApiBaseUrl: event.target.value,
+                }))
+              }
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">采集 API 密钥</span>
+            <input
+              className="control mono"
+              type="password"
+              required
+              value={nodeForm.trafficApiSecret}
+              onChange={(event) =>
+                setNodeForm((current) => ({
+                  ...current,
+                  trafficApiSecret: event.target.value,
+                }))
+              }
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">运行控制 Agent 地址</span>
+            <input
+              className="control mono"
+              value={nodeForm.controlApiBaseUrl}
+              onChange={(event) =>
+                setNodeForm((current) => ({
+                  ...current,
+                  controlApiBaseUrl: event.target.value,
+                }))
+              }
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">运行控制 Agent 密钥</span>
+            <input
+              className="control mono"
+              type="password"
+              value={nodeForm.controlApiSecret}
+              onChange={(event) =>
+                setNodeForm((current) => ({
+                  ...current,
+                  controlApiSecret: event.target.value,
+                }))
+              }
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">上行限速（Mbps，0 为不限）</span>
+            <input
+              className="control"
+              type="number"
+              min={0}
+              value={nodeForm.speedUpMbps}
+              onChange={(event) =>
+                setNodeForm((current) => ({
+                  ...current,
+                  speedUpMbps: Number(event.target.value),
+                }))
+              }
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">下行限速（Mbps，0 为不限）</span>
+            <input
+              className="control"
+              type="number"
+              min={0}
+              value={nodeForm.speedDownMbps}
+              onChange={(event) =>
+                setNodeForm((current) => ({
+                  ...current,
+                  speedDownMbps: Number(event.target.value),
+                }))
+              }
+            />
+          </label>
+          <label className="field checkbox-row">
+            <input
+              type="checkbox"
+              checked={nodeForm.allowInsecureTls}
+              onChange={(event) =>
+                setNodeForm((current) => ({
+                  ...current,
+                  allowInsecureTls: event.target.checked,
+                }))
+              }
+            />
+            <span>允许不安全 TLS</span>
+          </label>
+        </form>
+      </Drawer>
+      <Drawer
+        open={drawer === "runtime"}
+        onClose={() => {
+          setDrawer(null);
+          setRuntimeNode(null);
+        }}
+        title="运行控制配置"
+        footer={
+          <div className="toolbar-actions">
+            <button
+              className="action-button"
+              type="submit"
+              form="runtime-form"
+              disabled={!runtimeNode || busyId === runtimeNode.id}
+            >
+              保存配置
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => {
+                setDrawer(null);
+                setRuntimeNode(null);
+              }}
+            >
+              取消
+            </button>
+          </div>
+        }
+      >
+        <form
+          id="runtime-form"
+          className="form-grid"
+          onSubmit={saveRuntimeAgent}
+        >
+          <label className="field">
+            <span className="fine-print">Agent 地址</span>
+            <input
+              className="control mono"
+              value={runtimeForm.controlApiBaseUrl}
+              onChange={(event) =>
+                setRuntimeForm((current) => ({
+                  ...current,
+                  controlApiBaseUrl: event.target.value,
+                }))
+              }
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">Agent 密钥</span>
+            <input
+              className="control mono"
+              type="password"
+              placeholder={
+                runtimeNode?.controlApiSecretSet ? "已配置，留空保持不变" : ""
+              }
+              value={runtimeForm.controlApiSecret}
+              onChange={(event) =>
+                setRuntimeForm((current) => ({
+                  ...current,
+                  controlApiSecret: event.target.value,
+                }))
+              }
+            />
+          </label>
         </form>
       </Drawer>
     </ConsoleShell>

@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { AdminGuard } from '../common/admin.guard';
@@ -12,7 +13,10 @@ import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { CurrentPrincipal } from '../common/current-principal.decorator';
 import type { SessionPrincipal } from '../common/auth.types';
 import { ManualCreditDto, UpdateManualOrderDto } from '../contracts/http.dto';
-import { ControlPlaneStoreService } from '../domain/control-plane.store';
+import {
+  ControlPlaneStoreService,
+  type ManualOrderQuery,
+} from '../domain/control-plane.store';
 
 @Controller('api/admin/orders')
 @UseGuards(JwtAuthGuard, AdminGuard)
@@ -20,8 +24,8 @@ export class OrdersController {
   constructor(private readonly store: ControlPlaneStoreService) {}
 
   @Get()
-  listOrders() {
-    return this.store.getManualOrders();
+  listOrders(@Query() query: ManualOrderQuery) {
+    return this.store.getManualOrders(query);
   }
 
   @Post('manual-credit')

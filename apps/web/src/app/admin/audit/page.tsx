@@ -4,10 +4,12 @@ import { useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { DataTable } from "@/components/data-table";
 import { Panel } from "@/components/panel";
+import { Icon } from "@/components/icon";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
 import { formatDateTime } from "@/lib/format";
+import type { PaginatedResponse } from "@/lib/types";
 
 type AuditRecord = {
   id: string;
@@ -16,7 +18,12 @@ type AuditRecord = {
   action: string;
   targetType: string;
   targetId?: string | null;
-  metadata?: { path?: string; success?: boolean; durationMs?: number; error?: string | null };
+  metadata?: {
+    path?: string;
+    success?: boolean;
+    durationMs?: number;
+    error?: string | null;
+  };
   remoteAddr?: string | null;
   createdAt: string;
 };
@@ -24,6 +31,16 @@ type AuditRecord = {
 export default function AdminAuditPage() {
   const { token } = useAuth();
   const [records, setRecords] = useState<AuditRecord[]>([]);
+  const [page, setPage] = useState(1);
+  const [pageInfo, setPageInfo] = useState<PaginatedResponse<AuditRecord>>({
+    items: [],
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    totalPages: 1,
+  });
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,18 +49,35 @@ export default function AdminAuditPage() {
     setLoading(true);
     setError(null);
     try {
-      setRecords(await apiRequest<AuditRecord[]>("/api/admin/audit-logs?limit=500", { token }));
+      const query = new URLSearchParams({ page: String(page), pageSize: "20" });
+      if (debouncedSearch) query.set("q", debouncedSearch);
+      const result = await apiRequest<PaginatedResponse<AuditRecord>>(
+        `/api/admin/audit-logs?${query}`,
+        { token },
+      );
+      setRecords(result.items);
+      setPageInfo(result);
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "操作审计加载失败。");
+      setError(
+        cause instanceof ApiError ? cause.message : "操作审计加载失败。",
+      );
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [debouncedSearch, page, token]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timeoutId);
   }, [load]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
   return (
     <ConsoleShell
@@ -53,9 +87,22 @@ export default function AdminAuditPage() {
       navItems={adminNav}
       requireRole="admin"
       toolbarActions={
-        <button className="toolbar-button" type="button" onClick={() => void load()}>
-          刷新
-        </button>
+        <>
+          <input
+            className="control"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="搜索操作、目标或操作者"
+          />
+          <button
+            className="toolbar-button"
+            type="button"
+            onClick={() => void load()}
+          >
+            <Icon name="refresh" />
+            刷新
+          </button>
+        </>
       }
     >
       {error ? <div className="feedback error">{error}</div> : null}
@@ -72,6 +119,16 @@ export default function AdminAuditPage() {
         ) : null}
         {records.length > 0 ? (
           <DataTable
+            loading={loading}
+            error={error}
+            onRetry={() => void load()}
+            pagination={{
+              page: pageInfo.page,
+              pageSize: pageInfo.pageSize,
+              total: pageInfo.total,
+              totalPages: pageInfo.totalPages,
+              onPageChange: setPage,
+            }}
             headers={["时间", "操作者", "操作", "目标", "结果", "来源"]}
             rows={records.map((record) => [
               formatDateTime(record.createdAt),

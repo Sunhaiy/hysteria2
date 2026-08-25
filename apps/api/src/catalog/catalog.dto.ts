@@ -4,6 +4,7 @@ import {
   IsBoolean,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   MaxLength,
@@ -160,6 +161,11 @@ export class CatalogOfferInputDto {
   @Min(0)
   priceCents!: number;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  storeUrl?: string;
+
   @IsBoolean()
   active!: boolean;
 
@@ -186,8 +192,25 @@ export class SaveCatalogProductDto {
   @IsString()
   description?: string;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  storeUrl?: string;
+
   @IsString()
   accessProfileId!: string;
+
+  @IsInt()
+  @Min(0)
+  speedUpMbps!: number;
+
+  @IsInt()
+  @Min(0)
+  speedDownMbps!: number;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.1)
+  defaultTrafficMultiplier!: number;
 
   @IsOptional()
   @IsString()

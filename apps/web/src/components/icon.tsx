@@ -37,7 +37,11 @@ type IconName =
   | "refresh"
   | "warning"
   | "schedule"
-  | "download";
+  | "download"
+  | "arrow_back"
+  | "arrow_forward"
+  | "search"
+  | "content_copy";
 
 function BaseIcon(props: SVGProps<SVGSVGElement>) {
   return (
@@ -319,6 +323,30 @@ const icons: Record<IconName, ReactElement> = {
       <path d="M12 3v12" />
       <path d="m7 10 5 5 5-5" />
       <path d="M5 21h14" />
+    </BaseIcon>
+  ),
+  arrow_back: (
+    <BaseIcon>
+      <path d="m15 18-6-6 6-6" />
+      <path d="M9 12h10" />
+    </BaseIcon>
+  ),
+  arrow_forward: (
+    <BaseIcon>
+      <path d="m9 18 6-6-6-6" />
+      <path d="M5 12h10" />
+    </BaseIcon>
+  ),
+  search: (
+    <BaseIcon>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-4-4" />
+    </BaseIcon>
+  ),
+  content_copy: (
+    <BaseIcon>
+      <rect x="8" y="8" width="11" height="11" rx="2" />
+      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
     </BaseIcon>
   ),
 };

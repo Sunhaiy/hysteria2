@@ -13,7 +13,7 @@ export const adminNav = [
 
 export const portalNav = [
   { href: "/portal", label: "总览", icon: "account_circle", meta: "01" },
-  { href: "/portal/access", label: "接入信息", icon: "qr_code_2", meta: "HY2" },
+  { href: "/portal/access", label: "接入信息", icon: "qr_code_2", meta: "CLASH" },
   { href: "/portal/usage", label: "流量使用", icon: "network_node", meta: "48%" },
   { href: "/portal/orders", label: "续期记录", icon: "payments", meta: "03" },
 ];

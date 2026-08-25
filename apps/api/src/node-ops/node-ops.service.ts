@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { NodeLifecycleStatus, Prisma } from '@prisma/client';
+import { NodeLifecycleStatus, NodeProtocol, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
   SaveNodePoolDto,
@@ -16,46 +16,104 @@ export class NodeOpsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async overview() {
-    const [servers, pools, nodes] = await Promise.all([
+    const freshSince = new Date(Date.now() - 45_000);
+    const endpointInclude = {
+      healthSnapshots: { orderBy: { checkedAt: 'desc' as const }, take: 1 },
+      onlinePresence: {
+        where: {
+          observedAt: { gte: freshSince },
+          concurrentClients: { gt: 0 },
+        },
+        select: { concurrentClients: true },
+      },
+      accessProfileBindings: {
+        include: { accessProfile: { select: { id: true, name: true } } },
+        orderBy: [{ priority: 'asc' as const }, { id: 'asc' as const }],
+      },
+      runtimeCommands: {
+        orderBy: { requestedAt: 'desc' as const },
+        take: 1,
+      },
+    };
+    const [servers, unassignedNodes] = await Promise.all([
       this.prisma.nodeServer.findMany({
         include: {
           endpoints: {
+            include: endpointInclude,
             orderBy: [{ protocol: 'asc' }, { createdAt: 'asc' }],
           },
         },
         orderBy: { createdAt: 'asc' },
       }),
-      this.prisma.nodePool.findMany({
-        include: {
-          profiles: { include: { accessProfile: true } },
-          members: {
-            include: {
-              node: {
-                include: {
-                  serviceChecks: { orderBy: { checkedAt: 'desc' }, take: 1 },
-                  onlineSnapshots: {
-                    orderBy: { capturedAt: 'desc' },
-                    take: 50,
-                  },
-                },
-              },
-            },
-            orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
-          },
-        },
-        orderBy: { createdAt: 'asc' },
-      }),
       this.prisma.node.findMany({
-        include: {
-          server: true,
-          serviceChecks: { orderBy: { checkedAt: 'desc' }, take: 1 },
-          poolMemberships: { include: { pool: true } },
-        },
+        where: { serverId: null },
+        include: endpointInclude,
         orderBy: { createdAt: 'asc' },
       }),
     ]);
-    return {
-      servers: servers.map((server) => ({
+
+    type Endpoint = (typeof servers)[number]['endpoints'][number];
+    const presentEndpoint = (node: Endpoint) => {
+      const health = node.healthSnapshots[0];
+      const onlineUsers = node.onlinePresence.reduce(
+        (total, presence) => total + presence.concurrentClients,
+        0,
+      );
+      const runtimeCommand = node.runtimeCommands[0];
+      return {
+        id: node.id,
+        serverId: node.serverId,
+        label: node.label,
+        protocol: node.protocol.toLowerCase(),
+        hostname: node.hostname,
+        port: node.port,
+        lifecycleStatus: node.lifecycleStatus.toLowerCase(),
+        active: node.active,
+        region: node.region,
+        provider: node.provider,
+        tags: node.tags,
+        capacityUsers: node.capacityUsers,
+        onlineUsers,
+        capacityPercent: node.capacityUsers
+          ? Math.round((onlineUsers / node.capacityUsers) * 10_000) / 100
+          : null,
+        priority: node.accessProfileBindings[0]?.priority ?? null,
+        accessProfiles: node.accessProfileBindings.map((binding) => ({
+          id: binding.accessProfile.id,
+          name: binding.accessProfile.name,
+          priority: binding.priority,
+        })),
+        healthy: health?.healthy ?? null,
+        latencyMs: health?.latencyMs ?? null,
+        lastCheckedAt: health?.checkedAt.toISOString() ?? null,
+        lastSyncAt: node.lastSyncAt?.toISOString() ?? null,
+        lastSyncError: node.lastSyncError,
+        controlApiBaseUrl: node.controlApiBaseUrl,
+        controlApiSecretSet: Boolean(node.controlApiSecret),
+        runtimeControlConfigured:
+          Boolean(node.controlApiBaseUrl && node.controlApiSecret) ||
+          node.protocol === NodeProtocol.VLESS_REALITY,
+        runtimeState: node.runtimeState.toLowerCase(),
+        runtimeStateObservedAt:
+          node.runtimeStateObservedAt?.toISOString() ?? null,
+        runtimeError: node.runtimeError,
+        latestRuntimeCommand: runtimeCommand
+          ? {
+              id: runtimeCommand.id,
+              action: runtimeCommand.action.toLowerCase(),
+              status: runtimeCommand.status.toLowerCase(),
+              resultState: runtimeCommand.resultState?.toLowerCase() ?? null,
+              error: runtimeCommand.error,
+              requestedAt: runtimeCommand.requestedAt.toISOString(),
+              startedAt: runtimeCommand.startedAt?.toISOString() ?? null,
+              completedAt: runtimeCommand.completedAt?.toISOString() ?? null,
+            }
+          : null,
+      };
+    };
+    const serverViews = servers.map((server) => {
+      const endpoints = server.endpoints.map(presentEndpoint);
+      return {
         id: server.id,
         slug: server.slug,
         name: server.name,
@@ -63,80 +121,44 @@ export class NodeOpsService {
         region: server.region,
         provider: server.provider,
         active: server.active,
-        endpoints: server.endpoints.map((node) => ({
-          id: node.id,
-          label: node.label,
-          protocol: node.protocol.toLowerCase(),
-          port: node.port,
-          active: node.active,
-          lifecycleStatus: node.lifecycleStatus.toLowerCase(),
+        onlineUsers: endpoints.reduce(
+          (total, endpoint) => total + endpoint.onlineUsers,
+          0,
+        ),
+        healthyEndpoints: endpoints.filter(
+          (endpoint) => endpoint.healthy === true,
+        ).length,
+        endpoints,
+      };
+    });
+    if (unassignedNodes.length) {
+      const endpoints = unassignedNodes.map((node) => presentEndpoint(node));
+      serverViews.push({
+        id: 'unassigned',
+        slug: 'unassigned',
+        name: '未归属服务器',
+        hostname: '',
+        region: null,
+        provider: null,
+        active: false,
+        onlineUsers: endpoints.reduce(
+          (total, endpoint) => total + endpoint.onlineUsers,
+          0,
+        ),
+        healthyEndpoints: endpoints.filter(
+          (endpoint) => endpoint.healthy === true,
+        ).length,
+        endpoints,
+      });
+    }
+    return {
+      servers: serverViews,
+      nodes: serverViews.flatMap((server) =>
+        server.endpoints.map((endpoint) => ({
+          ...endpoint,
+          serverName: server.name,
         })),
-      })),
-      pools: pools.map((pool) => {
-        const members = pool.members.map((member) => {
-          const latest = member.node.serviceChecks[0];
-          const onlineUsers = latest?.onlineUsers ?? 0;
-          return {
-            memberId: member.id,
-            nodeId: member.nodeId,
-            nodeLabel: member.node.label,
-            priority: member.priority,
-            weight: member.weight,
-            lifecycleStatus: member.node.lifecycleStatus.toLowerCase(),
-            region: member.node.region,
-            provider: member.node.provider,
-            tags: member.node.tags,
-            capacityUsers: member.node.capacityUsers,
-            onlineUsers,
-            capacityPercent: member.node.capacityUsers
-              ? Math.round((onlineUsers / member.node.capacityUsers) * 10000) /
-                100
-              : null,
-            healthy: latest?.healthy ?? null,
-            lastCheckedAt: latest?.checkedAt.toISOString() ?? null,
-            serviceable:
-              pool.active &&
-              member.node.active &&
-              member.node.lifecycleStatus === NodeLifecycleStatus.ACTIVE &&
-              latest?.healthy !== false,
-          };
-        });
-        return {
-          id: pool.id,
-          slug: pool.slug,
-          name: pool.name,
-          description: pool.description,
-          region: pool.region,
-          active: pool.active,
-          profileNames: pool.profiles.map(
-            (profile) => profile.accessProfile.name,
-          ),
-          serviceableNodes: members.filter((member) => member.serviceable)
-            .length,
-          totalNodes: members.length,
-          onlineUsers: members.reduce(
-            (total, member) => total + member.onlineUsers,
-            0,
-          ),
-          members,
-        };
-      }),
-      nodes: nodes.map((node) => ({
-        id: node.id,
-        serverId: node.serverId,
-        serverName: node.server?.name ?? null,
-        label: node.label,
-        protocol: node.protocol.toLowerCase(),
-        lifecycleStatus: node.lifecycleStatus.toLowerCase(),
-        active: node.active,
-        region: node.region,
-        provider: node.provider,
-        tags: node.tags,
-        capacityUsers: node.capacityUsers,
-        pools: node.poolMemberships.map((membership) => membership.pool.name),
-        healthy: node.serviceChecks[0]?.healthy ?? null,
-        syncDelaySeconds: node.serviceChecks[0]?.syncDelaySeconds ?? null,
-      })),
+      ),
     };
   }
 

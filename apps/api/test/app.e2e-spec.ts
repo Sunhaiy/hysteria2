@@ -2,10 +2,17 @@ import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import type { NodeLifecycleStatus } from '@prisma/client';
 import { AppModule } from './../src/app.module';
+import { NodeRuntimeCommandService } from './../src/node-ops/node-runtime-command.service';
+import { PrismaService } from './../src/prisma/prisma.service';
 
 describe('Health (e2e)', () => {
   let app: INestApplication<App>;
+  let originalCoreState: {
+    active: boolean;
+    lifecycleStatus: NodeLifecycleStatus;
+  } | null;
 
   async function login(
     agent: ReturnType<typeof request.agent>,
@@ -39,6 +46,16 @@ describe('Health (e2e)', () => {
 
     app = moduleFixture.createNestApplication();
     await app.init();
+    const prisma = app.get(PrismaService);
+    originalCoreState = await prisma.node.findUnique({
+      where: { id: 'node_hk_core' },
+      select: { active: true, lifecycleStatus: true },
+    });
+    if (!originalCoreState) throw new Error('E2E core node fixture is missing');
+    await prisma.node.update({
+      where: { id: 'node_hk_core' },
+      data: { active: true, lifecycleStatus: 'ACTIVE' },
+    });
   });
 
   it('/api/health (GET)', () => {
@@ -56,12 +73,33 @@ describe('Health (e2e)', () => {
       });
   });
 
-  it('/integrations/hysteria/auth (POST) returns 200', () => {
-    return request(app.getHttpServer())
+  it('/integrations/hysteria/auth (POST) returns 200', async () => {
+    const unique = Date.now();
+    const adminAgent = request.agent(app.getHttpServer());
+    const csrf = await login(adminAgent, 'ops@hysteria.local', 'admin123!');
+    const created = await adminAgent
+      .post('/api/admin/users')
+      .set('X-CSRF-Token', csrf)
+      .send({
+        email: `auth.e2e.${unique}@example.com`,
+        displayName: `Auth E2E ${unique}`,
+        password: 'member123!',
+        role: 'member',
+        status: 'active',
+        initialPlanId: 'plan_core',
+        initialNodeId: 'node_hk_core',
+      })
+      .expect(201);
+    const accessToken = (created.body as { primaryAccessToken?: string })
+      .primaryAccessToken;
+    if (!accessToken)
+      throw new Error('E2E user did not receive an access token');
+
+    await request(app.getHttpServer())
       .post('/integrations/hysteria/auth?nodeId=node_hk_core')
       .send({
         addr: '127.0.0.1:59620',
-        auth: 'hy2_live_lin_primary',
+        auth: accessToken,
         tx: 0,
       })
       .expect(200)
@@ -388,25 +426,24 @@ describe('Health (e2e)', () => {
       replayed: true,
     });
 
-    await adminAgent
-      .get(`/api/admin/customers/${userId}`)
+    const entitlements = await adminAgent
+      .get(`/api/admin/customers/${userId}/entitlements?pageSize=100`)
       .expect(200)
       .expect(({ body }) => {
         const customer = body as {
-          grants: Array<{
+          items: Array<{
             kind: string;
             status: string;
             productName: string;
           }>;
-          orders: Array<{ id: string }>;
         };
-        const activePlans = customer.grants.filter(
+        const activePlans = customer.items.filter(
           (grant) => grant.kind === 'plan' && grant.status === 'active',
         );
         expect(activePlans).toHaveLength(1);
         expect(activePlans[0]?.productName).toBe('Pro 500');
         expect(
-          customer.grants.some(
+          customer.items.some(
             (grant) =>
               grant.kind === 'plan' &&
               grant.productName === 'Core 200' &&
@@ -414,12 +451,20 @@ describe('Health (e2e)', () => {
           ),
         ).toBe(true);
         expect(
-          customer.grants.some(
+          customer.items.some(
             (grant) =>
               grant.kind === 'traffic_pack' && grant.status === 'active',
           ),
         ).toBe(true);
-        expect(customer.orders).toHaveLength(3);
+      });
+    expect(
+      (entitlements.body as { total: number }).total,
+    ).toBeGreaterThanOrEqual(3);
+    await adminAgent
+      .get(`/api/admin/customers/${userId}/finance?kind=orders&pageSize=100`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect((body as { items: unknown[] }).items).toHaveLength(3);
       });
   });
 
@@ -467,8 +512,82 @@ describe('Health (e2e)', () => {
       });
   });
 
+  it('queues and executes an idempotent node runtime stop command', async () => {
+    const adminAgent = request.agent(app.getHttpServer());
+    const csrf = await login(adminAgent, 'ops@hysteria.local', 'admin123!');
+    await adminAgent
+      .patch('/api/admin/nodes/node_hk_core')
+      .set('X-CSRF-Token', csrf)
+      .send({
+        controlApiBaseUrl: 'mock://runtime-agent',
+        controlApiSecret: 'runtime-secret',
+      })
+      .expect(200);
+
+    const idempotencyKey = `runtime-stop-${Date.now()}`;
+    const queued = await adminAgent
+      .post('/api/admin/node-ops/nodes/node_hk_core/runtime-commands')
+      .set('X-CSRF-Token', csrf)
+      .send({ action: 'stop', idempotencyKey })
+      .expect(202);
+    expect(queued.body).toMatchObject({
+      nodeId: 'node_hk_core',
+      action: 'stop',
+      status: 'queued',
+    });
+
+    const runtime = app.get(NodeRuntimeCommandService);
+    await expect(runtime.processNext()).resolves.toMatchObject({
+      id: (queued.body as { id: string }).id,
+      status: 'succeeded',
+      resultState: 'inactive',
+    });
+
+    await adminAgent
+      .get(
+        `/api/admin/node-ops/nodes/node_hk_core/runtime-commands/${(queued.body as { id: string }).id}`,
+      )
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          status: 'succeeded',
+          resultState: 'inactive',
+        });
+      });
+    const replay = await adminAgent
+      .post('/api/admin/node-ops/nodes/node_hk_core/runtime-commands')
+      .set('X-CSRF-Token', csrf)
+      .send({ action: 'stop', idempotencyKey })
+      .expect(202);
+    expect((replay.body as { id: string }).id).toBe(
+      (queued.body as { id: string }).id,
+    );
+
+    await adminAgent
+      .get('/api/admin/node-ops')
+      .expect(200)
+      .expect(({ body }) => {
+        const node = (
+          body as { nodes: Array<{ id: string; runtimeState: string }> }
+        ).nodes.find((item) => item.id === 'node_hk_core');
+        expect(node?.runtimeState).toBe('inactive');
+      });
+
+    await adminAgent
+      .patch('/api/admin/nodes/node_hk_core')
+      .set('X-CSRF-Token', csrf)
+      .send({ controlApiBaseUrl: '' })
+      .expect(200);
+  });
+
   afterEach(async () => {
     if (app) {
+      if (originalCoreState) {
+        await app.get(PrismaService).node.update({
+          where: { id: 'node_hk_core' },
+          data: originalCoreState,
+        });
+      }
       await app.close();
     }
   });

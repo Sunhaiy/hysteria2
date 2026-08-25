@@ -18,7 +18,7 @@ import {
   RequestRegisterCodeDto,
 } from '../contracts/http.dto';
 import { AuthService } from './auth.service';
-import { ResetPasswordDto } from './auth.dto';
+import { RequestPasswordResetDto, ResetPasswordDto } from './auth.dto';
 import { clearSessionCookies, setSessionCookies } from './session-cookie';
 
 @Controller('api')
@@ -83,6 +83,14 @@ export class AuthController {
   @Throttle({ default: { limit: 8, ttl: 60_000 } })
   resetPassword(@Body() body: ResetPasswordDto) {
     return this.authService.resetPassword(body.token, body.password);
+  }
+
+  @Post('auth/forgot-password')
+  @HttpCode(200)
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  requestPasswordReset(@Body() body: RequestPasswordResetDto) {
+    return this.authService.requestPasswordReset(body.email);
   }
 
   @Get('me')

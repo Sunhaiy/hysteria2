@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import type { NavItem } from "@/lib/copy";
 import { useAuth } from "./auth-provider";
 import { Icon } from "./icon";
+import { MemberAnnouncementDialog } from "./member-announcement-dialog";
 import { SidebarNav } from "./sidebar-nav";
 import { useSite } from "./site-provider";
 import { ThemeToggle } from "./theme-toggle";
@@ -141,6 +142,7 @@ export function ConsoleShell({
           {children}
         </div>
       </main>
+      {requireRole === "member" ? <MemberAnnouncementDialog /> : null}
     </div>
   );
 }

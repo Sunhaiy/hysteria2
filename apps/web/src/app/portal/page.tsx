@@ -381,7 +381,7 @@ export default function PortalPage() {
                       </Link>
                       <Link href="/portal/tutorial">
                         <Icon name="book" />
-                        <span><strong>查看教程</strong><small>三平台接入指引</small></span>
+                        <span><strong>查看教程</strong><small>四平台接入指引</small></span>
                         <b>›</b>
                       </Link>
                       <Link href="/portal/usage">

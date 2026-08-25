@@ -28,6 +28,12 @@ export class RequestRegisterCodeDto {
   email!: string;
 }
 
+export class AcknowledgeAnnouncementDto {
+  @IsString()
+  @Length(64, 64)
+  version!: string;
+}
+
 export class UpdateSettingsDto {
   @IsOptional()
   @IsString()
@@ -53,6 +59,20 @@ export class UpdateSettingsDto {
   @IsOptional()
   @IsBoolean()
   registrationEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  announcementEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  announcementTitle?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(6000)
+  announcementContent?: string;
 
   @IsOptional()
   @IsString()
@@ -532,6 +552,14 @@ export class CreateNodeDto {
   @IsString()
   trafficApiSecret!: string;
 
+  @IsOptional()
+  @IsString()
+  controlApiBaseUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  controlApiSecret?: string;
+
   @IsBoolean()
   active!: boolean;
 
@@ -609,6 +637,14 @@ export class UpdateNodeDto {
   @IsOptional()
   @IsString()
   trafficApiSecret?: string;
+
+  @IsOptional()
+  @IsString()
+  controlApiBaseUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  controlApiSecret?: string;
 
   @IsOptional()
   @IsBoolean()
@@ -705,6 +741,14 @@ export class CreateRedemptionCodeDto {
   @IsOptional()
   @IsString()
   planId?: string;
+
+  @IsOptional()
+  @IsString()
+  catalogOfferId?: string;
+
+  @IsOptional()
+  @IsIn(['renew', 'replace'])
+  planMode?: 'renew' | 'replace';
 
   @IsOptional()
   @IsString()

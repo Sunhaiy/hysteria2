@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { AdminGuard } from '../common/admin.guard';
@@ -15,7 +16,11 @@ import {
   CreateRedemptionCodeDto,
   UpdateRedemptionCodeDto,
 } from '../contracts/http.dto';
-import { ControlPlaneStoreService } from '../domain/control-plane.store';
+import {
+  ControlPlaneStoreService,
+  type RedemptionCodeQuery,
+} from '../domain/control-plane.store';
+import type { PageQuery } from '../common/pagination';
 
 @Controller('api/admin/redemption-codes')
 @UseGuards(JwtAuthGuard, AdminGuard)
@@ -23,8 +28,8 @@ export class RedemptionCodesController {
   constructor(private readonly store: ControlPlaneStoreService) {}
 
   @Get()
-  listCodes() {
-    return this.store.getRedemptionCodes();
+  listCodes(@Query() query: RedemptionCodeQuery) {
+    return this.store.getRedemptionCodes(query);
   }
 
   @Post()
@@ -37,6 +42,8 @@ export class RedemptionCodesController {
       code: body.code,
       kind: body.kind,
       planId: body.planId,
+      catalogOfferId: body.catalogOfferId,
+      planMode: body.planMode,
       trafficPackProductId: body.trafficPackProductId,
       trafficBytes: body.trafficBytes,
       amountCents: body.amountCents,
@@ -51,8 +58,8 @@ export class RedemptionCodesController {
   }
 
   @Get(':id/uses')
-  listCodeUses(@Param('id') id: string) {
-    return this.store.getRedemptionCodeUses(id);
+  listCodeUses(@Param('id') id: string, @Query() query: PageQuery) {
+    return this.store.getRedemptionCodeUses(id, query);
   }
 
   @Patch(':id')

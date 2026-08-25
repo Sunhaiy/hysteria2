@@ -15,15 +15,42 @@ import type { SessionPrincipal } from '../common/auth.types';
 import {
   PurchasePlanDto,
   PurchaseTrafficPackDto,
+  AcknowledgeAnnouncementDto,
   RedeemCodeDto,
   RequestPlanOrderDto,
 } from '../contracts/http.dto';
+import { SettingsService } from '../settings/settings.service';
 import { PortalService } from './portal.service';
 
 @Controller('api/portal')
 @UseGuards(JwtAuthGuard)
 export class PortalController {
-  constructor(private readonly portalService: PortalService) {}
+  constructor(
+    private readonly portalService: PortalService,
+    private readonly settings: SettingsService,
+  ) {}
+
+  @Get('announcement')
+  async getAnnouncement(@CurrentPrincipal() principal: SessionPrincipal) {
+    return {
+      announcement: await this.settings.getPendingAnnouncement(principal.jti),
+    };
+  }
+
+  @Get('announcement/current')
+  async getCurrentAnnouncement() {
+    return {
+      announcement: await this.settings.getPublishedAnnouncement(),
+    };
+  }
+
+  @Post('announcement/acknowledge')
+  acknowledgeAnnouncement(
+    @CurrentPrincipal() principal: SessionPrincipal,
+    @Body() body: AcknowledgeAnnouncementDto,
+  ) {
+    return this.settings.acknowledgeAnnouncement(principal.jti, body.version);
+  }
 
   @Get('subscription')
   getSubscription(@CurrentPrincipal() principal: SessionPrincipal) {

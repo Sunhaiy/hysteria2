@@ -21,6 +21,7 @@ import { NodesModule } from './nodes/nodes.module';
 import { NodeOpsModule } from './node-ops/node-ops.module';
 import { OAuthModule } from './oauth/oauth.module';
 import { OrdersModule } from './orders/orders.module';
+import { OperationsModule } from './operations/operations.module';
 import { PlanBindingsModule } from './plan-bindings/plan-bindings.module';
 import { PlansModule } from './plans/plans.module';
 import { PortalModule } from './portal/portal.module';
@@ -34,6 +35,8 @@ import { TrafficPackProductsModule } from './traffic-pack-products/traffic-pack-
 import { TrafficAnalyticsModule } from './traffic-analytics/traffic-analytics.module';
 import { UsageSyncModule } from './usage-sync/usage-sync.module';
 import { AdminUsersModule } from './users/admin-users.module';
+import { TutorialsModule } from './tutorials/tutorials.module';
+import { TicketsModule } from './tickets/tickets.module';
 
 @Module({
   imports: [
@@ -72,12 +75,15 @@ import { AdminUsersModule } from './users/admin-users.module';
     NodesModule,
     NodeOpsModule,
     OrdersModule,
+    OperationsModule,
     RedemptionCodesModule,
     ReportingModule,
     PortalModule,
     HysteriaAuthModule,
     KickServiceModule,
     UsageSyncModule,
+    TutorialsModule,
+    TicketsModule,
   ],
 })
 export class AppModule {}

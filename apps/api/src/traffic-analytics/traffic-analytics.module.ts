@@ -5,5 +5,6 @@ import { TrafficAnalyticsService } from './traffic-analytics.service';
 @Module({
   controllers: [TrafficAnalyticsController],
   providers: [TrafficAnalyticsService],
+  exports: [TrafficAnalyticsService],
 })
 export class TrafficAnalyticsModule {}

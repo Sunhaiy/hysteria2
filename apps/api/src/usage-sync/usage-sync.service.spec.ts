@@ -19,8 +19,9 @@ describe('UsageSyncService', () => {
       acknowledgeTrafficBatch: jest.fn().mockResolvedValue(undefined),
       applyOnlineSnapshot: jest.fn().mockResolvedValue(undefined),
       validateUserIsRestricted: jest.fn().mockResolvedValue(true),
-      markNodeSyncSuccess: jest.fn().mockResolvedValue(undefined),
-      markNodeSyncFailure: jest.fn().mockResolvedValue(undefined),
+      markUserSyncSuccess: jest.fn().mockResolvedValue(undefined),
+      markTrafficSyncSuccess: jest.fn().mockResolvedValue(undefined),
+      markSyncFailure: jest.fn().mockResolvedValue(undefined),
     };
 
     const nodeClient = {
@@ -51,6 +52,7 @@ describe('UsageSyncService', () => {
       nodeClient as never,
       kickService as never,
       entitlements as never,
+      store as never,
     );
 
     const result = await service.syncAllNodes();
@@ -75,7 +77,8 @@ describe('UsageSyncService', () => {
       'usr_lin',
       'usage-sync',
     );
-    expect(store.markNodeSyncSuccess).toHaveBeenCalledWith('node_hk_core');
+    expect(store.markUserSyncSuccess).toHaveBeenCalledWith('node_hk_core');
+    expect(store.markTrafficSyncSuccess).toHaveBeenCalledWith('node_hk_core');
   });
 
   it('provisions VLESS users before collecting Xray statistics', async () => {
@@ -100,8 +103,9 @@ describe('UsageSyncService', () => {
       }),
       acknowledgeTrafficBatch: jest.fn().mockResolvedValue(undefined),
       applyOnlineSnapshot: jest.fn().mockResolvedValue(undefined),
-      markNodeSyncSuccess: jest.fn().mockResolvedValue(undefined),
-      markNodeSyncFailure: jest.fn().mockResolvedValue(undefined),
+      markUserSyncSuccess: jest.fn().mockResolvedValue(undefined),
+      markTrafficSyncSuccess: jest.fn().mockResolvedValue(undefined),
+      markSyncFailure: jest.fn().mockResolvedValue(undefined),
     };
     const nodeClient = {
       syncUsers: jest
@@ -132,6 +136,7 @@ describe('UsageSyncService', () => {
       nodeClient as never,
       { kickUserEverywhere: jest.fn() } as never,
       entitlements as never,
+      store as never,
     );
 
     const result = await service.syncAllNodes();
@@ -164,8 +169,9 @@ describe('UsageSyncService', () => {
       getNodesForControl: jest.fn().mockResolvedValue(nodes),
       acknowledgeTrafficBatch: jest.fn().mockResolvedValue(undefined),
       applyOnlineSnapshot: jest.fn().mockResolvedValue(undefined),
-      markNodeSyncSuccess: jest.fn().mockResolvedValue(undefined),
-      markNodeSyncFailure: jest.fn().mockResolvedValue(undefined),
+      markUserSyncSuccess: jest.fn().mockResolvedValue(undefined),
+      markTrafficSyncSuccess: jest.fn().mockResolvedValue(undefined),
+      markSyncFailure: jest.fn().mockResolvedValue(undefined),
     };
     const nodeClient = {
       claimTrafficBatch: jest.fn((node: { id: string }) =>
@@ -200,6 +206,7 @@ describe('UsageSyncService', () => {
       nodeClient as never,
       { kickUserEverywhere: jest.fn() } as never,
       entitlements as never,
+      store as never,
     );
 
     const result = await service.syncAllNodes();
@@ -222,8 +229,9 @@ describe('UsageSyncService', () => {
       getNodesForControl: jest.fn().mockResolvedValue([node]),
       acknowledgeTrafficBatch: jest.fn().mockResolvedValue(undefined),
       applyOnlineSnapshot: jest.fn().mockResolvedValue(undefined),
-      markNodeSyncSuccess: jest.fn().mockResolvedValue(undefined),
-      markNodeSyncFailure: jest.fn().mockResolvedValue(undefined),
+      markUserSyncSuccess: jest.fn().mockResolvedValue(undefined),
+      markTrafficSyncSuccess: jest.fn().mockResolvedValue(undefined),
+      markSyncFailure: jest.fn().mockResolvedValue(undefined),
     };
     const nodeClient = {
       claimTrafficBatch: jest.fn().mockResolvedValue({
@@ -259,6 +267,7 @@ describe('UsageSyncService', () => {
       nodeClient as never,
       { kickUserEverywhere: jest.fn() } as never,
       entitlements as never,
+      store as never,
     );
 
     await service.syncAllNodes();
@@ -267,26 +276,23 @@ describe('UsageSyncService', () => {
     expect(maxConcurrentAccessChecks).toBe(1);
   });
 
-  it('leaves scheduled synchronization to the external worker', async () => {
-    const previousRunner = process.env.NODE_SYNC_RUNNER;
-    process.env.NODE_SYNC_RUNNER = 'external';
-    const getNodesForControl = jest.fn();
+  it('exposes cleanup for the external worker without scheduling it in the API', async () => {
+    const cleanupOldData = jest.fn().mockResolvedValue({
+      deletedSnapshots: 2,
+      deletedAuthEvents: 3,
+    });
     const service = new UsageSyncService(
-      { getNodesForControl } as never,
+      { cleanupOldData } as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,
     );
 
-    try {
-      await service.scheduledSync();
-      expect(getNodesForControl).not.toHaveBeenCalled();
-    } finally {
-      if (previousRunner === undefined) {
-        delete process.env.NODE_SYNC_RUNNER;
-      } else {
-        process.env.NODE_SYNC_RUNNER = previousRunner;
-      }
-    }
+    await expect(service.cleanup(30)).resolves.toEqual({
+      deletedSnapshots: 2,
+      deletedAuthEvents: 3,
+    });
+    expect(cleanupOldData).toHaveBeenCalledWith(30);
   });
 });

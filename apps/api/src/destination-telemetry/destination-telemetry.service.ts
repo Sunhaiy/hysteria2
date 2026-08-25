@@ -16,7 +16,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
-import { ControlPlaneStoreService } from '../domain/control-plane.store';
+import { NodeControlService } from '../domain/node-control.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
   DestinationBatchDto,
@@ -40,8 +40,8 @@ export class DestinationTelemetryService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly store: ControlPlaneStoreService,
     private readonly audit: AuditService,
+    private readonly nodes: NodeControlService,
   ) {}
 
   async ingest(
@@ -49,7 +49,7 @@ export class DestinationTelemetryService {
     authorization: string | undefined,
     input: DestinationBatchDto,
   ) {
-    const node = await this.store.getNodeForControl(nodeId);
+    const node = await this.nodes.getNodeForControl(nodeId);
     if (!node) throw new NotFoundException('Node not found');
     if (!this.secretMatches(authorization, node.trafficApiSecret)) {
       throw new UnauthorizedException('Invalid node secret');

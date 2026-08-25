@@ -54,7 +54,12 @@ describe('ControlPlaneStoreService traffic pack purchases', () => {
         Promise.resolve(callback(tx)),
       ),
     };
-    const service = new ControlPlaneStoreService(prisma as never);
+    const service = new ControlPlaneStoreService(
+      prisma as never,
+      {
+        countForUser: jest.fn().mockResolvedValue(0),
+      } as never,
+    );
     jest
       .spyOn(service, 'getPortalOverview')
       .mockResolvedValue({ purchasedAt } as never);

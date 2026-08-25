@@ -11,6 +11,7 @@ import {
   Prisma,
   QuotaCadence,
 } from '@prisma/client';
+import { CacheService } from '../cache/cache.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
   CreateAccessProfileDto,
@@ -20,9 +21,14 @@ import type {
   SaveCatalogProductDto,
 } from './catalog.dto';
 
+const portalCatalogCacheKey = 'catalog:portal:v1';
+
 @Injectable()
 export class CatalogService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: CacheService,
+  ) {}
 
   async getAdminCatalog() {
     const [plans, trafficPacks, accessProfiles, products] = await Promise.all([
@@ -98,19 +104,40 @@ export class CatalogService {
   }
 
   async getPortalCatalog() {
+    const cached = await this.cache.get(portalCatalogCacheKey);
+    if (cached) {
+      try {
+        return JSON.parse(cached) as Awaited<
+          ReturnType<CatalogService['buildPortalCatalog']>
+        >;
+      } catch {
+        await this.cache.del(portalCatalogCacheKey);
+      }
+    }
+    const result = await this.buildPortalCatalog();
+    await this.cache.set(portalCatalogCacheKey, JSON.stringify(result), 300);
+    return result;
+  }
+
+  private async buildPortalCatalog() {
     const catalog = await this.getAdminCatalog();
     const profiles = new Map(
       catalog.accessProfiles.map((profile) => [profile.id, profile]),
     );
     return {
-      products: catalog.products.filter(
-        (product) =>
-          product.status === 'active' &&
-          product.offers.some((offer) => offer.active && !offer.archivedAt) &&
-          product.access.nodePools.some((pool) =>
-            pool.nodes.some((node) => node.serviceable),
-          ),
-      ),
+      products: catalog.products
+        .filter(
+          (product) =>
+            product.status === 'active' &&
+            product.offers.some((offer) => offer.active && !offer.archivedAt) &&
+            product.access.servers.some((server) =>
+              server.nodes.some((node) => node.serviceable),
+            ),
+        )
+        .map(({ defaultTrafficMultiplier, ...product }) => {
+          void defaultTrafficMultiplier;
+          return product;
+        }),
       plans: catalog.plans
         .filter((plan) => plan.active)
         .map((plan) => ({
@@ -144,6 +171,9 @@ export class CatalogService {
     const id = await this.prisma.$transaction(async (tx) => {
       const profile = await this.validateProductInput(tx, input);
       const kind = this.toProductKind(input.kind);
+      const defaultMultiplierBasisPoints = this.multiplierBasisPoints(
+        input.defaultTrafficMultiplier,
+      );
       const defaultOffer =
         input.offers.find((offer) => offer.isDefault) ?? input.offers[0];
       const primaryOffer =
@@ -162,8 +192,8 @@ export class CatalogService {
             active: input.status === 'active',
             trafficBytes: BigInt(primaryOffer.trafficBytes),
             durationDays: 30,
-            speedUpMbps: profile.speedUpMbps,
-            speedDownMbps: profile.speedDownMbps,
+            speedUpMbps: input.speedUpMbps,
+            speedDownMbps: input.speedDownMbps,
             deviceLimit: profile.deviceLimit,
             priceCents: primaryOffer.priceCents,
             accent: input.accent ?? 'green',
@@ -216,11 +246,15 @@ export class CatalogService {
           status: this.toProductStatus(input.status),
           name: input.name.trim(),
           description: input.description?.trim(),
+          storeUrl: this.normalizeStoreUrl(input.storeUrl),
           quotaCadence:
             kind === CatalogProductKind.PLAN
               ? QuotaCadence.MONTHLY_RESET
               : QuotaCadence.ONE_TIME,
           accessProfileId: input.accessProfileId,
+          speedUpMbps: input.speedUpMbps,
+          speedDownMbps: input.speedDownMbps,
+          defaultTrafficMultiplierBasisPoints: defaultMultiplierBasisPoints,
           accent:
             input.accent ??
             (kind === CatalogProductKind.PLAN ? 'green' : 'teal'),
@@ -236,6 +270,7 @@ export class CatalogService {
                 intervalMonths: this.intervalMonths(period),
                 trafficBytes: BigInt(offer.trafficBytes),
                 priceCents: offer.priceCents,
+                storeUrl: this.normalizeStoreUrl(offer.storeUrl),
                 active: offer.active,
                 isDefault: offer.isDefault ?? offer === defaultOffer,
               };
@@ -245,6 +280,7 @@ export class CatalogService {
       });
       return product.id;
     });
+    await this.invalidatePortalCatalog();
     return this.getUnifiedProduct(id);
   }
 
@@ -264,6 +300,9 @@ export class CatalogService {
         throw new BadRequestException('Product kind cannot be changed');
       }
       const profile = await this.validateProductInput(tx, input);
+      const defaultMultiplierBasisPoints = this.multiplierBasisPoints(
+        input.defaultTrafficMultiplier,
+      );
       const defaultOffer =
         input.offers.find((offer) => offer.isDefault) ?? input.offers[0];
       const retainedIds: string[] = [];
@@ -314,6 +353,7 @@ export class CatalogService {
                 intervalMonths: this.intervalMonths(period),
                 trafficBytes: BigInt(offer.trafficBytes),
                 priceCents: offer.priceCents,
+                storeUrl: this.normalizeStoreUrl(offer.storeUrl),
                 active: offer.active,
                 isDefault: offer.isDefault ?? offer === defaultOffer,
                 archivedAt: null,
@@ -329,6 +369,7 @@ export class CatalogService {
                 intervalMonths: this.intervalMonths(period),
                 trafficBytes: BigInt(offer.trafficBytes),
                 priceCents: offer.priceCents,
+                storeUrl: this.normalizeStoreUrl(offer.storeUrl),
                 active: offer.active,
                 isDefault: offer.isDefault ?? offer === defaultOffer,
               },
@@ -347,7 +388,11 @@ export class CatalogService {
           status: this.toProductStatus(input.status),
           name: input.name.trim(),
           description: input.description?.trim(),
+          storeUrl: this.normalizeStoreUrl(input.storeUrl),
           accessProfileId: input.accessProfileId,
+          speedUpMbps: input.speedUpMbps,
+          speedDownMbps: input.speedDownMbps,
+          defaultTrafficMultiplierBasisPoints: defaultMultiplierBasisPoints,
           accent: input.accent,
           sortOrder: input.sortOrder,
         },
@@ -363,8 +408,8 @@ export class CatalogService {
             description: input.description?.trim(),
             active: input.status === 'active',
             trafficBytes: BigInt(primary.trafficBytes),
-            speedUpMbps: profile.speedUpMbps,
-            speedDownMbps: profile.speedDownMbps,
+            speedUpMbps: input.speedUpMbps,
+            speedDownMbps: input.speedDownMbps,
             deviceLimit: profile.deviceLimit,
             priceCents: primary.priceCents,
             accent: input.accent,
@@ -391,7 +436,48 @@ export class CatalogService {
           },
         });
       }
+      await tx.entitlementGrant.updateMany({
+        where: {
+          productId: id,
+          status: 'ACTIVE',
+          endsAt: { gt: new Date() },
+        },
+        data: {
+          speedUpMbpsSnapshot: input.speedUpMbps,
+          speedDownMbpsSnapshot: input.speedDownMbps,
+        },
+      });
+      if (kind === CatalogProductKind.PLAN) {
+        await tx.subscription.updateMany({
+          where: {
+            status: 'ACTIVE',
+            endsAt: { gt: new Date() },
+            entitlementGrant: { productId: id, status: 'ACTIVE' },
+          },
+          data: {
+            speedUpMbpsSnapshot: input.speedUpMbps,
+            speedDownMbpsSnapshot: input.speedDownMbps,
+          },
+        });
+        await tx.accessAccount.updateMany({
+          where: {
+            trafficMultiplierOverrideBasisPoints: null,
+            entitlementGrants: {
+              some: {
+                productId: id,
+                kind: 'PLAN',
+                status: 'ACTIVE',
+                endsAt: { gt: new Date() },
+              },
+            },
+          },
+          data: {
+            trafficMultiplierBasisPoints: defaultMultiplierBasisPoints,
+          },
+        });
+      }
     });
+    await this.invalidatePortalCatalog();
     return this.getUnifiedProduct(id);
   }
 
@@ -411,8 +497,8 @@ export class CatalogService {
       );
   }
 
-  createAccessProfile(input: CreateAccessProfileDto) {
-    return this.prisma.$transaction(async (tx) => {
+  async createAccessProfile(input: CreateAccessProfileDto) {
+    const result = await this.prisma.$transaction(async (tx) => {
       await this.validateNodes(tx, input.nodeIds);
       const profile = await tx.accessProfile.create({
         data: {
@@ -439,10 +525,12 @@ export class CatalogService {
       });
       return this.presentAccessProfile(profile);
     });
+    await this.invalidatePortalCatalog();
+    return result;
   }
 
-  updateAccessProfile(id: string, input: UpdateAccessProfileDto) {
-    return this.prisma.$transaction(async (tx) => {
+  async updateAccessProfile(id: string, input: UpdateAccessProfileDto) {
+    const result = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.accessProfile.findUnique({ where: { id } });
       if (!existing) throw new NotFoundException('Access profile not found');
       if (input.nodeIds) {
@@ -478,11 +566,13 @@ export class CatalogService {
       });
       return this.presentAccessProfile(profile);
     });
+    await this.invalidatePortalCatalog();
+    return result;
   }
 
   async createOffer(input: CreatePlanOfferDto) {
     const period = this.toBillingPeriod(input.billingPeriod);
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const plan = await tx.plan.findUnique({ where: { id: input.planId } });
       if (!plan) throw new NotFoundException('Plan not found');
       const offerCount = await tx.planOffer.count({
@@ -509,10 +599,12 @@ export class CatalogService {
       });
       return this.presentOffer(offer);
     });
+    await this.invalidatePortalCatalog();
+    return result;
   }
 
-  updateOffer(id: string, input: UpdatePlanOfferDto) {
-    return this.prisma.$transaction(async (tx) => {
+  async updateOffer(id: string, input: UpdatePlanOfferDto) {
+    const result = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.planOffer.findUnique({ where: { id } });
       if (!existing) throw new NotFoundException('Plan offer not found');
       const period = input.billingPeriod
@@ -538,6 +630,8 @@ export class CatalogService {
       });
       return this.presentOffer(offer);
     });
+    await this.invalidatePortalCatalog();
+    return result;
   }
 
   async archiveOffer(id: string) {
@@ -558,7 +652,12 @@ export class CatalogService {
       where: { id },
       data: { active: false, isDefault: false, archivedAt: new Date() },
     });
+    await this.invalidatePortalCatalog();
     return this.presentOffer(offer);
+  }
+
+  private invalidatePortalCatalog() {
+    return this.cache.del(portalCatalogCacheKey);
   }
 
   private async getUnifiedProduct(id: string) {
@@ -577,21 +676,8 @@ export class CatalogService {
         },
         accessProfile: {
           include: {
-            poolBindings: {
-              include: {
-                pool: {
-                  include: {
-                    members: {
-                      include: { node: true },
-                      orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
-                    },
-                  },
-                },
-              },
-              orderBy: { priority: 'asc' },
-            },
             nodeBindings: {
-              include: { node: true },
+              include: { node: { include: { server: true } } },
               orderBy: { priority: 'asc' },
             },
           },
@@ -601,45 +687,42 @@ export class CatalogService {
     });
     return products.map((product) => {
       const directNodes = product.accessProfile?.nodeBindings ?? [];
-      const pools =
-        product.accessProfile?.poolBindings.map((binding) => ({
-          id: binding.pool.id,
-          name: binding.pool.name,
-          region: binding.pool.region,
-          active: binding.pool.active,
-          priority: binding.priority,
-          nodes: binding.pool.members.map((member) => ({
-            id: member.node.id,
-            label: member.node.label,
-            region: member.node.region,
-            provider: member.node.provider,
-            lifecycleStatus: member.node.lifecycleStatus.toLowerCase(),
-            priority: member.priority,
-            serviceable:
-              binding.pool.active &&
-              member.node.active &&
-              member.node.lifecycleStatus === 'ACTIVE',
-          })),
-        })) ?? [];
-      if (pools.length === 0 && directNodes.length > 0) {
-        pools.push({
-          id: `legacy-${product.accessProfileId}`,
-          name: '兼容节点组',
-          region: null,
-          active: true,
-          priority: 0,
-          nodes: directNodes.map((binding) => ({
-            id: binding.node.id,
-            label: binding.node.label,
-            region: binding.node.region,
-            provider: binding.node.provider,
-            lifecycleStatus: binding.node.lifecycleStatus.toLowerCase(),
-            priority: binding.priority,
-            serviceable:
-              binding.node.active && binding.node.lifecycleStatus === 'ACTIVE',
-          })),
-        });
+      const nodes = directNodes.map((binding) => ({
+        id: binding.node.id,
+        label: binding.node.label,
+        protocol: binding.node.protocol.toLowerCase(),
+        serverId: binding.node.serverId,
+        serverName: binding.node.server?.name ?? binding.node.hostname,
+        region: binding.node.region,
+        provider: binding.node.provider,
+        lifecycleStatus: binding.node.lifecycleStatus.toLowerCase(),
+        priority: binding.priority,
+        serviceable:
+          binding.node.active && binding.node.lifecycleStatus === 'ACTIVE',
+      }));
+      const serverMap = new Map<
+        string,
+        { id: string; name: string; region: string | null; nodes: typeof nodes }
+      >();
+      for (const node of nodes) {
+        const id = node.serverId ?? `host-${node.id}`;
+        const server = serverMap.get(id) ?? {
+          id,
+          name: node.serverName,
+          region: node.region,
+          nodes: [],
+        };
+        server.nodes.push(node);
+        serverMap.set(id, server);
       }
+      const servers = [...serverMap.values()];
+      // Compatibility shape for the current portal. It now represents direct
+      // server bindings and no longer reads NodePool tables.
+      const pools = servers.map((server, priority) => ({
+        ...server,
+        active: true,
+        priority,
+      }));
       const offers = product.offers.map((offer) => ({
         id: offer.id,
         slug: offer.slug,
@@ -649,6 +732,7 @@ export class CatalogService {
         legacyDurationDays: offer.legacyPlanOffer?.legacyDurationDays ?? null,
         trafficBytes: Number(offer.trafficBytes),
         priceCents: offer.priceCents,
+        storeUrl: offer.storeUrl ?? product.storeUrl,
         currency: offer.currency,
         active: offer.active,
         isDefault: offer.isDefault,
@@ -660,14 +744,20 @@ export class CatalogService {
         status: product.status.toLowerCase(),
         name: product.name,
         description: product.description,
+        storeUrl: product.storeUrl,
+        defaultTrafficMultiplier:
+          (product.defaultTrafficMultiplierBasisPoints ?? 10_000) / 10_000,
         accent: product.accent,
         sortOrder: product.sortOrder,
         accessProfileId: product.accessProfileId,
         access: {
           profileName: product.accessProfile?.name ?? null,
-          speedUpMbps: product.accessProfile?.speedUpMbps ?? 0,
-          speedDownMbps: product.accessProfile?.speedDownMbps ?? 0,
+          speedUpMbps:
+            product.speedUpMbps ?? product.accessProfile?.speedUpMbps ?? 0,
+          speedDownMbps:
+            product.speedDownMbps ?? product.accessProfile?.speedDownMbps ?? 0,
           deviceLimit: product.accessProfile?.deviceLimit ?? 0,
+          servers,
           nodePools: pools,
         },
         offers,
@@ -701,6 +791,7 @@ export class CatalogService {
       where: { id: input.accessProfileId },
     });
     if (!profile) throw new BadRequestException('Unknown access profile');
+    this.multiplierBasisPoints(input.defaultTrafficMultiplier);
     const periods = input.offers.map((offer) => offer.billingPeriod);
     if (new Set(periods).size !== periods.length) {
       throw new BadRequestException('Offer billing periods must be unique');
@@ -728,30 +819,45 @@ export class CatalogService {
           'Published products require an active profile and active offers',
         );
       }
-      const [poolNodes, legacyNodes] = await Promise.all([
-        tx.nodePoolMember.count({
-          where: {
-            pool: {
-              active: true,
-              profiles: { some: { accessProfileId: input.accessProfileId } },
-            },
-            node: { active: true, lifecycleStatus: 'ACTIVE' },
-          },
-        }),
-        tx.accessProfileNode.count({
-          where: {
-            accessProfileId: input.accessProfileId,
-            node: { active: true, lifecycleStatus: 'ACTIVE' },
-          },
-        }),
-      ]);
-      if (poolNodes + legacyNodes === 0) {
+      const directNodes = await tx.accessProfileNode.count({
+        where: {
+          accessProfileId: input.accessProfileId,
+          node: { active: true, lifecycleStatus: 'ACTIVE' },
+        },
+      });
+      if (directNodes === 0) {
         throw new BadRequestException(
-          'Published products require a serviceable node pool',
+          'Published products require a serviceable node',
         );
       }
     }
     return profile;
+  }
+
+  private multiplierBasisPoints(multiplier: number) {
+    const basisPoints = Math.round(multiplier * 10_000);
+    if (
+      !Number.isFinite(multiplier) ||
+      basisPoints < 1_000 ||
+      basisPoints > 1_000_000
+    ) {
+      throw new BadRequestException('Traffic multiplier must be 0.1 to 100');
+    }
+    return basisPoints;
+  }
+
+  private normalizeStoreUrl(value?: string) {
+    const trimmed = value?.trim();
+    if (!trimmed) return null;
+    try {
+      const url = new URL(trimmed);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        throw new Error('unsupported protocol');
+      }
+      return url.toString();
+    } catch {
+      throw new BadRequestException('Store URL must be a valid HTTP(S) URL');
+    }
   }
 
   private toProductKind(kind: SaveCatalogProductDto['kind']) {

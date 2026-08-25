@@ -4,27 +4,41 @@ describe('FinanceService', () => {
   it('separates fulfilled revenue, CDK value, refunds, and amortized cost', async () => {
     const prisma = {
       manualOrder: {
-        findMany: jest.fn().mockResolvedValue([
-          { status: 'APPLIED', source: 'WALLET', amountCents: 1000 },
-          { status: 'APPLIED', source: 'ADMIN', amountCents: 500 },
-          { status: 'APPLIED', source: 'CDK', amountCents: 600 },
-          { status: 'PENDING', source: 'WALLET', amountCents: 900 },
-        ]),
-      },
-      refund: {
-        findMany: jest.fn().mockResolvedValue([{ amountCents: 200 }]),
-      },
-      nodeCost: {
-        findMany: jest.fn().mockResolvedValue([
+        groupBy: jest.fn().mockResolvedValue([
           {
-            nodeId: 'node_1',
-            node: { label: 'Node 1' },
-            amountCents: 3100,
-            effectiveFrom: new Date('2026-12-31T16:00:00.000Z'),
-            effectiveTo: new Date('2027-01-31T16:00:00.000Z'),
+            status: 'APPLIED',
+            source: 'WALLET',
+            _sum: { amountCents: 1000 },
+            _count: { _all: 1 },
+          },
+          {
+            status: 'APPLIED',
+            source: 'ADMIN',
+            _sum: { amountCents: 500 },
+            _count: { _all: 1 },
+          },
+          {
+            status: 'APPLIED',
+            source: 'CDK',
+            _sum: { amountCents: 600 },
+            _count: { _all: 1 },
+          },
+          {
+            status: 'PENDING',
+            source: 'WALLET',
+            _sum: { amountCents: 900 },
+            _count: { _all: 1 },
           },
         ]),
       },
+      refund: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amountCents: 200 } }),
+      },
+      $queryRaw: jest
+        .fn()
+        .mockResolvedValue([
+          { nodeId: 'node_1', nodeLabel: 'Node 1', amortizedCents: 1000n },
+        ]),
       user: {
         aggregate: jest
           .fn()
@@ -48,16 +62,38 @@ describe('FinanceService', () => {
       to: '2027-01-11',
     });
 
+    const [groupBy] = prisma.manualOrder.groupBy.mock.calls[0] as unknown as [
+      { where: Record<string, unknown> },
+    ];
+    expect(groupBy.where).toMatchObject({
+      OR: [
+        {
+          status: 'APPLIED',
+          processedAt: {
+            gte: new Date('2026-12-31T16:00:00.000Z'),
+            lt: new Date('2027-01-10T16:00:00.000Z'),
+          },
+        },
+        {
+          status: 'PENDING',
+          createdAt: {
+            gte: new Date('2026-12-31T16:00:00.000Z'),
+            lt: new Date('2027-01-10T16:00:00.000Z'),
+          },
+        },
+      ],
+    });
+
     expect(summary).toMatchObject({
       currency: 'CNY',
       timezone: 'Asia/Shanghai',
-      fulfilledNetRevenueCents: 1500,
+      fulfilledNetRevenueCents: 2100,
       walletRevenueCents: 1000,
       manualRevenueCents: 500,
       cdkEntitlementValueCents: 600,
       refundCents: 200,
       amortizedNodeCostCents: 1000,
-      grossProfitCents: 300,
+      grossProfitCents: 900,
       walletLiabilityCents: 5000,
       appliedOrders: 3,
       pendingOrders: 1,

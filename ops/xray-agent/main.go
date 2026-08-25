@@ -11,14 +11,16 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	statscommand "github.com/xtls/xray-core/app/stats/command"
 	proxymancommand "github.com/xtls/xray-core/app/proxyman/command"
+	statscommand "github.com/xtls/xray-core/app/stats/command"
 	"github.com/xtls/xray-core/common/protocol"
 	"github.com/xtls/xray-core/common/serial"
 	"github.com/xtls/xray-core/proxy/vless"
@@ -29,6 +31,8 @@ import (
 )
 
 const maxBodyBytes = 2 << 20
+
+var validSystemdUnit = regexp.MustCompile(`^[A-Za-z0-9_.@:-]+\.service$`)
 
 type provisionedUser struct {
 	UserID string `json:"userId"`
@@ -45,6 +49,35 @@ type agent struct {
 	stateFile  string
 	mu         sync.Mutex
 	pending    *trafficBatch
+	services   map[string]string
+	manager    serviceManager
+	controlMu  sync.Mutex
+	completed  map[string]completedServiceCommand
+}
+
+type serviceManager interface {
+	status(context.Context, string) (string, string, int, error)
+	control(context.Context, string, string) (string, string, int, error)
+}
+
+type systemdServiceManager struct{}
+
+type serviceControlRequest struct {
+	Service        string `json:"service"`
+	Action         string `json:"action"`
+	IdempotencyKey string `json:"idempotencyKey"`
+}
+
+type serviceStatusResponse struct {
+	Service    string    `json:"service"`
+	Status     string    `json:"status"`
+	MainPID    int       `json:"mainPid"`
+	ObservedAt time.Time `json:"observedAt"`
+}
+
+type completedServiceCommand struct {
+	Request  serviceControlRequest
+	Response serviceStatusResponse
 }
 
 type trafficBatch struct {
@@ -70,6 +103,13 @@ func main() {
 		"XRAY_AGENT_STATE_FILE",
 		"/var/lib/hysteria2-xray-agent/traffic-batch.json",
 	)
+	services, err := parseServiceAllowlist(envOr(
+		"XRAY_AGENT_CONTROL_SERVICES",
+		"xray=xray.service",
+	))
+	if err != nil {
+		log.Fatalf("parse XRAY_AGENT_CONTROL_SERVICES: %v", err)
+	}
 
 	conn, err := grpc.NewClient(
 		xrayAPI,
@@ -86,6 +126,9 @@ func main() {
 		stats:      statscommand.NewStatsServiceClient(conn),
 		handler:    proxymancommand.NewHandlerServiceClient(conn),
 		stateFile:  stateFile,
+		services:   services,
+		manager:    systemdServiceManager{},
+		completed:  make(map[string]completedServiceCommand),
 	}
 	if err := a.loadPendingBatch(); err != nil {
 		log.Fatalf("load traffic batch state: %v", err)
@@ -98,7 +141,10 @@ func main() {
 	mux.HandleFunc("POST /traffic/ack", a.authorize(a.acknowledgeTraffic))
 	mux.HandleFunc("GET /online", a.authorize(a.online))
 	mux.HandleFunc("PUT /users", a.authorize(a.syncUsers))
+	mux.HandleFunc("GET /users/count", a.authorize(a.userCount))
 	mux.HandleFunc("POST /kick", a.authorize(a.kickUsers))
+	mux.HandleFunc("GET /service/status", a.authorize(a.serviceStatus))
+	mux.HandleFunc("POST /service/control", a.authorize(a.serviceControl))
 
 	server := &http.Server{
 		Addr:              listen,
@@ -141,6 +187,199 @@ func (a *agent) health(w http.ResponseWriter, _ *http.Request) {
 		"uptime":     result.Uptime,
 		"goroutines": result.NumGoroutine,
 	})
+}
+
+func (a *agent) serviceStatus(w http.ResponseWriter, r *http.Request) {
+	service := strings.TrimSpace(r.URL.Query().Get("service"))
+	unit, ok := a.services[service]
+	if !ok {
+		writeError(w, http.StatusBadRequest, "service is not allowed")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	activeState, _, mainPID, err := a.manager.status(ctx, unit)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, serviceStatusResponse{
+		Service:    service,
+		Status:     mapSystemdState(activeState),
+		MainPID:    mainPID,
+		ObservedAt: time.Now().UTC(),
+	})
+}
+
+func (a *agent) serviceControl(w http.ResponseWriter, r *http.Request) {
+	var input serviceControlRequest
+	if err := decodeJSON(w, r, &input); err != nil {
+		return
+	}
+	input.Service = strings.TrimSpace(input.Service)
+	input.Action = strings.TrimSpace(input.Action)
+	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
+	unit, ok := a.services[input.Service]
+	if !ok {
+		writeError(w, http.StatusBadRequest, "service is not allowed")
+		return
+	}
+	if input.Action != "start" && input.Action != "stop" {
+		writeError(w, http.StatusBadRequest, "action must be start or stop")
+		return
+	}
+	if input.IdempotencyKey == "" || len(input.IdempotencyKey) > 128 {
+		writeError(w, http.StatusBadRequest, "a valid idempotency key is required")
+		return
+	}
+
+	a.controlMu.Lock()
+	defer a.controlMu.Unlock()
+	if completed, present := a.completed[input.IdempotencyKey]; present {
+		if completed.Request.Service != input.Service || completed.Request.Action != input.Action {
+			writeError(w, http.StatusConflict, "idempotency key belongs to another command")
+			return
+		}
+		writeJSON(w, http.StatusOK, completed.Response)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 9*time.Second)
+	defer cancel()
+	activeState, _, mainPID, err := a.manager.control(ctx, unit, input.Action)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	response := serviceStatusResponse{
+		Service:    input.Service,
+		Status:     mapSystemdState(activeState),
+		MainPID:    mainPID,
+		ObservedAt: time.Now().UTC(),
+	}
+	if len(a.completed) >= 1000 {
+		clear(a.completed)
+	}
+	a.completed[input.IdempotencyKey] = completedServiceCommand{
+		Request:  input,
+		Response: response,
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (systemdServiceManager) status(ctx context.Context, unit string) (string, string, int, error) {
+	activeState, err := systemctlProperty(ctx, unit, "ActiveState")
+	if err != nil {
+		return "", "", 0, err
+	}
+	subState, err := systemctlProperty(ctx, unit, "SubState")
+	if err != nil {
+		return "", "", 0, err
+	}
+	mainPIDValue, err := systemctlProperty(ctx, unit, "MainPID")
+	if err != nil {
+		return "", "", 0, err
+	}
+	mainPID, err := strconv.Atoi(mainPIDValue)
+	if err != nil || mainPID < 0 {
+		return "", "", 0, fmt.Errorf("invalid MainPID %q for service", mainPIDValue)
+	}
+	return activeState, subState, mainPID, nil
+}
+
+func (manager systemdServiceManager) control(
+	ctx context.Context,
+	unit string,
+	action string,
+) (string, string, int, error) {
+	output, err := exec.CommandContext(ctx, "systemctl", action, unit).CombinedOutput()
+	if err != nil {
+		return "", "", 0, fmt.Errorf(
+			"systemctl %s failed: %v: %s",
+			action,
+			err,
+			strings.TrimSpace(string(output)),
+		)
+	}
+	desired := "active"
+	if action == "stop" {
+		desired = "inactive"
+	}
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		activeState, subState, mainPID, statusErr := manager.status(ctx, unit)
+		if statusErr != nil {
+			return "", "", 0, statusErr
+		}
+		if activeState == desired {
+			return activeState, subState, mainPID, nil
+		}
+		if activeState == "failed" {
+			return activeState, subState, mainPID, fmt.Errorf("service entered failed state")
+		}
+		select {
+		case <-ctx.Done():
+			return activeState, subState, mainPID, fmt.Errorf(
+				"service did not become %s: %w",
+				desired,
+				ctx.Err(),
+			)
+		case <-ticker.C:
+		}
+	}
+}
+
+func systemctlProperty(ctx context.Context, unit string, property string) (string, error) {
+	output, err := exec.CommandContext(
+		ctx,
+		"systemctl",
+		"show",
+		unit,
+		"--property",
+		property,
+		"--value",
+	).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf(
+			"read %s for service: %s",
+			property,
+			strings.TrimSpace(string(output)),
+		)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func mapSystemdState(activeState string) string {
+	switch activeState {
+	case "active", "inactive", "activating", "deactivating", "failed":
+		return activeState
+	default:
+		return "unknown"
+	}
+}
+
+func parseServiceAllowlist(value string) (map[string]string, error) {
+	services := make(map[string]string)
+	for _, entry := range strings.Split(value, ",") {
+		parts := strings.SplitN(strings.TrimSpace(entry), "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("expected logical-name=unit.service")
+		}
+		logicalName := strings.TrimSpace(parts[0])
+		unit := strings.TrimSpace(parts[1])
+		if logicalName != "xray" && logicalName != "hysteria2" {
+			return nil, fmt.Errorf("unsupported logical service %q", logicalName)
+		}
+		if !validSystemdUnit.MatchString(unit) {
+			return nil, fmt.Errorf("invalid systemd unit %q", unit)
+		}
+		services[logicalName] = unit
+	}
+	if len(services) == 0 {
+		return nil, errors.New("at least one service must be allowed")
+	}
+	return services, nil
 }
 
 func (a *agent) traffic(w http.ResponseWriter, r *http.Request) {
@@ -375,6 +614,20 @@ func (a *agent) syncUsers(w http.ResponseWriter, r *http.Request) {
 		"removed": removed,
 		"total":   len(desiredByEmail),
 	})
+}
+
+func (a *agent) userCount(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	result, err := a.handler.GetInboundUsers(
+		ctx,
+		&proxymancommand.GetInboundUserRequest{Tag: a.inboundTag},
+	)
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"total": len(result.Users)})
 }
 
 func (a *agent) kickUsers(w http.ResponseWriter, r *http.Request) {

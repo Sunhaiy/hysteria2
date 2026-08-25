@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, RefundMethod, RefundStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { pageResponse, parsePage } from '../common/pagination';
 import type { CreateNodeCostDto, CreateRefundDto } from './finance.dto';
 
 export interface FinanceQuery {
@@ -18,30 +19,61 @@ export interface FinanceQuery {
   pageSize?: string;
 }
 
+interface NodeCostSummaryRow {
+  nodeId: string;
+  nodeLabel: string;
+  amortizedCents: bigint;
+}
+
 @Injectable()
 export class FinanceService {
   constructor(private readonly prisma: PrismaService) {}
 
   async summary(query: FinanceQuery) {
     const range = this.range(query);
-    const orderWhere = this.orderWhere(query, range);
-    const [orders, refunds, costs, walletLiability, payments] =
+    const orderWhere = this.summaryOrderWhere(query, range);
+    const [orderGroups, refunds, costs, walletLiability, payments] =
       await Promise.all([
-        this.prisma.manualOrder.findMany({ where: orderWhere }),
-        this.prisma.refund.findMany({
+        this.prisma.manualOrder.groupBy({
+          by: ['source', 'status'],
+          where: orderWhere,
+          _sum: { amountCents: true },
+          _count: { _all: true },
+        }),
+        this.prisma.refund.aggregate({
           where: {
             status: RefundStatus.APPLIED,
             processedAt: { gte: range.from, lt: range.to },
             order: query.userId ? { userId: query.userId } : undefined,
           },
+          _sum: { amountCents: true },
         }),
-        this.prisma.nodeCost.findMany({
-          where: {
-            effectiveFrom: { lt: range.to },
-            OR: [{ effectiveTo: null }, { effectiveTo: { gt: range.from } }],
-          },
-          include: { node: true },
-        }),
+        this.prisma.$queryRaw<NodeCostSummaryRow[]>(Prisma.sql`
+          SELECT
+            cost."nodeId" AS "nodeId",
+            node."label" AS "nodeLabel",
+            COALESCE(SUM(ROUND(
+              cost."amountCents" *
+              GREATEST(
+                0,
+                EXTRACT(EPOCH FROM (
+                  LEAST(COALESCE(cost."effectiveTo", ${range.to}), ${range.to}) -
+                  GREATEST(cost."effectiveFrom", ${range.from})
+                ))
+              ) /
+              GREATEST(
+                86400,
+                EXTRACT(EPOCH FROM (
+                  COALESCE(cost."effectiveTo", ${range.to}) - cost."effectiveFrom"
+                ))
+              )
+            )), 0)::bigint AS "amortizedCents"
+          FROM "NodeCost" cost
+          JOIN "Node" node ON node."id" = cost."nodeId"
+          WHERE cost."effectiveFrom" < ${range.to}
+            AND (cost."effectiveTo" IS NULL OR cost."effectiveTo" > ${range.from})
+          GROUP BY cost."nodeId", node."label"
+        `),
         this.prisma.user.aggregate({
           where: { role: 'MEMBER', balanceCents: { gt: 0 } },
           _sum: { balanceCents: true },
@@ -53,27 +85,21 @@ export class FinanceService {
           _count: { _all: true },
         }),
       ]);
-    const fulfilled = orders.filter((order) => order.status === 'APPLIED');
-    const walletRevenueCents = fulfilled
-      .filter(
-        (order) => order.source === 'WALLET' || order.source === 'PAYMENT',
-      )
-      .reduce((sum, order) => sum + order.amountCents, 0);
-    const manualRevenueCents = fulfilled
-      .filter((order) => order.source === 'ADMIN' || order.source === 'LEGACY')
-      .reduce((sum, order) => sum + order.amountCents, 0);
-    const cdkEntitlementValueCents = fulfilled
-      .filter((order) => order.source === 'CDK')
-      .reduce((sum, order) => sum + order.amountCents, 0);
-    const refundCents = refunds.reduce(
-      (sum, refund) => sum + refund.amountCents,
-      0,
-    );
+    const fulfilled = orderGroups.filter((group) => group.status === 'APPLIED');
+    const revenueFor = (...sources: string[]) =>
+      fulfilled
+        .filter((group) => sources.includes(group.source))
+        .reduce((sum, group) => sum + (group._sum.amountCents ?? 0), 0);
+    const walletRevenueCents = revenueFor('WALLET', 'PAYMENT');
+    const manualRevenueCents = revenueFor('ADMIN', 'LEGACY');
+    const cdkRevenueCents = revenueFor('CDK');
+    const refundCents = refunds._sum.amountCents ?? 0;
     const amortizedNodeCostCents = costs.reduce(
-      (sum, cost) => sum + this.amortizedCost(cost, range.from, range.to),
+      (sum, cost) => sum + Number(cost.amortizedCents),
       0,
     );
-    const fulfilledNetRevenueCents = walletRevenueCents + manualRevenueCents;
+    const fulfilledNetRevenueCents =
+      walletRevenueCents + manualRevenueCents + cdkRevenueCents;
     return {
       timezone: 'Asia/Shanghai',
       currency: 'CNY',
@@ -81,15 +107,21 @@ export class FinanceService {
       fulfilledNetRevenueCents,
       walletRevenueCents,
       manualRevenueCents,
-      cdkEntitlementValueCents,
+      cdkRevenueCents,
+      // Compatibility alias for the current admin UI.
+      cdkEntitlementValueCents: cdkRevenueCents,
       refundCents,
       amortizedNodeCostCents,
       grossProfitCents:
         fulfilledNetRevenueCents - refundCents - amortizedNodeCostCents,
       walletLiabilityCents: walletLiability._sum.balanceCents ?? 0,
-      appliedOrders: fulfilled.length,
-      pendingOrders: orders.filter((order) => order.status === 'PENDING')
-        .length,
+      appliedOrders: fulfilled.reduce(
+        (sum, group) => sum + group._count._all,
+        0,
+      ),
+      pendingOrders: orderGroups
+        .filter((group) => group.status === 'PENDING')
+        .reduce((sum, group) => sum + group._count._all, 0),
       paymentBreakdown: payments.map((payment) => ({
         source: payment.source.toLowerCase(),
         status: payment.status.toLowerCase(),
@@ -98,8 +130,8 @@ export class FinanceService {
       })),
       nodeCosts: costs.map((cost) => ({
         nodeId: cost.nodeId,
-        nodeLabel: cost.node.label,
-        amortizedCents: this.amortizedCost(cost, range.from, range.to),
+        nodeLabel: cost.nodeLabel,
+        amortizedCents: Number(cost.amortizedCents),
       })),
     };
   }
@@ -117,14 +149,14 @@ export class FinanceService {
           paymentRecords: true,
           refunds: true,
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip,
         take,
       }),
       this.prisma.manualOrder.count({ where }),
     ]);
-    return {
-      items: items.map((order) => ({
+    return pageResponse(
+      items.map((order) => ({
         id: order.id,
         userId: order.userId,
         userEmail: order.user.email,
@@ -134,6 +166,7 @@ export class FinanceService {
         status: order.status.toLowerCase(),
         source: order.source.toLowerCase(),
         amountCents: order.amountCents,
+        basePriceCents: order.basePriceCents,
         discountCents: order.discountCents,
         paidCents: order.paymentRecords
           .filter((payment) => payment.status === 'SETTLED')
@@ -145,8 +178,8 @@ export class FinanceService {
       })),
       total,
       page,
-      pageSize: take,
-    };
+      take,
+    );
   }
 
   async ledger(query: FinanceQuery) {
@@ -160,14 +193,14 @@ export class FinanceService {
       this.prisma.walletLedgerEntry.findMany({
         where,
         include: { user: true, actor: true, order: true },
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip,
         take,
       }),
       this.prisma.walletLedgerEntry.count({ where }),
     ]);
-    return {
-      items: items.map((entry) => ({
+    return pageResponse(
+      items.map((entry) => ({
         id: entry.id,
         userId: entry.userId,
         userEmail: entry.user.email,
@@ -183,38 +216,47 @@ export class FinanceService {
       })),
       total,
       page,
-      pageSize: take,
-    };
+      take,
+    );
   }
 
   async refunds(query: FinanceQuery) {
     const range = this.range(query);
-    return this.prisma.refund
-      .findMany({
-        where: {
-          createdAt: { gte: range.from, lt: range.to },
-          status: query.status
-            ? (query.status.toUpperCase() as RefundStatus)
-            : undefined,
-          order: query.userId ? { userId: query.userId } : undefined,
-        },
+    const { skip, take, page } = this.pagination(query);
+    const where: Prisma.RefundWhereInput = {
+      createdAt: { gte: range.from, lt: range.to },
+      status: query.status
+        ? (query.status.toUpperCase() as RefundStatus)
+        : undefined,
+      order: query.userId ? { userId: query.userId } : undefined,
+    };
+    const [items, total] = await Promise.all([
+      this.prisma.refund.findMany({
+        where,
         include: { order: { include: { user: true } }, processedBy: true },
-        orderBy: { createdAt: 'desc' },
-      })
-      .then((items) =>
-        items.map((refund) => ({
-          id: refund.id,
-          orderId: refund.orderId,
-          userEmail: refund.order.user.email,
-          method: refund.method.toLowerCase(),
-          status: refund.status.toLowerCase(),
-          amountCents: refund.amountCents,
-          reason: refund.reason,
-          processedByEmail: refund.processedBy?.email ?? null,
-          processedAt: refund.processedAt?.toISOString() ?? null,
-          createdAt: refund.createdAt.toISOString(),
-        })),
-      );
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip,
+        take,
+      }),
+      this.prisma.refund.count({ where }),
+    ]);
+    return pageResponse(
+      items.map((refund) => ({
+        id: refund.id,
+        orderId: refund.orderId,
+        userEmail: refund.order.user.email,
+        method: refund.method.toLowerCase(),
+        status: refund.status.toLowerCase(),
+        amountCents: refund.amountCents,
+        reason: refund.reason,
+        processedByEmail: refund.processedBy?.email ?? null,
+        processedAt: refund.processedAt?.toISOString() ?? null,
+        createdAt: refund.createdAt.toISOString(),
+      })),
+      total,
+      page,
+      take,
+    );
   }
 
   async createRefund(orderId: string, input: CreateRefundDto, actorId: string) {
@@ -287,25 +329,37 @@ export class FinanceService {
 
   async nodeCosts(query: FinanceQuery) {
     const range = this.range(query);
-    const items = await this.prisma.nodeCost.findMany({
-      where: {
-        effectiveFrom: { lt: range.to },
-        OR: [{ effectiveTo: null }, { effectiveTo: { gt: range.from } }],
-      },
-      include: { node: true },
-      orderBy: { effectiveFrom: 'desc' },
-    });
-    return items.map((cost) => ({
-      id: cost.id,
-      nodeId: cost.nodeId,
-      nodeLabel: cost.node.label,
-      amountCents: cost.amountCents,
-      amortizedCents: this.amortizedCost(cost, range.from, range.to),
-      effectiveFrom: cost.effectiveFrom.toISOString(),
-      effectiveTo: cost.effectiveTo?.toISOString() ?? null,
-      providerReference: cost.providerReference,
-      note: cost.note,
-    }));
+    const { skip, take, page } = this.pagination(query);
+    const where: Prisma.NodeCostWhereInput = {
+      effectiveFrom: { lt: range.to },
+      OR: [{ effectiveTo: null }, { effectiveTo: { gt: range.from } }],
+    };
+    const [items, total] = await Promise.all([
+      this.prisma.nodeCost.findMany({
+        where,
+        include: { node: true },
+        orderBy: [{ effectiveFrom: 'desc' }, { id: 'desc' }],
+        skip,
+        take,
+      }),
+      this.prisma.nodeCost.count({ where }),
+    ]);
+    return pageResponse(
+      items.map((cost) => ({
+        id: cost.id,
+        nodeId: cost.nodeId,
+        nodeLabel: cost.node.label,
+        amountCents: cost.amountCents,
+        amortizedCents: this.amortizedCost(cost, range.from, range.to),
+        effectiveFrom: cost.effectiveFrom.toISOString(),
+        effectiveTo: cost.effectiveTo?.toISOString() ?? null,
+        providerReference: cost.providerReference,
+        note: cost.note,
+      })),
+      total,
+      page,
+      take,
+    );
   }
 
   createNodeCost(input: CreateNodeCostDto) {
@@ -331,16 +385,30 @@ export class FinanceService {
   }
 
   async exportCsv(kind: string, query: FinanceQuery) {
-    const records =
-      kind === 'ledger'
-        ? (await this.ledger({ ...query, pageSize: '5000' })).items
-        : (await this.orders({ ...query, pageSize: '5000' })).items;
+    const records: Array<Record<string, unknown>> = [];
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const response =
+        kind === 'ledger'
+          ? await this.ledger({
+              ...query,
+              page: String(page),
+              pageSize: '100',
+            })
+          : await this.orders({
+              ...query,
+              page: String(page),
+              pageSize: '100',
+            });
+      records.push(...response.items);
+      totalPages = response.totalPages;
+      page += 1;
+    } while (page <= totalPages);
     const keys = records.length ? Object.keys(records[0]) : ['id'];
     return `\uFEFF${[
       keys,
-      ...records.map((record) =>
-        keys.map((key) => record[key as keyof typeof record]),
-      ),
+      ...records.map((record) => keys.map((key) => record[key])),
     ]
       .map((row) => row.map((value) => this.csv(value)).join(','))
       .join('\r\n')}\r\n`;
@@ -376,13 +444,39 @@ export class FinanceService {
     };
   }
 
+  private summaryOrderWhere(
+    query: FinanceQuery,
+    range: { from: Date; to: Date },
+  ): Prisma.ManualOrderWhereInput {
+    const status = query.status?.toUpperCase();
+    const dateRange = { gte: range.from, lt: range.to };
+    const timeByRecognition =
+      status === 'APPLIED'
+        ? [{ status: 'APPLIED' as const, processedAt: dateRange }]
+        : status === 'PENDING'
+          ? [{ status: 'PENDING' as const, createdAt: dateRange }]
+          : status
+            ? [{ status: status as never, createdAt: dateRange }]
+            : [
+                { status: 'APPLIED' as const, processedAt: dateRange },
+                { status: 'PENDING' as const, createdAt: dateRange },
+              ];
+    return {
+      userId: query.userId,
+      source: query.source ? (query.source.toUpperCase() as never) : undefined,
+      catalogOffer: query.productId
+        ? { productId: query.productId }
+        : undefined,
+      OR: timeByRecognition,
+    };
+  }
+
   private pagination(query: FinanceQuery) {
-    const page = Math.max(Number.parseInt(query.page ?? '1', 10) || 1, 1);
-    const take = Math.min(
-      Math.max(Number.parseInt(query.pageSize ?? '50', 10) || 50, 1),
-      5000,
-    );
-    return { page, take, skip: (page - 1) * take };
+    const { page, pageSize, skip } = parsePage(query, {
+      defaultPageSize: 20,
+      maxPageSize: 100,
+    });
+    return { page, take: pageSize, skip };
   }
 
   private amortizedCost(

@@ -5,8 +5,8 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Interval } from '@nestjs/schedule';
 import { ControlPlaneStoreService } from '../domain/control-plane.store';
+import { NodeControlService } from '../domain/node-control.service';
 import { EntitlementService } from '../entitlement/entitlement.service';
 import { NodeAdapterRegistry } from '../integrations/node.adapter';
 import { KickService } from '../kick-service/kick-service.service';
@@ -21,33 +21,15 @@ export class UsageSyncService {
     private readonly nodeClient: NodeAdapterRegistry,
     private readonly kickService: KickService,
     private readonly entitlements: EntitlementService,
+    private readonly nodes: NodeControlService,
   ) {}
 
-  @Interval(60_000)
-  async scheduledSync() {
-    if (process.env.NODE_SYNC_RUNNER === 'external') {
-      return;
-    }
-    if (
-      process.env.NODE_SYNC_ENABLED !== 'true' &&
-      process.env.HYSTERIA_SYNC_ENABLED !== 'true'
-    ) {
-      return;
-    }
-    await this.syncAllNodes();
-  }
-
-  @Interval(24 * 60 * 60 * 1000)
-  async scheduledCleanup() {
-    const retentionDays = parseInt(process.env.DATA_RETENTION_DAYS ?? '30', 10);
-    const result = await this.store.cleanupOldData(retentionDays);
-    this.logger.log(
-      `Cleanup: removed ${result.deletedSnapshots} snapshots, ${result.deletedAuthEvents} auth events older than ${retentionDays} days`,
-    );
+  async cleanup(retentionDays: number) {
+    return this.store.cleanupOldData(retentionDays);
   }
 
   async syncAllNodes() {
-    const nodes = (await this.store.getNodesForControl()).filter(
+    const nodes = (await this.nodes.getNodesForControl()).filter(
       (node) => node.active,
     );
 
@@ -67,7 +49,7 @@ export class UsageSyncService {
   }
 
   async syncNode(nodeId: string) {
-    const node = await this.store.getNodeForControl(nodeId);
+    const node = await this.nodes.getNodeForControl(nodeId);
     if (!node) throw new NotFoundException(`Unknown node: ${nodeId}`);
     if (!node.active) {
       throw new BadRequestException(`Node is disabled: ${nodeId}`);
@@ -81,8 +63,7 @@ export class UsageSyncService {
   }
 
   private async syncNodeRecord(
-    node: Awaited<ReturnType<ControlPlaneStoreService['getNodeForControl']>> &
-      object,
+    node: Awaited<ReturnType<NodeControlService['getNodeForControl']>> & object,
   ) {
     try {
       let provisionedUsers = 0;
@@ -98,14 +79,14 @@ export class UsageSyncService {
         );
         provisionedUsers = users.length;
       }
+      await this.nodes.markUserSyncSuccess(node.id);
 
       const batch = await this.nodeClient.claimTrafficBatch(node);
       const applied = await this.entitlements.applyTrafficBatch(node.id, batch);
       await this.nodeClient.acknowledgeTrafficBatch(node, batch.id);
       await this.store.acknowledgeTrafficBatch(node.id, batch.id);
+      await this.nodes.markTrafficSyncSuccess(node.id);
       const impactedUsers = applied.impactedUsers;
-      const online = await this.nodeClient.fetchOnline(node);
-      await this.store.applyOnlineSnapshot(node.id, online);
 
       const restrictionChecks = [];
       for (const userId of impactedUsers) {
@@ -124,17 +105,15 @@ export class UsageSyncService {
           ),
       );
 
-      await this.store.markNodeSyncSuccess(node.id);
       return {
         nodeId: node.id,
         protocol: node.protocol,
         provisionedUsers,
         impactedUsers: impactedUsers.length,
-        onlineUsers: Object.keys(online).length,
       };
     } catch (error) {
       try {
-        await this.store.markNodeSyncFailure(node.id, error);
+        await this.nodes.markSyncFailure(node.id, error);
       } catch (markError) {
         this.logger.warn(
           `Failed to record sync error for node ${node.id}: ${String(markError)}`,

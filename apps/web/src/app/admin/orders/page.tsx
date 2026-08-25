@@ -12,7 +12,11 @@ import { apiDownload, apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
 import { clearDraft, getDraft } from "@/lib/draft";
 import { formatBytes, formatDateTime, formatMoney } from "@/lib/format";
-import type { AdminUser, ManualOrderRecord, PaginatedResponse, PlanRecord } from "@/lib/types";
+import type {
+  ManualOrderRecord,
+  PaginatedResponse,
+  PlanRecord,
+} from "@/lib/types";
 import { humanizeOrderKind, statusTone } from "@/lib/ui";
 
 const emptyForm = {
@@ -45,17 +49,26 @@ function renderRights(order: ManualOrderRecord) {
 export default function AdminOrdersPage() {
   const { token } = useAuth();
   const [orders, setOrders] = useState<ManualOrderRecord[]>([]);
-  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [users, setUsers] = useState<
+    Array<{ id: string; email: string; displayName: string }>
+  >([]);
   const [plans, setPlans] = useState<PlanRecord[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [hasDraftBanner, setHasDraftBanner] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [pageInfo, setPageInfo] = useState<
+    PaginatedResponse<ManualOrderRecord>
+  >({ items: [], page: 1, pageSize: 20, total: 0, totalPages: 1 });
   const [submitting, setSubmitting] = useState(false);
   const [actingOrderId, setActingOrderId] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [drawerError, setDrawerError] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<{ msg: string; kind: "success" | "error" } | null>(null);
+  const [feedback, setFeedback] = useState<{
+    msg: string;
+    kind: "success" | "error";
+  } | null>(null);
 
   const pendingCount = orders.filter((o) => o.status === "pending").length;
   const selectedPlan = plans.find((p) => p.id === form.planId) ?? null;
@@ -65,19 +78,26 @@ export default function AdminOrdersPage() {
     setLoading(true);
     try {
       const [nextOrders, nextUsers, nextPlans] = await Promise.all([
-        apiRequest<ManualOrderRecord[]>("/api/admin/orders", { token }),
-        apiRequest<PaginatedResponse<AdminUser>>("/api/admin/users?limit=200", { token }),
+        apiRequest<PaginatedResponse<ManualOrderRecord>>(
+          `/api/admin/orders?page=${page}&pageSize=20`,
+          { token },
+        ),
+        apiRequest<Array<{ id: string; email: string; displayName: string }>>(
+          "/api/admin/customers/options?pageSize=20",
+          { token },
+        ),
         apiRequest<PlanRecord[]>("/api/admin/plans", { token }),
       ]);
-      setOrders(nextOrders);
-      setUsers(nextUsers.items.filter((u) => u.role === "member"));
+      setOrders(nextOrders.items);
+      setPageInfo(nextOrders);
+      setUsers(nextUsers);
       setPlans(nextPlans.filter((p) => p.active));
     } catch {
       // keep stale
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [page, token]);
 
   useEffect(() => {
     const id = window.setTimeout(() => void load(), 0);
@@ -87,7 +107,8 @@ export default function AdminOrdersPage() {
   const isDirty = drawerOpen && form.userId !== "";
 
   function requestClose() {
-    if (isDirty && !window.confirm("有未保存的改动，关闭后将丢失。确定关闭？")) return;
+    if (isDirty && !window.confirm("有未保存的改动，关闭后将丢失。确定关闭？"))
+      return;
     forceClose();
   }
 
@@ -131,7 +152,8 @@ export default function AdminOrdersPage() {
           userId: form.userId,
           kind: form.kind,
           status: form.status,
-          planId: form.kind === "renewal" ? form.planId || undefined : undefined,
+          planId:
+            form.kind === "renewal" ? form.planId || undefined : undefined,
           amountCents: form.amountCents,
           durationDays:
             form.kind === "renewal" || form.kind === "manual_credit"
@@ -146,22 +168,28 @@ export default function AdminOrdersPage() {
       });
       clearDraft("order");
       setFeedback({
-        msg: form.status === "pending"
-          ? "待支付订单已创建，等待后台确认到账。"
-          : "订单已立即入账并同步到会员权益。",
+        msg:
+          form.status === "pending"
+            ? "待支付订单已创建，等待后台确认到账。"
+            : "订单已立即入账并同步到会员权益。",
         kind: "success",
       });
       setForm(emptyForm);
       forceClose();
       await load();
     } catch (cause) {
-      setDrawerError(cause instanceof ApiError ? cause.message : "订单创建失败。");
+      setDrawerError(
+        cause instanceof ApiError ? cause.message : "订单创建失败。",
+      );
     } finally {
       setSubmitting(false);
     }
   }
 
-  async function handleOrderAction(orderId: string, status: "applied" | "void") {
+  async function handleOrderAction(
+    orderId: string,
+    status: "applied" | "void",
+  ) {
     if (!token) return;
     setActingOrderId(orderId);
     setFeedback(null);
@@ -171,10 +199,16 @@ export default function AdminOrdersPage() {
         token,
         body: { status },
       });
-      setFeedback({ msg: status === "applied" ? "订单已确认到账并生效。" : "订单已作废。", kind: "success" });
+      setFeedback({
+        msg: status === "applied" ? "订单已确认到账并生效。" : "订单已作废。",
+        kind: "success",
+      });
       await load();
     } catch (cause) {
-      setFeedback({ msg: cause instanceof ApiError ? cause.message : "订单处理失败。", kind: "error" });
+      setFeedback({
+        msg: cause instanceof ApiError ? cause.message : "订单处理失败。",
+        kind: "error",
+      });
     } finally {
       setActingOrderId(null);
     }
@@ -207,7 +241,7 @@ export default function AdminOrdersPage() {
       toolbarMeta={
         <>
           <span className="badge info">
-            {loading ? "加载中..." : `${orders.length} 笔订单`}
+            {loading ? "加载中..." : `${pageInfo.total} 笔订单`}
           </span>
           {pendingCount > 0 ? (
             <span className="badge warn">{pendingCount} 笔待处理</span>
@@ -223,18 +257,25 @@ export default function AdminOrdersPage() {
             onClick={() => void handleExport()}
             title="导出订单流水 CSV"
           >
-            <Icon name="download" />{exporting ? "导出中" : "导出 CSV"}
+            <Icon name="download" />
+            {exporting ? "导出中" : "导出 CSV"}
           </button>
           <button className="action-button" type="button" onClick={openCreate}>
             创建订单
           </button>
-          <button className="toolbar-button" type="button" onClick={() => void load()}>
+          <button
+            className="toolbar-button"
+            type="button"
+            onClick={() => void load()}
+          >
             刷新
           </button>
         </>
       }
     >
-      {feedback ? <div className={`feedback ${feedback.kind}`}>{feedback.msg}</div> : null}
+      {feedback ? (
+        <div className={`feedback ${feedback.kind}`}>{feedback.msg}</div>
+      ) : null}
 
       <Panel
         title="订单工作台"
@@ -249,7 +290,23 @@ export default function AdminOrdersPage() {
         ) : null}
         {orders.length > 0 ? (
           <DataTable
-            headers={["用户", "套餐 / 权益", "类型", "状态", "金额", "处理时间", "操作"]}
+            loading={loading}
+            pagination={{
+              page: pageInfo.page,
+              pageSize: pageInfo.pageSize,
+              total: pageInfo.total,
+              totalPages: pageInfo.totalPages,
+              onPageChange: setPage,
+            }}
+            headers={[
+              "用户",
+              "套餐 / 权益",
+              "类型",
+              "状态",
+              "金额",
+              "处理时间",
+              "操作",
+            ]}
             rows={orders.map((order) => [
               <div key={order.id} className="split">
                 <strong>{order.userDisplayName}</strong>
@@ -257,7 +314,10 @@ export default function AdminOrdersPage() {
               </div>,
               renderRights(order),
               humanizeOrderKind(order.kind),
-              <span key={`${order.id}-st`} className={`badge ${statusTone(order.status)}`}>
+              <span
+                key={`${order.id}-st`}
+                className={`badge ${statusTone(order.status)}`}
+              >
                 {order.status}
               </span>,
               formatMoney(order.amountCents),
@@ -294,7 +354,11 @@ export default function AdminOrdersPage() {
           <div className="empty-state">
             <div className="empty-state-icon">🧾</div>
             <div className="empty-state-title">还没有订单</div>
-            <button className="action-button" type="button" onClick={openCreate}>
+            <button
+              className="action-button"
+              type="button"
+              onClick={openCreate}
+            >
               创建第一笔订单
             </button>
           </div>
@@ -324,18 +388,35 @@ export default function AdminOrdersPage() {
                   ? "创建待支付订单"
                   : "立即入账"}
             </button>
-            <button className="ghost-button" type="button" onClick={requestClose}>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={requestClose}
+            >
               取消
             </button>
           </div>
         }
       >
-        {drawerError ? <div className="feedback error">{drawerError}</div> : null}
+        {drawerError ? (
+          <div className="feedback error">{drawerError}</div>
+        ) : null}
 
         {hasDraftBanner ? (
-          <div className="feedback info" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div
+            className="feedback info"
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
             <span>已恢复上次未保存的草稿。</span>
-            <button className="ghost-button compact" type="button" onClick={discardDraft}>
+            <button
+              className="ghost-button compact"
+              type="button"
+              onClick={discardDraft}
+            >
               丢弃草稿
             </button>
           </div>
@@ -349,7 +430,10 @@ export default function AdminOrdersPage() {
               onChange={(v) => setForm((f) => ({ ...f, userId: v }))}
               options={[
                 { value: "", label: "请选择会员" },
-                ...users.map((u) => ({ value: u.id, label: `${u.displayName} / ${u.email}` })),
+                ...users.map((u) => ({
+                  value: u.id,
+                  label: `${u.displayName} / ${u.email}`,
+                })),
               ]}
             />
           </label>
@@ -361,7 +445,11 @@ export default function AdminOrdersPage() {
                 value={form.kind}
                 onChange={(v) => {
                   const nextKind = v as typeof form.kind;
-                  setForm((f) => ({ ...f, kind: nextKind, planId: nextKind === "renewal" ? f.planId : "" }));
+                  setForm((f) => ({
+                    ...f,
+                    kind: nextKind,
+                    planId: nextKind === "renewal" ? f.planId : "",
+                  }));
                 }}
                 options={[
                   { value: "renewal", label: "套餐 / 续期" },
@@ -375,7 +463,9 @@ export default function AdminOrdersPage() {
               <span className="fine-print">创建方式</span>
               <CustomSelect
                 value={form.status}
-                onChange={(v) => setForm((f) => ({ ...f, status: v as typeof f.status }))}
+                onChange={(v) =>
+                  setForm((f) => ({ ...f, status: v as typeof f.status }))
+                }
                 options={[
                   { value: "pending", label: "待支付订单" },
                   { value: "applied", label: "立即入账" },
@@ -395,12 +485,17 @@ export default function AdminOrdersPage() {
                     ...f,
                     planId: v,
                     amountCents: nextPlan ? nextPlan.priceCents : f.amountCents,
-                    durationDays: nextPlan ? nextPlan.durationDays : f.durationDays,
+                    durationDays: nextPlan
+                      ? nextPlan.durationDays
+                      : f.durationDays,
                   }));
                 }}
                 options={[
                   { value: "", label: "选择套餐或只录入续期天数" },
-                  ...plans.map((p) => ({ value: p.id, label: `${p.name} / ${formatMoney(p.priceCents)}` })),
+                  ...plans.map((p) => ({
+                    value: p.id,
+                    label: `${p.name} / ${formatMoney(p.priceCents)}`,
+                  })),
                 ]}
               />
             </label>
@@ -416,7 +511,10 @@ export default function AdminOrdersPage() {
                 step="0.01"
                 value={form.amountCents / 100}
                 onChange={(e) =>
-                  setForm((f) => ({ ...f, amountCents: Math.round(Number(e.target.value) * 100) }))
+                  setForm((f) => ({
+                    ...f,
+                    amountCents: Math.round(Number(e.target.value) * 100),
+                  }))
                 }
               />
             </label>
@@ -429,7 +527,12 @@ export default function AdminOrdersPage() {
                 min="0"
                 value={form.durationDays}
                 disabled={Boolean(selectedPlan) && form.kind === "renewal"}
-                onChange={(e) => setForm((f) => ({ ...f, durationDays: Number(e.target.value) }))}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    durationDays: Number(e.target.value),
+                  }))
+                }
               />
             </label>
           </div>
@@ -441,11 +544,16 @@ export default function AdminOrdersPage() {
                 className="control"
                 type="number"
                 min="0"
-                value={Math.round((form.trafficBytes / (1024 * 1024 * 1024)) * 100) / 100}
+                value={
+                  Math.round((form.trafficBytes / (1024 * 1024 * 1024)) * 100) /
+                  100
+                }
                 onChange={(e) =>
                   setForm((f) => ({
                     ...f,
-                    trafficBytes: Math.round(Number(e.target.value) * 1024 * 1024 * 1024),
+                    trafficBytes: Math.round(
+                      Number(e.target.value) * 1024 * 1024 * 1024,
+                    ),
                   }))
                 }
               />

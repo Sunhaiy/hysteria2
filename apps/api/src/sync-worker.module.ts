@@ -9,6 +9,8 @@ import { PrismaModule } from './prisma/prisma.module';
 import { SecurityModule } from './security/security.module';
 import { SettingsModule } from './settings/settings.module';
 import { UsageSyncModule } from './usage-sync/usage-sync.module';
+import { OperationsModule } from './operations/operations.module';
+import { NodeOpsModule } from './node-ops/node-ops.module';
 
 @Module({
   imports: [
@@ -28,6 +30,8 @@ import { UsageSyncModule } from './usage-sync/usage-sync.module';
     DomainModule,
     AuthModule,
     UsageSyncModule,
+    OperationsModule,
+    NodeOpsModule,
   ],
 })
 export class SyncWorkerModule {}

@@ -50,6 +50,9 @@ describe('PortalService VLESS + REALITY access', () => {
     expect(access.configSnippet).toContain('"publicKey": "reality-public-key"');
     expect(access.configSnippet).not.toContain('"password"');
     expect(access.subscriptionPath).toBe(
+      '/subscribe/hy2_0123456789abcdef01234567',
+    );
+    expect(access.mihomoSubscriptionPath).toBe(
       '/subscribe/hy2_0123456789abcdef01234567/clash',
     );
   });
@@ -76,5 +79,61 @@ describe('PortalService VLESS + REALITY access', () => {
         expect.objectContaining({ id: 'subscription_expiry' }),
       ]),
     );
+  });
+
+  it('serves a stored compatibility token through the Mihomo subscription', async () => {
+    const token = {
+      token: 'hy2_live_lin_primary',
+      userId: 'usr_lin',
+      revokedAt: null,
+      vlessUuid: '67fbc500-3f3c-4ab9-a076-3e17c56bb3a1',
+    };
+    const node = {
+      id: 'node_hy2',
+      label: 'HK Core',
+      protocol: 'HYSTERIA2' as const,
+      hostname: '203.0.113.10',
+      port: 443,
+      sni: 'example.com',
+      obfsPassword: null,
+      pinSHA256: null,
+      allowInsecureTls: false,
+      realityPublicKey: null,
+      realityShortId: null,
+      realityFingerprint: null,
+      realitySpiderX: null,
+      vlessFlow: null,
+    };
+    const settings = {
+      getSiteInfo: jest.fn().mockResolvedValue({ name: 'Test service' }),
+    };
+    const entitlements = {
+      resolveAccess: jest.fn().mockResolvedValue({
+        allowed: true,
+        nodes: [{ id: node.id, label: node.label }],
+        grants: [{ endsAt: '2026-09-01T00:00:00.000Z' }],
+        remainingBytes: 1024,
+        speedUpMbps: 20,
+        speedDownMbps: 120,
+        deviceLimit: 3,
+      }),
+    };
+    const prisma = {
+      accessToken: { findUnique: jest.fn().mockResolvedValue(token) },
+      entitlementGrant: { count: jest.fn().mockResolvedValue(1) },
+      node: { findMany: jest.fn().mockResolvedValue([node]) },
+    };
+    const service = new PortalService(
+      {} as never,
+      settings as never,
+      {} as never,
+      entitlements as never,
+      prisma as never,
+    );
+
+    const subscription = await service.getMihomoSubscription(token.token);
+
+    expect(subscription.content).toContain('type: hysteria2');
+    expect(subscription.nodeCount).toBe(1);
   });
 });

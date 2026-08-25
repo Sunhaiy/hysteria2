@@ -56,6 +56,18 @@ export class EntitlementService {
     const profile = await client.accessProfile.findUniqueOrThrow({
       where: { id: accessProfileId },
     });
+    if (
+      product.kind === CatalogProductKind.PLAN &&
+      account.trafficMultiplierOverrideBasisPoints === null
+    ) {
+      await client.accessAccount.update({
+        where: { id: account.id },
+        data: {
+          trafficMultiplierBasisPoints:
+            product.defaultTrafficMultiplierBasisPoints,
+        },
+      });
+    }
     const startsAt = order.processedAt ?? order.createdAt;
     const kind =
       product.kind === CatalogProductKind.PLAN
@@ -94,8 +106,8 @@ export class EntitlementService {
             status: EntitlementGrantStatus.ACTIVE,
             endsAt: order.entitlementExpiresAt,
             accessProfileId,
-            speedUpMbpsSnapshot: profile.speedUpMbps,
-            speedDownMbpsSnapshot: profile.speedDownMbps,
+            speedUpMbpsSnapshot: product.speedUpMbps,
+            speedDownMbpsSnapshot: product.speedDownMbps,
             deviceLimitSnapshot: profile.deviceLimit,
           },
         })
@@ -111,8 +123,8 @@ export class EntitlementService {
             startsAt,
             endsAt: order.entitlementExpiresAt,
             accessProfileId,
-            speedUpMbpsSnapshot: profile.speedUpMbps,
-            speedDownMbpsSnapshot: profile.speedDownMbps,
+            speedUpMbpsSnapshot: product.speedUpMbps,
+            speedDownMbpsSnapshot: product.speedDownMbps,
             deviceLimitSnapshot: profile.deviceLimit,
           },
         });
@@ -164,19 +176,6 @@ export class EntitlementService {
         product: true,
         accessProfile: {
           include: {
-            poolBindings: {
-              include: {
-                pool: {
-                  include: {
-                    members: {
-                      include: { node: true },
-                      orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
-                    },
-                  },
-                },
-              },
-              orderBy: { priority: 'asc' },
-            },
             nodeBindings: {
               include: { node: true },
               orderBy: { priority: 'asc' },
@@ -196,32 +195,12 @@ export class EntitlementService {
       { id: string; label: string; priority: number; region: string | null }
     >();
     for (const grant of usable) {
-      for (const binding of grant.accessProfile.poolBindings) {
-        if (!binding.pool.active) continue;
-        for (const member of binding.pool.members) {
-          if (!member.node.active || member.node.lifecycleStatus !== 'ACTIVE') {
-            continue;
-          }
-          const priority = binding.priority * 10000 + member.priority;
-          const prior = nodes.get(member.node.id);
-          if (!prior || priority < prior.priority) {
-            nodes.set(member.node.id, {
-              id: member.node.id,
-              label: member.node.label,
-              priority,
-              region: member.node.region,
-            });
-          }
+      for (const binding of grant.accessProfile.nodeBindings) {
+        if (!binding.node.active || binding.node.lifecycleStatus !== 'ACTIVE') {
+          continue;
         }
-      }
-      if (grant.accessProfile.poolBindings.length === 0) {
-        for (const binding of grant.accessProfile.nodeBindings) {
-          if (
-            !binding.node.active ||
-            binding.node.lifecycleStatus !== 'ACTIVE'
-          ) {
-            continue;
-          }
+        const prior = nodes.get(binding.node.id);
+        if (!prior || binding.priority < prior.priority) {
           nodes.set(binding.node.id, {
             id: binding.node.id,
             label: binding.node.label,
@@ -371,7 +350,10 @@ export class EntitlementService {
       const account = await this.ensureAccessAccount(userId, tx);
       const updated = await tx.accessAccount.update({
         where: { id: account.id },
-        data: { trafficMultiplierBasisPoints: basisPoints },
+        data: {
+          trafficMultiplierBasisPoints: basisPoints,
+          trafficMultiplierOverrideBasisPoints: basisPoints,
+        },
       });
       await tx.auditLog.create({
         data: {
@@ -737,31 +719,12 @@ export class EntitlementService {
           endsAt: { gt: bucketStart },
           accessProfile: {
             active: true,
-            OR: [
-              {
-                poolBindings: {
-                  some: {
-                    pool: {
-                      active: true,
-                      members: {
-                        some: {
-                          nodeId,
-                          node: { active: true, lifecycleStatus: 'ACTIVE' },
-                        },
-                      },
-                    },
-                  },
-                },
+            nodeBindings: {
+              some: {
+                nodeId,
+                node: { active: true, lifecycleStatus: 'ACTIVE' },
               },
-              {
-                nodeBindings: {
-                  some: {
-                    nodeId,
-                    node: { active: true, lifecycleStatus: 'ACTIVE' },
-                  },
-                },
-              },
-            ],
+            },
           },
         },
       },

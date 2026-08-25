@@ -29,6 +29,21 @@ export class MailService {
     });
   }
 
+  async sendPasswordReset(email: string, resetUrl: string) {
+    await this.send({
+      to: email,
+      subject: 'Hysteria 2 密码重置',
+      text: `请在 30 分钟内打开以下链接重置密码：\n${resetUrl}\n如果这不是你本人操作，请忽略本邮件。`,
+      html:
+        `<div style="font-family:system-ui,sans-serif;font-size:15px;color:#1a1a1a">` +
+        `<p>我们收到了你的密码重置请求。</p>` +
+        `<p><a href="${resetUrl}" style="display:inline-block;padding:10px 16px;background:#16865b;color:#fff;text-decoration:none;border-radius:6px">重置密码</a></p>` +
+        `<p style="color:#666">链接 30 分钟内有效且只能使用一次。如果这不是你本人操作，请忽略本邮件。</p>` +
+        `</div>`,
+      devNote: `[DEV] Password reset link for ${email}: ${resetUrl}`,
+    });
+  }
+
   async sendTest(email: string) {
     await this.send({
       to: email,

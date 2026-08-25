@@ -29,6 +29,7 @@ export class AdminSettingsController {
     const site = await this.settings.getSiteInfo();
     const tutorial = await this.settings.getTutorialConfig();
     const registrationEnabled = await this.settings.isRegistrationEnabled();
+    const announcement = await this.settings.getAnnouncementConfig();
     const callbackBase =
       process.env.OAUTH_CALLBACK_BASE ||
       process.env.API_PUBLIC_URL ||
@@ -63,6 +64,7 @@ export class AdminSettingsController {
       site,
       tutorial,
       registrationEnabled,
+      announcement,
     };
   }
 
@@ -81,6 +83,15 @@ export class AdminSettingsController {
       updates['smtp.from'] = body.smtpFrom.trim();
     if (body.registrationEnabled !== undefined) {
       updates['registration.enabled'] = String(body.registrationEnabled);
+    }
+    if (body.announcementEnabled !== undefined) {
+      updates['announcement.enabled'] = String(body.announcementEnabled);
+    }
+    if (body.announcementTitle !== undefined) {
+      updates['announcement.title'] = body.announcementTitle.trim();
+    }
+    if (body.announcementContent !== undefined) {
+      updates['announcement.content'] = body.announcementContent.trim();
     }
     if (body.googleClientId !== undefined) {
       updates['oauth.google.id'] = body.googleClientId.trim();

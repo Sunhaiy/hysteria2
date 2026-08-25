@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
 import {
   MonitorAlertSeverity,
   MonitorAlertStatus,
@@ -30,7 +29,6 @@ export class MonitoringService {
     private readonly mail: MailService,
   ) {}
 
-  @Cron('0 * * * * *')
   async scheduledCheck() {
     try {
       await this.runChecks();
@@ -40,12 +38,13 @@ export class MonitoringService {
   }
 
   async runChecks(now = new Date()) {
-    const [nodes, pendingBatches, deniedAuth, pools] = await Promise.all([
+    const [nodes, pendingBatches, deniedAuth] = await Promise.all([
       this.prisma.node.findMany({
         include: {
           serviceChecks: { orderBy: { checkedAt: 'desc' }, take: 1 },
-          onlineSnapshots: {
-            where: { capturedAt: { gte: new Date(now.getTime() - 180_000) } },
+          healthSnapshots: { orderBy: { checkedAt: 'desc' }, take: 1 },
+          onlinePresence: {
+            where: { observedAt: { gte: new Date(now.getTime() - 45_000) } },
           },
         },
       }),
@@ -58,9 +57,6 @@ export class MonitoringService {
           createdAt: { gte: new Date(now.getTime() - 5 * 60_000) },
         },
       }),
-      this.prisma.nodePool.findMany({
-        include: { members: { include: { node: true } } },
-      }),
     ]);
     const results: CheckResult[] = [];
     for (const node of nodes) {
@@ -72,11 +68,18 @@ export class MonitoringService {
         : null;
       const managed =
         node.active && node.lifecycleStatus !== NodeLifecycleStatus.DISABLED;
+      const health = node.healthSnapshots[0];
+      const healthStale =
+        !health || now.getTime() - health.checkedAt.getTime() > 180_000;
       const offline =
-        managed && (syncDelaySeconds === null || syncDelaySeconds > 180);
+        managed &&
+        (healthStale ||
+          !health.agentReachable ||
+          health.coreHealthy === false ||
+          health.publicEndpointReachable === false);
       const syncTimeout =
         managed && Boolean(node.lastSyncError || (syncDelaySeconds ?? 0) > 120);
-      const onlineUsers = node.onlineSnapshots.reduce(
+      const onlineUsers = node.onlinePresence.reduce(
         (total, snapshot) => total + snapshot.concurrentClients,
         0,
       );
@@ -84,9 +87,10 @@ export class MonitoringService {
         data: {
           nodeId: node.id,
           healthy: !offline && !node.lastSyncError,
+          latencyMs: health?.latencyMs,
           onlineUsers,
           syncDelaySeconds,
-          error: node.lastSyncError,
+          error: health?.error ?? node.lastSyncError,
           checkedAt: now,
         },
       });
@@ -111,7 +115,59 @@ export class MonitoringService {
           nodeId: node.id,
           metadata: { syncDelaySeconds },
         },
+        {
+          fingerprint: `node-presence-stale:${node.id}`,
+          kind: 'NODE_PRESENCE_STALE',
+          severity: MonitorAlertSeverity.WARNING,
+          title: `${node.label} 在线采集过期`,
+          message: '在线状态超过 45 秒没有更新。',
+          failing:
+            managed &&
+            (!health?.presenceAt ||
+              now.getTime() - health.presenceAt.getTime() > 45_000),
+          nodeId: node.id,
+        },
+        {
+          fingerprint: `node-user-sync-stale:${node.id}`,
+          kind: 'NODE_USER_SYNC_STALE',
+          severity: MonitorAlertSeverity.WARNING,
+          title: `${node.label} 用户同步过期`,
+          message: '授权用户同步超过 120 秒没有成功。',
+          failing:
+            managed &&
+            (!health?.userSyncAt ||
+              now.getTime() - health.userSyncAt.getTime() > 120_000),
+          nodeId: node.id,
+        },
+        {
+          fingerprint: `node-traffic-stale:${node.id}`,
+          kind: 'NODE_TRAFFIC_STALE',
+          severity: MonitorAlertSeverity.CRITICAL,
+          title: `${node.label} 流量采集过期`,
+          message: '流量批次超过 120 秒没有成功确认。',
+          failing:
+            managed &&
+            (!health?.trafficAt ||
+              now.getTime() - health.trafficAt.getTime() > 120_000),
+          nodeId: node.id,
+        },
       );
+      if (node.capacityUsers) {
+        const capacityPercent = (onlineUsers / node.capacityUsers) * 100;
+        results.push({
+          fingerprint: `node-capacity:${node.id}`,
+          kind: 'NODE_CAPACITY_HIGH',
+          severity:
+            capacityPercent >= 95
+              ? MonitorAlertSeverity.CRITICAL
+              : MonitorAlertSeverity.WARNING,
+          title: `${node.label} 容量偏高`,
+          message: `当前连接数达到配置容量的 ${capacityPercent.toFixed(1)}%。`,
+          failing: capacityPercent >= 80,
+          nodeId: node.id,
+          metadata: { onlineUsers, capacityUsers: node.capacityUsers },
+        });
+      }
       if (node.destinationTelemetryEnabled) {
         const stale =
           !node.destinationTelemetryLastAt ||
@@ -147,22 +203,6 @@ export class MonitoringService {
         metadata: { deniedAuth, windowMinutes: 5 },
       },
     );
-    for (const pool of pools) {
-      const serviceable = pool.members.some(
-        (member) =>
-          member.node.active &&
-          member.node.lifecycleStatus === NodeLifecycleStatus.ACTIVE,
-      );
-      results.push({
-        fingerprint: `pool-no-serviceable-node:${pool.id}`,
-        kind: 'POOL_NO_SERVICEABLE_NODE',
-        severity: MonitorAlertSeverity.CRITICAL,
-        title: `${pool.name} 无可用节点`,
-        message: '资源池没有 ACTIVE 状态的可服务节点。',
-        failing: pool.active && !serviceable,
-        metadata: { poolId: pool.id },
-      });
-    }
     for (const result of results) await this.applyResult(result, now);
     await this.retryPendingNotifications();
     await this.prisma.nodeServiceCheck.deleteMany({
@@ -174,7 +214,7 @@ export class MonitoringService {
   }
 
   async overview() {
-    const [alerts, nodes, pools] = await Promise.all([
+    const [alerts, nodes, activeServers] = await Promise.all([
       this.prisma.monitorAlert.findMany({
         include: {
           node: true,
@@ -190,7 +230,7 @@ export class MonitoringService {
       this.prisma.node.findMany({
         include: { serviceChecks: { orderBy: { checkedAt: 'desc' }, take: 1 } },
       }),
-      this.prisma.nodePool.count({ where: { active: true } }),
+      this.prisma.nodeServer.count({ where: { active: true } }),
     ]);
     return {
       checkIntervalSeconds: 60,
@@ -204,7 +244,8 @@ export class MonitoringService {
           alert.status !== MonitorAlertStatus.RESOLVED &&
           alert.severity === MonitorAlertSeverity.CRITICAL,
       ).length,
-      activePools: pools,
+      activeServers,
+      activePools: activeServers,
       nodes: nodes.map((node) => ({
         id: node.id,
         label: node.label,

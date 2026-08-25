@@ -31,10 +31,7 @@ describe('TrafficAnalyticsService', () => {
           { id: 'user_1', name: 'user@example.com', bytes: 120n },
         ])
         .mockResolvedValueOnce([{ id: 'product_1', name: 'Core', bytes: 110n }])
-        .mockResolvedValueOnce([{ id: 'node_1', name: 'HK', bytes: 100n }])
-        .mockResolvedValueOnce([
-          { id: 'pool_1', name: 'Default', bytes: 100n },
-        ]),
+        .mockResolvedValueOnce([{ id: 'node_1', name: 'HK', bytes: 100n }]),
     };
     const service = new TrafficAnalyticsService(prisma as never);
 
@@ -44,7 +41,7 @@ describe('TrafficAnalyticsService', () => {
     });
 
     expect(prisma.usageRollup.findMany).not.toHaveBeenCalled();
-    expect(prisma.$queryRaw).toHaveBeenCalledTimes(6);
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(5);
     expect(result).toEqual({
       timezone: 'Asia/Shanghai',
       totals: {
@@ -66,7 +63,6 @@ describe('TrafficAnalyticsService', () => {
         users: [{ id: 'user_1', name: 'user@example.com', bytes: 120 }],
         products: [{ id: 'product_1', name: 'Core', bytes: 110 }],
         nodes: [{ id: 'node_1', name: 'HK', bytes: 100 }],
-        pools: [{ id: 'pool_1', name: 'Default', bytes: 100 }],
       },
     });
   });

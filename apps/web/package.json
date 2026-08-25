@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start --port 3001",
     "lint": "eslint .",
-    "test": "node --test src/lib/format.test.mjs test/portal-plans-ui-contract.test.mjs",
+    "test": "node --test src/lib/format.test.mjs test/*.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

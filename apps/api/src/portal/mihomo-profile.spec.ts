@@ -25,7 +25,7 @@ describe('buildMihomoProfile', () => {
     {
       label: 'US Primary',
       protocol: 'VLESS_REALITY',
-      hostname: '154.44.9.49',
+      hostname: '198.51.100.10',
       port: 59630,
       sni: 'www.cloudflare.com',
       obfsPassword: null,
@@ -39,7 +39,7 @@ describe('buildMihomoProfile', () => {
     {
       label: 'US Secondary',
       protocol: 'HYSTERIA2',
-      hostname: '212.103.62.228',
+      hostname: '203.0.113.20',
       port: 5401,
       sni: 'example.com',
       obfsPassword: 'obfs-secret',
@@ -58,7 +58,7 @@ describe('buildMihomoProfile', () => {
     expect(profile.proxies).toHaveLength(2);
     expect(profile.proxies[0]).toMatchObject({
       type: 'vless',
-      server: '154.44.9.49',
+      server: '198.51.100.10',
       port: 59630,
       uuid: credential.vlessUuid,
       flow: 'xtls-rprx-vision',

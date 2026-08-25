@@ -1,4 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { createHash } from 'node:crypto';
+import { CacheService } from '../cache/cache.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SecretCipherService } from '../security/secret-cipher.service';
 import { secretSettingKeys } from '../security/secret-migration.service';
@@ -12,7 +14,7 @@ export interface SmtpConfig {
   configured: boolean;
 }
 
-export type TutorialUploadPlatform = 'windows' | 'android';
+export type TutorialUploadPlatform = 'windows' | 'android' | 'macos';
 
 export interface TutorialAssetRecord {
   storedName: string;
@@ -25,37 +27,41 @@ const TUTORIAL_DEFAULTS = {
   windows: {
     name: 'Windows',
     meta: '电脑',
-    client: 'v2rayN',
+    client: 'Clash Verge Rev',
     steps: [
-      '下载并安装 v2rayN 客户端',
+      '下载并安装 Clash Verge Rev 客户端',
       '打开「接入信息」，复制一键订阅链接',
-      '在 v2rayN 的订阅分组中添加订阅地址',
-      '更新订阅，选择节点并启用系统代理',
+      '在 Clash Verge Rev 中添加订阅地址',
+      '更新订阅，选择自动节点并启用系统代理',
     ],
   },
   android: {
     name: 'Android',
     meta: '手机 / 平板',
-    client: 'Hiddify',
+    client: 'FlClash',
     steps: [
-      '下载并安装 Hiddify 客户端',
+      '下载并安装 FlClash 客户端',
       '打开「接入信息」，复制一键订阅链接',
-      '在 Hiddify 中从剪贴板添加配置',
+      '在 FlClash 中从剪贴板添加订阅',
       '选择节点，允许 VPN 权限并开始连接',
     ],
   },
   ios: {
     name: 'iOS',
     meta: 'iPhone / iPad',
-    client: 'sing-box',
+    client: 'Stash',
     steps: [
-      '从 App Store 安装 sing-box 客户端',
+      '从 App Store 安装 Stash 客户端',
       '打开「接入信息」，复制订阅或配置地址',
-      '在 sing-box 中添加远程配置',
+      '在 Stash 中添加远程订阅',
       '允许 VPN 权限并启动连接',
     ],
   },
 } as const;
+
+const settingsCacheKey = 'settings:all:v1';
+const publishedTutorialsCacheKey = 'tutorials:published:v1';
+const announcementAcknowledgementTtlSeconds = 12 * 60 * 60;
 
 @Injectable()
 export class SettingsService {
@@ -64,14 +70,38 @@ export class SettingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly cipher: SecretCipherService,
+    private readonly sharedCache: CacheService,
   ) {}
 
   private async all(): Promise<Map<string, string>> {
     if (this.cache) {
       return this.cache;
     }
+    const cached = await this.sharedCache.get(settingsCacheKey);
+    if (cached) {
+      try {
+        const values = JSON.parse(cached) as Record<string, unknown>;
+        if (
+          values &&
+          typeof values === 'object' &&
+          Object.values(values).every((value) => typeof value === 'string')
+        ) {
+          this.cache = new Map(
+            Object.entries(values) as Array<[string, string]>,
+          );
+          return this.cache;
+        }
+      } catch {
+        await this.sharedCache.del(settingsCacheKey);
+      }
+    }
     const rows = await this.prisma.setting.findMany();
     this.cache = new Map(rows.map((row) => [row.key, row.value]));
+    await this.sharedCache.set(
+      settingsCacheKey,
+      JSON.stringify(Object.fromEntries(this.cache)),
+      300,
+    );
     return this.cache;
   }
 
@@ -96,7 +126,11 @@ export class SettingsService {
         },
       });
     }
-    this.cache = null; // invalidate so the next read reflects the change
+    this.cache = null;
+    await this.sharedCache.del(settingsCacheKey);
+    if (Object.keys(updates).some((key) => key.startsWith('tutorial.'))) {
+      await this.sharedCache.del(publishedTutorialsCacheKey);
+    }
   }
 
   async getTutorialAsset(
@@ -197,6 +231,62 @@ export class SettingsService {
   async isRegistrationEnabled(): Promise<boolean> {
     const value = await this.get('registration.enabled');
     return value === undefined ? true : value === 'true';
+  }
+
+  async getAnnouncementConfig() {
+    const map = await this.all();
+    const title = map.get('announcement.title')?.trim() || '服务公告';
+    const content = map.get('announcement.content')?.trim() || '';
+    return {
+      enabled: map.get('announcement.enabled') === 'true',
+      title,
+      content,
+      version: createHash('sha256')
+        .update(`${title}\0${content}`)
+        .digest('hex'),
+    };
+  }
+
+  async getPendingAnnouncement(sessionId: string) {
+    const announcement = await this.getPublishedAnnouncement();
+    if (!announcement) return null;
+
+    const acknowledgement = await this.sharedCache.get(
+      this.announcementAcknowledgementKey(sessionId, announcement.version),
+    );
+    return acknowledgement ? null : announcement;
+  }
+
+  async getPublishedAnnouncement() {
+    const announcement = await this.getAnnouncementConfig();
+    if (!announcement.enabled || !announcement.content) return null;
+    return {
+      title: announcement.title,
+      content: announcement.content,
+      version: announcement.version,
+    };
+  }
+
+  async acknowledgeAnnouncement(sessionId: string, version: string) {
+    const announcement = await this.getAnnouncementConfig();
+    if (
+      !announcement.enabled ||
+      !announcement.content ||
+      announcement.version !== version
+    ) {
+      throw new BadRequestException('公告已更新，请重新查看');
+    }
+
+    await this.sharedCache.set(
+      this.announcementAcknowledgementKey(sessionId, version),
+      '1',
+      announcementAcknowledgementTtlSeconds,
+    );
+    return { success: true };
+  }
+
+  private announcementAcknowledgementKey(sessionId: string, version: string) {
+    return `announcement:ack:${sessionId}:${version}`;
   }
 
   /** Public site identity used by the UI and browser chrome. */

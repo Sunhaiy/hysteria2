@@ -4,6 +4,8 @@ import {
   NodeTrafficClientService,
   type ProvisionedUser,
   type TrafficNode,
+  type NodeHealthProbe,
+  type NodeServiceStatus,
 } from './node-traffic-client.service';
 
 export interface NodeAdapter {
@@ -19,7 +21,14 @@ export interface NodeAdapter {
     users: ProvisionedUser[],
   ): Promise<{ added: number; removed: number; total: number }>;
   fetchOnline(node: TrafficNode): Promise<Record<string, number>>;
+  probeHealth(node: TrafficNode): Promise<NodeHealthProbe>;
   kickUsers(node: TrafficNode, userIds: string[]): Promise<{ kicked?: number }>;
+  controlService(
+    node: TrafficNode,
+    action: 'start' | 'stop',
+    idempotencyKey: string,
+  ): Promise<NodeServiceStatus>;
+  getServiceStatus(node: TrafficNode): Promise<NodeServiceStatus>;
 }
 
 abstract class HttpNodeAdapter implements NodeAdapter {
@@ -45,8 +54,24 @@ abstract class HttpNodeAdapter implements NodeAdapter {
     return this.client.fetchOnline(node);
   }
 
+  probeHealth(node: TrafficNode) {
+    return this.client.probeHealth(node);
+  }
+
   kickUsers(node: TrafficNode, userIds: string[]) {
     return this.client.kickUsers(node, userIds);
+  }
+
+  controlService(
+    node: TrafficNode,
+    action: 'start' | 'stop',
+    idempotencyKey: string,
+  ) {
+    return this.client.controlService(node, action, idempotencyKey);
+  }
+
+  getServiceStatus(node: TrafficNode) {
+    return this.client.getServiceStatus(node);
   }
 }
 
@@ -129,7 +154,23 @@ export class NodeAdapterRegistry {
     return this.adapterFor(node).fetchOnline(node);
   }
 
+  probeHealth(node: TrafficNode) {
+    return this.adapterFor(node).probeHealth(node);
+  }
+
   kickUsers(node: TrafficNode, userIds: string[]) {
     return this.adapterFor(node).kickUsers(node, userIds);
+  }
+
+  controlService(
+    node: TrafficNode,
+    action: 'start' | 'stop',
+    idempotencyKey: string,
+  ) {
+    return this.adapterFor(node).controlService(node, action, idempotencyKey);
+  }
+
+  getServiceStatus(node: TrafficNode) {
+    return this.adapterFor(node).getServiceStatus(node);
   }
 }

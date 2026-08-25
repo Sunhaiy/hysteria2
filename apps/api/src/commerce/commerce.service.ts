@@ -80,12 +80,37 @@ export class CommerceService {
     };
   }
 
-  redeem(userId: string, code: string, expectedTrafficPackProductId?: string) {
-    return this.store.redeemRedemptionCode(
+  async redeem(
+    userId: string,
+    code: string,
+    expectedTrafficPackProductId?: string,
+  ) {
+    const result = await this.store.redeemRedemptionCode(
       userId,
       code,
       expectedTrafficPackProductId,
     );
+    const orderId = result?.order?.id;
+    if (orderId && this.entitlements) {
+      const order = await this.prisma.manualOrder.findUnique({
+        where: { id: orderId },
+        select: { catalogOfferId: true, kind: true },
+      });
+      if (order?.catalogOfferId && order.kind === OrderKind.RENEWAL) {
+        const subscription = await this.prisma.subscription.findFirst({
+          where: {
+            userId,
+            status: SubscriptionStatus.ACTIVE,
+          },
+          orderBy: { updatedAt: 'desc' },
+        });
+        await this.entitlements.grantFromOrder({
+          orderId,
+          subscriptionId: subscription?.id,
+        });
+      }
+    }
+    return result;
   }
 
   async checkout(
@@ -130,6 +155,41 @@ export class CommerceService {
       }
     }
     throw new ConflictException('Checkout transaction could not be completed');
+  }
+
+  async grantComplimentaryPlan(
+    userId: string,
+    offerId: string,
+    actorId: string,
+    idempotencyKey: string,
+  ) {
+    const normalizedKey = idempotencyKey.trim();
+    if (!normalizedKey || normalizedKey.length > 120) {
+      throw new BadRequestException('A valid Idempotency-Key is required');
+    }
+    return this.prisma.$transaction(
+      async (tx) => {
+        const existing = await tx.manualOrder.findUnique({
+          where: {
+            userId_idempotencyKey: {
+              userId,
+              idempotencyKey: normalizedKey,
+            },
+          },
+        });
+        if (existing) {
+          return this.replayCheckout(existing, { offerId });
+        }
+        return this.createOfferCheckout(
+          tx,
+          userId,
+          { offerId },
+          normalizedKey,
+          { complimentary: true, actorId },
+        );
+      },
+      { isolationLevel: 'Serializable' },
+    );
   }
 
   private replayCheckout(
@@ -330,6 +390,7 @@ export class CommerceService {
     userId: string,
     input: Extract<CheckoutInput, { offerId: string }>,
     idempotencyKey: string,
+    options: { complimentary?: boolean; actorId?: string } = {},
   ): Promise<CheckoutResult> {
     const [user, offer] = await Promise.all([
       tx.user.findUnique({ where: { id: userId } }),
@@ -369,6 +430,14 @@ export class CommerceService {
     ) {
       throw new BadRequestException('Catalog offer is not purchasable');
     }
+    if (
+      options.complimentary &&
+      offer.product.kind !== CatalogProductKind.PLAN
+    ) {
+      throw new BadRequestException(
+        'Complimentary grants require a plan offer',
+      );
+    }
     const nodeId = await this.resolveServiceableNodeId(
       tx,
       offer.product.accessProfileId,
@@ -376,24 +445,26 @@ export class CommerceService {
     if (!nodeId) {
       throw new BadRequestException('Catalog offer has no serviceable node');
     }
-    const discount = input.discountCode
-      ? await this.reserveDiscount(
-          tx,
-          userId,
-          input.discountCode,
-          offer.priceCents,
-        )
-      : null;
-    const chargedCents = Math.max(
-      offer.priceCents - (discount?.discountCents ?? 0),
-      0,
-    );
-    const debit = await tx.user.updateMany({
-      where: { id: userId, balanceCents: { gte: chargedCents } },
-      data: { balanceCents: { decrement: chargedCents } },
-    });
-    if (debit.count !== 1) {
-      throw new BadRequestException('Insufficient wallet balance');
+    const discount =
+      !options.complimentary && input.discountCode
+        ? await this.reserveDiscount(
+            tx,
+            userId,
+            input.discountCode,
+            offer.priceCents,
+          )
+        : null;
+    const chargedCents = options.complimentary
+      ? 0
+      : Math.max(offer.priceCents - (discount?.discountCents ?? 0), 0);
+    if (!options.complimentary) {
+      const debit = await tx.user.updateMany({
+        where: { id: userId, balanceCents: { gte: chargedCents } },
+        data: { balanceCents: { decrement: chargedCents } },
+      });
+      if (debit.count !== 1) {
+        throw new BadRequestException('Insufficient wallet balance');
+      }
     }
 
     const purchasedAt = new Date();
@@ -425,7 +496,7 @@ export class CommerceService {
         },
         orderBy: { endsAt: 'desc' },
       });
-      if (existing && existing.planId === plan.id) {
+      if (existing && existing.planId === plan.id && !options.complimentary) {
         const extensionBase =
           existing.endsAt > purchasedAt ? existing.endsAt : purchasedAt;
         const extendedEndsAt = this.offerExpiry(extensionBase, expiryOffer);
@@ -517,10 +588,12 @@ export class CommerceService {
           offer.product.kind === CatalogProductKind.PLAN
             ? OrderKind.RENEWAL
             : OrderKind.TRAFFIC_PACK,
-        source: OrderSource.WALLET,
+        source: options.complimentary ? OrderSource.ADMIN : OrderSource.WALLET,
         amountCents: chargedCents,
         basePriceCents: offer.priceCents,
-        discountCents: discount?.discountCents ?? 0,
+        discountCents: options.complimentary
+          ? offer.priceCents
+          : (discount?.discountCents ?? 0),
         currency: offer.currency,
         productSlugSnapshot: offer.slug,
         productNameSnapshot: `${offer.product.name} · ${offer.name}`,
@@ -553,41 +626,58 @@ export class CommerceService {
         data: { codeId: discount.codeId, userId, orderId: order.id },
       });
     }
-    const wallet = await tx.walletTransaction.create({
-      data: {
-        userId,
-        amountCents: -chargedCents,
-        kind: 'PURCHASE',
-        note: `Purchase ${offer.product.name} · ${offer.name}`,
-      },
-    });
-    await Promise.all([
-      tx.walletLedgerEntry.create({
+    if (!options.complimentary) {
+      const wallet = await tx.walletTransaction.create({
         data: {
-          legacyTransactionId: wallet.id,
           userId,
-          orderId: order.id,
           amountCents: -chargedCents,
-          beforeBalanceCents: user.balanceCents,
-          afterBalanceCents: user.balanceCents - chargedCents,
           kind: 'PURCHASE',
-          idempotencyKey,
-          note: `购买 ${offer.product.name} · ${offer.name}`,
+          note: `Purchase ${offer.product.name} · ${offer.name}`,
         },
-      }),
-      tx.paymentRecord.create({
+      });
+      await Promise.all([
+        tx.walletLedgerEntry.create({
+          data: {
+            legacyTransactionId: wallet.id,
+            userId,
+            orderId: order.id,
+            amountCents: -chargedCents,
+            beforeBalanceCents: user.balanceCents,
+            afterBalanceCents: user.balanceCents - chargedCents,
+            kind: 'PURCHASE',
+            idempotencyKey,
+            note: `购买 ${offer.product.name} · ${offer.name}`,
+          },
+        }),
+        tx.paymentRecord.create({
+          data: {
+            orderId: order.id,
+            userId,
+            source: 'WALLET',
+            status: 'SETTLED',
+            amountCents: chargedCents,
+            currency: offer.currency,
+            paidAt: purchasedAt,
+            reconciledAt: purchasedAt,
+          },
+        }),
+      ]);
+    } else {
+      await tx.auditLog.create({
         data: {
-          orderId: order.id,
-          userId,
-          source: 'WALLET',
-          status: 'SETTLED',
-          amountCents: chargedCents,
-          currency: offer.currency,
-          paidAt: purchasedAt,
-          reconciledAt: purchasedAt,
+          actorId: options.actorId,
+          action: 'COMPLIMENTARY_PLAN_GRANTED',
+          targetType: 'ManualOrder',
+          targetId: order.id,
+          metadata: {
+            userId,
+            offerId: offer.id,
+            listPriceCents: offer.priceCents,
+            recognizedRevenueCents: 0,
+          },
         },
-      }),
-    ]);
+      });
+    }
     if (!this.entitlements) {
       throw new ConflictException('Entitlement module is unavailable');
     }
@@ -612,32 +702,14 @@ export class CommerceService {
     tx: Prisma.TransactionClient,
     accessProfileId: string,
   ) {
-    const poolBindings = await tx.accessProfilePool.findMany({
-      where: { accessProfileId, pool: { active: true } },
-      include: {
-        pool: {
-          include: {
-            members: {
-              where: { node: { active: true, lifecycleStatus: 'ACTIVE' } },
-              orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
-            },
-          },
-        },
-      },
-      orderBy: { priority: 'asc' },
-    });
-    const pooledNode = poolBindings.find(
-      (binding) => binding.pool.members.length > 0,
-    )?.pool.members[0]?.nodeId;
-    if (pooledNode) return pooledNode;
-    const legacy = await tx.accessProfileNode.findFirst({
+    const binding = await tx.accessProfileNode.findFirst({
       where: {
         accessProfileId,
         node: { active: true, lifecycleStatus: 'ACTIVE' },
       },
       orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
     });
-    return legacy?.nodeId ?? null;
+    return binding?.nodeId ?? null;
   }
 
   private async createPlanCheckout(
@@ -922,19 +994,6 @@ export class CommerceService {
             include: {
               accessProfile: {
                 include: {
-                  poolBindings: {
-                    where: {
-                      pool: {
-                        active: true,
-                        members: {
-                          some: {
-                            node: { active: true, lifecycleStatus: 'ACTIVE' },
-                          },
-                        },
-                      },
-                    },
-                    take: 1,
-                  },
                   nodeBindings: {
                     where: {
                       node: { active: true, lifecycleStatus: 'ACTIVE' },
@@ -954,8 +1013,7 @@ export class CommerceService {
         !offer.active ||
         offer.product.status !== CatalogProductStatus.ACTIVE ||
         !offer.product.accessProfile?.active ||
-        (offer.product.accessProfile.poolBindings.length === 0 &&
-          offer.product.accessProfile.nodeBindings.length === 0)
+        offer.product.accessProfile.nodeBindings.length === 0
       ) {
         throw new BadRequestException('Catalog offer is not purchasable');
       }

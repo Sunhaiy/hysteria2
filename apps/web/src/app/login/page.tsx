@@ -97,10 +97,13 @@ function LoginPageBody() {
         {oauthError ? <div className="feedback error" role="alert">{oauthError}</div> : null}
 
         <div className="auth2-row">
-          <label className="auth2-check">
-            <input type="checkbox" />
-            <span>记住我</span>
-          </label>
+          <span />
+          <Link
+            className="auth2-link"
+            href={`/forgot-password?email=${encodeURIComponent(email)}`}
+          >
+            忘记密码？
+          </Link>
         </div>
 
         <button className="auth2-submit" type="submit" disabled={submitting}>

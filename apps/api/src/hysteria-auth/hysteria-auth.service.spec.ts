@@ -16,7 +16,12 @@ describe('HysteriaAuthService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new HysteriaAuthService(store as never, entitlements as never);
+    service = new HysteriaAuthService(
+      store as never,
+      entitlements as never,
+      store as never,
+      { countForUser: store.getCurrentOnlineCount } as never,
+    );
   });
 
   it('delegates Hysteria HTTP auth payloads to the control plane service', async () => {

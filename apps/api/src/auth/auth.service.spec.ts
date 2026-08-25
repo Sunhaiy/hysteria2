@@ -18,21 +18,29 @@ describe('AuthService sessions', () => {
       consumePasswordResetToken: jest
         .fn<Promise<boolean>, [string, string]>()
         .mockResolvedValue(true),
+      issuePasswordResetToken: jest.fn().mockResolvedValue({
+        id: 'reset_1',
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+      }),
     };
     const jwt = {
       signAsync: jest.fn().mockResolvedValue('signed-session'),
     };
     const cache = {
+      get: jest.fn().mockResolvedValue(null),
       set: jest.fn().mockResolvedValue(undefined),
+    };
+    const mail = {
+      sendPasswordReset: jest.fn().mockResolvedValue(undefined),
     };
     const service = new AuthService(
       store as never,
       jwt as never,
       cache as never,
-      {} as never,
+      mail as never,
       {} as never,
     );
-    return { service, store };
+    return { service, store, mail };
   }
 
   it.each(['suspended', 'banned'] as const)(
@@ -69,5 +77,41 @@ describe('AuthService sessions', () => {
       createHash('sha256').update('raw-reset-token').digest('hex'),
     );
     await expect(compare('new-password-123', passwordHash)).resolves.toBe(true);
+  });
+
+  it('emails a hashed one-time reset token without exposing it in the response', async () => {
+    const { service, store, mail } = createService('active');
+
+    const response = await service.requestPasswordReset('Member@Example.com');
+
+    expect(response).toEqual({
+      success: true,
+      message: '如果该邮箱已注册，重置链接将在几分钟内发送。',
+    });
+    expect(store.issuePasswordResetToken).toHaveBeenCalledTimes(1);
+    const [issued] = store.issuePasswordResetToken.mock.calls[0] as unknown as [
+      { userId: string; createdById: string | null; tokenHash: string },
+    ];
+    expect(issued).toMatchObject({ userId: 'user_1', createdById: null });
+    expect(issued.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+    const [recipient, resetUrl] = mail.sendPasswordReset.mock
+      .calls[0] as unknown as [string, string];
+    expect(recipient).toBe('member@example.com');
+    expect(resetUrl).toMatch(/\/reset-password\?token=/);
+    expect(response).not.toHaveProperty('resetUrl');
+  });
+
+  it('returns the same response for an unknown email without issuing a token', async () => {
+    const { service, store, mail } = createService('active');
+    store.findUserByEmail.mockResolvedValueOnce(null);
+
+    const response = await service.requestPasswordReset('nobody@example.com');
+
+    expect(response).toEqual({
+      success: true,
+      message: '如果该邮箱已注册，重置链接将在几分钟内发送。',
+    });
+    expect(store.issuePasswordResetToken).not.toHaveBeenCalled();
+    expect(mail.sendPasswordReset).not.toHaveBeenCalled();
   });
 });
