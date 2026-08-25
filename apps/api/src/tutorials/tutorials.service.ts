@@ -17,7 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 import type { SaveTutorialDraftDto } from './tutorials.dto';
 
-const publishedCacheKey = 'tutorials:published:v1';
+const publishedCacheKey = 'tutorials:published:v2';
 const maxImageBytes = 10 * 1024 * 1024;
 const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
@@ -38,7 +38,7 @@ const defaults = {
     platform: TutorialPlatform.ANDROID,
     name: 'Android',
     meta: '手机 / 平板',
-    clientName: 'FlClash',
+    clientName: 'Clash Meta',
   },
   ios: {
     platform: TutorialPlatform.IOS,
@@ -135,7 +135,7 @@ export class TutorialsService {
           assets.get(this.platformId(guide.platform)) ?? null,
         ),
         draft: guide.revisions[0]
-          ? this.presentRevision(guide.revisions[0])
+          ? this.presentRevision(guide.revisions[0], guide.platform)
           : null,
       })),
     };
@@ -161,7 +161,8 @@ export class TutorialsService {
       },
     });
     if (!guide) throw new NotFoundException('Tutorial guide not found');
-    if (guide.revisions[0]) return this.presentRevision(guide.revisions[0]);
+    if (guide.revisions[0])
+      return this.presentRevision(guide.revisions[0], platform);
     const latest = await this.prisma.tutorialRevision.findFirst({
       where: { guideId: guide.id },
       orderBy: { version: 'desc' },
@@ -183,7 +184,7 @@ export class TutorialsService {
         steps: { include: { image: true }, orderBy: { sortOrder: 'asc' } },
       },
     });
-    return this.presentRevision(draft);
+    return this.presentRevision(draft, platform);
   }
 
   async saveDraft(
@@ -243,7 +244,7 @@ export class TutorialsService {
         },
       });
     });
-    return this.presentRevision(updated);
+    return this.presentRevision(updated, platform);
   }
 
   async publish(platformValue: string, revisionId: string) {
@@ -426,7 +427,8 @@ export class TutorialsService {
   private normalizeLegacyCopy(value: string) {
     return value
       .replaceAll('v2rayN', 'Clash Verge Rev')
-      .replaceAll('Hiddify', 'FlClash')
+      .replaceAll('Hiddify', 'Clash Meta')
+      .replaceAll('FlClash', 'Clash Meta')
       .replaceAll('sing-box', 'Stash');
   }
 
@@ -491,24 +493,31 @@ export class TutorialsService {
     };
   }
 
-  private presentRevision(revision: {
-    id: string;
-    version: number;
-    status: TutorialRevisionStatus;
-    publishedAt: Date | null;
-    steps: Array<{
+  private presentRevision(
+    revision: {
       id: string;
-      title: string;
-      body: string;
-      sortOrder: number;
-      image: {
+      version: number;
+      status: TutorialRevisionStatus;
+      publishedAt: Date | null;
+      steps: Array<{
         id: string;
-        originalName: string;
-        width: number | null;
-        height: number | null;
-      } | null;
-    }>;
-  }) {
+        title: string;
+        body: string;
+        sortOrder: number;
+        image: {
+          id: string;
+          originalName: string;
+          width: number | null;
+          height: number | null;
+        } | null;
+      }>;
+    },
+    platform?: TutorialPlatform,
+  ) {
+    const presentCopy = (value: string) =>
+      platform === TutorialPlatform.ANDROID
+        ? this.normalizeLegacyCopy(value)
+        : value;
     return {
       id: revision.id,
       version: revision.version,
@@ -516,8 +525,8 @@ export class TutorialsService {
       publishedAt: revision.publishedAt?.toISOString() ?? null,
       steps: revision.steps.map((step) => ({
         id: step.id,
-        title: step.title,
-        body: step.body,
+        title: presentCopy(step.title),
+        body: presentCopy(step.body),
         sortOrder: step.sortOrder,
         image: step.image ? this.presentImage(step.image) : null,
       })),
@@ -542,16 +551,22 @@ export class TutorialsService {
       downloadUrl: string;
     } | null,
   ) {
+    const clientName =
+      guide.platform === TutorialPlatform.ANDROID
+        ? this.normalizeLegacyCopy(guide.clientName)
+        : guide.clientName;
     return {
       id: guide.id,
       platform: this.platformId(guide.platform),
       name: guide.name,
       meta: guide.meta,
-      clientName: guide.clientName,
+      clientName,
       externalUrl: guide.externalUrl,
       active: guide.active,
       asset,
-      revision: revision ? this.presentRevision(revision) : null,
+      revision: revision
+        ? this.presentRevision(revision, guide.platform)
+        : null,
     };
   }
 }

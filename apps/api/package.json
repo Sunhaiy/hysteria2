@@ -15,7 +15,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "prisma db seed",
     "lint": "eslint \"{src,test}/**/*.ts\"",
-    "test": "jest",
+    "test": "jest && node --test prisma/verify-runtime-agent-inventory.test.js",
     "test:cov": "jest --coverage",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "typecheck": "tsc --noEmit"

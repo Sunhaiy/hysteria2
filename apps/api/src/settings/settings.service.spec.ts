@@ -56,7 +56,32 @@ describe('SettingsService cache', () => {
     await service.setMany({ 'tutorial.windows.asset': '{"id":"asset"}' });
 
     expect(cache.del).toHaveBeenCalledWith('settings:all:v1');
-    expect(cache.del).toHaveBeenCalledWith('tutorials:published:v1');
+    expect(cache.del).toHaveBeenCalledWith('tutorials:published:v2');
+  });
+
+  it('does not present the legacy redemption route as a shop URL', async () => {
+    const prisma = {
+      setting: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { key: 'portal.cdkButtonUrl', value: '/portal/redeem' },
+          ]),
+      },
+    };
+    const cache = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new SettingsService(
+      prisma as never,
+      {} as never,
+      cache as never,
+    );
+
+    await expect(service.getPortalBranding()).resolves.toMatchObject({
+      cdkButtonUrl: '',
+    });
   });
 
   it('returns an enabled announcement once per login session', async () => {

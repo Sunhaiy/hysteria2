@@ -31,6 +31,13 @@ type Endpoint = {
   lastCheckedAt?: string | null;
   lastSyncAt?: string | null;
   lastSyncError?: string | null;
+  obfsPassword?: string | null;
+  sni?: string | null;
+  allowInsecureTls: boolean;
+  realityPublicKey?: string | null;
+  realityShortId?: string | null;
+  trafficApiBaseUrl: string;
+  trafficApiSecretSet: boolean;
   controlApiBaseUrl?: string | null;
   controlApiSecretSet: boolean;
   runtimeControlConfigured: boolean;
@@ -43,6 +50,8 @@ type Endpoint = {
     | "failed";
   runtimeStateObservedAt?: string | null;
   runtimeError?: string | null;
+  speedUpMbps: number;
+  speedDownMbps: number;
   latestRuntimeCommand?: {
     id: string;
     action: "start" | "stop" | "status";
@@ -158,7 +167,7 @@ const runtimeStateDetail = (node: Endpoint) =>
             ? formatDateTime(node.runtimeStateObservedAt)
             : node.runtimeControlConfigured
               ? "等待状态采集"
-              : "未配置 Agent";
+              : "未配置服务管理";
 
 export default function NodesPage() {
   const { token } = useAuth();
@@ -167,16 +176,11 @@ export default function NodesPage() {
   const [feedback, setFeedback] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [drawer, setDrawer] = useState<"server" | "node" | "runtime" | null>(
-    null,
-  );
+  const [drawer, setDrawer] = useState<"server" | "node" | null>(null);
   const [serverForm, setServerForm] = useState<ServerForm>(emptyServerForm);
   const [nodeForm, setNodeForm] = useState<NodeForm>(emptyNodeForm);
-  const [runtimeNode, setRuntimeNode] = useState<Endpoint | null>(null);
-  const [runtimeForm, setRuntimeForm] = useState({
-    controlApiBaseUrl: "",
-    controlApiSecret: "",
-  });
+  const [editingServer, setEditingServer] = useState<Server | null>(null);
+  const [editingNode, setEditingNode] = useState<Endpoint | null>(null);
 
   const load = useCallback(
     async (signal?: AbortSignal, showLoading = true) => {
@@ -287,58 +291,54 @@ export default function NodesPage() {
     }
   }
 
-  function openRuntimeDrawer(node: Endpoint) {
-    setRuntimeNode(node);
-    setRuntimeForm({
-      controlApiBaseUrl: node.controlApiBaseUrl ?? "",
-      controlApiSecret: "",
-    });
-    setDrawer("runtime");
-    setError(null);
-  }
-
-  async function saveRuntimeAgent(event: FormEvent) {
-    event.preventDefault();
-    if (!token || !runtimeNode) return;
-    setBusyId(runtimeNode.id);
-    setError(null);
-    try {
-      await apiRequest(`/api/admin/nodes/${runtimeNode.id}`, {
-        method: "PATCH",
-        token,
-        body: {
-          controlApiBaseUrl: runtimeForm.controlApiBaseUrl.trim(),
-          controlApiSecret: runtimeForm.controlApiSecret || undefined,
-        },
-      });
-      setDrawer(null);
-      setRuntimeNode(null);
-      setFeedback(`${runtimeNode.label} 的运行控制 Agent 已更新。`);
-      await load();
-    } catch (cause) {
-      setError(
-        cause instanceof ApiError ? cause.message : "运行控制配置保存失败。",
-      );
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  function openServerDrawer() {
-    setServerForm(emptyServerForm);
+  function openServerDrawer(server?: Server) {
+    setEditingServer(server ?? null);
+    setServerForm(
+      server
+        ? {
+            slug: server.slug,
+            name: server.name,
+            hostname: server.hostname,
+            region: server.region ?? "",
+            provider: server.provider ?? "",
+          }
+        : emptyServerForm,
+    );
     setDrawer("server");
     setError(null);
   }
 
-  function openNodeDrawer(server?: Server) {
+  function openNodeDrawer(server?: Server, node?: Endpoint) {
     const availableServers = data.servers.filter(
       (item) => item.id !== "unassigned",
     );
-    setNodeForm({
-      ...emptyNodeForm,
-      serverId: server?.id ?? availableServers[0]?.id ?? "",
-      hostname: server?.hostname ?? availableServers[0]?.hostname ?? "",
-    });
+    setEditingNode(node ?? null);
+    setNodeForm(
+      node
+        ? {
+            serverId: server?.id ?? "",
+            protocol: node.protocol,
+            label: node.label,
+            hostname: node.hostname,
+            port: node.port,
+            obfsPassword: node.obfsPassword ?? "",
+            sni: node.sni ?? "",
+            realityPublicKey: node.realityPublicKey ?? "",
+            realityShortId: node.realityShortId ?? "",
+            trafficApiBaseUrl: node.trafficApiBaseUrl,
+            trafficApiSecret: "",
+            controlApiBaseUrl: node.controlApiBaseUrl ?? "",
+            controlApiSecret: "",
+            allowInsecureTls: node.allowInsecureTls,
+            speedUpMbps: node.speedUpMbps,
+            speedDownMbps: node.speedDownMbps,
+          }
+        : {
+            ...emptyNodeForm,
+            serverId: server?.id ?? availableServers[0]?.id ?? "",
+            hostname: server?.hostname ?? availableServers[0]?.hostname ?? "",
+          },
+    );
     setDrawer("node");
     setError(null);
   }
@@ -346,24 +346,34 @@ export default function NodesPage() {
   async function saveServer(event: FormEvent) {
     event.preventDefault();
     if (!token) return;
-    setBusyId("new-server");
+    setBusyId(editingServer?.id ?? "new-server");
     setError(null);
     try {
-      await apiRequest("/api/admin/node-ops/servers", {
-        method: "POST",
-        token,
-        body: {
-          ...serverForm,
-          slug: serverForm.slug.trim(),
-          name: serverForm.name.trim(),
-          hostname: serverForm.hostname.trim(),
-          region: serverForm.region.trim() || undefined,
-          provider: serverForm.provider.trim() || undefined,
-          active: true,
+      await apiRequest(
+        editingServer
+          ? `/api/admin/node-ops/servers/${editingServer.id}`
+          : "/api/admin/node-ops/servers",
+        {
+          method: editingServer ? "PUT" : "POST",
+          token,
+          body: {
+            ...serverForm,
+            slug: serverForm.slug.trim(),
+            name: serverForm.name.trim(),
+            hostname: serverForm.hostname.trim(),
+            region: serverForm.region.trim() || undefined,
+            provider: serverForm.provider.trim() || undefined,
+            active: editingServer?.active ?? true,
+          },
         },
-      });
+      );
       setDrawer(null);
-      setFeedback("服务器已新增，可继续登记协议节点。");
+      setEditingServer(null);
+      setFeedback(
+        editingServer
+          ? "服务器信息已更新。"
+          : "服务器已新增，可继续登记协议节点。",
+      );
       await load();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "服务器新增失败。");
@@ -375,51 +385,56 @@ export default function NodesPage() {
   async function saveNode(event: FormEvent) {
     event.preventDefault();
     if (!token) return;
-    setBusyId("new-node");
+    setBusyId(editingNode?.id ?? "new-node");
     setError(null);
     try {
-      await apiRequest("/api/admin/nodes", {
-        method: "POST",
-        token,
-        body: {
-          serverId: nodeForm.serverId,
-          protocol: nodeForm.protocol,
-          label: nodeForm.label.trim(),
-          hostname: nodeForm.hostname.trim(),
-          port: nodeForm.port,
-          obfsPassword:
-            nodeForm.protocol === "hysteria2"
-              ? nodeForm.obfsPassword.trim() || undefined
-              : undefined,
-          sni: nodeForm.sni.trim() || undefined,
-          allowInsecureTls: nodeForm.allowInsecureTls,
-          realityPublicKey:
-            nodeForm.protocol === "vless_reality"
-              ? nodeForm.realityPublicKey.trim()
-              : undefined,
-          realityShortId:
-            nodeForm.protocol === "vless_reality"
-              ? nodeForm.realityShortId.trim() || undefined
-              : undefined,
-          realityFingerprint:
-            nodeForm.protocol === "vless_reality" ? "chrome" : undefined,
-          realitySpiderX:
-            nodeForm.protocol === "vless_reality" ? "/" : undefined,
-          vlessFlow:
-            nodeForm.protocol === "vless_reality"
-              ? "xtls-rprx-vision"
-              : undefined,
-          trafficApiBaseUrl: nodeForm.trafficApiBaseUrl.trim(),
-          trafficApiSecret: nodeForm.trafficApiSecret,
-          controlApiBaseUrl: nodeForm.controlApiBaseUrl.trim() || undefined,
-          controlApiSecret: nodeForm.controlApiSecret || undefined,
-          active: true,
-          speedUpMbps: nodeForm.speedUpMbps,
-          speedDownMbps: nodeForm.speedDownMbps,
+      await apiRequest(
+        editingNode ? `/api/admin/nodes/${editingNode.id}` : "/api/admin/nodes",
+        {
+          method: editingNode ? "PATCH" : "POST",
+          token,
+          body: {
+            serverId: nodeForm.serverId,
+            protocol: nodeForm.protocol,
+            label: nodeForm.label.trim(),
+            hostname: nodeForm.hostname.trim(),
+            port: nodeForm.port,
+            obfsPassword:
+              nodeForm.protocol === "hysteria2"
+                ? nodeForm.obfsPassword.trim() || undefined
+                : undefined,
+            sni: nodeForm.sni.trim() || undefined,
+            allowInsecureTls: nodeForm.allowInsecureTls,
+            realityPublicKey:
+              nodeForm.protocol === "vless_reality"
+                ? nodeForm.realityPublicKey.trim()
+                : undefined,
+            realityShortId:
+              nodeForm.protocol === "vless_reality"
+                ? nodeForm.realityShortId.trim() || undefined
+                : undefined,
+            realityFingerprint:
+              nodeForm.protocol === "vless_reality" ? "chrome" : undefined,
+            realitySpiderX:
+              nodeForm.protocol === "vless_reality" ? "/" : undefined,
+            vlessFlow:
+              nodeForm.protocol === "vless_reality"
+                ? "xtls-rprx-vision"
+                : undefined,
+            trafficApiBaseUrl: nodeForm.trafficApiBaseUrl.trim(),
+            trafficApiSecret:
+              nodeForm.trafficApiSecret || (editingNode ? undefined : ""),
+            controlApiBaseUrl: nodeForm.controlApiBaseUrl.trim(),
+            controlApiSecret: nodeForm.controlApiSecret || undefined,
+            active: editingNode ? undefined : true,
+            speedUpMbps: nodeForm.speedUpMbps,
+            speedDownMbps: nodeForm.speedDownMbps,
+          },
         },
-      });
+      );
       setDrawer(null);
-      setFeedback("节点已新增并启用。");
+      setEditingNode(null);
+      setFeedback(editingNode ? "节点配置已更新。" : "节点已新增并启用。");
       await load();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "节点新增失败。");
@@ -444,6 +459,34 @@ export default function NodesPage() {
         cause instanceof ApiError
           ? cause.message
           : "节点仍有关联记录，无法删除。",
+      );
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function deleteServer(server: Server) {
+    if (
+      !token ||
+      !window.confirm(
+        `确认删除服务器“${server.name}”？只有不包含节点的服务器可以删除。`,
+      )
+    )
+      return;
+    setBusyId(server.id);
+    setError(null);
+    try {
+      await apiRequest(`/api/admin/node-ops/servers/${server.id}`, {
+        method: "DELETE",
+        token,
+      });
+      setFeedback(`${server.name} 已删除。`);
+      await load();
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError
+          ? cause.message
+          : "请先移动或删除服务器下的全部节点。",
       );
     } finally {
       setBusyId(null);
@@ -481,7 +524,7 @@ export default function NodesPage() {
           <button
             className="ghost-button"
             type="button"
-            onClick={openServerDrawer}
+            onClick={() => openServerDrawer()}
           >
             <Icon name="add" />
             新增服务器
@@ -552,14 +595,39 @@ export default function NodesPage() {
                   {server.onlineUsers} 在线
                 </span>
                 {server.id !== "unassigned" ? (
-                  <button
-                    className="ghost-button compact"
-                    type="button"
-                    onClick={() => openNodeDrawer(server)}
-                  >
-                    <Icon name="add" />
-                    新增节点
-                  </button>
+                  <>
+                    <button
+                      className="ghost-button compact"
+                      type="button"
+                      onClick={() => openServerDrawer(server)}
+                    >
+                      <Icon name="edit" />
+                      编辑服务器
+                    </button>
+                    <button
+                      className="ghost-button compact"
+                      type="button"
+                      onClick={() => openNodeDrawer(server)}
+                    >
+                      <Icon name="add" />
+                      新增节点
+                    </button>
+                    <button
+                      className="danger-button compact"
+                      disabled={
+                        busyId === server.id || server.endpoints.length > 0
+                      }
+                      type="button"
+                      title={
+                        server.endpoints.length
+                          ? "请先移动或删除服务器下的全部节点"
+                          : "删除服务器"
+                      }
+                      onClick={() => void deleteServer(server)}
+                    >
+                      删除服务器
+                    </button>
+                  </>
                 ) : null}
               </div>
             }
@@ -583,10 +651,10 @@ export default function NodesPage() {
                           ? node.accessProfiles
                               .map(
                                 (profile) =>
-                                  `${profile.name} · P${profile.priority}`,
+                                  `${profile.name.replace(/\s*访问策略/g, "")} · 优先级 ${profile.priority + 1}`,
                               )
                               .join(" / ")
-                          : "未直接绑定访问策略"}
+                          : "尚未分配给套餐"}
                       </span>
                     </div>
                     <div className="node-endpoint-telemetry">
@@ -711,19 +779,19 @@ export default function NodesPage() {
                         <button
                           className="ghost-button compact"
                           type="button"
-                          onClick={() => openRuntimeDrawer(node)}
+                          onClick={() => openNodeDrawer(server, node)}
                         >
-                          配置 Agent
+                          配置服务管理
                         </button>
                       )}
                       <button
                         className="ghost-button compact"
                         disabled={busyId === node.id}
                         type="button"
-                        onClick={() => openRuntimeDrawer(node)}
+                        onClick={() => openNodeDrawer(server, node)}
                       >
-                        <Icon name="settings" />
-                        运行配置
+                        <Icon name="edit" />
+                        编辑节点
                       </button>
                       <button
                         className="danger-button compact"
@@ -746,14 +814,14 @@ export default function NodesPage() {
       <Drawer
         open={drawer === "server"}
         onClose={() => setDrawer(null)}
-        title="新增服务器"
+        title={editingServer ? "编辑服务器" : "新增服务器"}
         footer={
           <div className="toolbar-actions">
             <button
               className="action-button"
               type="submit"
               form="server-form"
-              disabled={busyId === "new-server"}
+              disabled={busyId === (editingServer?.id ?? "new-server")}
             >
               保存服务器
             </button>
@@ -844,14 +912,14 @@ export default function NodesPage() {
       <Drawer
         open={drawer === "node"}
         onClose={() => setDrawer(null)}
-        title="新增节点"
+        title={editingNode ? "编辑节点" : "新增节点"}
         footer={
           <div className="toolbar-actions">
             <button
               className="action-button"
               type="submit"
               form="node-form"
-              disabled={busyId === "new-node"}
+              disabled={busyId === (editingNode?.id ?? "new-node")}
             >
               保存节点
             </button>
@@ -1008,7 +1076,7 @@ export default function NodesPage() {
             </label>
           )}
           <label className="field">
-            <span className="fine-print">采集 API 地址</span>
+            <span className="fine-print">流量采集地址</span>
             <input
               className="control mono"
               required
@@ -1022,11 +1090,14 @@ export default function NodesPage() {
             />
           </label>
           <label className="field">
-            <span className="fine-print">采集 API 密钥</span>
+            <span className="fine-print">流量采集密钥</span>
             <input
               className="control mono"
               type="password"
-              required
+              required={!editingNode}
+              placeholder={
+                editingNode?.trafficApiSecretSet ? "已配置，留空保持不变" : ""
+              }
               value={nodeForm.trafficApiSecret}
               onChange={(event) =>
                 setNodeForm((current) => ({
@@ -1037,7 +1108,7 @@ export default function NodesPage() {
             />
           </label>
           <label className="field">
-            <span className="fine-print">运行控制 Agent 地址</span>
+            <span className="fine-print">节点管理地址</span>
             <input
               className="control mono"
               value={nodeForm.controlApiBaseUrl}
@@ -1050,10 +1121,17 @@ export default function NodesPage() {
             />
           </label>
           <label className="field">
-            <span className="fine-print">运行控制 Agent 密钥</span>
+            <span className="fine-print">节点管理密钥</span>
             <input
               className="control mono"
               type="password"
+              required={
+                Boolean(nodeForm.controlApiBaseUrl.trim()) &&
+                !editingNode?.controlApiSecretSet
+              }
+              placeholder={
+                editingNode?.controlApiSecretSet ? "已配置，留空保持不变" : ""
+              }
               value={nodeForm.controlApiSecret}
               onChange={(event) =>
                 setNodeForm((current) => ({
@@ -1105,73 +1183,6 @@ export default function NodesPage() {
               }
             />
             <span>允许不安全 TLS</span>
-          </label>
-        </form>
-      </Drawer>
-      <Drawer
-        open={drawer === "runtime"}
-        onClose={() => {
-          setDrawer(null);
-          setRuntimeNode(null);
-        }}
-        title="运行控制配置"
-        footer={
-          <div className="toolbar-actions">
-            <button
-              className="action-button"
-              type="submit"
-              form="runtime-form"
-              disabled={!runtimeNode || busyId === runtimeNode.id}
-            >
-              保存配置
-            </button>
-            <button
-              className="ghost-button"
-              type="button"
-              onClick={() => {
-                setDrawer(null);
-                setRuntimeNode(null);
-              }}
-            >
-              取消
-            </button>
-          </div>
-        }
-      >
-        <form
-          id="runtime-form"
-          className="form-grid"
-          onSubmit={saveRuntimeAgent}
-        >
-          <label className="field">
-            <span className="fine-print">Agent 地址</span>
-            <input
-              className="control mono"
-              value={runtimeForm.controlApiBaseUrl}
-              onChange={(event) =>
-                setRuntimeForm((current) => ({
-                  ...current,
-                  controlApiBaseUrl: event.target.value,
-                }))
-              }
-            />
-          </label>
-          <label className="field">
-            <span className="fine-print">Agent 密钥</span>
-            <input
-              className="control mono"
-              type="password"
-              placeholder={
-                runtimeNode?.controlApiSecretSet ? "已配置，留空保持不变" : ""
-              }
-              value={runtimeForm.controlApiSecret}
-              onChange={(event) =>
-                setRuntimeForm((current) => ({
-                  ...current,
-                  controlApiSecret: event.target.value,
-                }))
-              }
-            />
           </label>
         </form>
       </Drawer>

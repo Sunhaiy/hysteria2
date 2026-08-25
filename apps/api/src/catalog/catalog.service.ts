@@ -11,6 +11,7 @@ import {
   Prisma,
   QuotaCadence,
 } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import { CacheService } from '../cache/cache.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
@@ -31,38 +32,43 @@ export class CatalogService {
   ) {}
 
   async getAdminCatalog() {
-    const [plans, trafficPacks, accessProfiles, products] = await Promise.all([
-      this.prisma.plan.findMany({
-        include: {
-          offers: {
-            orderBy: [{ billingPeriod: 'asc' }, { priceCents: 'asc' }],
-          },
-          accessProfile: {
-            include: {
-              nodeBindings: {
-                include: { node: true },
-                orderBy: { priority: 'asc' },
+    const [plans, trafficPacks, accessProfiles, products, nodes] =
+      await Promise.all([
+        this.prisma.plan.findMany({
+          include: {
+            offers: {
+              orderBy: [{ billingPeriod: 'asc' }, { priceCents: 'asc' }],
+            },
+            accessProfile: {
+              include: {
+                nodeBindings: {
+                  include: { node: true },
+                  orderBy: { priority: 'asc' },
+                },
               },
             },
           },
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.trafficPackProduct.findMany({
-        include: { accessProfile: true },
-        orderBy: [{ archivedAt: 'asc' }, { priceCents: 'asc' }],
-      }),
-      this.prisma.accessProfile.findMany({
-        include: {
-          nodeBindings: {
-            include: { node: true },
-            orderBy: { priority: 'asc' },
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.prisma.trafficPackProduct.findMany({
+          include: { accessProfile: true },
+          orderBy: [{ archivedAt: 'asc' }, { priceCents: 'asc' }],
+        }),
+        this.prisma.accessProfile.findMany({
+          include: {
+            nodeBindings: {
+              include: { node: true },
+              orderBy: { priority: 'asc' },
+            },
           },
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.loadUnifiedProducts(),
-    ]);
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.loadUnifiedProducts(),
+        this.prisma.node.findMany({
+          include: { server: true },
+          orderBy: [{ serverId: 'asc' }, { createdAt: 'asc' }],
+        }),
+      ]);
     return {
       products,
       plans: plans.map((plan) => ({
@@ -100,6 +106,7 @@ export class CatalogService {
       accessProfiles: accessProfiles.map((profile) =>
         this.presentAccessProfile(profile),
       ),
+      servers: this.groupAvailableNodes(nodes),
     };
   }
 
@@ -169,7 +176,12 @@ export class CatalogService {
 
   async createProduct(input: SaveCatalogProductDto) {
     const id = await this.prisma.$transaction(async (tx) => {
-      const profile = await this.validateProductInput(tx, input);
+      const productId = randomUUID();
+      const profile = await this.resolveProductAccessProfile(
+        tx,
+        input,
+        productId,
+      );
       const kind = this.toProductKind(input.kind);
       const defaultMultiplierBasisPoints = this.multiplierBasisPoints(
         input.defaultTrafficMultiplier,
@@ -197,7 +209,7 @@ export class CatalogService {
             deviceLimit: profile.deviceLimit,
             priceCents: primaryOffer.priceCents,
             accent: input.accent ?? 'green',
-            accessProfileId: input.accessProfileId,
+            accessProfileId: profile.id,
           },
         });
         legacyPlanId = plan.id;
@@ -231,7 +243,7 @@ export class CatalogService {
               )! * 30,
             priceCents: defaultOffer.priceCents,
             accent: input.accent ?? 'teal',
-            accessProfileId: input.accessProfileId,
+            accessProfileId: profile.id,
           },
         });
         legacyTrafficPackProductId = product.id;
@@ -239,6 +251,7 @@ export class CatalogService {
 
       const product = await tx.catalogProduct.create({
         data: {
+          id: productId,
           legacyPlanId,
           legacyTrafficPackProductId,
           slug: input.slug.trim(),
@@ -251,7 +264,7 @@ export class CatalogService {
             kind === CatalogProductKind.PLAN
               ? QuotaCadence.MONTHLY_RESET
               : QuotaCadence.ONE_TIME,
-          accessProfileId: input.accessProfileId,
+          accessProfileId: profile.id,
           speedUpMbps: input.speedUpMbps,
           speedDownMbps: input.speedDownMbps,
           defaultTrafficMultiplierBasisPoints: defaultMultiplierBasisPoints,
@@ -299,7 +312,12 @@ export class CatalogService {
       if (existing.kind !== kind) {
         throw new BadRequestException('Product kind cannot be changed');
       }
-      const profile = await this.validateProductInput(tx, input);
+      const profile = await this.resolveProductAccessProfile(
+        tx,
+        input,
+        id,
+        existing.accessProfileId,
+      );
       const defaultMultiplierBasisPoints = this.multiplierBasisPoints(
         input.defaultTrafficMultiplier,
       );
@@ -389,7 +407,7 @@ export class CatalogService {
           name: input.name.trim(),
           description: input.description?.trim(),
           storeUrl: this.normalizeStoreUrl(input.storeUrl),
-          accessProfileId: input.accessProfileId,
+          accessProfileId: profile.id,
           speedUpMbps: input.speedUpMbps,
           speedDownMbps: input.speedDownMbps,
           defaultTrafficMultiplierBasisPoints: defaultMultiplierBasisPoints,
@@ -413,7 +431,7 @@ export class CatalogService {
             deviceLimit: profile.deviceLimit,
             priceCents: primary.priceCents,
             accent: input.accent,
-            accessProfileId: input.accessProfileId,
+            accessProfileId: profile.id,
           },
         });
       }
@@ -431,7 +449,7 @@ export class CatalogService {
               )! * 30,
             priceCents: defaultOffer.priceCents,
             accent: input.accent,
-            accessProfileId: input.accessProfileId,
+            accessProfileId: profile.id,
             archivedAt: input.status === 'archived' ? new Date() : null,
           },
         });
@@ -443,8 +461,10 @@ export class CatalogService {
           endsAt: { gt: new Date() },
         },
         data: {
+          accessProfileId: profile.id,
           speedUpMbpsSnapshot: input.speedUpMbps,
           speedDownMbpsSnapshot: input.speedDownMbps,
+          deviceLimitSnapshot: profile.deviceLimit,
         },
       });
       if (kind === CatalogProductKind.PLAN) {
@@ -457,11 +477,11 @@ export class CatalogService {
           data: {
             speedUpMbpsSnapshot: input.speedUpMbps,
             speedDownMbpsSnapshot: input.speedDownMbps,
+            deviceLimitSnapshot: profile.deviceLimit,
           },
         });
         await tx.accessAccount.updateMany({
           where: {
-            trafficMultiplierOverrideBasisPoints: null,
             entitlementGrants: {
               some: {
                 productId: id,
@@ -474,6 +494,15 @@ export class CatalogService {
           data: {
             trafficMultiplierBasisPoints: defaultMultiplierBasisPoints,
           },
+        });
+      }
+      if (existing.legacyTrafficPackProductId) {
+        await tx.trafficPack.updateMany({
+          where: {
+            trafficPackProductId: existing.legacyTrafficPackProductId,
+            status: 'ACTIVE',
+          },
+          data: { accessProfileId: profile.id },
         });
       }
     });
@@ -780,17 +809,15 @@ export class CatalogService {
     });
   }
 
-  private async validateProductInput(
+  private async resolveProductAccessProfile(
     tx: Prisma.TransactionClient,
     input: SaveCatalogProductDto,
+    productId: string,
+    currentProfileId?: string | null,
   ) {
     if (input.offers.length === 0) {
       throw new BadRequestException('At least one catalog offer is required');
     }
-    const profile = await tx.accessProfile.findUnique({
-      where: { id: input.accessProfileId },
-    });
-    if (!profile) throw new BadRequestException('Unknown access profile');
     this.multiplierBasisPoints(input.defaultTrafficMultiplier);
     const periods = input.offers.map((offer) => offer.billingPeriod);
     if (new Set(periods).size !== periods.length) {
@@ -813,6 +840,71 @@ export class CatalogService {
           : 'Published traffic packs require quarterly and yearly offers',
       );
     }
+
+    if (input.nodeIds) {
+      await this.validateNodes(tx, input.nodeIds);
+      const nodes = await tx.node.findMany({
+        where: { id: { in: input.nodeIds } },
+        select: { id: true, active: true, lifecycleStatus: true },
+      });
+      if (
+        input.status === 'active' &&
+        !nodes.some((node) => node.active && node.lifecycleStatus === 'ACTIVE')
+      ) {
+        throw new BadRequestException(
+          'Published products require a serviceable node',
+        );
+      }
+      const managedSlug = `catalog-product-${productId}`;
+      const current = currentProfileId
+        ? await tx.accessProfile.findUnique({ where: { id: currentProfileId } })
+        : null;
+      const profileData = {
+        name: `${input.name.trim()} 可用节点`,
+        description: '由商品节点选择自动维护',
+        active: input.status !== 'archived',
+        speedUpMbps: input.speedUpMbps,
+        speedDownMbps: input.speedDownMbps,
+        deviceLimit: input.deviceLimit ?? current?.deviceLimit ?? 5,
+      };
+      if (current?.slug === managedSlug) {
+        await tx.accessProfileNode.deleteMany({
+          where: { accessProfileId: current.id },
+        });
+        return tx.accessProfile.update({
+          where: { id: current.id },
+          data: {
+            ...profileData,
+            nodeBindings: {
+              create: input.nodeIds.map((nodeId, priority) => ({
+                nodeId,
+                priority,
+              })),
+            },
+          },
+        });
+      }
+      return tx.accessProfile.create({
+        data: {
+          slug: managedSlug,
+          ...profileData,
+          nodeBindings: {
+            create: input.nodeIds.map((nodeId, priority) => ({
+              nodeId,
+              priority,
+            })),
+          },
+        },
+      });
+    }
+
+    if (!input.accessProfileId) {
+      throw new BadRequestException('At least one node is required');
+    }
+    const profile = await tx.accessProfile.findUnique({
+      where: { id: input.accessProfileId },
+    });
+    if (!profile) throw new BadRequestException('Unknown access profile');
     if (input.status === 'active') {
       if (!profile.active || input.offers.some((offer) => !offer.active)) {
         throw new BadRequestException(
@@ -821,7 +913,7 @@ export class CatalogService {
       }
       const directNodes = await tx.accessProfileNode.count({
         where: {
-          accessProfileId: input.accessProfileId,
+          accessProfileId: profile.id,
           node: { active: true, lifecycleStatus: 'ACTIVE' },
         },
       });
@@ -832,6 +924,61 @@ export class CatalogService {
       }
     }
     return profile;
+  }
+
+  private groupAvailableNodes(
+    nodes: Array<{
+      id: string;
+      label: string;
+      protocol: string;
+      hostname: string;
+      active: boolean;
+      lifecycleStatus: string;
+      serverId: string | null;
+      server: {
+        id: string;
+        name: string;
+        region: string | null;
+        active: boolean;
+      } | null;
+    }>,
+  ) {
+    const servers = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        region: string | null;
+        nodes: Array<{
+          id: string;
+          label: string;
+          protocol: string;
+          hostname: string;
+          serviceable: boolean;
+        }>;
+      }
+    >();
+    for (const node of nodes) {
+      const serverId = node.server?.id ?? `unassigned-${node.id}`;
+      const server = servers.get(serverId) ?? {
+        id: serverId,
+        name: node.server?.name ?? '未归属服务器',
+        region: node.server?.region ?? null,
+        nodes: [],
+      };
+      server.nodes.push({
+        id: node.id,
+        label: node.label,
+        protocol: node.protocol.toLowerCase(),
+        hostname: node.hostname,
+        serviceable:
+          node.active &&
+          node.lifecycleStatus === 'ACTIVE' &&
+          (node.server?.active ?? true),
+      });
+      servers.set(serverId, server);
+    }
+    return [...servers.values()];
   }
 
   private multiplierBasisPoints(multiplier: number) {

@@ -130,6 +130,76 @@ describe('CatalogService publishing rules', () => {
     );
   });
 
+  it('creates a product-owned node binding instead of mutating a shared profile', async () => {
+    const tx = {
+      node: {
+        count: jest.fn().mockResolvedValue(1),
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 'node_1', active: true, lifecycleStatus: 'ACTIVE' },
+          ]),
+      },
+      accessProfile: {
+        findUnique: jest.fn().mockResolvedValue({
+          ...profile,
+          slug: 'shared-profile',
+        }),
+        create: jest.fn().mockResolvedValue({
+          ...profile,
+          id: 'profile_owned',
+          slug: 'catalog-product-product_1',
+        }),
+      },
+    };
+    const service = serviceWith(tx);
+    const productInput = {
+      slug: 'core',
+      kind: 'plan' as const,
+      status: 'draft' as const,
+      name: 'Core',
+      nodeIds: ['node_1'],
+      deviceLimit: 4,
+      speedUpMbps: 30,
+      speedDownMbps: 150,
+      defaultTrafficMultiplier: 1.5,
+      offers: [
+        {
+          slug: 'core-monthly',
+          name: 'Monthly',
+          billingPeriod: 'monthly' as const,
+          trafficBytes: 100,
+          priceCents: 1000,
+          active: true,
+        },
+      ],
+    };
+    const resolver = service as unknown as {
+      resolveProductAccessProfile(
+        client: typeof tx,
+        input: typeof productInput,
+        productId: string,
+        currentProfileId?: string,
+      ): Promise<{ id: string }>;
+    };
+
+    const result = await resolver.resolveProductAccessProfile(
+      tx,
+      productInput,
+      'product_1',
+      'profile_shared',
+    );
+
+    expect(result.id).toBe('profile_owned');
+    const [createProfile] = tx.accessProfile.create.mock
+      .calls[0] as unknown as [{ data: Record<string, unknown> }];
+    expect(createProfile.data).toMatchObject({
+      slug: 'catalog-product-product_1',
+      deviceLimit: 4,
+      nodeBindings: { create: [{ nodeId: 'node_1', priority: 0 }] },
+    });
+  });
+
   it('updates active speed snapshots and the default multiplier in one transaction', async () => {
     const now = new Date('2026-08-24T00:00:00.000Z');
     const periods = ['monthly', 'quarterly', 'yearly'] as const;
@@ -270,9 +340,6 @@ describe('CatalogService publishing rules', () => {
       { where: Record<string, unknown>; data: Record<string, unknown> },
     ];
     expect(accountUpdate).toMatchObject({
-      where: {
-        trafficMultiplierOverrideBasisPoints: null,
-      },
       data: { trafficMultiplierBasisPoints: 15_000 },
     });
   });
@@ -283,6 +350,7 @@ describe('CatalogService publishing rules', () => {
       plan: { findMany: jest.fn().mockResolvedValue([]) },
       trafficPackProduct: { findMany: jest.fn().mockResolvedValue([]) },
       accessProfile: { findMany: jest.fn().mockResolvedValue([]) },
+      node: { findMany: jest.fn().mockResolvedValue([]) },
       catalogProduct: {
         findMany: jest.fn().mockResolvedValue([
           {

@@ -744,25 +744,27 @@ model AuthEvent {
 }
 
 model UsageRollup {
-  id                  String             @id @default(cuid())
-  userId              String
-  subscriptionId      String?
-  nodeId              String
-  importBatchId       String?
-  subscriptionCycleId String?
-  bucketStart         DateTime
-  txBytes             BigInt
-  rxBytes             BigInt
-  accountedBytes      BigInt?
-  overageBytes        BigInt             @default(0)
-  source              String
-  createdAt           DateTime           @default(now())
-  user                User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  subscription        Subscription?      @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
-  node                Node               @relation(fields: [nodeId], references: [id], onDelete: Cascade)
-  importBatch         UsageImportBatch?  @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
-  subscriptionCycle   SubscriptionCycle? @relation(fields: [subscriptionCycleId], references: [id], onDelete: SetNull)
-  allocations         UsageAllocation[]
+  id                    String             @id @default(cuid())
+  userId                String
+  subscriptionId        String?
+  nodeId                String
+  importBatchId         String?
+  subscriptionCycleId   String?
+  bucketStart           DateTime
+  txBytes               BigInt
+  rxBytes               BigInt
+  rawBytes              BigInt?
+  multiplierBasisPoints Int?
+  accountedBytes        BigInt?
+  overageBytes          BigInt             @default(0)
+  source                String
+  createdAt             DateTime           @default(now())
+  user                  User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription          Subscription?      @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  node                  Node               @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  importBatch           UsageImportBatch?  @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  subscriptionCycle     SubscriptionCycle? @relation(fields: [subscriptionCycleId], references: [id], onDelete: SetNull)
+  allocations           UsageAllocation[]
 
   @@unique([importBatchId, userId])
   @@index([userId, bucketStart])

@@ -38,11 +38,11 @@ const TUTORIAL_DEFAULTS = {
   android: {
     name: 'Android',
     meta: '手机 / 平板',
-    client: 'FlClash',
+    client: 'Clash Meta',
     steps: [
-      '下载并安装 FlClash 客户端',
+      '下载并安装 Clash Meta 客户端',
       '打开「接入信息」，复制一键订阅链接',
-      '在 FlClash 中从剪贴板添加订阅',
+      '在 Clash Meta 中从剪贴板添加订阅',
       '选择节点，允许 VPN 权限并开始连接',
     ],
   },
@@ -60,7 +60,7 @@ const TUTORIAL_DEFAULTS = {
 } as const;
 
 const settingsCacheKey = 'settings:all:v1';
-const publishedTutorialsCacheKey = 'tutorials:published:v1';
+const publishedTutorialsCacheKey = 'tutorials:published:v2';
 const announcementAcknowledgementTtlSeconds = 12 * 60 * 60;
 
 @Injectable()
@@ -305,13 +305,15 @@ export class SettingsService {
   async getPortalBranding() {
     const map = await this.all();
     const mode = map.get('portal.purchaseMode');
+    const configuredShopUrl = map.get('portal.cdkButtonUrl')?.trim() || '';
     return {
       // "balance" = self-serve wallet checkout; "cdk" = buy a CDK at the shop
       // link then redeem it.
       purchaseMode: mode === 'cdk' ? 'cdk' : 'balance',
       buyButtonText: map.get('portal.buyButtonText') || '购买',
       cdkButtonText: map.get('portal.cdkButtonText') || 'cdk充值',
-      cdkButtonUrl: map.get('portal.cdkButtonUrl') || '/portal/redeem',
+      cdkButtonUrl:
+        configuredShopUrl === '/portal/redeem' ? '' : configuredShopUrl,
     };
   }
 

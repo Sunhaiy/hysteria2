@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { CustomSelect } from "@/components/custom-select";
 import { DataTable } from "@/components/data-table";
+import { EChart } from "@/components/echart";
 import { Icon } from "@/components/icon";
 import { MetricCard } from "@/components/metric-card";
 import { Panel } from "@/components/panel";
@@ -14,6 +15,7 @@ import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
 import { formatBytes, formatDateTime, formatMoney } from "@/lib/format";
 import type { PaginatedResponse } from "@/lib/types";
+import type { EChartsOption } from "echarts";
 
 type Bucket = {
   id: string;
@@ -46,6 +48,8 @@ type Customer = {
   notes?: string | null;
   balanceCents: number;
   trafficMultiplier: number;
+  planTrafficMultiplier: number;
+  effectiveTrafficMultiplier: number;
   createdAt: string;
   summary: {
     activeGrantCount: number;
@@ -283,6 +287,47 @@ export default function CustomerDetailPage() {
     [catalog],
   );
 
+  const trafficChartOption = useMemo<EChartsOption>(() => {
+    const points = [...usage.items].reverse();
+    return {
+      tooltip: {
+        trigger: "axis",
+        valueFormatter: (value) => formatBytes(Number(value)),
+      },
+      legend: {
+        data: ["实际流量", "计费流量"],
+        top: 0,
+        left: "center",
+      },
+      grid: { left: 12, right: 18, top: 48, bottom: 36, containLabel: true },
+      xAxis: {
+        type: "category",
+        boundaryGap: false,
+        data: points.map((item) => formatDateTime(item.bucketStart)),
+      },
+      yAxis: {
+        type: "value",
+        axisLabel: { formatter: (value: number) => formatBytes(value) },
+      },
+      series: [
+        {
+          name: "实际流量",
+          type: "line",
+          smooth: true,
+          showSymbol: points.length < 24,
+          data: points.map((item) => item.physicalBytes),
+        },
+        {
+          name: "计费流量",
+          type: "line",
+          smooth: true,
+          showSymbol: points.length < 24,
+          data: points.map((item) => item.accountedBytes),
+        },
+      ],
+    };
+  }, [usage.items]);
+
   async function act(
     path: string,
     method: "POST" | "PATCH" | "DELETE",
@@ -439,7 +484,7 @@ export default function CustomerDetailPage() {
           <MetricCard
             label="剩余额度"
             value={formatBytes(customer.summary.remainingBytes)}
-            footnote={`计费倍率 ${customer.trafficMultiplier}x`}
+            footnote={`实际倍率 ${customer.effectiveTrafficMultiplier}x`}
           />
           <MetricCard
             label="在线设备"
@@ -477,10 +522,13 @@ export default function CustomerDetailPage() {
         </div>
         {view === "entitlements" ? (
           <>
-            <Panel title="流量策略与总额度">
+            <Panel
+              title="流量倍率与总额度"
+              copy={`套餐倍率 ${customer.planTrafficMultiplier}x，用户倍率 ${customer.trafficMultiplier}x，计费自动取较高值。`}
+            >
               <div className="inline-form">
                 <label className="field">
-                  <span className="fine-print">计费倍率</span>
+                  <span className="fine-print">用户倍率</span>
                   <input
                     className="control"
                     type="number"
@@ -544,7 +592,14 @@ export default function CustomerDetailPage() {
                 onRetry={() => setReloadKey((value) => value + 1)}
                 pagination={pagination}
                 emptyText="暂无权益"
-                headers={["商品", "类型", "有效期", "访问策略", "额度", "操作"]}
+                headers={[
+                  "商品",
+                  "类型",
+                  "有效期",
+                  "速率与设备",
+                  "额度",
+                  "操作",
+                ]}
                 rows={grants.items.flatMap((grant) =>
                   grant.buckets.map((bucket) => [
                     <span className="list" key={`${grant.id}-name`}>
@@ -553,7 +608,7 @@ export default function CustomerDetailPage() {
                     </span>,
                     grant.kind === "plan" ? "套餐月度额度" : "一次性流量包",
                     `${formatDateTime(bucket.startsAt)} - ${formatDateTime(bucket.endsAt)}`,
-                    `${grant.accessProfileName} · ${grant.speedDownMbps} Mbps · ${grant.deviceLimit} 台`,
+                    `${grant.speedDownMbps} Mbps · ${grant.deviceLimit} 台`,
                     `${formatBytes(bucket.remainingBytes)} / ${formatBytes(bucket.grantedBytes)}`,
                     <button
                       className="ghost-button compact"
@@ -626,7 +681,10 @@ export default function CustomerDetailPage() {
               {access.identities.length ? (
                 <div className="admin-access-identities">
                   {access.identities.map((identity) => (
-                    <section className="admin-access-identity" key={identity.id}>
+                    <section
+                      className="admin-access-identity"
+                      key={identity.id}
+                    >
                       <div className="admin-access-identity-head">
                         <div className="split">
                           <strong>{identity.label}</strong>
@@ -653,7 +711,10 @@ export default function CustomerDetailPage() {
                             value: identity.mihomoSubscriptionUrl,
                           },
                         ].map((link) => (
-                          <div className="admin-subscription-row" key={link.label}>
+                          <div
+                            className="admin-subscription-row"
+                            key={link.label}
+                          >
                             <span className="fine-print">{link.label}</span>
                             <span className="mono">{link.value}</span>
                             <button
@@ -722,24 +783,40 @@ export default function CustomerDetailPage() {
           </>
         ) : null}
         {view === "traffic" ? (
-          <Panel title="流量与额度分摊">
-            <DataTable
-              loading={loading}
-              error={error}
-              pagination={pagination}
-              emptyText="暂无流量记录"
-              headers={["时间", "节点", "物理流量", "计费流量", "额度分摊"]}
-              rows={usage.items.map((item) => [
-                formatDateTime(item.bucketStart),
-                item.nodeLabel,
-                formatBytes(item.physicalBytes),
-                formatBytes(item.accountedBytes),
-                item.allocations
-                  .map((allocation) => formatBytes(allocation.accountedBytes))
-                  .join(" + ") || "未分摊",
-              ])}
-            />
-          </Panel>
+          <>
+            <Panel
+              title="流量趋势"
+              copy="对比节点上报的实际流量与倍率计费后的流量。"
+            >
+              {usage.items.length ? (
+                <EChart
+                  option={trafficChartOption}
+                  height={320}
+                  ariaLabel="客户实际流量与计费流量趋势图"
+                />
+              ) : (
+                <div className="empty-state">暂无流量记录</div>
+              )}
+            </Panel>
+            <Panel title="流量与额度分摊">
+              <DataTable
+                loading={loading}
+                error={error}
+                pagination={pagination}
+                emptyText="暂无流量记录"
+                headers={["时间", "节点", "物理流量", "计费流量", "额度分摊"]}
+                rows={usage.items.map((item) => [
+                  formatDateTime(item.bucketStart),
+                  item.nodeLabel,
+                  formatBytes(item.physicalBytes),
+                  formatBytes(item.accountedBytes),
+                  item.allocations
+                    .map((allocation) => formatBytes(allocation.accountedBytes))
+                    .join(" + ") || "未分摊",
+                ])}
+              />
+            </Panel>
+          </>
         ) : null}
         {view === "finance" ? (
           <>

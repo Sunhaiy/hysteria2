@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -44,6 +45,12 @@ export class NodeOpsController {
   @Put('servers/:id')
   updateServer(@Param('id') id: string, @Body() body: SaveNodeServerDto) {
     return this.nodes.updateServer(id, body);
+  }
+
+  @Delete('servers/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  deleteServer(@Param('id') id: string) {
+    return this.nodes.deleteServer(id);
   }
 
   @Post('pools')

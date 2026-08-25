@@ -197,8 +197,20 @@ export class SaveCatalogProductDto {
   @MaxLength(2048)
   storeUrl?: string;
 
+  @IsOptional()
   @IsString()
-  accessProfileId!: string;
+  accessProfileId?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  nodeIds?: string[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  deviceLimit?: number;
 
   @IsInt()
   @Min(0)

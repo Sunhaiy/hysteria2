@@ -230,7 +230,10 @@ export class CustomerAdminService {
         primaryAccessTokenLastUsedAt:
           user.accessTokens[0]?.lastUsedAt?.toISOString() ?? null,
         trafficMultiplier:
-          (user.accessAccount?.trafficMultiplierBasisPoints ?? 10_000) / 10_000,
+          Math.max(
+            user.accessAccount?.trafficMultiplierBasisPoints ?? 10_000,
+            user.accessAccount?.trafficMultiplierOverrideBasisPoints ?? 10_000,
+          ) / 10_000,
         remainingBytes,
         activePlanNames: user.subscriptions.map((item) => item.plan.name),
         activeTrafficPackCount: user.trafficPacks.length,
@@ -327,8 +330,11 @@ export class CustomerAdminService {
         consumedTrafficBytes: Number(consumed),
         trafficRemainingBytes: remainingBytes,
         trafficMultiplier:
-          (subscription.accessAccount?.trafficMultiplierBasisPoints ?? 10_000) /
-          10_000,
+          Math.max(
+            subscription.accessAccount?.trafficMultiplierBasisPoints ?? 10_000,
+            subscription.accessAccount?.trafficMultiplierOverrideBasisPoints ??
+              10_000,
+          ) / 10_000,
         quotaState: this.quotaState(remainingBytes),
         speedUpMbpsSnapshot: subscription.speedUpMbpsSnapshot,
         speedDownMbpsSnapshot: subscription.speedDownMbpsSnapshot,
@@ -397,8 +403,16 @@ export class CustomerAdminService {
       status: user.status.toLowerCase(),
       notes: user.notes,
       balanceCents: user.balanceCents,
-      trafficMultiplier:
+      planTrafficMultiplier:
         (user.accessAccount?.trafficMultiplierBasisPoints ?? 10_000) / 10_000,
+      trafficMultiplier:
+        (user.accessAccount?.trafficMultiplierOverrideBasisPoints ?? 10_000) /
+        10_000,
+      effectiveTrafficMultiplier:
+        Math.max(
+          user.accessAccount?.trafficMultiplierBasisPoints ?? 10_000,
+          user.accessAccount?.trafficMultiplierOverrideBasisPoints ?? 10_000,
+        ) / 10_000,
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),
       summary: {
@@ -879,11 +893,9 @@ export class CustomerAdminService {
         where: { userId },
         create: {
           userId,
-          trafficMultiplierBasisPoints: basisPoints,
           trafficMultiplierOverrideBasisPoints: basisPoints,
         },
         update: {
-          trafficMultiplierBasisPoints: basisPoints,
           trafficMultiplierOverrideBasisPoints: basisPoints,
         },
       });
@@ -895,12 +907,18 @@ export class CustomerAdminService {
           targetId: account.id,
           metadata: {
             userId,
-            before: (before?.trafficMultiplierBasisPoints ?? 10_000) / 10_000,
+            before:
+              (before?.trafficMultiplierOverrideBasisPoints ?? 10_000) / 10_000,
             after: basisPoints / 10_000,
           },
         },
       });
-      return { userId, trafficMultiplier: basisPoints / 10_000 };
+      return {
+        userId,
+        trafficMultiplier: basisPoints / 10_000,
+        effectiveTrafficMultiplier:
+          Math.max(account.trafficMultiplierBasisPoints, basisPoints) / 10_000,
+      };
     });
   }
 

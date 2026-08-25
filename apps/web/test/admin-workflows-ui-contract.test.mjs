@@ -27,6 +27,9 @@ test("catalog offers expose period-specific shop URLs and plan traffic policy", 
   assert.match(catalog, /默认倍率/);
   assert.match(catalog, /上行限速/);
   assert.match(catalog, /下行限速/);
+  assert.match(catalog, /nodeIds/);
+  assert.match(catalog, /可用节点/);
+  assert.doesNotMatch(catalog, /访问策略/);
 });
 
 test("node operations separate access and runtime service controls", async () => {
@@ -40,6 +43,19 @@ test("node operations separate access and runtime service controls", async () =>
   assert.match(nodes, /runtime-commands/);
   assert.match(nodes, /删除节点/);
   assert.match(nodes, /node-endpoint-list/);
+  assert.match(nodes, /编辑服务器/);
+  assert.match(nodes, /删除服务器/);
+  assert.match(nodes, /编辑节点/);
+  assert.match(nodes, /节点管理地址/);
+  assert.doesNotMatch(nodes, /Agent/);
+});
+
+test("customer traffic statistics include an accounted-usage chart", async () => {
+  const detail = await source("app/admin/customers/[id]/page.tsx");
+
+  assert.match(detail, /<EChart/);
+  assert.match(detail, /trafficChartOption/);
+  assert.match(detail, /accountedBytes/);
 });
 
 test("admin navigation keeps CDK management visible", async () => {
@@ -55,7 +71,7 @@ test("customer list can filter everyone with subscription history", async () => 
   assert.match(customers, /subscriptionHistory/);
 });
 
-test("member access keeps v2rayN and Hiddify as the primary subscription", async () => {
+test("member access prioritizes Clash and keeps subscription details aligned", async () => {
   const access = await source("app/portal/access/page.tsx");
 
   assert.match(access, /v2rayN/);
@@ -64,6 +80,14 @@ test("member access keeps v2rayN and Hiddify as the primary subscription", async
   assert.match(access, /access\.mihomoSubscriptionUrl/);
   assert.match(access, /title="订阅链接"/);
   assert.match(access, /subscription-method-grid/);
+  assert.ok(
+    access.indexOf("Clash / Mihomo") < access.indexOf("v2rayN / Hiddify"),
+    "Clash / Mihomo should be presented before v2rayN / Hiddify",
+  );
+  assert.match(
+    access,
+    /className="portal-access-main"[\s\S]*className="portal-access-subscriptions"[\s\S]*className="portal-access-status"/,
+  );
 });
 
 test("support tickets are available to members and administrators", async () => {
@@ -114,4 +138,6 @@ test("tutorial management uploads installers and keeps the required platform ord
     memberTutorials,
     /windows:\s*0[\s\S]*android:\s*1[\s\S]*macos:\s*2[\s\S]*ios:\s*3/,
   );
+  assert.match(memberTutorials, /clientName: "Clash Meta"/);
+  assert.doesNotMatch(memberTutorials, /FlClash/);
 });

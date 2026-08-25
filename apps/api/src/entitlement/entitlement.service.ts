@@ -56,10 +56,7 @@ export class EntitlementService {
     const profile = await client.accessProfile.findUniqueOrThrow({
       where: { id: accessProfileId },
     });
-    if (
-      product.kind === CatalogProductKind.PLAN &&
-      account.trafficMultiplierOverrideBasisPoints === null
-    ) {
+    if (product.kind === CatalogProductKind.PLAN) {
       await client.accessAccount.update({
         where: { id: account.id },
         data: {
@@ -291,7 +288,14 @@ export class EntitlementService {
     return {
       id: fresh.id,
       userId,
-      trafficMultiplier: fresh.trafficMultiplierBasisPoints / 10_000,
+      planTrafficMultiplier: fresh.trafficMultiplierBasisPoints / 10_000,
+      userTrafficMultiplier:
+        (fresh.trafficMultiplierOverrideBasisPoints ?? 10_000) / 10_000,
+      trafficMultiplier:
+        Math.max(
+          fresh.trafficMultiplierBasisPoints,
+          fresh.trafficMultiplierOverrideBasisPoints ?? 10_000,
+        ) / 10_000,
       subscriptions: fresh.subscriptions.map((subscription) => {
         const cycle = subscription.cycles[0];
         return {
@@ -351,7 +355,6 @@ export class EntitlementService {
       const updated = await tx.accessAccount.update({
         where: { id: account.id },
         data: {
-          trafficMultiplierBasisPoints: basisPoints,
           trafficMultiplierOverrideBasisPoints: basisPoints,
         },
       });
@@ -363,7 +366,8 @@ export class EntitlementService {
           targetId: account.id,
           metadata: {
             userId,
-            before: account.trafficMultiplierBasisPoints / 10_000,
+            before:
+              (account.trafficMultiplierOverrideBasisPoints ?? 10_000) / 10_000,
             after: basisPoints / 10_000,
           },
         },
@@ -371,7 +375,13 @@ export class EntitlementService {
       return {
         id: updated.id,
         userId,
-        trafficMultiplier: updated.trafficMultiplierBasisPoints / 10_000,
+        userTrafficMultiplier:
+          (updated.trafficMultiplierOverrideBasisPoints ?? 10_000) / 10_000,
+        trafficMultiplier:
+          Math.max(
+            updated.trafficMultiplierBasisPoints,
+            updated.trafficMultiplierOverrideBasisPoints ?? 10_000,
+          ) / 10_000,
       };
     });
   }
@@ -697,8 +707,12 @@ export class EntitlementService {
     if (!user) return false;
     const account = await this.ensureAccessAccount(userId, tx);
     const physical = BigInt(counters.tx) + BigInt(counters.rx);
+    const multiplierBasisPoints = Math.max(
+      account.trafficMultiplierBasisPoints,
+      account.trafficMultiplierOverrideBasisPoints ?? 10_000,
+    );
     const scaled =
-      physical * BigInt(account.trafficMultiplierBasisPoints) +
+      physical * BigInt(multiplierBasisPoints) +
       BigInt(account.trafficMultiplierRemainder);
     const accounted = scaled / multiplierScale;
     const remainder = Number(scaled % multiplierScale);
@@ -811,6 +825,8 @@ export class EntitlementService {
           bucketStart,
           txBytes: BigInt(counters.tx),
           rxBytes: BigInt(counters.rx),
+          rawBytes: physical,
+          multiplierBasisPoints,
           accountedBytes: accounted,
           overageBytes: remaining,
           source: 'sync-v2',
@@ -919,6 +935,8 @@ export class EntitlementService {
         bucketStart,
         txBytes: BigInt(counters.tx),
         rxBytes: BigInt(counters.rx),
+        rawBytes: physical,
+        multiplierBasisPoints,
         accountedBytes: accounted,
         overageBytes: remaining,
         source: 'sync',

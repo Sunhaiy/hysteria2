@@ -89,8 +89,12 @@ const FALLBACK: TutorialPlatform[] = [
     platform: "android",
     name: "Android",
     meta: "手机 / 平板",
-    clientName: "FlClash",
-    revision: { id: "android", version: 1, steps: defaultSteps("FlClash") },
+    clientName: "Clash Meta",
+    revision: {
+      id: "android",
+      version: 1,
+      steps: defaultSteps("Clash Meta"),
+    },
   },
   {
     id: "macos",

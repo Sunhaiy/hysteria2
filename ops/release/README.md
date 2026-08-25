@@ -31,10 +31,10 @@ unit names cannot be supplied by a request.
 
 ## 2. Create the private inventory
 
-Copy `agent-inventory.example` to `agent-inventory`, fill in every production
-Agent, its logical service, and the expected `active` or `inactive` state. This
-keeps deliberately disabled endpoints disabled. Restrict the file before adding
-secrets:
+Copy `agent-inventory.example` to `agent-inventory`. The first field must be the
+database node ID; fill in every production Agent, its logical service, and the
+expected `active` or `inactive` state. This keeps deliberately disabled
+endpoints disabled. Restrict the file before adding secrets:
 
 ```bash
 install -m 0600 /dev/null ops/release/agent-inventory
@@ -57,7 +57,9 @@ BASELINE_FILE=/var/lib/hysteria2-release/pre-cutover.txt \
 bash ops/release/control-plane-preflight.sh
 ```
 
-The preflight requires healthy API/Web endpoints, completed Prisma migrations,
+The preflight compares the private inventory with the production database and
+fails if a managed node is missing, extra, or has mismatched Agent credentials.
+It then requires healthy API/Web endpoints, completed Prisma migrations,
 reachable Agent status endpoints in their declared state, a non-empty
 subscription, and active control plane units. It records every remote service
 PID, Agent service state, authorized VLESS user count, online count, and the

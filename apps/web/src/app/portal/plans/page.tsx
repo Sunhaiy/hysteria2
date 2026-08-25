@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { CustomSelect } from "@/components/custom-select";
@@ -65,7 +64,6 @@ type Quote = {
   balanceCents: number;
   sufficient: boolean;
 };
-type Wallet = { balanceCents: number };
 type Branding = {
   purchaseMode: "balance" | "cdk";
   buyButtonText: string;
@@ -83,7 +81,7 @@ const defaultBranding: Branding = {
   purchaseMode: "balance",
   buyButtonText: "购买",
   cdkButtonText: "CDK 充值",
-  cdkButtonUrl: "/portal/redeem",
+  cdkButtonUrl: "",
 };
 
 function durationName(offer: Offer) {
@@ -101,7 +99,6 @@ function offerPeriodName(offer: Offer) {
 export default function PortalPlansPage() {
   const { token } = useAuth();
   const [catalog, setCatalog] = useState<Catalog>({ products: [] });
-  const [wallet, setWallet] = useState<Wallet>({ balanceCents: 0 });
   const [branding, setBranding] = useState<Branding>(defaultBranding);
   const [currentPlanName, setCurrentPlanName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -122,19 +119,16 @@ export default function PortalPlansPage() {
     setError(null);
     setLoading(true);
     try {
-      const [nextCatalog, nextWallet, nextBranding, nextOverview] =
-        await Promise.all([
-          apiRequest<Catalog>("/api/portal/catalog", { token }),
-          apiRequest<Wallet>("/api/portal/wallet", { token }),
-          apiRequest<Branding>("/api/portal/branding", { token }).catch(
-            () => defaultBranding,
-          ),
-          apiRequest<PortalOverviewResponse>("/api/portal/subscription", {
-            token,
-          }).catch(() => null),
-        ]);
+      const [nextCatalog, nextBranding, nextOverview] = await Promise.all([
+        apiRequest<Catalog>("/api/portal/catalog", { token }),
+        apiRequest<Branding>("/api/portal/branding", { token }).catch(
+          () => defaultBranding,
+        ),
+        apiRequest<PortalOverviewResponse>("/api/portal/subscription", {
+          token,
+        }).catch(() => null),
+      ]);
       setCatalog(nextCatalog);
-      setWallet(nextWallet);
       setBranding(nextBranding);
       setCurrentPlanName(nextOverview?.plan.name ?? null);
       setSelected((current) => {
@@ -169,7 +163,8 @@ export default function PortalPlansPage() {
   const checkoutStoreUrl =
     checkout?.offer.storeUrl ||
     checkout?.product.storeUrl ||
-    branding.cdkButtonUrl;
+    branding.cdkButtonUrl ||
+    null;
 
   async function fetchQuote(offer: Offer, code = "") {
     if (!token) return;
@@ -390,11 +385,6 @@ export default function PortalPlansPage() {
       scope="Member"
       navItems={portalNav}
       requireRole="member"
-      toolbarMeta={
-        <span className="badge info">
-          余额 {formatMoney(wallet.balanceCents)}
-        </span>
-      }
     >
       {error && !checkout ? (
         <div className="feedback error">{error}</div>
@@ -496,15 +486,11 @@ export default function PortalPlansPage() {
                 </strong>
               </div>
             </div>
-            {checkout.product.kind === "plan" ? (
-              <div className="feedback warn">
-                套餐切换立即生效，旧套餐会取消且不补偿剩余价值；已有流量包不受影响。
-              </div>
-            ) : (
+            {checkout.product.kind === "traffic_pack" ? (
               <div className="feedback info">
                 该流量包提供独立节点权限，不要求已有套餐。
               </div>
-            )}
+            ) : null}
             <label className="field">
               <span className="fine-print">优惠码</span>
               <div className="inline-form">
@@ -542,31 +528,33 @@ export default function PortalPlansPage() {
                 </div>
               </div>
             ) : null}
-            <div className="toolbar-actions">
-              {checkoutStoreUrl.startsWith("http") ? (
+            <div className="checkout-store-actions">
+              {checkoutStoreUrl ? (
                 <a
-                  className="action-button"
+                  className="action-button checkout-store-link"
                   href={checkoutStoreUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  target={
+                    checkoutStoreUrl.startsWith("http") ? "_blank" : undefined
+                  }
+                  rel={
+                    checkoutStoreUrl.startsWith("http")
+                      ? "noopener noreferrer"
+                      : undefined
+                  }
                 >
                   <Icon name="payments" />
-                  前往店铺购买 CDK
+                  前往店铺购买
                 </a>
               ) : (
-                <Link className="action-button" href={checkoutStoreUrl}>
+                <button
+                  className="action-button checkout-store-link"
+                  type="button"
+                  disabled
+                >
                   <Icon name="payments" />
-                  {checkoutStoreUrl === "/portal/redeem"
-                    ? "使用 CDK 兑换"
-                    : "前往店铺购买 CDK"}
-                </Link>
+                  前往店铺购买
+                </button>
               )}
-              {checkoutStoreUrl !== "/portal/redeem" ? (
-                <Link className="ghost-button" href="/portal/redeem">
-                  <Icon name="redeem" />
-                  使用 CDK 兑换
-                </Link>
-              ) : null}
             </div>
           </div>
         ) : null}

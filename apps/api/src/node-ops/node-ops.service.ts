@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -88,6 +89,13 @@ export class NodeOpsService {
         lastCheckedAt: health?.checkedAt.toISOString() ?? null,
         lastSyncAt: node.lastSyncAt?.toISOString() ?? null,
         lastSyncError: node.lastSyncError,
+        obfsPassword: node.obfsPassword,
+        sni: node.sni,
+        allowInsecureTls: node.allowInsecureTls,
+        realityPublicKey: node.realityPublicKey,
+        realityShortId: node.realityShortId,
+        trafficApiBaseUrl: node.trafficApiBaseUrl,
+        trafficApiSecretSet: Boolean(node.trafficApiSecret),
         controlApiBaseUrl: node.controlApiBaseUrl,
         controlApiSecretSet: Boolean(node.controlApiSecret),
         runtimeControlConfigured:
@@ -97,6 +105,8 @@ export class NodeOpsService {
         runtimeStateObservedAt:
           node.runtimeStateObservedAt?.toISOString() ?? null,
         runtimeError: node.runtimeError,
+        speedUpMbps: node.speedUpMbps,
+        speedDownMbps: node.speedDownMbps,
         latestRuntimeCommand: runtimeCommand
           ? {
               id: runtimeCommand.id,
@@ -175,6 +185,20 @@ export class NodeOpsService {
       where: { id },
       data: this.serverData(input),
     });
+  }
+
+  async deleteServer(id: string) {
+    const server = await this.prisma.nodeServer.findUnique({
+      where: { id },
+      select: { id: true, _count: { select: { endpoints: true } } },
+    });
+    if (!server) throw new NotFoundException('Node server not found');
+    if (server._count.endpoints > 0) {
+      throw new ConflictException(
+        'Move or delete every node on this server before deleting it',
+      );
+    }
+    await this.prisma.nodeServer.delete({ where: { id } });
   }
 
   async createPool(input: SaveNodePoolDto) {

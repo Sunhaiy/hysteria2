@@ -104,79 +104,111 @@ export default function PortalAccessPage() {
       ) : null}
       {access ? (
         <section className="portal-access-layout">
-          <div className="portal-access-subscriptions">
-            <Panel
-              title="订阅链接"
-              copy="按客户端选择对应格式，两种订阅都会在刷新时同步后台节点变化。"
-            >
-              <div className="subscription-method-grid">
-                <section className="subscription-method">
-                  <div className="subscription-method-heading">
-                    <h4>v2rayN / Hiddify</h4>
-                    <span className="badge neutral">通用订阅</span>
-                  </div>
-                  <p className="fine-print">
-                    适用于 v2rayN 和 Hiddify，刷新订阅即可同步节点。
-                  </p>
-                  <label className="field">
-                    <span className="fine-print">专属订阅链接</span>
-                    <div className="subscription-link-row">
-                      <input
-                        className="control mono"
-                        value={access.subscriptionUrl}
-                        readOnly
-                      />
-                      <button
-                        className="action-button"
-                        type="button"
-                        onClick={() =>
-                          void copySubscription(
-                            access.subscriptionUrl,
-                            "v2rayN / Hiddify 订阅链接",
-                          )
-                        }
-                      >
-                        复制
-                      </button>
+          <div className="portal-access-main">
+            <div className="portal-access-subscriptions">
+              <Panel
+                title="订阅链接"
+                copy="按客户端选择对应格式，两种订阅都会在刷新时同步后台节点变化。"
+              >
+                <div className="subscription-method-grid">
+                  <section className="subscription-method">
+                    <div className="subscription-method-heading">
+                      <h4>Clash / Mihomo</h4>
+                      <span className="badge info">YAML</span>
                     </div>
-                  </label>
-                </section>
-                <section className="subscription-method">
-                  <div className="subscription-method-heading">
-                    <h4>Clash / Mihomo</h4>
-                    <span className="badge info">YAML</span>
-                  </div>
-                  <p className="fine-print">
-                    适用于 Clash Verge Rev、FlClash 和 Stash，包含自动故障转移。
-                  </p>
-                  <label className="field">
-                    <span className="fine-print">Mihomo YAML 订阅链接</span>
-                    <div className="subscription-link-row">
-                      <input
-                        className="control mono"
-                        value={access.mihomoSubscriptionUrl}
-                        readOnly
-                      />
-                      <button
-                        className="action-button"
-                        type="button"
-                        onClick={() =>
-                          void copySubscription(
-                            access.mihomoSubscriptionUrl,
-                            "Clash 订阅链接",
-                          )
-                        }
-                      >
-                        复制
-                      </button>
+                    <p className="fine-print">
+                      适用于 Clash Verge Rev、FlClash 和 Stash，包含自动故障转移。
+                    </p>
+                    <label className="field">
+                      <span className="fine-print">Mihomo YAML 订阅链接</span>
+                      <div className="subscription-link-row">
+                        <input
+                          className="control mono"
+                          value={access.mihomoSubscriptionUrl}
+                          readOnly
+                        />
+                        <button
+                          className="action-button"
+                          type="button"
+                          onClick={() =>
+                            void copySubscription(
+                              access.mihomoSubscriptionUrl,
+                              "Clash 订阅链接",
+                            )
+                          }
+                        >
+                          复制
+                        </button>
+                      </div>
+                    </label>
+                  </section>
+                  <section className="subscription-method">
+                    <div className="subscription-method-heading">
+                      <h4>v2rayN / Hiddify</h4>
+                      <span className="badge neutral">通用订阅</span>
                     </div>
-                  </label>
-                </section>
+                    <p className="fine-print">
+                      适用于 v2rayN 和 Hiddify，刷新订阅即可同步节点。
+                    </p>
+                    <label className="field">
+                      <span className="fine-print">专属订阅链接</span>
+                      <div className="subscription-link-row">
+                        <input
+                          className="control mono"
+                          value={access.subscriptionUrl}
+                          readOnly
+                        />
+                        <button
+                          className="action-button"
+                          type="button"
+                          onClick={() =>
+                            void copySubscription(
+                              access.subscriptionUrl,
+                              "v2rayN / Hiddify 订阅链接",
+                            )
+                          }
+                        >
+                          复制
+                        </button>
+                      </div>
+                    </label>
+                  </section>
+                </div>
+                <p className="fine-print subscription-security-note">
+                  订阅链接包含接入凭据，请勿转发给他人。
+                </p>
+              </Panel>
+            </div>
+            <div className="portal-access-status">
+              <Panel title="订阅状态">
+                <div className="kpi-list">
+                  <div className="list-row">
+                    <span className="muted">状态</span>
+                    <strong>
+                      <span className="badge success">可用</span>
+                    </strong>
+                  </div>
+                  <div className="list-row">
+                    <span className="muted">套餐到期</span>
+                    <strong>{formatDateTime(access.expiresAt)}</strong>
+                  </div>
+                  <div className="list-row">
+                    <span className="muted">剩余流量</span>
+                    <strong>{formatBytes(access.trafficRemaining)}</strong>
+                  </div>
+                  <div className="list-row">
+                    <span className="muted">节点数量</span>
+                    <strong>{access.nodes.length}</strong>
+                  </div>
+                </div>
+              </Panel>
+              <div className="toolbar-actions">
+                <Link className="action-button" href="/portal/tutorial">
+                  <Icon name="book" />
+                  查看使用教程
+                </Link>
               </div>
-              <p className="fine-print subscription-security-note">
-                订阅链接包含接入凭据，请勿转发给他人。
-              </p>
-            </Panel>
+            </div>
           </div>
           <div className="portal-access-qr">
             <Panel
@@ -194,36 +226,6 @@ export default function PortalAccessPage() {
                 />
               </div>
             </Panel>
-          </div>
-          <div className="portal-access-status">
-            <Panel title="订阅状态">
-              <div className="kpi-list">
-                <div className="list-row">
-                  <span className="muted">状态</span>
-                  <strong>
-                    <span className="badge success">可用</span>
-                  </strong>
-                </div>
-                <div className="list-row">
-                  <span className="muted">套餐到期</span>
-                  <strong>{formatDateTime(access.expiresAt)}</strong>
-                </div>
-                <div className="list-row">
-                  <span className="muted">剩余流量</span>
-                  <strong>{formatBytes(access.trafficRemaining)}</strong>
-                </div>
-                <div className="list-row">
-                  <span className="muted">节点数量</span>
-                  <strong>{access.nodes.length}</strong>
-                </div>
-              </div>
-            </Panel>
-            <div className="toolbar-actions">
-              <Link className="action-button" href="/portal/tutorial">
-                <Icon name="book" />
-                查看使用教程
-              </Link>
-            </div>
           </div>
         </section>
       ) : emptyState && !loading ? (

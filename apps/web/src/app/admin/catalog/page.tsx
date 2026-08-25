@@ -37,7 +37,6 @@ type Product = {
   defaultTrafficMultiplier: number;
   accent: string;
   sortOrder: number;
-  accessProfileId: string;
   quotaCadence: string;
   access: {
     profileName?: string | null;
@@ -47,22 +46,29 @@ type Product = {
     servers: Array<{
       id: string;
       name: string;
-      nodes: Array<{ id: string; label: string; serviceable: boolean }>;
+      nodes: Array<{
+        id: string;
+        label: string;
+        protocol: "hysteria2" | "vless_reality";
+        serviceable: boolean;
+      }>;
     }>;
   };
   offers: Offer[];
 };
-type Profile = {
+type CatalogServer = {
   id: string;
-  slug: string;
   name: string;
-  active: boolean;
-  speedUpMbps: number;
-  speedDownMbps: number;
-  deviceLimit: number;
-  nodes: Array<{ nodeLabel: string; active: boolean }>;
+  region?: string | null;
+  nodes: Array<{
+    id: string;
+    label: string;
+    protocol: "hysteria2" | "vless_reality";
+    hostname: string;
+    serviceable: boolean;
+  }>;
 };
-type Catalog = { products: Product[]; accessProfiles: Profile[] };
+type Catalog = { products: Product[]; servers: CatalogServer[] };
 type ProductForm = {
   slug: string;
   kind: "plan" | "traffic_pack";
@@ -70,7 +76,8 @@ type ProductForm = {
   name: string;
   description: string;
   storeUrl: string;
-  accessProfileId: string;
+  nodeIds: string[];
+  deviceLimit: number;
   speedUpMbps: number;
   speedDownMbps: number;
   defaultTrafficMultiplier: number;
@@ -78,8 +85,6 @@ type ProductForm = {
   sortOrder: number;
   offers: Offer[];
 };
-type View = "products" | "access";
-
 const offerTemplate = (
   period: Offer["billingPeriod"],
   kind: ProductForm["kind"],
@@ -105,7 +110,8 @@ const emptyForm = (kind: ProductForm["kind"] = "plan"): ProductForm => ({
   name: "",
   description: "",
   storeUrl: "",
-  accessProfileId: "",
+  nodeIds: [],
+  deviceLimit: 5,
   speedUpMbps: 20,
   speedDownMbps: 100,
   defaultTrafficMultiplier: 1,
@@ -123,9 +129,8 @@ export default function CatalogPage() {
   const { token } = useAuth();
   const [catalog, setCatalog] = useState<Catalog>({
     products: [],
-    accessProfiles: [],
+    servers: [],
   });
-  const [view, setView] = useState<View>("products");
   const [kindFilter, setKindFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -171,7 +176,10 @@ export default function CatalogPage() {
           name: product.name,
           description: product.description ?? "",
           storeUrl: product.storeUrl ?? "",
-          accessProfileId: product.accessProfileId,
+          nodeIds: product.access.servers.flatMap((server) =>
+            server.nodes.map((node) => node.id),
+          ),
+          deviceLimit: product.access.deviceLimit,
           speedUpMbps: product.access.speedUpMbps,
           speedDownMbps: product.access.speedDownMbps,
           defaultTrafficMultiplier: product.defaultTrafficMultiplier,
@@ -181,11 +189,7 @@ export default function CatalogPage() {
             .filter((offer) => !offer.archivedAt)
             .map((offer) => ({ ...offer })),
         }
-      : {
-          ...emptyForm(),
-          accessProfileId:
-            catalog.accessProfiles.find((profile) => profile.active)?.id ?? "",
-        };
+      : emptyForm();
     setForm(next);
     setDrawerOpen(true);
     setError(null);
@@ -200,7 +204,8 @@ export default function CatalogPage() {
       slug: current.slug,
       description: current.description,
       storeUrl: current.storeUrl,
-      accessProfileId: current.accessProfileId,
+      nodeIds: current.nodeIds,
+      deviceLimit: current.deviceLimit,
       speedUpMbps: current.speedUpMbps,
       speedDownMbps: current.speedDownMbps,
       defaultTrafficMultiplier: current.defaultTrafficMultiplier,
@@ -249,7 +254,8 @@ export default function CatalogPage() {
             name: form.name.trim(),
             description: form.description.trim() || undefined,
             storeUrl: form.storeUrl.trim() || undefined,
-            accessProfileId: form.accessProfileId,
+            nodeIds: form.nodeIds,
+            deviceLimit: form.deviceLimit,
             speedUpMbps: form.speedUpMbps,
             speedDownMbps: form.speedDownMbps,
             defaultTrafficMultiplier: form.defaultTrafficMultiplier,
@@ -279,7 +285,7 @@ export default function CatalogPage() {
   return (
     <ConsoleShell
       title="商品中心"
-      subtitle="套餐、流量包与访问策略"
+      subtitle="套餐、流量包与可用节点"
       scope="Catalog"
       navItems={adminNav}
       requireRole="admin"
@@ -328,141 +334,101 @@ export default function CatalogPage() {
             footnote="独立接入，3 / 12 个月"
           />
           <MetricCard
-            label="访问策略"
-            value={String(catalog.accessProfiles.length)}
-            footnote="绑定节点资源池"
+            label="可用节点"
+            value={String(
+              catalog.servers
+                .flatMap((server) => server.nodes)
+                .filter((node) => node.serviceable).length,
+            )}
+            footnote="可直接分配给商品"
           />
         </div>
-        <div className="segmented-control">
-          <button
-            type="button"
-            className={view === "products" ? "active" : ""}
-            onClick={() => setView("products")}
-          >
-            商品与规格
-          </button>
-          <button
-            type="button"
-            className={view === "access" ? "active" : ""}
-            onClick={() => setView("access")}
-          >
-            访问策略
-          </button>
-        </div>
-        {view === "products" ? (
-          <Panel
-            title="统一商品列表"
-            copy="套餐和流量包使用同一状态筛选与编辑流程。"
-            action={
-              <div className="inline-form compact">
-                <CustomSelect
-                  value={kindFilter}
-                  onChange={setKindFilter}
-                  options={[
-                    { value: "", label: "全部类型" },
-                    { value: "plan", label: "套餐" },
-                    { value: "traffic_pack", label: "流量包" },
-                  ]}
-                />
-                <CustomSelect
-                  value={statusFilter}
-                  onChange={setStatusFilter}
-                  options={[
-                    { value: "", label: "全部状态" },
-                    { value: "active", label: "上架" },
-                    { value: "draft", label: "草稿" },
-                    { value: "archived", label: "归档" },
-                  ]}
-                />
-              </div>
-            }
-          >
-            <DataTable
-              headers={[
-                "商品",
-                "类型",
-                "销售规格",
-                "流量规则",
-                "访问权益",
-                "节点范围",
-                "状态",
-                "操作",
-              ]}
-              rows={products.map((product) => [
-                <span className="list" key={product.id}>
-                  <strong>{product.name}</strong>
-                  <small className="mono">{product.slug}</small>
-                </span>,
-                product.kind === "plan" ? "套餐" : "流量包",
-                <span className="list" key={`${product.id}-offers`}>
-                  {product.offers
-                    .filter((offer) => offer.active && !offer.archivedAt)
-                    .map((offer) => (
-                      <small key={offer.id}>
-                        {offer.name} {formatMoney(offer.priceCents)}
-                      </small>
-                    ))}
-                </span>,
-                product.kind === "plan"
-                  ? `每月重置 ${formatBytes(product.offers[0]?.trafficBytes ?? 0)}`
-                  : product.offers
-                      .map(
-                        (offer) =>
-                          `${offer.name} ${formatBytes(offer.trafficBytes)}`,
-                      )
-                      .join(" · "),
-                `${product.access.speedDownMbps} Mbps · ${product.access.deviceLimit} 台`,
-                product.access.servers
-                  .map((server) => server.name)
-                  .join(" · ") || "未绑定",
-                <span
-                  className={`badge ${product.status === "active" ? "success" : product.status === "draft" ? "warn" : "neutral"}`}
-                  key={`${product.id}-status`}
-                >
-                  {product.status === "active"
-                    ? "上架"
-                    : product.status === "draft"
-                      ? "草稿"
-                      : "归档"}
-                </span>,
-                <button
-                  className="ghost-button compact"
-                  type="button"
-                  key={`${product.id}-edit`}
-                  onClick={() => openProduct(product)}
-                >
-                  <Icon name="edit" />
-                  编辑
-                </button>,
-              ])}
-            />
-          </Panel>
-        ) : (
-          <Panel
-            title="访问策略"
-            copy="速率和设备数由权益快照保存，节点访问通过资源池计算。"
-          >
-            <DataTable
-              headers={["策略", "速率", "设备", "兼容节点", "状态"]}
-              rows={catalog.accessProfiles.map((profile) => [
-                <span className="list" key={profile.id}>
-                  <strong>{profile.name}</strong>
-                  <small className="mono">{profile.slug}</small>
-                </span>,
-                `${profile.speedUpMbps} / ${profile.speedDownMbps} Mbps`,
-                `${profile.deviceLimit} 台`,
-                profile.nodes.map((node) => node.nodeLabel).join(" · ") ||
-                  "由资源池提供",
-                <span
-                  className={`badge ${profile.active ? "success" : "neutral"}`}
-                  key={`${profile.id}-status`}
-                >
-                  {profile.active ? "启用" : "停用"}
-                </span>,
-              ])}
-            />
-          </Panel>
-        )}
+        <Panel
+          title="统一商品列表"
+          copy="套餐和流量包使用同一状态筛选与编辑流程。"
+          action={
+            <div className="inline-form compact">
+              <CustomSelect
+                value={kindFilter}
+                onChange={setKindFilter}
+                options={[
+                  { value: "", label: "全部类型" },
+                  { value: "plan", label: "套餐" },
+                  { value: "traffic_pack", label: "流量包" },
+                ]}
+              />
+              <CustomSelect
+                value={statusFilter}
+                onChange={setStatusFilter}
+                options={[
+                  { value: "", label: "全部状态" },
+                  { value: "active", label: "上架" },
+                  { value: "draft", label: "草稿" },
+                  { value: "archived", label: "归档" },
+                ]}
+              />
+            </div>
+          }
+        >
+          <DataTable
+            headers={[
+              "商品",
+              "类型",
+              "销售规格",
+              "流量规则",
+              "访问权益",
+              "节点范围",
+              "状态",
+              "操作",
+            ]}
+            rows={products.map((product) => [
+              <span className="list" key={product.id}>
+                <strong>{product.name}</strong>
+                <small className="mono">{product.slug}</small>
+              </span>,
+              product.kind === "plan" ? "套餐" : "流量包",
+              <span className="list" key={`${product.id}-offers`}>
+                {product.offers
+                  .filter((offer) => offer.active && !offer.archivedAt)
+                  .map((offer) => (
+                    <small key={offer.id}>
+                      {offer.name} {formatMoney(offer.priceCents)}
+                    </small>
+                  ))}
+              </span>,
+              product.kind === "plan"
+                ? `每月重置 ${formatBytes(product.offers[0]?.trafficBytes ?? 0)}`
+                : product.offers
+                    .map(
+                      (offer) =>
+                        `${offer.name} ${formatBytes(offer.trafficBytes)}`,
+                    )
+                    .join(" · "),
+              `${product.access.speedDownMbps} Mbps · ${product.access.deviceLimit} 台`,
+              product.access.servers.map((server) => server.name).join(" · ") ||
+                "未绑定",
+              <span
+                className={`badge ${product.status === "active" ? "success" : product.status === "draft" ? "warn" : "neutral"}`}
+                key={`${product.id}-status`}
+              >
+                {product.status === "active"
+                  ? "上架"
+                  : product.status === "draft"
+                    ? "草稿"
+                    : "归档"}
+              </span>,
+              <button
+                className="ghost-button compact"
+                type="button"
+                key={`${product.id}-edit`}
+                onClick={() => openProduct(product)}
+              >
+                <Icon name="edit" />
+                编辑
+              </button>,
+            ])}
+          />
+        </Panel>
       </div>
       <Drawer
         open={drawerOpen}
@@ -478,7 +444,7 @@ export default function CatalogPage() {
                 busy ||
                 !form.name.trim() ||
                 !form.slug.trim() ||
-                !form.accessProfileId
+                form.nodeIds.length === 0
               }
             >
               保存商品
@@ -546,19 +512,43 @@ export default function CatalogPage() {
               ]}
             />
           </label>
-          <label className="field">
-            <span className="fine-print">访问策略</span>
-            <CustomSelect
-              value={form.accessProfileId}
-              onChange={(value) =>
-                setForm((current) => ({ ...current, accessProfileId: value }))
-              }
-              options={catalog.accessProfiles.map((profile) => ({
-                value: profile.id,
-                label: profile.name,
-              }))}
-            />
-          </label>
+          <div className="field form-grid-wide">
+            <span className="fine-print">可用节点</span>
+            <div className="catalog-node-selector">
+              {catalog.servers.map((server) => (
+                <section className="catalog-node-group" key={server.id}>
+                  <strong>{server.name}</strong>
+                  {server.nodes.map((node) => (
+                    <label className="checkbox-row" key={node.id}>
+                      <input
+                        type="checkbox"
+                        checked={form.nodeIds.includes(node.id)}
+                        onChange={(event) =>
+                          setForm((current) => ({
+                            ...current,
+                            nodeIds: event.target.checked
+                              ? [...current.nodeIds, node.id]
+                              : current.nodeIds.filter((id) => id !== node.id),
+                          }))
+                        }
+                      />
+                      <span>
+                        {node.label} ·{" "}
+                        {node.protocol === "vless_reality"
+                          ? "VLESS + Reality"
+                          : "Hysteria2"}
+                      </span>
+                      <span
+                        className={`badge ${node.serviceable ? "success" : "neutral"}`}
+                      >
+                        {node.serviceable ? "可用" : "已停用"}
+                      </span>
+                    </label>
+                  ))}
+                </section>
+              ))}
+            </div>
+          </div>
           <label className="field">
             <span className="fine-print">说明</span>
             <textarea
@@ -615,6 +605,22 @@ export default function CatalogPage() {
                 setForm((current) => ({
                   ...current,
                   speedDownMbps: Number(event.target.value),
+                }))
+              }
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">设备数上限</span>
+            <input
+              className="control"
+              type="number"
+              min={1}
+              step={1}
+              value={form.deviceLimit}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  deviceLimit: Number(event.target.value),
                 }))
               }
             />
