@@ -190,7 +190,7 @@ async function bootstrap() {
         30_000,
         async () => {
           const results = await operations.probeHealth();
-          const failures = results.filter((result) => 'error' in result).length;
+          const failures = results.filter((result) => !result.healthy).length;
           logger.log(
             `Probed ${results.length} nodes with ${failures} failures`,
           );
