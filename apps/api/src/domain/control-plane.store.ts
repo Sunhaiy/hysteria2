@@ -2137,8 +2137,12 @@ export class ControlPlaneStoreService {
       throw new BadRequestException('套餐兑换码需要选择套餐周期');
     }
 
-    if (input.kind === 'traffic_pack' && !input.trafficPackProductId) {
-      throw new BadRequestException('流量包兑换码必须绑定流量包商品');
+    if (
+      input.kind === 'traffic_pack' &&
+      !input.catalogOfferId &&
+      !input.trafficPackProductId
+    ) {
+      throw new BadRequestException('流量包兑换码必须绑定流量包规格');
     }
 
     if (
@@ -2197,13 +2201,28 @@ export class ControlPlaneStoreService {
     ) {
       throw new BadRequestException('套餐兑换码需要有效的套餐周期');
     }
+    if (
+      input.kind === 'traffic_pack' &&
+      input.catalogOfferId &&
+      (!catalogOffer || catalogOffer.product.kind !== 'TRAFFIC_PACK')
+    ) {
+      throw new BadRequestException('流量包兑换码需要有效的流量包规格');
+    }
     if (input.planId && !catalogOffer) {
       await this.mustGetPlanRecord(input.planId);
     }
 
-    const trafficPackProduct = input.trafficPackProductId
-      ? await this.mustGetTrafficPackProductRecord(input.trafficPackProductId)
-      : null;
+    const resolvedTrafficPackProductId =
+      input.kind === 'traffic_pack'
+        ? (catalogOffer?.product.legacyTrafficPackProductId ??
+          input.trafficPackProductId)
+        : undefined;
+    const trafficPackProduct =
+      resolvedTrafficPackProductId && !catalogOffer
+        ? await this.mustGetTrafficPackProductRecord(
+            resolvedTrafficPackProductId,
+          )
+        : null;
 
     if (input.createdById) {
       await this.mustGetUserRecord(input.createdById);
@@ -2241,22 +2260,28 @@ export class ControlPlaneStoreService {
         input.kind === 'plan'
           ? (catalogOffer?.product.legacyPlanId ?? input.planId)
           : undefined,
-      catalogOfferId: input.kind === 'plan' ? catalogOffer?.id : undefined,
+      catalogOfferId:
+        input.kind === 'plan' || input.kind === 'traffic_pack'
+          ? catalogOffer?.id
+          : undefined,
       planMode:
         input.kind === 'plan' && input.planMode === 'replace'
           ? RedemptionPlanMode.REPLACE
           : RedemptionPlanMode.RENEW,
       trafficPackProductId:
-        input.kind === 'traffic_pack' ? input.trafficPackProductId : undefined,
+        input.kind === 'traffic_pack'
+          ? resolvedTrafficPackProductId
+          : undefined,
       trafficBytes:
-        input.kind === 'traffic_pack' && trafficPackProduct
-          ? trafficPackProduct.trafficBytes
+        input.kind === 'traffic_pack'
+          ? (catalogOffer?.trafficBytes ?? trafficPackProduct?.trafficBytes)
           : undefined,
       amountCents:
         input.kind === 'plan' && catalogOffer
           ? catalogOffer.priceCents
-          : input.kind === 'traffic_pack' && trafficPackProduct
-            ? trafficPackProduct.priceCents
+          : input.kind === 'traffic_pack' &&
+              (catalogOffer || trafficPackProduct)
+            ? (catalogOffer?.priceCents ?? trafficPackProduct?.priceCents ?? 0)
             : (input.amountCents ?? 0),
       discountPercent:
         input.kind === 'discount' ? (input.discountPercent ?? null) : null,
@@ -3541,14 +3566,38 @@ export class ControlPlaneStoreService {
         'Traffic pack redemption code is missing traffic bytes',
       );
     }
-    const product = input.code.trafficPackProduct;
-    if (!product?.accessProfileId || !product.validityDays) {
+    const offer =
+      input.code.catalogOffer?.product.kind === 'TRAFFIC_PACK'
+        ? input.code.catalogOffer
+        : null;
+    const legacyProduct = input.code.trafficPackProduct;
+    const accessProfileId =
+      offer?.product.accessProfileId ?? legacyProduct?.accessProfileId;
+    const legacyTrafficPackProductId =
+      offer?.product.legacyTrafficPackProductId ?? legacyProduct?.id;
+    if (!accessProfileId) {
       throw new BadRequestException('流量包兑换码未绑定有效商品配置');
     }
-    const expiresAt = this.buildSubscriptionEndDate(
-      input.redeemedAt,
-      product.validityDays,
-    );
+    const expiresAt = offer
+      ? offer.billingPeriod === BillingPeriod.LEGACY
+        ? legacyProduct?.validityDays
+          ? this.buildSubscriptionEndDate(
+              input.redeemedAt,
+              legacyProduct.validityDays,
+            )
+          : null
+        : offer.intervalMonths
+          ? this.addUtcMonthsClamped(input.redeemedAt, offer.intervalMonths)
+          : null
+      : legacyProduct?.validityDays
+        ? this.buildSubscriptionEndDate(
+            input.redeemedAt,
+            legacyProduct.validityDays,
+          )
+        : null;
+    if (!expiresAt) {
+      throw new BadRequestException('流量包兑换码的有效期配置无效');
+    }
     const account = await tx.accessAccount.upsert({
       where: { userId: input.userId },
       create: { userId: input.userId },
@@ -3558,19 +3607,27 @@ export class ControlPlaneStoreService {
     const order = await tx.manualOrder.create({
       data: {
         userId: input.userId,
-        trafficPackProductId: input.code.trafficPackProductId,
+        trafficPackProductId: legacyTrafficPackProductId,
+        catalogOfferId: offer?.id,
         status: OrderStatus.APPLIED,
         kind: OrderKind.TRAFFIC_PACK,
         source: OrderSource.CDK,
         amountCents: input.code.amountCents,
         basePriceCents: input.code.amountCents,
-        productSlugSnapshot: input.code.trafficPackProduct?.slug,
-        productNameSnapshot:
-          input.code.trafficPackProduct?.name ?? input.code.label,
+        currency: offer?.currency ?? 'CNY',
+        productSlugSnapshot: offer?.slug ?? legacyProduct?.slug,
+        productNameSnapshot: offer
+          ? `${offer.product.name} · ${offer.name}`
+          : (legacyProduct?.name ?? input.code.label),
         trafficBytes: input.code.trafficBytes,
-        validityDays: input.code.trafficPackProduct?.validityDays,
+        validityDays: Math.round(
+          (expiresAt.getTime() - input.redeemedAt.getTime()) /
+            (24 * 60 * 60 * 1000),
+        ),
         entitlementExpiresAt: expiresAt,
-        accessProfileIdSnapshot: product.accessProfileId,
+        billingPeriodSnapshot: offer?.billingPeriod,
+        intervalMonthsSnapshot: offer?.intervalMonths,
+        accessProfileIdSnapshot: accessProfileId,
         note: input.code.note || `Redeemed ${input.code.code}`,
         processedAt: input.redeemedAt,
       },
@@ -3586,9 +3643,11 @@ export class ControlPlaneStoreService {
       data: {
         userId: input.userId,
         accessAccountId: account.id,
-        trafficPackProductId: product.id,
-        accessProfileId: product.accessProfileId,
-        label: input.code.label,
+        trafficPackProductId: legacyTrafficPackProductId,
+        accessProfileId,
+        label: offer
+          ? `${offer.product.name} · ${offer.name}`
+          : input.code.label,
         totalBytes: input.code.trafficBytes,
         remainingBytes: input.code.trafficBytes,
         status: TrafficPackStatus.ACTIVE,

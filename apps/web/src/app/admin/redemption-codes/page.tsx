@@ -17,7 +17,6 @@ import type {
   PaginatedResponse,
   RedemptionCodeRecord,
   RedemptionUseRecord,
-  TrafficPackProductRecord,
 } from "@/lib/types";
 import {
   fromDateTimeLocal,
@@ -38,6 +37,7 @@ function describeCodeValue(item: RedemptionCodeRecord) {
       return `${item.catalogOfferName ?? item.planName ?? "套餐开通"}${item.planMode === "replace" ? " · 覆盖" : " · 续费"}`;
     case "traffic_pack":
       return (
+        item.catalogOfferName ??
         item.trafficPackProductName ??
         (item.trafficBytes ? formatBytes(item.trafficBytes) : "流量包")
       );
@@ -52,14 +52,14 @@ function describeCodeValue(item: RedemptionCodeRecord) {
   }
 }
 
-function emptyForm(catalogOfferId = "") {
+function emptyForm(catalogOfferId = "", trafficPackOfferId = "") {
   return {
     label: "",
     customCode: "",
     kind: "plan" as CdkKind,
     catalogOfferId,
+    trafficPackOfferId,
     planMode: "renew" as "renew" | "replace",
-    trafficPackProductId: "",
     amountCents: 1800,
     discountMode: "percent" as "percent" | "fixed",
     discountPercent: 20,
@@ -75,9 +75,9 @@ export default function AdminRedemptionCodesPage() {
   const { token } = useAuth();
   const [codes, setCodes] = useState<RedemptionCodeRecord[]>([]);
   const [planOffers, setPlanOffers] = useState<CatalogOfferOption[]>([]);
-  const [trafficPacks, setTrafficPacks] = useState<TrafficPackProductRecord[]>(
-    [],
-  );
+  const [trafficPackOffers, setTrafficPackOffers] = useState<
+    CatalogOfferOption[]
+  >([]);
   const [form, setForm] = useState(() => emptyForm());
   const [latestCode, setLatestCode] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -133,7 +133,7 @@ export default function AdminRedemptionCodesPage() {
       if (debouncedSearch) query.set("q", debouncedSearch);
       if (kindFilter !== "all") query.set("kind", kindFilter);
       if (statusFilter !== "all") query.set("status", statusFilter);
-      const [nextCodes, nextCatalog, nextTrafficPacks] = await Promise.all([
+      const [nextCodes, nextCatalog] = await Promise.all([
         apiRequest<PaginatedResponse<RedemptionCodeRecord>>(
           `/api/admin/redemption-codes?${query}`,
           { token },
@@ -146,17 +146,14 @@ export default function AdminRedemptionCodesPage() {
             offers: Array<{
               id: string;
               name: string;
+              billingPeriod: "monthly" | "quarterly" | "yearly" | "legacy";
+              trafficBytes: number;
+              priceCents: number;
               active: boolean;
               archivedAt?: string | null;
             }>;
           }>;
         }>("/api/admin/catalog", { token }),
-        apiRequest<TrafficPackProductRecord[]>(
-          "/api/admin/traffic-pack-products",
-          {
-            token,
-          },
-        ),
       ]);
       setCodes(nextCodes.items);
       setPageInfo(nextCodes);
@@ -172,14 +169,26 @@ export default function AdminRedemptionCodesPage() {
               label: `${product.name} · ${offer.name}`,
             })),
         );
+      const nextTrafficPackOffers = nextCatalog.products
+        .filter(
+          (product) =>
+            product.kind === "traffic_pack" && product.status !== "archived",
+        )
+        .flatMap((product) =>
+          product.offers
+            .filter((offer) => offer.active && !offer.archivedAt)
+            .map((offer) => ({
+              id: offer.id,
+              label: `${product.name} · ${offer.name} · ${formatBytes(offer.trafficBytes)} · ${formatMoney(offer.priceCents)}`,
+            })),
+        );
       setPlanOffers(nextPlanOffers);
-      setTrafficPacks(nextTrafficPacks);
+      setTrafficPackOffers(nextTrafficPackOffers);
       setForm((current) => ({
         ...current,
         catalogOfferId: current.catalogOfferId || nextPlanOffers[0]?.id || "",
-        trafficPackProductId:
-          current.trafficPackProductId ||
-          nextTrafficPacks.find((product) => !product.archivedAt)?.id ||
+        trafficPackOfferId:
+          current.trafficPackOfferId || nextTrafficPackOffers[0]?.id ||
           "",
       }));
     } catch {
@@ -231,7 +240,9 @@ export default function AdminRedemptionCodesPage() {
       setForm(draft);
       setHasDraftBanner(true);
     } else {
-      setForm(emptyForm(planOffers[0]?.id ?? ""));
+      setForm(
+        emptyForm(planOffers[0]?.id ?? "", trafficPackOffers[0]?.id ?? ""),
+      );
       setHasDraftBanner(false);
     }
     setDrawerError(null);
@@ -240,7 +251,9 @@ export default function AdminRedemptionCodesPage() {
 
   function discardDraft() {
     clearDraft("code");
-    setForm(emptyForm(planOffers[0]?.id ?? ""));
+    setForm(
+      emptyForm(planOffers[0]?.id ?? "", trafficPackOffers[0]?.id ?? ""),
+    );
     setHasDraftBanner(false);
   }
 
@@ -262,12 +275,12 @@ export default function AdminRedemptionCodesPage() {
               form.count > 1 ? undefined : form.customCode.trim() || undefined,
             kind: form.kind,
             catalogOfferId:
-              form.kind === "plan" ? form.catalogOfferId : undefined,
+              form.kind === "plan"
+                ? form.catalogOfferId
+                : form.kind === "traffic_pack"
+                  ? form.trafficPackOfferId
+                  : undefined,
             planMode: form.kind === "plan" ? form.planMode : undefined,
-            trafficPackProductId:
-              form.kind === "traffic_pack"
-                ? form.trafficPackProductId
-                : undefined,
             amountCents: form.amountCents,
             discountPercent:
               form.kind === "discount" && form.discountMode === "percent"
@@ -298,7 +311,9 @@ export default function AdminRedemptionCodesPage() {
             : `兑换码已生成：${newCodes[0]}`,
         kind: "success",
       });
-      setForm(emptyForm(planOffers[0]?.id ?? ""));
+      setForm(
+        emptyForm(planOffers[0]?.id ?? "", trafficPackOffers[0]?.id ?? ""),
+      );
       forceClose();
       await load();
     } catch (cause) {
@@ -564,7 +579,7 @@ export default function AdminRedemptionCodesPage() {
                 submitting ||
                 !form.label.trim() ||
                 (form.kind === "plan" && !form.catalogOfferId) ||
-                (form.kind === "traffic_pack" && !form.trafficPackProductId) ||
+                (form.kind === "traffic_pack" && !form.trafficPackOfferId) ||
                 (form.kind === "balance" && form.amountCents <= 0)
               }
             >
@@ -705,27 +720,25 @@ export default function AdminRedemptionCodesPage() {
 
           {form.kind === "traffic_pack" ? (
             <label className="field">
-              <span className="fine-print">绑定流量包商品</span>
+              <span className="fine-print">绑定流量包规格</span>
               <CustomSelect
-                value={form.trafficPackProductId}
+                value={form.trafficPackOfferId}
                 onChange={(value) =>
                   setForm((current) => ({
                     ...current,
-                    trafficPackProductId: value,
+                    trafficPackOfferId: value,
                   }))
                 }
                 options={[
-                  { value: "", label: "请选择流量包商品" },
-                  ...trafficPacks
-                    .filter((product) => !product.archivedAt)
-                    .map((product) => ({
-                      value: product.id,
-                      label: `${product.name} · ${formatBytes(product.trafficBytes)} · ${formatMoney(product.priceCents)}`,
-                    })),
+                  { value: "", label: "请选择季度或年度规格" },
+                  ...trafficPackOffers.map((offer) => ({
+                    value: offer.id,
+                    label: offer.label,
+                  })),
                 ]}
               />
               <span className="field-hint">
-                CDK 的流量、价格和有效期来自所选商品快照。
+                CDK 的流量、价格和有效期来自所选季度或年度规格。
               </span>
             </label>
           ) : null}

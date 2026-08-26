@@ -133,6 +133,9 @@ test("CDKs expose renew and replace plan behavior", async () => {
   assert.match(codes, /planMode/);
   assert.match(codes, /同套餐自动续费/);
   assert.match(codes, /立即覆盖当前套餐/);
+  assert.match(codes, /trafficPackOfferId/);
+  assert.match(codes, /绑定流量包规格/);
+  assert.match(codes, /product\.kind === "traffic_pack"/);
 });
 
 test("tutorial management uploads installers and keeps the required platform order", async () => {

@@ -2,6 +2,56 @@ import { BadRequestException } from '@nestjs/common';
 import { ControlPlaneStoreService } from './control-plane.store';
 
 describe('Traffic pack product redemption', () => {
+  it('creates a traffic pack CDK for the exact yearly catalog offer', async () => {
+    const yearlyOffer = {
+      id: 'offer_pack_yearly',
+      name: '年度包',
+      billingPeriod: 'YEARLY',
+      intervalMonths: 12,
+      trafficBytes: 600n,
+      priceCents: 36000,
+      product: {
+        id: 'catalog_pack',
+        kind: 'TRAFFIC_PACK',
+        legacyPlanId: null,
+        legacyTrafficPackProductId: 'pack_legacy',
+      },
+    };
+    const prisma = {
+      catalogOffer: {
+        findUnique: jest.fn().mockResolvedValue(yearlyOffer),
+      },
+      redemptionCode: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        createMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+    const service = new ControlPlaneStoreService(
+      prisma as never,
+      { countForUser: jest.fn().mockResolvedValue(0) } as never,
+    );
+
+    await service.createRedemptionCode({
+      label: '年度流量包',
+      code: 'PACK-YEARLY',
+      kind: 'traffic_pack',
+      catalogOfferId: yearlyOffer.id,
+    });
+
+    expect(prisma.redemptionCode.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          code: 'PACK-YEARLY',
+          catalogOfferId: yearlyOffer.id,
+          trafficPackProductId: 'pack_legacy',
+          trafficBytes: 600n,
+          amountCents: 36000,
+        }),
+      ],
+    });
+  });
+
   it('rejects a CDK that is not bound to the selected product', async () => {
     const prisma = {
       user: {
@@ -174,6 +224,160 @@ describe('Traffic pack product redemption', () => {
     expect(result?.order).toMatchObject({
       amountCents: 8900,
       basePriceCents: 8900,
+    });
+    jest.useRealTimers();
+  });
+
+  it('redeems a yearly traffic pack offer with its exact quota and term', async () => {
+    const now = new Date('2026-08-26T08:00:00.000Z');
+    jest.useFakeTimers().setSystemTime(now);
+    const user = {
+      id: 'user_1',
+      email: 'member@example.com',
+      displayName: 'Member',
+      balanceCents: 0,
+    };
+    const offer = {
+      id: 'offer_pack_yearly',
+      slug: 'pack-100g-yearly',
+      name: '年付',
+      billingPeriod: 'YEARLY',
+      intervalMonths: 12,
+      priceCents: 7200,
+      currency: 'CNY',
+      trafficBytes: 100n,
+      product: {
+        id: 'catalog_pack',
+        name: '100 GB 流量包',
+        kind: 'TRAFFIC_PACK',
+        accessProfileId: 'profile_pack',
+        legacyPlan: null,
+        legacyTrafficPackProductId: 'pack_legacy',
+      },
+    };
+    const code = {
+      id: 'code_pack',
+      code: 'PACK-YEARLY',
+      label: '年度流量包',
+      kind: 'TRAFFIC_PACK',
+      status: 'ACTIVE',
+      planId: null,
+      plan: null,
+      catalogOfferId: offer.id,
+      catalogOffer: offer,
+      trafficPackProductId: 'pack_legacy',
+      trafficPackProduct: null,
+      trafficBytes: 100n,
+      amountCents: 7200,
+      discountPercent: null,
+      discountCents: null,
+      planMode: 'RENEW',
+      maxUses: 1,
+      usedCount: 0,
+      note: null,
+      expiresAt: null,
+      createdById: 'admin_1',
+      createdBy: null,
+      redeemedById: null,
+      redeemedBy: null,
+      redeemedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const tx = {
+      user: { findUnique: jest.fn().mockResolvedValue(user) },
+      subscription: { findFirst: jest.fn().mockResolvedValue(null) },
+      accessAccount: {
+        upsert: jest.fn().mockResolvedValue({ id: 'account_1' }),
+      },
+      trafficPack: {
+        create: jest.fn().mockResolvedValue({ id: 'traffic_pack_1' }),
+      },
+      redemptionCode: {
+        findUnique: jest.fn().mockResolvedValue(code),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        update: jest.fn().mockResolvedValue({
+          ...code,
+          status: 'REDEEMED',
+          usedCount: 1,
+          redeemedById: user.id,
+          redeemedBy: user,
+          redeemedAt: now,
+        }),
+      },
+      redemptionUse: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({}),
+      },
+      manualOrder: {
+        create: jest.fn().mockImplementation(({ data }) =>
+          Promise.resolve({
+            id: 'order_pack_cdk',
+            ...data,
+            user,
+            processedById: null,
+            processedBy: null,
+            planId: null,
+            plan: null,
+            trafficPackProduct: null,
+            createdAt: now,
+          }),
+        ),
+      },
+    };
+    const prisma = {
+      ...tx,
+      subscription: {
+        ...tx.subscription,
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      trafficPack: {
+        ...tx.trafficPack,
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      redemptionCode: {
+        ...tx.redemptionCode,
+        updateMany: jest
+          .fn()
+          .mockResolvedValueOnce({ count: 0 })
+          .mockResolvedValueOnce({ count: 1 }),
+      },
+      $transaction: jest.fn((callback: (client: typeof tx) => unknown) =>
+        callback({
+          ...tx,
+          redemptionCode: {
+            ...tx.redemptionCode,
+            updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          },
+        }),
+      ),
+    };
+    const service = new ControlPlaneStoreService(
+      prisma as never,
+      { countForUser: jest.fn().mockResolvedValue(0) } as never,
+    );
+
+    await service.redeemRedemptionCode(user.id, code.code);
+
+    const [orderCreate] = tx.manualOrder.create.mock.calls[0] as unknown as [
+      { data: Record<string, unknown> },
+    ];
+    expect(orderCreate.data).toMatchObject({
+      catalogOfferId: offer.id,
+      amountCents: 7200,
+      basePriceCents: 7200,
+      billingPeriodSnapshot: 'YEARLY',
+      intervalMonthsSnapshot: 12,
+      entitlementExpiresAt: new Date('2027-08-26T08:00:00.000Z'),
+    });
+    const [packCreate] = tx.trafficPack.create.mock.calls[0] as unknown as [
+      { data: Record<string, unknown> },
+    ];
+    expect(packCreate.data).toMatchObject({
+      trafficPackProductId: 'pack_legacy',
+      totalBytes: 100n,
+      remainingBytes: 100n,
+      expiresAt: new Date('2027-08-26T08:00:00.000Z'),
     });
     jest.useRealTimers();
   });
