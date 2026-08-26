@@ -94,7 +94,14 @@ export class CommerceService {
     if (orderId && this.entitlements) {
       const order = await this.prisma.manualOrder.findUnique({
         where: { id: orderId },
-        select: { catalogOfferId: true, kind: true },
+        select: {
+          catalogOfferId: true,
+          kind: true,
+          trafficPackProductId: true,
+          trafficBytes: true,
+          entitlementExpiresAt: true,
+          accessProfileIdSnapshot: true,
+        },
       });
       if (order?.catalogOfferId && order.kind === OrderKind.RENEWAL) {
         const subscription = await this.prisma.subscription.findFirst({
@@ -107,6 +114,36 @@ export class CommerceService {
         await this.entitlements.grantFromOrder({
           orderId,
           subscriptionId: subscription?.id,
+        });
+      }
+      if (order?.catalogOfferId && order.kind === OrderKind.TRAFFIC_PACK) {
+        if (
+          !order.trafficBytes ||
+          !order.entitlementExpiresAt ||
+          !order.accessProfileIdSnapshot
+        ) {
+          throw new ConflictException(
+            'Traffic pack order is missing its entitlement snapshot',
+          );
+        }
+        const trafficPack = await this.prisma.trafficPack.findFirst({
+          where: {
+            userId,
+            trafficPackProductId: order.trafficPackProductId,
+            totalBytes: order.trafficBytes,
+            expiresAt: order.entitlementExpiresAt,
+            accessProfileId: order.accessProfileIdSnapshot,
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+        if (!trafficPack) {
+          throw new ConflictException(
+            'Traffic pack entitlement source was not created',
+          );
+        }
+        await this.entitlements.grantFromOrder({
+          orderId,
+          trafficPackId: trafficPack.id,
         });
       }
     }

@@ -3,6 +3,54 @@ import { CommerceService } from './commerce.service';
 describe('CommerceService checkout', () => {
   afterEach(() => jest.useRealTimers());
 
+  it('materializes a V2 entitlement for a traffic pack CDK redemption', async () => {
+    const store = {
+      redeemRedemptionCode: jest.fn().mockResolvedValue({
+        code: { id: 'code_pack' },
+        order: { id: 'order_pack_cdk' },
+        balanceCents: 0,
+      }),
+    };
+    const prisma = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          catalogOfferId: 'offer_pack',
+          kind: 'TRAFFIC_PACK',
+          trafficPackProductId: 'pack_legacy',
+          trafficBytes: 100n,
+          entitlementExpiresAt: new Date('2027-08-26T08:00:00.000Z'),
+          accessProfileIdSnapshot: 'profile_pack',
+        }),
+      },
+      trafficPack: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'traffic_pack_1' }),
+      },
+    };
+    const entitlements = { grantFromOrder: jest.fn().mockResolvedValue({}) };
+    const service = new CommerceService(
+      prisma as never,
+      store as never,
+      entitlements as never,
+    );
+
+    await service.redeem('user_1', 'PACK-YEARLY');
+
+    expect(prisma.trafficPack.findFirst).toHaveBeenCalledWith({
+      where: {
+        userId: 'user_1',
+        trafficPackProductId: 'pack_legacy',
+        totalBytes: 100n,
+        expiresAt: new Date('2027-08-26T08:00:00.000Z'),
+        accessProfileId: 'profile_pack',
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(entitlements.grantFromOrder).toHaveBeenCalledWith({
+      orderId: 'order_pack_cdk',
+      trafficPackId: 'traffic_pack_1',
+    });
+  });
+
   it('returns the original order for a repeated idempotency key', async () => {
     const existingOrder = {
       id: 'order_1',
