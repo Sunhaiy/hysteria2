@@ -92,7 +92,7 @@ function buildHysteriaProxy(
     password: credential.token,
     sni: node.sni ?? node.hostname,
     'skip-cert-verify': node.allowInsecureTls,
-    fingerprint: 'chrome',
+    'client-fingerprint': 'chrome',
     obfs: node.obfsPassword ? 'salamander' : undefined,
     'obfs-password': node.obfsPassword ?? undefined,
     'ca-sha256': node.pinSHA256 ?? undefined,

@@ -72,9 +72,13 @@ describe('buildMihomoProfile', () => {
     expect(profile.proxies[1]).toMatchObject({
       type: 'hysteria2',
       password: credential.token,
+      'client-fingerprint': 'chrome',
       obfs: 'salamander',
       'obfs-password': 'obfs-secret',
     });
+    expect(profile.proxies.every((proxy) => !('fingerprint' in proxy))).toBe(
+      true,
+    );
   });
 
   it('uses ordered automatic failover as the default selector', () => {
