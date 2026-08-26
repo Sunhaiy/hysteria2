@@ -95,6 +95,61 @@ describe('CustomerAdminService list filtering', () => {
       },
     ]);
   });
+
+  it('presents unified quota instead of stale legacy subscription totals', async () => {
+    const now = new Date('2026-08-26T00:00:00.000Z');
+    const prisma = {
+      user: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'user_1',
+            email: 'user@example.com',
+            displayName: 'User',
+            role: 'MEMBER',
+            status: 'ACTIVE',
+            notes: null,
+            balanceCents: 0,
+            createdAt: now,
+            updatedAt: now,
+            accessTokens: [],
+            accessAccount: null,
+            subscriptions: [
+              {
+                plan: { name: 'Legacy Pro' },
+                cycles: [
+                  {
+                    grantedBytes: 200n,
+                    adjustmentBytes: 0n,
+                    consumedBytes: 0n,
+                  },
+                ],
+              },
+            ],
+            trafficPacks: [{ remainingBytes: 50n }],
+            entitlementGrants: [
+              {
+                kind: 'PLAN',
+                product: { name: 'Pro' },
+                quotaBuckets: [{ grantedBytes: 120n, consumedBytes: 20n }],
+              },
+            ],
+            onlinePresence: [],
+          },
+        ]),
+        count: jest.fn().mockResolvedValue(1),
+      },
+    };
+    const service = new CustomerAdminService(prisma as never);
+
+    const result = await service.listUsers({ q: 'user@example.com' });
+
+    expect(result.items[0]).toMatchObject({
+      remainingBytes: 100,
+      activePlanNames: ['Pro'],
+      activeTrafficPackCount: 0,
+      quotaState: 'low',
+    });
+  });
 });
 
 describe('CustomerAdminService subscription links', () => {

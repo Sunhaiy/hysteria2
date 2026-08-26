@@ -27,110 +27,10 @@ export class PortalService {
   }
 
   async getSubscription(userId: string) {
-    try {
-      const overview = await this.store.getPortalOverview(userId);
-      return { ...overview, alerts: buildPortalAlerts(overview) };
-    } catch (error) {
-      if (!this.entitlements || !this.prisma) throw error;
-      const access = await this.entitlements.resolveAccess(userId);
-      if (!access.allowed) throw error;
-      const [user, grants] = await Promise.all([
-        this.prisma.user.findUniqueOrThrow({ where: { id: userId } }),
-        this.prisma.entitlementGrant.findMany({
-          where: {
-            userId,
-            status: 'ACTIVE',
-            startsAt: { lte: new Date() },
-            endsAt: { gt: new Date() },
-          },
-          include: {
-            product: true,
-            quotaBuckets: { orderBy: { endsAt: 'asc' } },
-          },
-          orderBy: { endsAt: 'asc' },
-        }),
-      ]);
-      const primary =
-        grants.find((grant) => grant.kind === 'PLAN') ?? grants[0];
-      if (!primary) throw error;
-      const primaryRemaining = primary.quotaBuckets.reduce(
-        (sum, bucket) =>
-          sum +
-          Number(
-            bucket.grantedBytes > bucket.consumedBytes
-              ? bucket.grantedBytes - bucket.consumedBytes
-              : BigInt(0),
-          ),
-        0,
-      );
-      const overview = {
-        user: {
-          id: user.id,
-          email: user.email,
-          displayName: user.displayName,
-          role: user.role.toLowerCase(),
-          status: user.status.toLowerCase(),
-        },
-        subscription: {
-          id: primary.id,
-          userId,
-          planId: primary.productId,
-          planName: primary.product.name,
-          status: 'active' as const,
-          startsAt: primary.startsAt.toISOString(),
-          endsAt: primary.endsAt.toISOString(),
-          includedTrafficBytes:
-            primary.kind === 'PLAN'
-              ? primary.quotaBuckets.reduce(
-                  (sum, bucket) => sum + Number(bucket.grantedBytes),
-                  0,
-                )
-              : 0,
-          bonusTrafficBytes: 0,
-          consumedTrafficBytes:
-            primary.kind === 'PLAN'
-              ? primary.quotaBuckets.reduce(
-                  (sum, bucket) => sum + Number(bucket.consumedBytes),
-                  0,
-                )
-              : 0,
-          speedUpMbpsSnapshot: access.speedUpMbps,
-          speedDownMbpsSnapshot: access.speedDownMbps,
-          deviceLimitSnapshot: access.deviceLimit,
-        },
-        plan: {
-          id: primary.productId,
-          name: primary.kind === 'PLAN' ? primary.product.name : '独立流量权益',
-        },
-        nodeLabel: access.nodes[0]?.label ?? null,
-        remainingBytes: access.remainingBytes ?? 0,
-        balanceCents: user.balanceCents,
-        online: 0,
-        packs: grants
-          .filter((grant) => grant.kind === 'TRAFFIC_PACK')
-          .map((grant) => ({
-            id: grant.id,
-            label: grant.product.name,
-            totalBytes: grant.quotaBuckets.reduce(
-              (sum, bucket) => sum + Number(bucket.grantedBytes),
-              0,
-            ),
-            remainingBytes:
-              grant.id === primary.id
-                ? primaryRemaining
-                : grant.quotaBuckets.reduce(
-                    (sum, bucket) =>
-                      sum + Number(bucket.grantedBytes - bucket.consumedBytes),
-                    0,
-                  ),
-            status: 'active' as const,
-            expiresAt: grant.endsAt.toISOString(),
-            createdAt: grant.createdAt.toISOString(),
-            updatedAt: grant.updatedAt.toISOString(),
-          })),
-      };
-      return { ...overview, alerts: buildPortalAlerts(overview) };
-    }
+    const overview = (await this.hasV2Entitlements(userId))
+      ? await this.getV2SubscriptionOverview(userId)
+      : await this.store.getPortalOverview(userId);
+    return { ...overview, alerts: buildPortalAlerts(overview) };
   }
 
   getPlans() {
@@ -141,8 +41,13 @@ export class PortalService {
     return this.store.getPurchasableTrafficPackProducts();
   }
 
-  getUsage(userId: string) {
-    return this.store.getUsageForUser(userId);
+  async getUsage(userId: string) {
+    const legacyUsage = await this.store.getUsageForUser(userId);
+    if (!(await this.hasV2Entitlements(userId))) return legacyUsage;
+    return {
+      ...legacyUsage,
+      ...(await this.getV2QuotaUsage(userId)),
+    };
   }
 
   getOrders(userId: string) {
@@ -243,11 +148,183 @@ export class PortalService {
     }
   }
 
+  private async hasV2Entitlements(userId: string) {
+    if (!this.entitlements || !this.prisma) return false;
+    return (
+      (await this.prisma.entitlementGrant.count({ where: { userId } })) > 0
+    );
+  }
+
+  private async getV2SubscriptionOverview(userId: string) {
+    if (!this.entitlements || !this.prisma) {
+      throw new NotFoundException('Entitlement service unavailable');
+    }
+    const access = await this.entitlements.resolveAccess(userId);
+    const now = new Date();
+    const [user, grants] = await Promise.all([
+      this.prisma.user.findUniqueOrThrow({
+        where: { id: userId },
+        include: {
+          onlinePresence: {
+            where: {
+              observedAt: { gte: new Date(now.getTime() - 45_000) },
+              concurrentClients: { gt: 0 },
+            },
+            select: { concurrentClients: true },
+          },
+        },
+      }),
+      this.getCurrentV2Grants(userId, now),
+    ]);
+    const primary = grants.find((grant) => grant.kind === 'PLAN') ?? grants[0];
+    if (!primary) throw new NotFoundException('No active access entitlement');
+    const remaining = (grant: (typeof grants)[number]) =>
+      grant.quotaBuckets.reduce(
+        (sum, bucket) =>
+          sum +
+          Number(
+            bucket.grantedBytes > bucket.consumedBytes
+              ? bucket.grantedBytes - bucket.consumedBytes
+              : BigInt(0),
+          ),
+        0,
+      );
+    const totalRemaining = grants.reduce(
+      (sum, grant) => sum + remaining(grant),
+      0,
+    );
+    const overview = {
+      user: {
+        id: user.id,
+        email: user.email,
+        displayName: user.displayName,
+        role: user.role.toLowerCase(),
+        status: user.status.toLowerCase(),
+      },
+      subscription: {
+        id: primary.id,
+        userId,
+        planId: primary.productId,
+        planName: primary.product.name,
+        status: 'active' as const,
+        startsAt: primary.startsAt.toISOString(),
+        endsAt: primary.endsAt.toISOString(),
+        includedTrafficBytes:
+          primary.kind === 'PLAN'
+            ? primary.quotaBuckets.reduce(
+                (sum, bucket) => sum + Number(bucket.grantedBytes),
+                0,
+              )
+            : 0,
+        bonusTrafficBytes: 0,
+        consumedTrafficBytes:
+          primary.kind === 'PLAN'
+            ? primary.quotaBuckets.reduce(
+                (sum, bucket) => sum + Number(bucket.consumedBytes),
+                0,
+              )
+            : 0,
+        speedUpMbpsSnapshot:
+          access.allowed && access.speedUpMbps !== undefined
+            ? access.speedUpMbps
+            : primary.speedUpMbpsSnapshot,
+        speedDownMbpsSnapshot:
+          access.allowed && access.speedDownMbps !== undefined
+            ? access.speedDownMbps
+            : primary.speedDownMbpsSnapshot,
+        deviceLimitSnapshot:
+          access.allowed && access.deviceLimit !== undefined
+            ? access.deviceLimit
+            : primary.deviceLimitSnapshot,
+      },
+      plan: {
+        id: primary.productId,
+        name: primary.kind === 'PLAN' ? primary.product.name : '独立流量权益',
+      },
+      nodeLabel: access.nodes[0]?.label ?? null,
+      remainingBytes: totalRemaining,
+      balanceCents: user.balanceCents,
+      online: user.onlinePresence.reduce(
+        (total, presence) => total + presence.concurrentClients,
+        0,
+      ),
+      packs: grants
+        .filter((grant) => grant.kind === 'TRAFFIC_PACK')
+        .map((grant) => ({
+          id: grant.id,
+          label: grant.product.name,
+          totalBytes: grant.quotaBuckets.reduce(
+            (sum, bucket) => sum + Number(bucket.grantedBytes),
+            0,
+          ),
+          remainingBytes: remaining(grant),
+          status: 'active' as const,
+          expiresAt: grant.endsAt.toISOString(),
+          createdAt: grant.createdAt.toISOString(),
+          updatedAt: grant.updatedAt.toISOString(),
+        })),
+    };
+    return overview;
+  }
+
+  private async getV2QuotaUsage(userId: string) {
+    if (!this.entitlements || !this.prisma) {
+      throw new NotFoundException('Entitlement service unavailable');
+    }
+    await this.entitlements.resolveAccess(userId);
+    const grants = await this.getCurrentV2Grants(userId, new Date());
+    const totals = grants.reduce(
+      (result, grant) => {
+        for (const bucket of grant.quotaBuckets) {
+          const remaining = Number(
+            bucket.grantedBytes > bucket.consumedBytes
+              ? bucket.grantedBytes - bucket.consumedBytes
+              : BigInt(0),
+          );
+          if (grant.kind === 'PLAN') {
+            result.baseRemainingBytes += remaining;
+            result.consumedBytes += Number(bucket.consumedBytes);
+          } else {
+            result.packRemainingBytes += remaining;
+          }
+        }
+        return result;
+      },
+      { consumedBytes: 0, baseRemainingBytes: 0, packRemainingBytes: 0 },
+    );
+    const primary = grants.find((grant) => grant.kind === 'PLAN') ?? grants[0];
+    return {
+      subscriptionId: primary?.legacySubscriptionId ?? primary?.id ?? null,
+      ...totals,
+      totalRemainingBytes:
+        totals.baseRemainingBytes + totals.packRemainingBytes,
+    };
+  }
+
+  private getCurrentV2Grants(userId: string, now: Date) {
+    if (!this.prisma) {
+      throw new NotFoundException('Entitlement service unavailable');
+    }
+    return this.prisma.entitlementGrant.findMany({
+      where: {
+        userId,
+        status: 'ACTIVE',
+        startsAt: { lte: now },
+        endsAt: { gt: now },
+      },
+      include: {
+        product: true,
+        quotaBuckets: {
+          where: { startsAt: { lte: now }, endsAt: { gt: now } },
+          orderBy: { endsAt: 'asc' },
+        },
+      },
+      orderBy: { endsAt: 'asc' },
+    });
+  }
+
   async getAccess(userId: string) {
-    const hasV2 =
-      this.entitlements &&
-      this.prisma &&
-      (await this.prisma.entitlementGrant.count({ where: { userId } })) > 0;
+    const hasV2 = await this.hasV2Entitlements(userId);
     const bundle = hasV2
       ? await this.getV2AccessBundle(userId)
       : await this.store.getAccessBundle(userId);

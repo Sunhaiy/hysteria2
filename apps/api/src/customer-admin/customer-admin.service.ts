@@ -179,6 +179,19 @@ export class CustomerAdminService {
               OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
             },
           },
+          entitlementGrants: {
+            where: {
+              status: 'ACTIVE',
+              startsAt: { lte: now },
+              endsAt: { gt: now },
+            },
+            include: {
+              product: true,
+              quotaBuckets: {
+                where: { startsAt: { lte: now }, endsAt: { gt: now } },
+              },
+            },
+          },
           onlinePresence: {
             where: {
               concurrentClients: { gt: 0 },
@@ -214,7 +227,35 @@ export class CustomerAdminService {
         (total, pack) => total + Number(pack.remainingBytes),
         0,
       );
-      const remainingBytes = planRemaining + packRemaining;
+      const hasV2Entitlements = user.entitlementGrants.length > 0;
+      const v2Remaining = user.entitlementGrants.reduce(
+        (grantTotal, grant) =>
+          grantTotal +
+          grant.quotaBuckets.reduce(
+            (bucketTotal, bucket) =>
+              bucketTotal +
+              this.remaining(bucket.grantedBytes, bucket.consumedBytes),
+            0,
+          ),
+        0,
+      );
+      const remainingBytes = hasV2Entitlements
+        ? v2Remaining
+        : planRemaining + packRemaining;
+      const activePlanNames = hasV2Entitlements
+        ? [
+            ...new Set(
+              user.entitlementGrants
+                .filter((grant) => grant.kind === 'PLAN')
+                .map((grant) => grant.product.name),
+            ),
+          ]
+        : user.subscriptions.map((item) => item.plan.name);
+      const activeTrafficPackCount = hasV2Entitlements
+        ? user.entitlementGrants.filter(
+            (grant) => grant.kind === 'TRAFFIC_PACK',
+          ).length
+        : user.trafficPacks.length;
       return {
         id: user.id,
         email: user.email,
@@ -236,8 +277,8 @@ export class CustomerAdminService {
             user.accessAccount?.trafficMultiplierOverrideBasisPoints ?? 10_000,
           ) / 10_000,
         remainingBytes,
-        activePlanNames: user.subscriptions.map((item) => item.plan.name),
-        activeTrafficPackCount: user.trafficPacks.length,
+        activePlanNames,
+        activeTrafficPackCount,
         quotaState: this.quotaState(remainingBytes),
         onlineClients: user.onlinePresence.reduce(
           (total, item) => total + item.concurrentClients,

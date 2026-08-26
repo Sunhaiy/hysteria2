@@ -132,6 +132,88 @@ describe('PortalService VLESS + REALITY access', () => {
     );
   });
 
+  it('prefers unified quota over a stale legacy portal total', async () => {
+    const store = {
+      getPortalOverview: jest.fn().mockResolvedValue({
+        remainingBytes: 250,
+        subscription: {
+          includedTrafficBytes: 200,
+          bonusTrafficBytes: 0,
+          endsAt: '2099-09-01T00:00:00.000Z',
+        },
+        packs: [{ remainingBytes: 50 }],
+      }),
+      getUsageForUser: jest.fn().mockResolvedValue({
+        subscriptionId: 'legacy_subscription',
+        consumedBytes: 0,
+        baseRemainingBytes: 200,
+        packRemainingBytes: 50,
+        totalRemainingBytes: 250,
+        recent: [],
+      }),
+    };
+    const entitlements = {
+      resolveAccess: jest.fn().mockResolvedValue({
+        allowed: true,
+        remainingBytes: 100,
+        speedUpMbps: 20,
+        speedDownMbps: 140,
+        deviceLimit: 3,
+        nodes: [{ id: 'node_hy2', label: 'US New' }],
+      }),
+    };
+    const prisma = {
+      user: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 'user_1',
+          email: 'user@example.com',
+          displayName: 'User',
+          role: 'MEMBER',
+          status: 'ACTIVE',
+          balanceCents: 0,
+          onlinePresence: [],
+        }),
+      },
+      entitlementGrant: {
+        count: jest.fn().mockResolvedValue(1),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'grant_plan',
+            kind: 'PLAN',
+            productId: 'product_pro',
+            product: { name: 'Pro' },
+            startsAt: new Date('2026-08-26T00:00:00.000Z'),
+            endsAt: new Date('2099-09-01T00:00:00.000Z'),
+            createdAt: new Date('2026-08-26T00:00:00.000Z'),
+            updatedAt: new Date('2026-08-26T00:00:00.000Z'),
+            quotaBuckets: [{ grantedBytes: 120n, consumedBytes: 20n }],
+          },
+        ]),
+      },
+    };
+    const service = new PortalService(
+      store as never,
+      {} as never,
+      {} as never,
+      entitlements as never,
+      prisma as never,
+    );
+
+    const overview = await service.getSubscription('user_1');
+
+    expect(overview.remainingBytes).toBe(100);
+    expect(overview.subscription.includedTrafficBytes).toBe(120);
+    expect(store.getPortalOverview).not.toHaveBeenCalled();
+
+    const usage = await service.getUsage('user_1');
+    expect(usage).toMatchObject({
+      consumedBytes: 20,
+      baseRemainingBytes: 100,
+      packRemainingBytes: 0,
+      totalRemainingBytes: 100,
+    });
+  });
+
   it('serves a stored compatibility token through the Mihomo subscription', async () => {
     const token = {
       token: 'hy2_live_lin_primary',
