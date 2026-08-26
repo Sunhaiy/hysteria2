@@ -15,6 +15,7 @@ import {
   formatTrafficLimit,
 } from "@/lib/format";
 import { normalizePlanAccent, planAccentColor } from "@/lib/plan-accents";
+import { sortCatalogProductsByPrice } from "@/lib/catalog-sort";
 import type { PortalOverviewResponse } from "@/lib/types";
 
 type Offer = {
@@ -153,9 +154,11 @@ export default function PortalPlansPage() {
 
   const groups = useMemo(
     () => ({
-      plans: catalog.products.filter((product) => product.kind === "plan"),
-      packs: catalog.products.filter(
-        (product) => product.kind === "traffic_pack",
+      plans: sortCatalogProductsByPrice(
+        catalog.products.filter((product) => product.kind === "plan"),
+      ),
+      packs: sortCatalogProductsByPrice(
+        catalog.products.filter((product) => product.kind === "traffic_pack"),
       ),
     }),
     [catalog.products],
