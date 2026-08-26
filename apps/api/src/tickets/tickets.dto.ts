@@ -8,7 +8,7 @@ import {
 
 export class CreateSupportTicketDto {
   @IsString()
-  @MinLength(3)
+  @MinLength(1)
   @MaxLength(160)
   subject!: string;
 

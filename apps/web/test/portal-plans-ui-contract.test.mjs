@@ -11,6 +11,11 @@ test("member catalog keeps the established plan cards and shop entry", async () 
   assert.match(source, /data-plan-accent=/);
   assert.match(source, /className="action-button checkout-store-link"/);
   assert.match(source, /href=\{checkoutStoreUrl\}/);
+  assert.match(source, /href=\{purchaseStoreUrl\}/);
+  assert.match(
+    source,
+    /branding\.purchaseMode === "cdk"[\s\S]*branding\.cdkButtonUrl/,
+  );
   assert.match(source, /前往店铺购买/);
   assert.match(source, /formatTrafficLimit/);
   assert.match(source, /formatSpeedLimit/);

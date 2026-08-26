@@ -2,6 +2,7 @@ import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
 import { CacheService } from '../cache/cache.service';
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { apiPublicUrl, webPublicUrl } from '../common/public-url';
 
 @Controller('api/health')
 export class HealthController {
@@ -24,6 +25,7 @@ export class HealthController {
   @Get('ready')
   async getReadiness() {
     const timestamp = new Date().toISOString();
+    const publicUrls = this.publicUrlHealth();
     const [database, redis, migrations, nodes, mail] = await Promise.all([
       this.databaseHealth(),
       this.cache.health(),
@@ -31,7 +33,7 @@ export class HealthController {
       this.nodeSyncHealth(),
       this.mailHealth(),
     ]);
-    const checks = { database, redis, migrations, nodes, mail };
+    const checks = { database, redis, migrations, nodes, mail, publicUrls };
     const ok = Object.values(checks).every((check) => check.ok);
     const payload = { ok, timestamp, checks };
     if (!ok) throw new ServiceUnavailableException(payload);
@@ -106,6 +108,14 @@ export class HealthController {
       const configured = await this.mail.isConfigured();
       const required = process.env.SMTP_REQUIRED === 'true';
       return { ok: !required || configured, configured, required };
+    } catch (error) {
+      return { ok: false, error: this.errorMessage(error) };
+    }
+  }
+
+  private publicUrlHealth() {
+    try {
+      return { ok: true, api: apiPublicUrl(), web: webPublicUrl() };
     } catch (error) {
       return { ok: false, error: this.errorMessage(error) };
     }

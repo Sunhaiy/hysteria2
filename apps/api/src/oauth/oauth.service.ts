@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { CacheService } from '../cache/cache.service';
 import { AuthService } from '../auth/auth.service';
 import { SettingsService } from '../settings/settings.service';
+import { apiPublicUrl, webPublicUrl } from '../common/public-url';
 
 type Provider = 'google' | 'github';
 
@@ -24,14 +25,12 @@ export class OAuthService {
 
   private apiBase() {
     return (
-      process.env.OAUTH_CALLBACK_BASE ||
-      process.env.API_PUBLIC_URL ||
-      'http://localhost:4000'
+      process.env.OAUTH_CALLBACK_BASE?.replace(/\/$/, '') || apiPublicUrl()
     );
   }
 
   webBase() {
-    return process.env.WEB_PUBLIC_URL || 'http://localhost:3001';
+    return webPublicUrl();
   }
 
   private redirectUri(provider: Provider) {

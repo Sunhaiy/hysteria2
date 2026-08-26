@@ -1,6 +1,57 @@
 import { PortalService } from './portal.service';
 
 describe('PortalService VLESS + REALITY access', () => {
+  it('never emits localhost subscription URLs when production public URL configuration is missing', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousPublicUrl = process.env.API_PUBLIC_URL;
+    process.env.NODE_ENV = 'production';
+    delete process.env.API_PUBLIC_URL;
+    const node = {
+      id: 'node_vless',
+      label: 'HK Reality',
+      protocol: 'VLESS_REALITY' as const,
+      hostname: '203.0.113.10',
+      port: 443,
+      sni: 'www.microsoft.com',
+      obfsPassword: null,
+      pinSHA256: null,
+      allowInsecureTls: false,
+      realityPublicKey: 'reality-public-key',
+      realityShortId: '0123456789abcdef',
+      realityFingerprint: 'chrome',
+      realitySpiderX: '/',
+      vlessFlow: 'xtls-rprx-vision',
+    };
+    const store = {
+      getAccessBundle: jest.fn().mockResolvedValue({
+        token: {
+          token: 'hy2_0123456789abcdef01234567',
+          vlessUuid: '67fbc500-3f3c-4ab9-a076-3e17c56bb3a1',
+        },
+        node,
+        nodes: [node],
+        subscription: {
+          speedUpMbpsSnapshot: 0,
+          speedDownMbpsSnapshot: 0,
+          endsAt: '2026-09-01T00:00:00.000Z',
+        },
+        trafficRemaining: 1024,
+      }),
+    };
+    const service = new PortalService(store as never, {} as never, {} as never);
+
+    try {
+      await expect(service.getAccess('usr_lin')).rejects.toThrow(
+        'API_PUBLIC_URL is required in production',
+      );
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      if (previousPublicUrl === undefined) delete process.env.API_PUBLIC_URL;
+      else process.env.API_PUBLIC_URL = previousPublicUrl;
+    }
+  });
+
   it('builds a standard VLESS REALITY URI with the per-user UUID', async () => {
     const node = {
       id: 'node_vless',

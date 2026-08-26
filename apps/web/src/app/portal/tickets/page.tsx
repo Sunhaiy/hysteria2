@@ -279,7 +279,7 @@ export default function PortalTicketsPage() {
               className="action-button"
               type="submit"
               form="create-ticket"
-              disabled={busy || subject.trim().length < 3 || !message.trim()}
+              disabled={busy || !subject.trim() || !message.trim()}
             >
               提交
             </button>

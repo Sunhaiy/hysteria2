@@ -15,6 +15,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import type { CustomerQuotaOperationDto } from './customer-admin.dto';
 import { pageResponse, parsePage, type PageQuery } from '../common/pagination';
+import { apiPublicUrl } from '../common/public-url';
 
 export interface CustomerQuery extends PageQuery {
   q?: string;
@@ -1177,10 +1178,7 @@ export class CustomerAdminService {
   }
 
   private subscriptionUrl(token: string) {
-    const publicBaseUrl = (
-      process.env.API_PUBLIC_URL ?? 'http://localhost:4000'
-    ).replace(/\/$/, '');
-    return `${publicBaseUrl}/subscribe/${encodeURIComponent(token)}`;
+    return `${apiPublicUrl()}/subscribe/${encodeURIComponent(token)}`;
   }
 
   private mihomoSubscriptionUrl(token: string) {

@@ -12,6 +12,7 @@ import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { TestEmailDto, UpdateSettingsDto } from '../contracts/http.dto';
 import { MailService } from '../mail/mail.service';
 import { SettingsService } from './settings.service';
+import { apiPublicUrl } from '../common/public-url';
 
 @Controller('api/admin/settings')
 @UseGuards(JwtAuthGuard, AdminGuard)
@@ -30,10 +31,7 @@ export class AdminSettingsController {
     const tutorial = await this.settings.getTutorialConfig();
     const registrationEnabled = await this.settings.isRegistrationEnabled();
     const announcement = await this.settings.getAnnouncementConfig();
-    const callbackBase =
-      process.env.OAUTH_CALLBACK_BASE ||
-      process.env.API_PUBLIC_URL ||
-      'http://localhost:4000';
+    const callbackBase = process.env.OAUTH_CALLBACK_BASE || apiPublicUrl();
     return {
       smtp: {
         host: smtp.host ?? '',

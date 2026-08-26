@@ -16,27 +16,6 @@ interface OAuthProviderState {
   callbackUrl: string;
 }
 
-type TutorialPlatformId = "windows" | "android" | "ios";
-
-interface TutorialPlatformSettings {
-  id: TutorialPlatformId;
-  name: string;
-  meta: string;
-  client: string;
-  steps: string[];
-  externalUrl: string;
-  asset: {
-    originalName: string;
-    size: number;
-    uploadedAt: string;
-    downloadUrl: string;
-  } | null;
-}
-
-interface TutorialSettings {
-  platforms: TutorialPlatformSettings[];
-}
-
 interface SettingsResponse {
   smtp: {
     host: string;
@@ -62,7 +41,6 @@ interface SettingsResponse {
     browserTitle: string;
     iconUrl: string;
   };
-  tutorial: TutorialSettings;
   registrationEnabled: boolean;
   announcement: {
     enabled: boolean;
@@ -70,11 +48,6 @@ interface SettingsResponse {
     content: string;
     version: string;
   };
-}
-
-function formatFileSize(bytes: number) {
-  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
 export default function AdminSettingsPage() {
@@ -119,14 +92,6 @@ export default function AdminSettingsPage() {
   const [cdkButtonText, setCdkButtonText] = useState("");
   const [cdkButtonUrl, setCdkButtonUrl] = useState("");
   const [savingBranding, setSavingBranding] = useState(false);
-  const [tutorial, setTutorial] = useState<TutorialSettings>({ platforms: [] });
-  const [tutorialFiles, setTutorialFiles] = useState<
-    Partial<Record<TutorialPlatformId, File>>
-  >({});
-  const [savingTutorial, setSavingTutorial] = useState(false);
-  const [uploadingPlatform, setUploadingPlatform] =
-    useState<TutorialPlatformId | null>(null);
-
   const applySettings = useCallback((data: SettingsResponse) => {
     setHost(data.smtp.host);
     setPort(String(data.smtp.port));
@@ -152,7 +117,6 @@ export default function AdminSettingsPage() {
     setBuyButtonText(data.branding.buyButtonText);
     setCdkButtonText(data.branding.cdkButtonText);
     setCdkButtonUrl(data.branding.cdkButtonUrl);
-    setTutorial(data.tutorial);
   }, []);
 
   const load = useCallback(async () => {
@@ -243,9 +207,7 @@ export default function AdminSettingsPage() {
         },
       });
       applySettings(data);
-      showToast(
-        data.announcement.enabled ? "公告已发布" : "公告已暂停展示",
-      );
+      showToast(data.announcement.enabled ? "公告已发布" : "公告已暂停展示");
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "公告保存失败。");
     } finally {
@@ -341,74 +303,6 @@ export default function AdminSettingsPage() {
       setError(cause instanceof ApiError ? cause.message : "保存失败。");
     } finally {
       setSavingBranding(false);
-    }
-  }
-
-  function updateTutorialPlatform(
-    id: TutorialPlatformId,
-    patch: Partial<TutorialPlatformSettings>,
-  ) {
-    setTutorial((current) => ({
-      platforms: current.platforms.map((platform) =>
-        platform.id === id ? { ...platform, ...patch } : platform,
-      ),
-    }));
-  }
-
-  async function saveTutorial() {
-    if (!token) return;
-    setSavingTutorial(true);
-    setError(null);
-    const platform = (id: TutorialPlatformId) =>
-      tutorial.platforms.find((item) => item.id === id);
-    try {
-      const data = await apiRequest<SettingsResponse>("/api/admin/settings", {
-        method: "PATCH",
-        token,
-        body: {
-          tutorialWindowsClient:
-            platform("windows")?.client ?? "Clash Verge Rev",
-          tutorialWindowsSteps: platform("windows")?.steps.join("\n") ?? "",
-          tutorialWindowsUrl: platform("windows")?.externalUrl ?? "",
-          tutorialAndroidClient: platform("android")?.client ?? "FlClash",
-          tutorialAndroidSteps: platform("android")?.steps.join("\n") ?? "",
-          tutorialAndroidUrl: platform("android")?.externalUrl ?? "",
-          tutorialIosClient: platform("ios")?.client ?? "Stash",
-          tutorialIosSteps: platform("ios")?.steps.join("\n") ?? "",
-          tutorialIosUrl: platform("ios")?.externalUrl ?? "",
-        },
-      });
-      applySettings(data);
-      showToast("使用教程已保存");
-    } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "教程保存失败。");
-    } finally {
-      setSavingTutorial(false);
-    }
-  }
-
-  async function uploadTutorialApp(id: "windows" | "android") {
-    if (!token || !tutorialFiles[id]) return;
-    setUploadingPlatform(id);
-    setError(null);
-    const body = new FormData();
-    body.append("file", tutorialFiles[id]);
-    try {
-      const data = await apiRequest<TutorialSettings>(
-        `/api/admin/tutorial-assets/${id}`,
-        {
-          method: "POST",
-          token,
-          body,
-        },
-      );
-      setTutorial(data);
-      setTutorialFiles((current) => ({ ...current, [id]: undefined }));
-      showToast(`${id === "windows" ? "Windows" : "Android"} 客户端已上传`);
-    } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "客户端上传失败。");
-    } finally {
-      setUploadingPlatform(null);
     }
   }
 
@@ -675,137 +569,6 @@ export default function AdminSettingsPage() {
                 onClick={() => void saveAnnouncement()}
               >
                 {savingAnnouncement ? "保存中..." : "保存公告"}
-              </button>
-            </div>
-          </Panel>
-
-          <Panel
-            title="使用教程与客户端下载"
-            copy="客户端安装包设置保留兼容；图文步骤和发布请使用教程管理。Windows 使用 Clash Verge Rev，Android 使用 FlClash，iOS 使用 Stash。"
-          >
-            <div className="tutorial-admin-grid">
-              {tutorial.platforms.map((platform) => (
-                <section className="tutorial-admin-card" key={platform.id}>
-                  <div className="tutorial-admin-heading">
-                    <div>
-                      <strong>{platform.name}</strong>
-                      <span>{platform.meta}</span>
-                    </div>
-                    <span className="badge info">{platform.client}</span>
-                  </div>
-                  <label className="field">
-                    <span className="fine-print">客户端名称</span>
-                    <input
-                      className="control"
-                      value={platform.client}
-                      onChange={(event) =>
-                        updateTutorialPlatform(platform.id, {
-                          client: event.target.value,
-                        })
-                      }
-                      placeholder={
-                        platform.id === "windows"
-                          ? "Clash Verge Rev"
-                          : platform.id === "android"
-                            ? "FlClash"
-                            : "Stash"
-                      }
-                    />
-                  </label>
-                  <label className="field">
-                    <span className="fine-print">操作步骤（每行一项）</span>
-                    <textarea
-                      className="control tutorial-steps-editor"
-                      value={platform.steps.join("\n")}
-                      onChange={(event) =>
-                        updateTutorialPlatform(platform.id, {
-                          steps: event.target.value.split("\n"),
-                        })
-                      }
-                    />
-                  </label>
-                  <label className="field">
-                    <span className="fine-print">
-                      {platform.id === "ios"
-                        ? "App Store / 外部下载链接"
-                        : "备用外部下载链接（可选）"}
-                    </span>
-                    <input
-                      className="control"
-                      value={platform.externalUrl}
-                      onChange={(event) =>
-                        updateTutorialPlatform(platform.id, {
-                          externalUrl: event.target.value,
-                        })
-                      }
-                      placeholder="https://..."
-                    />
-                  </label>
-                  {platform.id !== "ios" ? (
-                    <div className="tutorial-upload-box">
-                      <div>
-                        <strong>
-                          {platform.asset?.originalName ?? "尚未上传安装包"}
-                        </strong>
-                        <span>
-                          {platform.asset
-                            ? `${formatFileSize(platform.asset.size)} · ${new Date(platform.asset.uploadedAt).toLocaleString("zh-CN")}`
-                            : platform.id === "windows"
-                              ? "支持 EXE、MSI、ZIP，最大 250 MB"
-                              : "支持 APK，最大 250 MB"}
-                        </span>
-                      </div>
-                      <input
-                        className="control"
-                        type="file"
-                        accept={
-                          platform.id === "windows" ? ".exe,.msi,.zip" : ".apk"
-                        }
-                        onChange={(event) => {
-                          const file = event.target.files?.[0];
-                          setTutorialFiles((current) => ({
-                            ...current,
-                            [platform.id]: file,
-                          }));
-                        }}
-                      />
-                      <button
-                        className="ghost-button"
-                        type="button"
-                        disabled={
-                          !tutorialFiles[platform.id] ||
-                          uploadingPlatform === platform.id
-                        }
-                        onClick={() =>
-                          void uploadTutorialApp(
-                            platform.id as "windows" | "android",
-                          )
-                        }
-                      >
-                        {uploadingPlatform === platform.id
-                          ? "上传中..."
-                          : platform.asset
-                            ? "替换安装包"
-                            : "上传安装包"}
-                      </button>
-                    </div>
-                  ) : (
-                    <p className="fine-print tutorial-ios-note">
-                      iOS 不在服务器上传安装包，填写 App Store
-                      或指定渠道链接即可。
-                    </p>
-                  )}
-                </section>
-              ))}
-            </div>
-            <div className="toolbar-actions">
-              <button
-                className="action-button"
-                type="button"
-                disabled={savingTutorial}
-                onClick={() => void saveTutorial()}
-              >
-                {savingTutorial ? "保存中..." : "保存教程内容"}
               </button>
             </div>
           </Panel>

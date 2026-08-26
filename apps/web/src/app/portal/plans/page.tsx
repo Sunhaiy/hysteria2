@@ -237,6 +237,11 @@ export default function PortalPlansPage() {
         const accent = normalizePlanAccent(product.accent ?? "green");
         const isCurrent =
           product.kind === "plan" && product.name === currentPlanName;
+        const purchaseStoreUrl =
+          offer?.storeUrl ||
+          product.storeUrl ||
+          (branding.purchaseMode === "cdk" ? branding.cdkButtonUrl : "") ||
+          null;
         return (
           <article
             className={`plan-card premium-plan-card${isCurrent ? " current" : ""}`}
@@ -335,10 +340,10 @@ export default function PortalPlansPage() {
                 </div>
               ) : null}
               <div className="plan-card-footer">
-                {offer && (offer.storeUrl || product.storeUrl) ? (
+                {offer && purchaseStoreUrl ? (
                   <a
                     className="action-button"
-                    href={offer.storeUrl || product.storeUrl || "#"}
+                    href={purchaseStoreUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                   >

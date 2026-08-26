@@ -10,6 +10,7 @@ import { buildPortalAlerts } from './portal-alerts';
 import { EntitlementService } from '../entitlement/entitlement.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { buildMihomoProfile } from './mihomo-profile';
+import { apiPublicUrl } from '../common/public-url';
 
 @Injectable()
 export class PortalService {
@@ -264,9 +265,7 @@ export class PortalService {
     });
     const subscriptionPath = `/subscribe/${bundle.token.token}`;
     const mihomoSubscriptionPath = `${subscriptionPath}/clash`;
-    const publicBaseUrl = (
-      process.env.API_PUBLIC_URL ?? 'http://localhost:4000'
-    ).replace(/\/$/, '');
+    const publicBaseUrl = apiPublicUrl();
     const subscriptionUrl = `${publicBaseUrl}${subscriptionPath}`;
     const mihomoSubscriptionUrl = `${publicBaseUrl}${mihomoSubscriptionPath}`;
     const subscriptionQrCode = await QRCode.toDataURL(subscriptionUrl, {

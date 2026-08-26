@@ -24,6 +24,11 @@ test("catalog offers expose period-specific shop URLs and plan traffic policy", 
   assert.match(catalog, /storeUrl/);
   assert.match(catalog, /该周期店铺链接/);
   assert.match(plans, /offer\.storeUrl/);
+  assert.match(
+    plans,
+    /branding\.purchaseMode === "cdk"[\s\S]*branding\.cdkButtonUrl/,
+  );
+  assert.match(plans, /href=\{purchaseStoreUrl\}/);
   assert.match(catalog, /默认倍率/);
   assert.match(catalog, /上行限速/);
   assert.match(catalog, /下行限速/);
@@ -102,6 +107,10 @@ test("support tickets are available to members and administrators", async () => 
   assert.match(memberTickets, /\/api\/portal\/tickets/);
   assert.match(memberTickets, /\/api\/portal\/announcement\/current/);
   assert.match(memberTickets, /ticket-announcement/);
+  assert.match(
+    memberTickets,
+    /disabled=\{busy \|\| !subject\.trim\(\) \|\| !message\.trim\(\)\}/,
+  );
   assert.match(adminTickets, /\/api\/admin\/tickets/);
   assert.match(adminTickets, /关闭工单/);
 });
@@ -127,9 +136,10 @@ test("CDKs expose renew and replace plan behavior", async () => {
 });
 
 test("tutorial management uploads installers and keeps the required platform order", async () => {
-  const [adminTutorials, memberTutorials] = await Promise.all([
+  const [adminTutorials, memberTutorials, settings] = await Promise.all([
     source("app/admin/tutorials/page.tsx"),
     source("app/portal/tutorial/page.tsx"),
+    source("app/admin/settings/page.tsx"),
   ]);
 
   assert.match(adminTutorials, /tutorial-assets/);
@@ -140,4 +150,7 @@ test("tutorial management uploads installers and keeps the required platform ord
   );
   assert.match(memberTutorials, /clientName: "Clash Meta"/);
   assert.doesNotMatch(memberTutorials, /FlClash/);
+  assert.doesNotMatch(settings, /tutorial-assets/);
+  assert.doesNotMatch(settings, /tutorialWindows/);
+  assert.doesNotMatch(settings, /使用教程与客户端下载/);
 });

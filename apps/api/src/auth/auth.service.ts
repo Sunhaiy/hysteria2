@@ -12,6 +12,7 @@ import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import { compare, hash } from 'bcryptjs';
 import { CacheService } from '../cache/cache.service';
 import { type SessionPrincipal } from '../common/auth.types';
+import { webPublicUrl } from '../common/public-url';
 import { ControlPlaneStoreService } from '../domain/control-plane.store';
 import { MailService } from '../mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
@@ -211,11 +212,8 @@ export class AuthService {
       tokenHash,
       expiresAt,
     });
-    const webBaseUrl = (
-      process.env.WEB_PUBLIC_URL ?? 'http://localhost:3001'
-    ).replace(/\/$/, '');
     return {
-      resetUrl: `${webBaseUrl}/reset-password?token=${encodeURIComponent(rawToken)}`,
+      resetUrl: `${webPublicUrl()}/reset-password?token=${encodeURIComponent(rawToken)}`,
       expiresAt: expiresAt.toISOString(),
     };
   }
