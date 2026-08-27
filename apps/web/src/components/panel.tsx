@@ -5,17 +5,21 @@ export function Panel({
   copy,
   action,
   allowOverflow = false,
+  className,
   children,
 }: {
   title: string;
   copy?: string;
   action?: ReactNode;
   allowOverflow?: boolean;
+  className?: string;
   children: ReactNode;
 }) {
   return (
     <section
-      className={`panel${allowOverflow ? " panel-overflow-visible" : ""}`}
+      className={`panel${allowOverflow ? " panel-overflow-visible" : ""}${
+        className ? ` ${className}` : ""
+      }`}
     >
       <div className="panel-header">
         <div className="split">

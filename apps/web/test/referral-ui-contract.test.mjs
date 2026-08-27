@@ -6,6 +6,10 @@ const page = await readFile(
   new URL("../src/app/portal/referrals/page.tsx", import.meta.url),
   "utf8",
 );
+const adminPage = await readFile(
+  new URL("../src/app/admin/referrals/page.tsx", import.meta.url),
+  "utf8",
+);
 const styles = await readFile(
   new URL("../src/app/globals.scss", import.meta.url),
   "utf8",
@@ -38,5 +42,14 @@ test("referral page has responsive metrics and a designed empty state", () => {
   assert.match(
     styles,
     /@media \(max-width: 520px\)[\s\S]*\.referral-metric-grid/,
+  );
+});
+
+test("admin referral filters stack below the panel title on mobile", () => {
+  assert.match(adminPage, /className="referral-records-panel"/);
+  assert.match(adminPage, /referral-record-filters/);
+  assert.match(
+    styles,
+    /@media \(max-width: 720px\)[\s\S]*\.referral-records-panel \.panel-header\s*\{[^}]*flex-direction:\s*column;/s,
   );
 });

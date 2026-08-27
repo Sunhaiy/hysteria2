@@ -20,12 +20,15 @@ test("admin dashboard uses the dedicated projection and five operational metrics
     assert.match(page, new RegExp(`label="${label}"`));
   }
   assert.doesNotMatch(page, /需要关注的订阅|高用量用户/);
+  assert.match(page, /splitNumber:\s*3/);
+  assert.match(page, /axisLabel:\s*\{ width:\s*132, overflow:\s*"truncate" \}/);
 });
 
 test("customer traffic and finance expose daily detail and annual break-even", async () => {
-  const [customer, finance] = await Promise.all([
+  const [customer, finance, styles] = await Promise.all([
     read("../src/app/admin/customers/[id]/page.tsx"),
     read("../src/app/admin/finance/page.tsx"),
+    read("../src/app/globals.scss"),
   ]);
 
   assert.match(customer, /\/traffic\/daily\?/);
@@ -34,4 +37,8 @@ test("customer traffic and finance expose daily detail and annual break-even", a
   assert.match(finance, /\/api\/admin\/finance\/annual-break-even\?year=/);
   assert.match(finance, /\/api\/admin\/finance\/annual-costs\//);
   assert.match(finance, /年度总成本独立计算，不与节点成本重复相加/);
+  assert.match(
+    styles,
+    /\.annual-cost-form > \.action-button\s*\{[^}]*white-space:\s*nowrap;/s,
+  );
 });

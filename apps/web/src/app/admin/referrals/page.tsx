@@ -179,7 +179,47 @@ export default function AdminReferralsPage() {
         ) : null}
       </Panel>
 
-      <Panel title="邀请记录" action={<div className="inline-form compact"><input className="control" placeholder="邀请人邮箱" value={inviter} onChange={(event) => setInviter(event.target.value)} /><input className="control" placeholder="被邀请人邮箱" value={invitee} onChange={(event) => setInvitee(event.target.value)} /><input className="control mono" placeholder="邀请码" value={inviteCode} onChange={(event) => setInviteCode(event.target.value.toUpperCase().slice(0, 8))} /><CustomSelect value={status} onChange={(value) => { setStatus(value); setPage(1); }} options={[{ value: "all", label: "全部状态" }, { value: "pending", label: "待成交" }, { value: "rewarded", label: "已奖励" }, { value: "reversed", label: "已追回" }]} /></div>}>
+      <Panel
+        className="referral-records-panel"
+        title="邀请记录"
+        action={
+          <div className="inline-form compact referral-record-filters">
+            <input
+              className="control"
+              placeholder="邀请人邮箱"
+              value={inviter}
+              onChange={(event) => setInviter(event.target.value)}
+            />
+            <input
+              className="control"
+              placeholder="被邀请人邮箱"
+              value={invitee}
+              onChange={(event) => setInvitee(event.target.value)}
+            />
+            <input
+              className="control mono"
+              placeholder="邀请码"
+              value={inviteCode}
+              onChange={(event) =>
+                setInviteCode(event.target.value.toUpperCase().slice(0, 8))
+              }
+            />
+            <CustomSelect
+              value={status}
+              onChange={(value) => {
+                setStatus(value);
+                setPage(1);
+              }}
+              options={[
+                { value: "all", label: "全部状态" },
+                { value: "pending", label: "待成交" },
+                { value: "rewarded", label: "已奖励" },
+                { value: "reversed", label: "已追回" },
+              ]}
+            />
+          </div>
+        }
+      >
         <DataTable
           loading={loading}
           emptyText="没有匹配的邀请记录"

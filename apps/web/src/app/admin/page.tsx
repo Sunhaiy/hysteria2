@@ -151,9 +151,17 @@ export default function AdminDashboardPage() {
       grid: { left: 8, right: 18, top: 8, bottom: 8, containLabel: true },
       xAxis: {
         type: "value",
-        axisLabel: { formatter: (value: number) => formatBytes(value) },
+        splitNumber: 3,
+        axisLabel: {
+          hideOverlap: true,
+          formatter: (value: number) => formatBytes(value),
+        },
       },
-      yAxis: { type: "category", data: rows.map((item) => item.label) },
+      yAxis: {
+        type: "category",
+        data: rows.map((item) => item.label),
+        axisLabel: { width: 132, overflow: "truncate" },
+      },
       series: [
         {
           name: "本月流量",

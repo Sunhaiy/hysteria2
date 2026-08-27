@@ -4619,7 +4619,7 @@ select.control {
 
 .annual-break-even-layout {
   display: grid;
-  grid-template-columns: minmax(300px, 0.8fr) minmax(360px, 1.2fr);
+  grid-template-columns: minmax(420px, 1fr) minmax(360px, 1fr);
   gap: 20px;
   align-items: end;
 }
@@ -4629,6 +4629,11 @@ select.control {
   grid-template-columns: minmax(100px, 0.45fr) minmax(180px, 1fr) auto;
   gap: 10px;
   align-items: end;
+}
+
+.annual-cost-form > .action-button {
+  min-width: 118px;
+  white-space: nowrap;
 }
 
 .annual-break-even-summary {
@@ -5409,6 +5414,15 @@ select.control {
 
   .annual-cost-form {
     grid-template-columns: 1fr;
+  }
+
+  .referral-records-panel .panel-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .referral-record-filters {
+    width: 100%;
   }
 
   .referral-page-heading,
