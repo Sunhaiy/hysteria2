@@ -60,6 +60,7 @@ export class AuthController {
       code: body.code,
       password: body.password,
       displayName: body.displayName,
+      inviteCode: body.inviteCode,
     });
     setSessionCookies(response, session.accessToken);
     return this.withoutAccessToken(session);

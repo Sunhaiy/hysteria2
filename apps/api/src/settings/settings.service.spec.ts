@@ -44,6 +44,9 @@ describe('SettingsService cache', () => {
   it('invalidates settings and published tutorials after tutorial settings change', async () => {
     const prisma = {
       setting: { upsert: jest.fn().mockResolvedValue({}) },
+      $transaction: jest.fn((operations: Array<Promise<unknown>>) =>
+        Promise.all(operations),
+      ),
     };
     const cache = { del: jest.fn().mockResolvedValue(undefined) };
     const cipher = { encrypt: jest.fn((value: string) => value) };

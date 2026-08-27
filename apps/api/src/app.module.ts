@@ -28,6 +28,7 @@ import { PortalModule } from './portal/portal.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedemptionCodesModule } from './redemption-codes/redemption-codes.module';
 import { ReportingModule } from './reporting/reporting.module';
+import { ReferralModule } from './referrals/referral.module';
 import { SecurityModule } from './security/security.module';
 import { SettingsModule } from './settings/settings.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
@@ -78,6 +79,7 @@ import { TicketsModule } from './tickets/tickets.module';
     OperationsModule,
     RedemptionCodesModule,
     ReportingModule,
+    ReferralModule,
     PortalModule,
     HysteriaAuthModule,
     KickServiceModule,

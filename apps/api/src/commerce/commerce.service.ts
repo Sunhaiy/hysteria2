@@ -22,6 +22,7 @@ import {
 import { ControlPlaneStoreService } from '../domain/control-plane.store';
 import { PrismaService } from '../prisma/prisma.service';
 import { EntitlementService } from '../entitlement/entitlement.service';
+import { ReferralService } from '../referrals/referral.service';
 
 export type CheckoutInput =
   | { offerId: string; discountCode?: string }
@@ -44,6 +45,7 @@ export class CommerceService {
     private readonly prisma: PrismaService,
     private readonly store: ControlPlaneStoreService,
     @Optional() private readonly entitlements?: EntitlementService,
+    @Optional() private readonly referrals?: ReferralService,
   ) {}
 
   async quoteCheckout(userId: string, input: CheckoutInput) {
@@ -85,69 +87,77 @@ export class CommerceService {
     code: string,
     expectedTrafficPackProductId?: string,
   ) {
-    const result = await this.store.redeemRedemptionCode(
+    return this.store.redeemRedemptionCode(
       userId,
       code,
       expectedTrafficPackProductId,
+      this.entitlements
+        ? async ({ tx, code: redeemedCode, order }) => {
+            if (!order?.catalogOfferId || !this.entitlements) return;
+            if (
+              redeemedCode.kind === RedemptionCodeKind.PLAN &&
+              order.kind === OrderKind.RENEWAL
+            ) {
+              const subscription = await tx.subscription.findFirst({
+                where: {
+                  userId,
+                  status: SubscriptionStatus.ACTIVE,
+                },
+                orderBy: { updatedAt: 'desc' },
+              });
+              const grant = await this.entitlements.grantFromOrder(
+                {
+                  orderId: order.id,
+                  subscriptionId: subscription?.id,
+                },
+                tx,
+              );
+              if (this.referrals) {
+                await this.referrals.settlePlanCdkReward(
+                  tx,
+                  userId,
+                  order.id,
+                  grant.id,
+                );
+              }
+              return;
+            }
+            if (
+              redeemedCode.kind === RedemptionCodeKind.TRAFFIC_PACK &&
+              order.kind === OrderKind.TRAFFIC_PACK
+            ) {
+              if (
+                !order.trafficBytes ||
+                !order.entitlementExpiresAt ||
+                !order.accessProfileIdSnapshot
+              ) {
+                throw new ConflictException(
+                  'Traffic pack order is missing its entitlement snapshot',
+                );
+              }
+              const trafficPack = await tx.trafficPack.findFirst({
+                where: {
+                  userId,
+                  trafficPackProductId: order.trafficPackProductId,
+                  totalBytes: order.trafficBytes,
+                  expiresAt: order.entitlementExpiresAt,
+                  accessProfileId: order.accessProfileIdSnapshot,
+                },
+                orderBy: { createdAt: 'desc' },
+              });
+              if (!trafficPack) {
+                throw new ConflictException(
+                  'Traffic pack entitlement source was not created',
+                );
+              }
+              await this.entitlements.grantFromOrder(
+                { orderId: order.id, trafficPackId: trafficPack.id },
+                tx,
+              );
+            }
+          }
+        : undefined,
     );
-    const orderId = result?.order?.id;
-    if (orderId && this.entitlements) {
-      const order = await this.prisma.manualOrder.findUnique({
-        where: { id: orderId },
-        select: {
-          catalogOfferId: true,
-          kind: true,
-          trafficPackProductId: true,
-          trafficBytes: true,
-          entitlementExpiresAt: true,
-          accessProfileIdSnapshot: true,
-        },
-      });
-      if (order?.catalogOfferId && order.kind === OrderKind.RENEWAL) {
-        const subscription = await this.prisma.subscription.findFirst({
-          where: {
-            userId,
-            status: SubscriptionStatus.ACTIVE,
-          },
-          orderBy: { updatedAt: 'desc' },
-        });
-        await this.entitlements.grantFromOrder({
-          orderId,
-          subscriptionId: subscription?.id,
-        });
-      }
-      if (order?.catalogOfferId && order.kind === OrderKind.TRAFFIC_PACK) {
-        if (
-          !order.trafficBytes ||
-          !order.entitlementExpiresAt ||
-          !order.accessProfileIdSnapshot
-        ) {
-          throw new ConflictException(
-            'Traffic pack order is missing its entitlement snapshot',
-          );
-        }
-        const trafficPack = await this.prisma.trafficPack.findFirst({
-          where: {
-            userId,
-            trafficPackProductId: order.trafficPackProductId,
-            totalBytes: order.trafficBytes,
-            expiresAt: order.entitlementExpiresAt,
-            accessProfileId: order.accessProfileIdSnapshot,
-          },
-          orderBy: { createdAt: 'desc' },
-        });
-        if (!trafficPack) {
-          throw new ConflictException(
-            'Traffic pack entitlement source was not created',
-          );
-        }
-        await this.entitlements.grantFromOrder({
-          orderId,
-          trafficPackId: trafficPack.id,
-        });
-      }
-    }
-    return result;
   }
 
   async checkout(

@@ -5059,6 +5059,20 @@ select.control {
   padding-top: 2px;
 }
 
+.referral-code-layout {
+  display: grid;
+  gap: 14px;
+}
+
+.referral-code-value {
+  width: fit-content;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-panel-alt);
+  font-size: 22px;
+}
+
 @media (max-width: 1200px) {
   .admin-chart-grid,
   .admin-overview-row,

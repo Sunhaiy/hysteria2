@@ -2410,6 +2410,19 @@ export class ControlPlaneStoreService {
     userId: string,
     rawCode: string,
     expectedTrafficPackProductId?: string,
+    onApplied?: (context: {
+      tx: Prisma.TransactionClient;
+      code: { kind: RedemptionCodeKind };
+      order: {
+        id: string;
+        kind: OrderKind;
+        catalogOfferId: string | null;
+        trafficPackProductId: string | null;
+        trafficBytes: bigint | null;
+        entitlementExpiresAt: Date | null;
+        accessProfileIdSnapshot: string | null;
+      } | null;
+    }) => Promise<void>,
   ) {
     await this.mustGetUserRecord(userId);
     await this.expireOverdueSubscriptions();
@@ -2539,6 +2552,10 @@ export class ControlPlaneStoreService {
         await tx.redemptionUse.create({
           data: { codeId: code.id, userId, orderId: order?.id ?? null },
         });
+
+        if (onApplied) {
+          await onApplied({ tx, code, order });
+        }
 
         const nextUsedCount = code.usedCount + 1;
         const exhausted = nextUsedCount >= code.maxUses;

@@ -203,6 +203,11 @@ export class RegisterDto {
   @IsString()
   @MaxLength(40)
   displayName?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(8, 8)
+  inviteCode?: string;
 }
 
 export class CreateUserDto {

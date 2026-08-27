@@ -5,6 +5,7 @@ import {
   HttpStatus,
   Injectable,
   Logger,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -15,6 +16,7 @@ import { type SessionPrincipal } from '../common/auth.types';
 import { webPublicUrl } from '../common/public-url';
 import { ControlPlaneStoreService } from '../domain/control-plane.store';
 import { MailService } from '../mail/mail.service';
+import { MemberOnboardingService } from '../referrals/member-onboarding.service';
 import { SettingsService } from '../settings/settings.service';
 
 const REGISTER_CODE_TTL_SECONDS = 10 * 60;
@@ -35,6 +37,7 @@ export class AuthService {
     private readonly cache: CacheService,
     private readonly mail: MailService,
     private readonly settings: SettingsService,
+    @Optional() private readonly onboarding?: MemberOnboardingService,
   ) {}
 
   async login(email: string, password: string) {
@@ -96,6 +99,7 @@ export class AuthService {
     code: string;
     password: string;
     displayName?: string;
+    inviteCode?: string;
   }) {
     if (!(await this.settings.isRegistrationEnabled())) {
       throw new BadRequestException('当前未开放注册，请联系管理员');
@@ -120,13 +124,22 @@ export class AuthService {
     const displayName =
       input.displayName?.trim() || email.split('@')[0] || email;
 
-    await this.store.createUser({
-      email,
-      displayName,
-      passwordHash,
-      role: 'member',
-      status: 'active',
-    });
+    if (this.onboarding) {
+      await this.onboarding.createEmailMember({
+        email,
+        displayName,
+        passwordHash,
+        inviteCode: input.inviteCode,
+      });
+    } else {
+      await this.store.createUser({
+        email,
+        displayName,
+        passwordHash,
+        role: 'member',
+        status: 'active',
+      });
+    }
 
     await this.cache.del(`reg-code:${email}`);
     await this.cache.del(`reg-cooldown:${email}`);
@@ -149,13 +162,23 @@ export class AuthService {
         throw new BadRequestException('当前未开放注册，请联系管理员');
       }
       const passwordHash = await hash(`${randomUUID()}${randomUUID()}`, 10);
-      await this.store.createUser({
-        email,
-        displayName: input.displayName?.trim() || email.split('@')[0] || email,
-        passwordHash,
-        role: 'member',
-        status: 'active',
-      });
+      const displayName =
+        input.displayName?.trim() || email.split('@')[0] || email;
+      if (this.onboarding) {
+        await this.onboarding.createOAuthMember({
+          email,
+          displayName,
+          passwordHash,
+        });
+      } else {
+        await this.store.createUser({
+          email,
+          displayName,
+          passwordHash,
+          role: 'member',
+          status: 'active',
+        });
+      }
       user = await this.store.findUserByEmail(email);
     }
 

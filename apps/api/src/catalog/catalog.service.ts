@@ -308,6 +308,11 @@ export class CatalogService {
         },
       });
       if (!existing) throw new NotFoundException('Catalog product not found');
+      if (existing.systemManaged) {
+        throw new BadRequestException(
+          'System-managed products cannot be edited',
+        );
+      }
       const kind = this.toProductKind(input.kind);
       if (existing.kind !== kind) {
         throw new BadRequestException('Product kind cannot be changed');
@@ -697,7 +702,7 @@ export class CatalogService {
 
   private async loadUnifiedProducts(id?: string) {
     const products = await this.prisma.catalogProduct.findMany({
-      where: id ? { id } : undefined,
+      where: id ? { id, systemManaged: false } : { systemManaged: false },
       include: {
         offers: {
           include: { legacyPlanOffer: true },

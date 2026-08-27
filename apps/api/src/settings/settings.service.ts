@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+import type { Prisma } from '@prisma/client';
 import { CacheService } from '../cache/cache.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SecretCipherService } from '../security/secret-cipher.service';
@@ -110,21 +111,26 @@ export class SettingsService {
   }
 
   async setMany(updates: Record<string, string>) {
-    for (const [key, value] of Object.entries(updates)) {
-      await this.prisma.setting.upsert({
-        where: { key },
-        create: {
-          key,
-          value: secretSettingKeys.includes(key)
-            ? this.cipher.encrypt(value)
-            : value,
-        },
-        update: {
-          value: secretSettingKeys.includes(key)
-            ? this.cipher.encrypt(value)
-            : value,
-        },
-      });
+    const entries = Object.entries(updates);
+    if (entries.length > 0) {
+      await this.prisma.$transaction(
+        entries.map(([key, value]) =>
+          this.prisma.setting.upsert({
+            where: { key },
+            create: {
+              key,
+              value: secretSettingKeys.includes(key)
+                ? this.cipher.encrypt(value)
+                : value,
+            },
+            update: {
+              value: secretSettingKeys.includes(key)
+                ? this.cipher.encrypt(value)
+                : value,
+            },
+          }),
+        ),
+      );
     }
     this.cache = null;
     await this.sharedCache.del(settingsCacheKey);
@@ -231,6 +237,36 @@ export class SettingsService {
   async isRegistrationEnabled(): Promise<boolean> {
     const value = await this.get('registration.enabled');
     return value === undefined ? true : value === 'true';
+  }
+
+  async isReferralEnabled(): Promise<boolean> {
+    return (await this.get('referral.enabled')) === 'true';
+  }
+
+  async getReferralConfig(client?: Prisma.TransactionClient) {
+    const values = client
+      ? new Map(
+          (
+            await client.setting.findMany({
+              where: {
+                key: {
+                  in: ['referral.enabled', 'referral.inviterRewardCents'],
+                },
+              },
+            })
+          ).map((row) => [row.key, row.value]),
+        )
+      : await this.all();
+    const rawReward = Number.parseInt(
+      values.get('referral.inviterRewardCents') ?? '500',
+      10,
+    );
+    return {
+      enabled: values.get('referral.enabled') === 'true',
+      inviterRewardCents:
+        Number.isFinite(rawReward) && rawReward >= 0 ? rawReward : 500,
+      inviteeRewardBytes: 20 * 1024 * 1024 * 1024,
+    };
   }
 
   async getAnnouncementConfig() {

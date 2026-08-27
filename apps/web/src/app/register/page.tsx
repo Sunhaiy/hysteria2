@@ -16,12 +16,24 @@ export default function RegisterPage() {
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [codeSent, setCodeSent] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const [sending, setSending] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const invite = new URLSearchParams(window.location.search)
+        .get("invite")
+        ?.trim()
+        .toUpperCase();
+      if (invite) setInviteCode(invite.slice(0, 8));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (cooldown <= 0) {
@@ -72,6 +84,7 @@ export default function RegisterPage() {
           code,
           password,
           displayName: displayName || undefined,
+          inviteCode: inviteCode || undefined,
         },
       });
       // Reuse the tested login path to establish the session in context.
@@ -112,6 +125,23 @@ export default function RegisterPage() {
         </label>
 
         <label className="auth2-input">
+          <span className="auth2-input-icon"><Icon name="group_add" /></span>
+          <input
+            value={inviteCode}
+            onChange={(event) =>
+              setInviteCode(
+                event.target.value
+                  .toUpperCase()
+                  .replace(/[^A-HJ-NP-Z2-9]/g, "")
+                  .slice(0, 8),
+              )
+            }
+            placeholder="邀请码（可选）"
+            autoComplete="off"
+          />
+        </label>
+
+        <label className="auth2-input">
           <span className="auth2-input-icon"><Icon name="hash" /></span>
           <input
             value={code}
@@ -148,13 +178,19 @@ export default function RegisterPage() {
         <button
           className="auth2-submit"
           type="submit"
-          disabled={submitting || !codeSent || code.length !== 6 || password.length < 8}
+          disabled={
+            submitting ||
+            !codeSent ||
+            code.length !== 6 ||
+            password.length < 8 ||
+            (inviteCode.length > 0 && inviteCode.length !== 8)
+          }
         >
           {submitting ? "注册中..." : "注册并登录"}
         </button>
       </form>
 
-      <OAuthButtons />
+      {inviteCode ? null : <OAuthButtons />}
 
       <div className="auth2-foot">
         已有账号？

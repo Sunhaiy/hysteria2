@@ -90,6 +90,23 @@ draft, and switch the guide pointer in one database transaction.
 - Member activity waits for staff; staff activity waits for the member. Closed
   tickets reject new replies until an administrator reopens them.
 
+## Referrals
+
+- **ReferralCode** is a member's stable eight-character invitation identity.
+  Ambiguous characters are excluded, and members cannot rotate their code.
+- **ReferralAttribution** is the immutable inviter/invitee ownership captured
+  during email verification registration. One invitee can have only one
+  attribution, and OAuth never creates one.
+- A pending attribution qualifies only when the invitee's first plan CDK
+  successfully grants a plan entitlement. Wallet checkout, traffic-pack and
+  balance CDKs, discounts, and complimentary admin grants do not qualify.
+- The inviter reward and invitee traffic amount are snapshots on the
+  attribution. The traffic reward is a system-managed traffic-pack entitlement
+  with the qualifying plan's access profile and expiry.
+- Any applied refund on the qualifying order reverses the reward once. Wallet
+  recovery stops at zero and records the unrecovered amount; canceling the
+  bonus grant preserves consumed traffic and immutable usage allocations.
+
 ## Module seams
 
 - `CatalogService`: catalog products, offers, access profiles, portal catalog.
@@ -98,6 +115,10 @@ draft, and switch the guide pointer in one database transaction.
 - `NodeOpsService` and `OperationsService`: server topology and live operations.
 - `FinanceService`: paged ledgers and database-aggregated reporting.
 - `TutorialsService`: drafts, assets, publication, and published guides.
+- `ReferralService`: stable codes, read models, transactional settlement, and
+  conservative refund reversal.
+- `MemberOnboardingService`: atomic member, access identity, and optional email
+  referral attribution creation.
 - `ControlPlaneStoreService`: legacy compatibility adapter only. Do not add new
   business behavior to this module.
 

@@ -25,6 +25,12 @@ export const adminNav: NavItem[] = [
   { href: "/admin/nodes", label: "服务器节点", icon: "hub", meta: "NODE" },
   { href: "/admin/tutorials", label: "教程管理", icon: "book", meta: "DOC" },
   { href: "/admin/tickets", label: "工单", icon: "mail", meta: "SUP" },
+  {
+    href: "/admin/referrals",
+    label: "拉新管理",
+    icon: "group_add",
+    meta: "GROW",
+  },
   { href: "/admin/audit", label: "审计", icon: "shield", meta: "AUDIT" },
   { href: "/admin/settings", label: "设置", icon: "settings", meta: "CONF" },
 ];
@@ -46,6 +52,12 @@ export const portalNav: NavItem[] = [
   },
   { href: "/portal/tutorial", label: "使用教程", icon: "book", meta: "GUIDE" },
   { href: "/portal/tickets", label: "我的工单", icon: "mail", meta: "HELP" },
+  {
+    href: "/portal/referrals",
+    label: "邀请奖励",
+    icon: "group_add",
+    meta: "INVITE",
+  },
   {
     href: "/portal/usage",
     label: "流量使用",

@@ -25,6 +25,8 @@ const gb = 1024 * 1024 * 1024;
 
 async function main() {
   await prisma.$transaction([
+    prisma.referralAttribution.deleteMany(),
+    prisma.referralCode.deleteMany(),
     prisma.monitorAlertEvent.deleteMany(),
     prisma.monitorAlert.deleteMany(),
     prisma.nodeServiceCheck.deleteMany(),
@@ -546,6 +548,18 @@ async function main() {
         speedDownMbps: 120,
         accent: 'teal',
         sortOrder: 30,
+      },
+      {
+        id: 'system_referral_traffic_bonus',
+        slug: 'system-referral-traffic-bonus',
+        kind: 'TRAFFIC_PACK',
+        status: 'ARCHIVED',
+        name: '邀请奖励流量',
+        description: '系统管理的邀请奖励权益',
+        quotaCadence: 'ONE_TIME',
+        accent: 'green',
+        sortOrder: 2147483647,
+        systemManaged: true,
       },
     ],
   });

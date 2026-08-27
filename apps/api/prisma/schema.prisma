@@ -242,6 +242,12 @@ enum SupportTicketStatus {
   CLOSED
 }
 
+enum ReferralStatus {
+  PENDING
+  REWARDED
+  REVERSED
+}
+
 model User {
   id                           String                        @id @default(cuid())
   email                        String                        @unique
@@ -283,6 +289,9 @@ model User {
   acknowledgedAlerts           MonitorAlert[]                @relation("MonitorAlertAcknowledgedBy")
   supportTickets               SupportTicket[]               @relation("SupportTicketOwner")
   supportTicketMessages        SupportTicketMessage[]        @relation("SupportTicketMessageAuthor")
+  referralCode                 ReferralCode?                 @relation("ReferralCodeOwner")
+  referralsSent                ReferralAttribution[]         @relation("ReferralInviter")
+  referralReceived             ReferralAttribution?          @relation("ReferralInvitee")
 
   @@index([role, status, createdAt, id])
 }
@@ -618,20 +627,20 @@ model QuotaAdjustment {
 }
 
 model ManualOrder {
-  id                      String              @id @default(cuid())
+  id                      String               @id @default(cuid())
   userId                  String
   processedById           String?
   planId                  String?
   trafficPackProductId    String?
   planOfferId             String?
   catalogOfferId          String?
-  status                  OrderStatus         @default(PENDING)
+  status                  OrderStatus          @default(PENDING)
   kind                    OrderKind
-  source                  OrderSource         @default(LEGACY)
+  source                  OrderSource          @default(LEGACY)
   amountCents             Int
   basePriceCents          Int?
-  discountCents           Int                 @default(0)
-  currency                String              @default("CNY")
+  discountCents           Int                  @default(0)
+  currency                String               @default("CNY")
   productSlugSnapshot     String?
   productNameSnapshot     String?
   durationDays            Int?
@@ -643,17 +652,18 @@ model ManualOrder {
   accessProfileIdSnapshot String?
   idempotencyKey          String?
   note                    String?
-  createdAt               DateTime            @default(now())
+  createdAt               DateTime             @default(now())
   processedAt             DateTime?
-  user                    User                @relation("ManualOrderTargetUser", fields: [userId], references: [id], onDelete: Cascade)
-  processedBy             User?               @relation("ManualOrderProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
-  plan                    Plan?               @relation(fields: [planId], references: [id], onDelete: SetNull)
-  trafficPackProduct      TrafficPackProduct? @relation(fields: [trafficPackProductId], references: [id], onDelete: SetNull)
-  planOffer               PlanOffer?          @relation(fields: [planOfferId], references: [id], onDelete: SetNull)
-  catalogOffer            CatalogOffer?       @relation(fields: [catalogOfferId], references: [id], onDelete: SetNull)
+  user                    User                 @relation("ManualOrderTargetUser", fields: [userId], references: [id], onDelete: Cascade)
+  processedBy             User?                @relation("ManualOrderProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
+  plan                    Plan?                @relation(fields: [planId], references: [id], onDelete: SetNull)
+  trafficPackProduct      TrafficPackProduct?  @relation(fields: [trafficPackProductId], references: [id], onDelete: SetNull)
+  planOffer               PlanOffer?           @relation(fields: [planOfferId], references: [id], onDelete: SetNull)
+  catalogOffer            CatalogOffer?        @relation(fields: [catalogOfferId], references: [id], onDelete: SetNull)
   paymentRecords          PaymentRecord[]
   refunds                 Refund[]
   walletLedger            WalletLedgerEntry[]
+  qualifyingReferral      ReferralAttribution?
 
   @@unique([userId, idempotencyKey])
   @@index([trafficPackProductId, createdAt])
@@ -1054,6 +1064,7 @@ model CatalogProduct {
   defaultTrafficMultiplierBasisPoints Int                  @default(10000)
   accent                              String               @default("green")
   sortOrder                           Int                  @default(0)
+  systemManaged                       Boolean              @default(false)
   createdAt                           DateTime             @default(now())
   updatedAt                           DateTime             @updatedAt
   legacyPlan                          Plan?                @relation(fields: [legacyPlanId], references: [id], onDelete: SetNull)
@@ -1119,6 +1130,7 @@ model EntitlementGrant {
   legacySubscription    Subscription?          @relation(fields: [legacySubscriptionId], references: [id], onDelete: SetNull)
   legacyTrafficPack     TrafficPack?           @relation(fields: [legacyTrafficPackId], references: [id], onDelete: SetNull)
   quotaBuckets          QuotaBucket[]
+  referralBonusFor      ReferralAttribution?
 
   @@index([userId, kind, status, endsAt])
   @@index([accessAccountId, status, endsAt])
@@ -1216,8 +1228,8 @@ model PaymentRecord {
 }
 
 model WalletLedgerEntry {
-  id                  String        @id @default(cuid())
-  legacyTransactionId String?       @unique
+  id                  String               @id @default(cuid())
+  legacyTransactionId String?              @unique
   userId              String
   actorId             String?
   orderId             String?
@@ -1227,14 +1239,60 @@ model WalletLedgerEntry {
   kind                WalletTxnKind
   idempotencyKey      String?
   note                String?
-  createdAt           DateTime      @default(now())
-  user                User          @relation("WalletLedgerTargetUser", fields: [userId], references: [id], onDelete: Cascade)
-  actor               User?         @relation("WalletLedgerActor", fields: [actorId], references: [id], onDelete: SetNull)
-  order               ManualOrder?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  createdAt           DateTime             @default(now())
+  user                User                 @relation("WalletLedgerTargetUser", fields: [userId], references: [id], onDelete: Cascade)
+  actor               User?                @relation("WalletLedgerActor", fields: [actorId], references: [id], onDelete: SetNull)
+  order               ManualOrder?         @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  referralReward      ReferralAttribution? @relation("ReferralRewardLedger")
+  referralReversal    ReferralAttribution? @relation("ReferralReversalLedger")
 
   @@unique([userId, idempotencyKey])
   @@index([userId, createdAt])
   @@index([orderId, createdAt])
+}
+
+model ReferralCode {
+  id           String                @id @default(cuid())
+  ownerId      String                @unique
+  code         String                @unique
+  active       Boolean               @default(true)
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+  owner        User                  @relation("ReferralCodeOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  attributions ReferralAttribution[]
+}
+
+model ReferralAttribution {
+  id                      String             @id @default(cuid())
+  inviterId               String
+  inviteeId               String             @unique
+  referralCodeId          String
+  codeSnapshot            String
+  status                  ReferralStatus     @default(PENDING)
+  inviterRewardCents      Int
+  inviteeRewardBytes      BigInt
+  qualifyingOrderId       String?            @unique
+  rewardWalletLedgerId    String?            @unique
+  reversalWalletLedgerId  String?            @unique
+  bonusEntitlementGrantId String?            @unique
+  rewardedAt              DateTime?
+  reversedAt              DateTime?
+  recoveredCents          Int                @default(0)
+  unrecoveredCents        Int                @default(0)
+  revokedUnusedBytes      BigInt             @default(0)
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
+  inviter                 User               @relation("ReferralInviter", fields: [inviterId], references: [id], onDelete: Restrict)
+  invitee                 User               @relation("ReferralInvitee", fields: [inviteeId], references: [id], onDelete: Restrict)
+  referralCode            ReferralCode       @relation(fields: [referralCodeId], references: [id], onDelete: Restrict)
+  qualifyingOrder         ManualOrder?       @relation(fields: [qualifyingOrderId], references: [id], onDelete: Restrict)
+  rewardWalletLedger      WalletLedgerEntry? @relation("ReferralRewardLedger", fields: [rewardWalletLedgerId], references: [id], onDelete: SetNull)
+  reversalWalletLedger    WalletLedgerEntry? @relation("ReferralReversalLedger", fields: [reversalWalletLedgerId], references: [id], onDelete: SetNull)
+  bonusEntitlementGrant   EntitlementGrant?  @relation(fields: [bonusEntitlementGrantId], references: [id], onDelete: SetNull)
+
+  @@index([inviterId, status, createdAt, id])
+  @@index([status, createdAt, id])
+  @@index([codeSnapshot, createdAt, id])
 }
 
 model Refund {

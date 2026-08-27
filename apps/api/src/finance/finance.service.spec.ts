@@ -133,7 +133,10 @@ describe('FinanceService', () => {
         operation(tx),
       ),
     };
-    const service = new FinanceService(prisma as never);
+    const referrals = {
+      reverseForRefund: jest.fn().mockResolvedValue({ reversed: true }),
+    };
+    const service = new FinanceService(prisma as never, referrals as never);
 
     await service.createRefund(
       'order_1',
@@ -156,6 +159,12 @@ describe('FinanceService', () => {
       afterBalanceCents: 650,
       kind: 'REFUND',
     });
+    expect(referrals.reverseForRefund).toHaveBeenCalledWith(
+      tx,
+      'order_1',
+      'admin_1',
+      'refund_1',
+    );
   });
 
   it('rejects refunds beyond the unrefunded order amount', async () => {

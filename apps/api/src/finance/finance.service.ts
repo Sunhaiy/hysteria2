@@ -2,10 +2,12 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { Prisma, RefundMethod, RefundStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { pageResponse, parsePage } from '../common/pagination';
+import { ReferralService } from '../referrals/referral.service';
 import type { CreateNodeCostDto, CreateRefundDto } from './finance.dto';
 
 export interface FinanceQuery {
@@ -27,7 +29,10 @@ interface NodeCostSummaryRow {
 
 @Injectable()
 export class FinanceService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly referrals?: ReferralService,
+  ) {}
 
   async summary(query: FinanceQuery) {
     const range = this.range(query);
@@ -318,6 +323,9 @@ export class FinanceService {
             note: input.reason,
           },
         });
+      }
+      if (this.referrals) {
+        await this.referrals.reverseForRefund(tx, orderId, actorId, refund.id);
       }
       return {
         ...refund,

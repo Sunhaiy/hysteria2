@@ -4,38 +4,52 @@ describe('CommerceService checkout', () => {
   afterEach(() => jest.useRealTimers());
 
   it('materializes a V2 entitlement for a traffic pack CDK redemption', async () => {
-    const store = {
-      redeemRedemptionCode: jest.fn().mockResolvedValue({
-        code: { id: 'code_pack' },
-        order: { id: 'order_pack_cdk' },
-        balanceCents: 0,
-      }),
-    };
-    const prisma = {
-      manualOrder: {
-        findUnique: jest.fn().mockResolvedValue({
-          catalogOfferId: 'offer_pack',
-          kind: 'TRAFFIC_PACK',
-          trafficPackProductId: 'pack_legacy',
-          trafficBytes: 100n,
-          entitlementExpiresAt: new Date('2027-08-26T08:00:00.000Z'),
-          accessProfileIdSnapshot: 'profile_pack',
-        }),
-      },
+    const tx = {
       trafficPack: {
         findFirst: jest.fn().mockResolvedValue({ id: 'traffic_pack_1' }),
       },
     };
+    const store = {
+      redeemRedemptionCode: jest
+        .fn()
+        .mockImplementation(
+          async (
+            _userId: string,
+            _code: string,
+            _expected: string | undefined,
+            onApplied: (context: unknown) => Promise<void>,
+          ) => {
+            await onApplied({
+              tx,
+              code: { kind: 'TRAFFIC_PACK' },
+              order: {
+                id: 'order_pack_cdk',
+                catalogOfferId: 'offer_pack',
+                kind: 'TRAFFIC_PACK',
+                trafficPackProductId: 'pack_legacy',
+                trafficBytes: 100n,
+                entitlementExpiresAt: new Date('2027-08-26T08:00:00.000Z'),
+                accessProfileIdSnapshot: 'profile_pack',
+              },
+            });
+            return {
+              code: { id: 'code_pack' },
+              order: { id: 'order_pack_cdk' },
+              balanceCents: 0,
+            };
+          },
+        ),
+    };
     const entitlements = { grantFromOrder: jest.fn().mockResolvedValue({}) };
     const service = new CommerceService(
-      prisma as never,
+      {} as never,
       store as never,
       entitlements as never,
     );
 
     await service.redeem('user_1', 'PACK-YEARLY');
 
-    expect(prisma.trafficPack.findFirst).toHaveBeenCalledWith({
+    expect(tx.trafficPack.findFirst).toHaveBeenCalledWith({
       where: {
         userId: 'user_1',
         trafficPackProductId: 'pack_legacy',
@@ -45,10 +59,73 @@ describe('CommerceService checkout', () => {
       },
       orderBy: { createdAt: 'desc' },
     });
-    expect(entitlements.grantFromOrder).toHaveBeenCalledWith({
-      orderId: 'order_pack_cdk',
-      trafficPackId: 'traffic_pack_1',
-    });
+    expect(entitlements.grantFromOrder).toHaveBeenCalledWith(
+      {
+        orderId: 'order_pack_cdk',
+        trafficPackId: 'traffic_pack_1',
+      },
+      tx,
+    );
+  });
+
+  it('settles a pending referral inside the first plan CDK transaction', async () => {
+    const tx = {
+      subscription: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'subscription_1' }),
+      },
+    };
+    const store = {
+      redeemRedemptionCode: jest
+        .fn()
+        .mockImplementation(
+          async (
+            _userId: string,
+            _code: string,
+            _expected: string | undefined,
+            onApplied: (context: unknown) => Promise<void>,
+          ) => {
+            await onApplied({
+              tx,
+              code: { kind: 'PLAN' },
+              order: {
+                id: 'order_plan_cdk',
+                kind: 'RENEWAL',
+                catalogOfferId: 'offer_plan',
+              },
+            });
+            return {
+              code: { id: 'code_plan' },
+              order: { id: 'order_plan_cdk' },
+              balanceCents: 0,
+            };
+          },
+        ),
+    };
+    const entitlements = {
+      grantFromOrder: jest.fn().mockResolvedValue({ id: 'plan_grant_1' }),
+    };
+    const referrals = {
+      settlePlanCdkReward: jest.fn().mockResolvedValue({ settled: true }),
+    };
+    const service = new CommerceService(
+      {} as never,
+      store as never,
+      entitlements as never,
+      referrals as never,
+    );
+
+    await service.redeem('invitee_1', 'PLAN-CDK');
+
+    expect(entitlements.grantFromOrder).toHaveBeenCalledWith(
+      { orderId: 'order_plan_cdk', subscriptionId: 'subscription_1' },
+      tx,
+    );
+    expect(referrals.settlePlanCdkReward).toHaveBeenCalledWith(
+      tx,
+      'invitee_1',
+      'order_plan_cdk',
+      'plan_grant_1',
+    );
   });
 
   it('returns the original order for a repeated idempotency key', async () => {

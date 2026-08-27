@@ -3,6 +3,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AdminGuard } from '../common/admin.guard';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
+import { ReferralModule } from '../referrals/referral.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 
@@ -20,6 +21,7 @@ import { AuthService } from './auth.service';
         limit: 120,
       },
     ]),
+    ReferralModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtAuthGuard, AdminGuard],
