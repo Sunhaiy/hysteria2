@@ -63,9 +63,30 @@ type NodeCost = {
   effectiveTo?: string | null;
   providerReference?: string | null;
 };
+type AnnualBreakEven = {
+  year: number;
+  status: "unconfigured" | "not_recovered" | "recovered";
+  annualCostCents: number | null;
+  recognizedRevenueCents: number;
+  refundCents: number;
+  netRevenueCents: number;
+  progressPercent: number | null;
+  differenceCents: number | null;
+  remainingCents: number | null;
+  profitCents: number | null;
+  updatedByEmail: string | null;
+  updatedAt: string | null;
+};
 type View = "overview" | "orders" | "ledger" | "refunds" | "costs";
 
 const isoDate = (date: Date) => date.toISOString().slice(0, 10);
+const currentShanghaiYear = () =>
+  Number(
+    new Intl.DateTimeFormat("en", {
+      timeZone: "Asia/Shanghai",
+      year: "numeric",
+    }).format(new Date()),
+  );
 const emptyPage = <T,>(): PaginatedResponse<T> => ({
   items: [],
   page: 1,
@@ -90,6 +111,10 @@ export default function FinancePage() {
   const [reloadKey, setReloadKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [annualYear, setAnnualYear] = useState(currentShanghaiYear);
+  const [annualCostYuan, setAnnualCostYuan] = useState("");
+  const [annual, setAnnual] = useState<AnnualBreakEven | null>(null);
+  const [annualSaving, setAnnualSaving] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -119,6 +144,40 @@ export default function FinancePage() {
       controller.abort();
     };
   }, [from, reloadKey, to, token]);
+
+  const loadAnnual = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!token) return;
+      try {
+        const result = await apiRequest<AnnualBreakEven>(
+          `/api/admin/finance/annual-break-even?year=${annualYear}`,
+          { token, signal },
+        );
+        setAnnual(result);
+        setAnnualCostYuan(
+          result.annualCostCents == null
+            ? ""
+            : String(result.annualCostCents / 100),
+        );
+      } catch (cause) {
+        if (cause instanceof DOMException && cause.name === "AbortError") return;
+        setError(cause instanceof ApiError ? cause.message : "年度回本数据加载失败。");
+      }
+    },
+    [annualYear, token],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(
+      () => void loadAnnual(controller.signal),
+      0,
+    );
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [loadAnnual, reloadKey]);
 
   useEffect(() => {
     if (!token || view === "overview") return;
@@ -211,6 +270,29 @@ export default function FinancePage() {
     onPageChange: setPage,
   };
   const queryString = new URLSearchParams({ from, to }).toString();
+
+  async function saveAnnualCost() {
+    if (!token) return;
+    const totalCostCents = Math.round(Number(annualCostYuan) * 100);
+    if (!Number.isSafeInteger(totalCostCents) || totalCostCents < 0) {
+      setError("请输入有效的年度总成本。");
+      return;
+    }
+    setAnnualSaving(true);
+    setError(null);
+    try {
+      await apiRequest(`/api/admin/finance/annual-costs/${annualYear}`, {
+        method: "PUT",
+        token,
+        body: { totalCostCents },
+      });
+      await loadAnnual();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "年度成本保存失败。");
+    } finally {
+      setAnnualSaving(false);
+    }
+  }
 
   return (
     <ConsoleShell
@@ -319,35 +401,109 @@ export default function FinancePage() {
           ))}
         </div>
         {view === "overview" ? (
-          <div className="two-col">
-            <Panel title="毛利构成">
-              <EChart
-                option={profitOption}
-                height={280}
-                ariaLabel="毛利构成图"
-              />
+          <>
+            <Panel
+              title="年度回本"
+              copy="年度总成本独立计算，不与节点成本重复相加。"
+            >
+              <div className="annual-break-even-layout">
+                <div className="annual-cost-form">
+                  <label className="field">
+                    <span className="fine-print">年份</span>
+                    <input
+                      className="control"
+                      type="number"
+                      min={2000}
+                      max={2100}
+                      value={annualYear}
+                      onChange={(event) =>
+                        setAnnualYear(Number(event.target.value))
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="fine-print">年度总成本（元）</span>
+                    <input
+                      className="control"
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      placeholder="例如 12000"
+                      value={annualCostYuan}
+                      onChange={(event) => setAnnualCostYuan(event.target.value)}
+                    />
+                  </label>
+                  <button
+                    className="action-button"
+                    type="button"
+                    disabled={annualSaving || annualCostYuan === ""}
+                    onClick={() => void saveAnnualCost()}
+                  >
+                    {annualSaving ? "保存中..." : "保存年度成本"}
+                  </button>
+                </div>
+                <div className="annual-break-even-summary">
+                  <div className="split-row">
+                    <span>年度净收入</span>
+                    <strong>{formatMoney(annual?.netRevenueCents ?? 0)}</strong>
+                  </div>
+                  <div className="split-row">
+                    <span>年度成本</span>
+                    <strong>
+                      {annual?.annualCostCents == null
+                        ? "未配置"
+                        : formatMoney(annual.annualCostCents)}
+                    </strong>
+                  </div>
+                  <div className="bar-track" aria-label="年度回本进度">
+                    <span
+                      className="bar-fill bar-fill-success"
+                      style={{ width: `${annual?.progressPercent ?? 0}%` }}
+                    />
+                  </div>
+                  <div className="split-row fine-print">
+                    <span>回本进度 {annual?.progressPercent ?? 0}%</span>
+                    <span>
+                      {annual?.status === "recovered"
+                        ? `已回本 · 盈利 ${formatMoney(annual.profitCents ?? 0)}`
+                        : annual?.status === "not_recovered"
+                          ? `未回本 · 还差 ${formatMoney(annual.remainingCents ?? 0)}`
+                          : "请先填写年度总成本"}
+                    </span>
+                  </div>
+                </div>
+              </div>
             </Panel>
-            <Panel title="收入确认">
-              <DataTable
-                headers={["分类", "金额"]}
-                rows={[
-                  [
-                    "全部已履约收入",
-                    formatMoney(summary?.fulfilledNetRevenueCents ?? 0),
-                  ],
-                  [
-                    "CDK 套餐收入（周期实际价）",
-                    formatMoney(summary?.cdkRevenueCents ?? 0),
-                  ],
-                  [
-                    "钱包余额负债",
-                    formatMoney(summary?.walletLiabilityCents ?? 0),
-                  ],
-                  ["待处理订单", String(summary?.pendingOrders ?? 0)],
-                ]}
-              />
-            </Panel>
-          </div>
+            <div className="two-col">
+              <Panel title="毛利构成">
+                <EChart
+                  option={profitOption}
+                  height={280}
+                  ariaLabel="毛利构成图"
+                />
+              </Panel>
+              <Panel title="收入确认">
+                <DataTable
+                  headers={["分类", "金额"]}
+                  rows={[
+                    [
+                      "全部已履约收入",
+                      formatMoney(summary?.fulfilledNetRevenueCents ?? 0),
+                    ],
+                    [
+                      "CDK 套餐收入（周期实际价）",
+                      formatMoney(summary?.cdkRevenueCents ?? 0),
+                    ],
+                    [
+                      "钱包余额负债",
+                      formatMoney(summary?.walletLiabilityCents ?? 0),
+                    ],
+                    ["待处理订单", String(summary?.pendingOrders ?? 0)],
+                  ]}
+                />
+              </Panel>
+            </div>
+          </>
         ) : null}
         {view === "orders" ? (
           <Panel title="订单">

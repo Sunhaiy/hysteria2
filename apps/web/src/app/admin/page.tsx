@@ -12,275 +12,361 @@ import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
-import { formatBytes, formatDateTime, formatMoney } from "@/lib/format";
-import type {
-  AdminUser,
-  AuthEventRecord,
-  NodeRecord,
-  PaginatedResponse,
-  PlanRecord,
-  ReportingSummaryResponse,
-  SubscriptionRecord,
-  UsageSummaryResponse,
-} from "@/lib/types";
-import { statusTone } from "@/lib/ui";
+import { formatBytes, formatDateTime } from "@/lib/format";
 
-const GB = 1024 * 1024 * 1024;
+type DashboardSummary = {
+  generatedAt: string;
+  timezone: string;
+  freshnessSeconds: number;
+  metrics: {
+    todayPhysicalBytes: number;
+    yesterdayPhysicalBytes: number;
+    monthPhysicalBytes: number;
+    activePlanSubscribers: number;
+    onlineUsers: number;
+    activeConnections: number;
+  };
+  trend: Array<{
+    date: string;
+    txBytes: number;
+    rxBytes: number;
+    physicalBytes: number;
+  }>;
+  nodes: Array<{
+    id: string;
+    label: string;
+    serverName: string;
+    protocol: string;
+    active: boolean;
+    healthy: boolean | null;
+    physicalBytes: number;
+    onlineUsers: number;
+    activeConnections: number;
+    lastSeenAt: string | null;
+  }>;
+  subscriptions: {
+    active: number;
+    expired: number;
+    paused: number;
+    canceled: number;
+  };
+  auth: { granted: number; denied: number };
+};
+
+const protocolLabel = (protocol: string) =>
+  protocol === "vless_reality" ? "VLESS Reality" : "Hysteria2";
 
 export default function AdminDashboardPage() {
   const { token } = useAuth();
-  const [users, setUsers] = useState<AdminUser[]>([]);
-  const [plans, setPlans] = useState<PlanRecord[]>([]);
-  const [subscriptions, setSubscriptions] = useState<SubscriptionRecord[]>([]);
-  const [nodes, setNodes] = useState<NodeRecord[]>([]);
-  const [authEvents, setAuthEvents] = useState<AuthEventRecord[]>([]);
-  const [usage, setUsage] = useState<UsageSummaryResponse | null>(null);
-  const [reporting, setReporting] = useState<ReportingSummaryResponse | null>(null);
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    if (!token) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const [nextUsers, nextPlans, nextSubscriptions, nextNodes, nextEvents, nextUsage, nextReporting] = await Promise.all([
-        apiRequest<PaginatedResponse<AdminUser>>("/api/admin/users?limit=200", { token }),
-        apiRequest<PlanRecord[]>("/api/admin/plans", { token }),
-        apiRequest<PaginatedResponse<SubscriptionRecord>>("/api/admin/subscriptions?limit=200", { token }),
-        apiRequest<NodeRecord[]>("/api/admin/nodes", { token }),
-        apiRequest<AuthEventRecord[]>("/api/admin/auth-events", { token }),
-        apiRequest<UsageSummaryResponse>("/api/admin/usage/summary", { token }),
-        apiRequest<ReportingSummaryResponse>("/api/admin/reporting/summary", { token }),
-      ]);
-      setUsers(nextUsers.items);
-      setPlans(nextPlans);
-      setSubscriptions(nextSubscriptions.items);
-      setNodes(nextNodes);
-      setAuthEvents(nextEvents);
-      setUsage(nextUsage);
-      setReporting(nextReporting);
-    } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "管理台数据加载失败。");
-    } finally {
-      setLoading(false);
-    }
-  }, [token]);
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!token) return;
+      setLoading(true);
+      setError(null);
+      try {
+        setSummary(
+          await apiRequest<DashboardSummary>("/api/admin/dashboard/summary", {
+            token,
+            signal,
+          }),
+        );
+      } catch (cause) {
+        if (cause instanceof DOMException && cause.name === "AbortError") return;
+        setError(
+          cause instanceof ApiError ? cause.message : "管理台数据加载失败。",
+        );
+      } finally {
+        if (!signal?.aborted) setLoading(false);
+      }
+    },
+    [token],
+  );
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timeoutId);
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => void load(controller.signal), 0);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
   }, [load]);
 
-  const activeSubscriptions = subscriptions.filter((item) => item.status === "active");
-  const restrictedUsers = users.filter((item) => item.status !== "active");
-  const activeNodes = nodes.filter((item) => item.active);
-  const totalConcurrent = nodes.reduce((sum, node) => sum + node.concurrentUsers, 0);
-  const passEvents = authEvents.filter((event) => event.granted).length;
-  const blockEvents = authEvents.length - passEvents;
-
-  const trafficOption = useMemo<EChartsOption>(() => ({
-    animationDuration: 500,
-    tooltip: { trigger: "axis", valueFormatter: (value) => `${Number(value).toFixed(2)} GB` },
-    legend: { data: ["上传", "下载"], top: 0, right: 0 },
-    grid: { left: 10, right: 12, top: 42, bottom: 10, containLabel: true },
-    xAxis: {
-      type: "category",
-      boundaryGap: false,
-      data: usage?.daily.map((item) => item.date.slice(5).replace("-", "/")) ?? [],
-    },
-    yAxis: { type: "value", name: "GB", nameTextStyle: { color: "#8a8a8a" } },
-    series: [
-      {
-        name: "上传",
-        type: "line",
-        smooth: true,
-        symbol: "none",
-        lineStyle: { width: 2 },
-        areaStyle: { opacity: 0.08 },
-        data: usage?.daily.map((item) => Number((item.txBytes / GB).toFixed(3))) ?? [],
+  const trafficOption = useMemo<EChartsOption>(
+    () => ({
+      animationDuration: 500,
+      tooltip: {
+        trigger: "axis",
+        valueFormatter: (value) => formatBytes(Number(value)),
       },
-      {
-        name: "下载",
-        type: "line",
-        smooth: true,
-        symbol: "none",
-        lineStyle: { width: 2 },
-        areaStyle: { opacity: 0.08 },
-        data: usage?.daily.map((item) => Number((item.rxBytes / GB).toFixed(3))) ?? [],
+      legend: { data: ["上传", "下载"], top: 0, right: 0 },
+      grid: { left: 10, right: 12, top: 42, bottom: 10, containLabel: true },
+      xAxis: {
+        type: "category",
+        boundaryGap: false,
+        data:
+          summary?.trend.map((item) => item.date.slice(5).replace("-", "/")) ??
+          [],
       },
-    ],
-  }), [usage]);
+      yAxis: {
+        type: "value",
+        axisLabel: { formatter: (value: number) => formatBytes(value) },
+      },
+      series: [
+        {
+          name: "上传",
+          type: "line",
+          smooth: true,
+          symbol: "none",
+          lineStyle: { width: 2 },
+          areaStyle: { opacity: 0.08 },
+          data: summary?.trend.map((item) => item.txBytes) ?? [],
+        },
+        {
+          name: "下载",
+          type: "line",
+          smooth: true,
+          symbol: "none",
+          lineStyle: { width: 2 },
+          areaStyle: { opacity: 0.08 },
+          data: summary?.trend.map((item) => item.rxBytes) ?? [],
+        },
+      ],
+    }),
+    [summary],
+  );
 
   const nodeTrafficOption = useMemo<EChartsOption>(() => {
-    const rows = [...(usage?.nodes ?? [])].slice(0, 8).reverse();
+    const rows = [...(summary?.nodes ?? [])].slice(0, 8).reverse();
     return {
       animationDuration: 500,
-      tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, valueFormatter: (value) => `${Number(value).toFixed(2)} GB` },
+      tooltip: {
+        trigger: "axis",
+        axisPointer: { type: "shadow" },
+        valueFormatter: (value) => formatBytes(Number(value)),
+      },
       grid: { left: 8, right: 18, top: 8, bottom: 8, containLabel: true },
-      xAxis: { type: "value", name: "GB" },
-      yAxis: { type: "category", data: rows.map((item) => item.nodeLabel) },
-      series: [{
-        name: "累计流量",
-        type: "bar",
-        barMaxWidth: 20,
-        itemStyle: { borderRadius: [0, 5, 5, 0] },
-        data: rows.map((item) => Number((item.totalBytes / GB).toFixed(3))),
-      }],
-    };
-  }, [usage]);
-
-  const statusOption = useMemo<EChartsOption>(() => ({
-    tooltip: { trigger: "item" },
-    legend: { bottom: 0 },
-    series: [{
-      type: "pie",
-      radius: ["54%", "76%"],
-      center: ["50%", "44%"],
-      label: { show: false },
-      data: [
-        { name: "活跃", value: activeSubscriptions.length },
-        { name: "过期", value: subscriptions.filter((item) => item.status === "expired").length },
-        { name: "暂停", value: subscriptions.filter((item) => item.status === "paused").length },
-        { name: "取消", value: subscriptions.filter((item) => item.status === "canceled").length },
+      xAxis: {
+        type: "value",
+        axisLabel: { formatter: (value: number) => formatBytes(value) },
+      },
+      yAxis: { type: "category", data: rows.map((item) => item.label) },
+      series: [
+        {
+          name: "本月流量",
+          type: "bar",
+          barMaxWidth: 20,
+          itemStyle: { borderRadius: [0, 5, 5, 0] },
+          data: rows.map((item) => item.physicalBytes),
+        },
       ],
-    }],
-  }), [activeSubscriptions.length, subscriptions]);
+    };
+  }, [summary]);
 
-  const authOption = useMemo<EChartsOption>(() => ({
-    tooltip: { trigger: "item" },
-    legend: { bottom: 0 },
-    series: [{
-      type: "pie",
-      radius: ["54%", "76%"],
-      center: ["50%", "44%"],
-      label: { show: false },
-      data: [{ name: "通过", value: passEvents }, { name: "拦截", value: blockEvents }],
-    }],
-  }), [blockEvents, passEvents]);
+  const statusOption = useMemo<EChartsOption>(
+    () => ({
+      tooltip: { trigger: "item" },
+      legend: { bottom: 0 },
+      series: [
+        {
+          type: "pie",
+          radius: ["54%", "76%"],
+          center: ["50%", "44%"],
+          label: { show: false },
+          data: [
+            { name: "活跃", value: summary?.subscriptions.active ?? 0 },
+            { name: "过期", value: summary?.subscriptions.expired ?? 0 },
+            { name: "暂停", value: summary?.subscriptions.paused ?? 0 },
+            { name: "取消", value: summary?.subscriptions.canceled ?? 0 },
+          ],
+        },
+      ],
+    }),
+    [summary],
+  );
 
-  const attentionSubscriptions = [...subscriptions]
-    .sort((a, b) => {
-      if (a.status !== "active" && b.status === "active") return -1;
-      if (a.status === "active" && b.status !== "active") return 1;
-      return new Date(a.endsAt).getTime() - new Date(b.endsAt).getTime();
-    })
-    .slice(0, 8);
+  const authOption = useMemo<EChartsOption>(
+    () => ({
+      tooltip: { trigger: "item" },
+      legend: { bottom: 0 },
+      series: [
+        {
+          type: "pie",
+          radius: ["54%", "76%"],
+          center: ["50%", "44%"],
+          label: { show: false },
+          data: [
+            { name: "通过", value: summary?.auth.granted ?? 0 },
+            { name: "拒绝", value: summary?.auth.denied ?? 0 },
+          ],
+        },
+      ],
+    }),
+    [summary],
+  );
+
+  const activeNodes = summary?.nodes.filter((node) => node.active).length ?? 0;
+  const healthyNodes =
+    summary?.nodes.filter((node) => node.active && node.healthy).length ?? 0;
 
   return (
     <ConsoleShell
       title="管理台总览"
-      subtitle="用户、订阅、节点、流量和鉴权状态集中概览"
+      subtitle="订阅、在线与节点运行状态"
       scope="Operations"
       navItems={adminNav}
       requireRole="admin"
-      toolbarMeta={<span className="badge success">{activeNodes.length}/{nodes.length} 节点在线</span>}
-      toolbarActions={<button className="toolbar-button" type="button" disabled={loading} onClick={() => void load()}><Icon name="refresh" />刷新数据</button>}
+      toolbarMeta={
+        <span className="badge success">
+          {healthyNodes}/{activeNodes} 个启用节点健康
+        </span>
+      }
+      toolbarActions={
+        <button
+          className="toolbar-button"
+          type="button"
+          disabled={loading}
+          onClick={() => void load()}
+        >
+          <Icon name="refresh" />
+          刷新数据
+        </button>
+      }
     >
       {error ? <div className="feedback error">{error}</div> : null}
 
       <section className="metric-grid admin-primary-metrics">
-        <MetricCard label="累计总流量" value={formatBytes(usage?.totals.totalBytes ?? 0)} footnote={`上传 ${formatBytes(usage?.totals.txBytes ?? 0)} · 下载 ${formatBytes(usage?.totals.rxBytes ?? 0)}`} />
-        <MetricCard label="近 24 小时" value={formatBytes(usage?.totals.last24HoursBytes ?? 0)} footnote={`近 7 天 ${formatBytes(usage?.totals.last7DaysBytes ?? 0)}`} />
-        <MetricCard label="活跃订阅" value={`${activeSubscriptions.length}/${subscriptions.length}`} footnote={`${users.length} 位用户 · ${restrictedUsers.length} 位受限`} />
-        <MetricCard label="当前活跃连接" value={String(totalConcurrent)} footnote={`${activeNodes.length} 个活跃节点承载`} />
-      </section>
-
-      <section className="metric-grid admin-primary-metrics">
         <MetricCard
-          label="余额成交额"
-          value={formatMoney(reporting?.commerce.walletRevenueCents ?? 0)}
-          footnote={`${reporting?.commerce.appliedOrders ?? 0} 笔已生效订单`}
+          label="今日流量"
+          value={formatBytes(summary?.metrics.todayPhysicalBytes ?? 0)}
+          footnote="北京时间 · 双向物理流量"
         />
         <MetricCard
-          label="CDK 权益价值"
-          value={formatMoney(reporting?.commerce.cdkEntitlementValueCents ?? 0)}
-          footnote={`累计优惠 ${formatMoney(reporting?.commerce.discountCents ?? 0)}`}
+          label="昨日流量"
+          value={formatBytes(summary?.metrics.yesterdayPhysicalBytes ?? 0)}
+          footnote="完整自然日"
         />
         <MetricCard
-          label="订单完成率"
-          value={`${reporting?.commerce.completionRatePercent ?? 0}%`}
-          footnote={`${reporting?.commerce.pendingOrders ?? 0} 笔待处理 · ${reporting?.commerce.voidOrders ?? 0} 笔作废`}
+          label="本月流量"
+          value={formatBytes(summary?.metrics.monthPhysicalBytes ?? 0)}
+          footnote="本月累计双向流量"
         />
         <MetricCard
-          label="节点同步健康度"
-          value={`${reporting?.nodes.availabilityPercent ?? 0}%`}
-          footnote={`${reporting?.nodes.healthy ?? 0}/${reporting?.nodes.active ?? 0} 健康 · ${reporting?.nodes.pendingUsageBatches ?? 0} 批待确认`}
+          label="当前订阅用户"
+          value={String(summary?.metrics.activePlanSubscribers ?? 0)}
+          footnote="有效套餐用户去重"
+        />
+        <MetricCard
+          label="在线用户"
+          value={String(summary?.metrics.onlineUsers ?? 0)}
+          footnote={`${summary?.metrics.activeConnections ?? 0} 条活跃连接`}
         />
       </section>
 
       <section className="admin-chart-grid">
-        <Panel title="近 14 天流量趋势" copy="按日汇总全部节点上传和下载流量。">
-          <EChart option={trafficOption} height={320} ariaLabel="近十四天上传下载流量趋势" />
+        <Panel title="近 14 天流量趋势" copy="按北京时间汇总上传与下载流量。">
+          <EChart
+            option={trafficOption}
+            height={320}
+            ariaLabel="近十四天流量趋势"
+          />
         </Panel>
-        <Panel title="节点累计流量排行" copy="展示每个节点自记录以来累计处理的总流量。">
-          <EChart option={nodeTrafficOption} height={320} ariaLabel="节点累计流量排行" />
+        <Panel title="本月节点流量排行" copy="按双向物理流量从高到低排列。">
+          <EChart
+            option={nodeTrafficOption}
+            height={320}
+            ariaLabel="节点流量排行"
+          />
         </Panel>
       </section>
 
       <section className="admin-overview-row">
-        <Panel title="订阅状态" copy={`${subscriptions.length} 条订阅`}>
+        <Panel title="订阅状态" copy="当前订阅状态分布">
           <EChart option={statusOption} height={240} ariaLabel="订阅状态分布" />
         </Panel>
-        <Panel title="鉴权结果" copy={`最近 ${authEvents.length} 条记录`}>
+        <Panel title="鉴权结果" copy="最近 24 小时">
           <EChart option={authOption} height={240} ariaLabel="鉴权结果分布" />
         </Panel>
-        <Panel title="快捷操作" copy="常用管理入口集中到这里。">
+        <Panel title="快捷操作" copy="常用管理入口">
           <div className="admin-quick-actions">
-            <Link href="/admin/customers"><Icon name="group" /><span><strong>客户管理</strong><small>查看客户与服务状态</small></span><b>›</b></Link>
-            <Link href="/admin/customers"><Icon name="subscription" /><span><strong>权益调整</strong><small>切换套餐或调整额度</small></span><b>›</b></Link>
-            <Link href="/admin/nodes"><Icon name="hub" /><span><strong>新增节点</strong><small>接入 Hysteria 2 / VLESS 节点</small></span><b>›</b></Link>
-            <Link href="/admin/catalog"><Icon name="stacks" /><span><strong>商品管理</strong><small>配置套餐与流量包</small></span><b>›</b></Link>
+            <Link href="/admin/customers">
+              <Icon name="group" />
+              <span>
+                <strong>客户管理</strong>
+                <small>查看权益与在线状态</small>
+              </span>
+              <b>›</b>
+            </Link>
+            <Link href="/admin/operations">
+              <Icon name="monitoring" />
+              <span>
+                <strong>运营监控</strong>
+                <small>实时在线、流量和告警</small>
+              </span>
+              <b>›</b>
+            </Link>
+            <Link href="/admin/nodes">
+              <Icon name="hub" />
+              <span>
+                <strong>节点管理</strong>
+                <small>启停与运行状态</small>
+              </span>
+              <b>›</b>
+            </Link>
+            <Link href="/admin/finance">
+              <Icon name="payments" />
+              <span>
+                <strong>财务中心</strong>
+                <small>收入、退款与年度回本</small>
+              </span>
+              <b>›</b>
+            </Link>
           </div>
         </Panel>
       </section>
 
-      <Panel title="节点运行概览" copy="累计流量来自完整用量记录，在线数来自最近节点快照。">
+      <Panel title="节点运行概览" copy="在线数据超过 45 秒会视为过期。">
         <DataTable
-          headers={["节点", "状态", "累计总流量", "上传", "下载", "当前并发", "最近流量"]}
-          rows={(usage?.nodes ?? []).map((item) => {
-            const node = nodes.find((candidate) => candidate.id === item.nodeId);
-            return [
-              <strong key={`${item.nodeId}-name`}>{item.nodeLabel}</strong>,
-              <span key={`${item.nodeId}-status`} className={`badge ${item.active ? "success" : "warn"}`}>{item.active ? "运行中" : "已停用"}</span>,
-              <strong key={`${item.nodeId}-total`}>{formatBytes(item.totalBytes)}</strong>,
-              formatBytes(item.txBytes),
-              formatBytes(item.rxBytes),
-              String(node?.concurrentUsers ?? 0),
-              item.lastSeenAt ? formatDateTime(item.lastSeenAt) : "暂无记录",
-            ];
-          })}
+          loading={loading}
+          error={error}
+          onRetry={() => void load()}
+          emptyText="暂无节点"
+          headers={[
+            "服务器",
+            "节点",
+            "协议",
+            "状态",
+            "本月流量",
+            "在线用户",
+            "活跃连接",
+            "最近流量",
+          ]}
+          rows={(summary?.nodes ?? []).map((node) => [
+            node.serverName,
+            <strong key={`${node.id}-label`}>{node.label}</strong>,
+            protocolLabel(node.protocol),
+            <span
+              key={`${node.id}-status`}
+              className={`badge ${!node.active ? "neutral" : node.healthy ? "success" : "danger"}`}
+            >
+              {!node.active ? "已停用" : node.healthy ? "健康" : "异常"}
+            </span>,
+            formatBytes(node.physicalBytes),
+            String(node.onlineUsers),
+            String(node.activeConnections),
+            node.lastSeenAt ? formatDateTime(node.lastSeenAt) : "暂无记录",
+          ])}
         />
       </Panel>
 
-      <section className="workspace-grid">
-        <Panel title="需要关注的订阅" copy="状态异常和即将到期的订阅排在前面。">
-          <DataTable
-            headers={["用户", "套餐", "节点", "状态", "剩余流量", "到期时间"]}
-            rows={attentionSubscriptions.map((subscription) => [
-              <div key={`${subscription.id}-user`} className="split"><strong>{subscription.userDisplayName}</strong><span className="muted">{subscription.userEmail}</span></div>,
-              subscription.planName,
-              subscription.nodeLabel,
-              <span key={`${subscription.id}-status`} className={`badge ${statusTone(subscription.status)}`}>{subscription.status}</span>,
-              formatBytes(subscription.trafficRemainingBytes),
-              formatDateTime(subscription.endsAt),
-            ])}
-          />
-        </Panel>
-        <Panel title="高用量用户" copy="按历史累计总流量排序。">
-          <div className="rank-list">
-            {(usage?.users ?? []).slice(0, 8).map((item, index) => (
-              <div className="rank-row" key={item.userId}>
-                <span>{index + 1}</span>
-                <div><strong>{item.userDisplayName}</strong><small>{item.userEmail}</small></div>
-                <b>{formatBytes(item.totalBytes)}</b>
-              </div>
-            ))}
-          </div>
-        </Panel>
-      </section>
-
-      <div className="fine-print admin-dashboard-footnote">当前共有 {plans.filter((plan) => plan.active).length} 个可售套餐，统计数据基于 {usage?.totals.recordCount ?? 0} 条流量记录。</div>
+      {summary ? (
+        <div className="fine-print admin-dashboard-footnote">
+          更新于 {formatDateTime(summary.generatedAt)} · 在线数据新鲜度 {summary.freshnessSeconds} 秒
+        </div>
+      ) : null}
     </ConsoleShell>
   );
 }

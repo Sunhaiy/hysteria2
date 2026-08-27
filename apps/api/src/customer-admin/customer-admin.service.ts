@@ -16,6 +16,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import type { CustomerQuotaOperationDto } from './customer-admin.dto';
 import { pageResponse, parsePage, type PageQuery } from '../common/pagination';
 import { apiPublicUrl } from '../common/public-url';
+import {
+  CustomerTrafficService,
+  type DailyTrafficQuery,
+} from './customer-traffic.service';
 
 export interface CustomerQuery extends PageQuery {
   q?: string;
@@ -45,7 +49,10 @@ export interface SubscriptionQuery extends PageQuery {
 
 @Injectable()
 export class CustomerAdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly customerTraffic: CustomerTrafficService,
+  ) {}
 
   async searchOptions(query: Pick<CustomerQuery, 'q' | 'pageSize'>) {
     const q = query.q?.trim();
@@ -398,7 +405,7 @@ export class CustomerAdminService {
 
   async getCustomer(id: string) {
     const now = new Date();
-    const [user, orders] = await Promise.all([
+    const [user, recentTraffic] = await Promise.all([
       this.prisma.user.findUnique({
         where: { id },
         include: {
@@ -417,27 +424,23 @@ export class CustomerAdminService {
               observedAt: { gte: new Date(now.getTime() - 45_000) },
               concurrentClients: { gt: 0 },
             },
-            select: { concurrentClients: true },
+            select: { nodeId: true, concurrentClients: true },
           },
         },
       }),
-      this.prisma.manualOrder.aggregate({
-        where: { userId: id, status: 'APPLIED' },
-        _sum: { amountCents: true },
-      }),
+      this.customerTraffic.daily(id, {}, now),
     ]);
     if (!user) throw new NotFoundException('Customer not found');
-    const remainingBytes = user.entitlementGrants.reduce(
-      (grantTotal, grant) =>
-        grantTotal +
-        grant.quotaBuckets.reduce(
-          (bucketTotal, bucket) =>
-            bucketTotal +
-            this.remaining(bucket.grantedBytes, bucket.consumedBytes),
-          0,
-        ),
+    const quota = user.entitlementGrants.flatMap((grant) => grant.quotaBuckets);
+    const grantedBytes = quota.reduce(
+      (total, bucket) => total + Number(bucket.grantedBytes),
       0,
     );
+    const consumedBytes = quota.reduce(
+      (total, bucket) => total + Number(bucket.consumedBytes),
+      0,
+    );
+    const remainingBytes = Math.max(grantedBytes - consumedBytes, 0);
     return {
       id: user.id,
       email: user.email,
@@ -459,14 +462,25 @@ export class CustomerAdminService {
       updatedAt: user.updatedAt.toISOString(),
       summary: {
         activeGrantCount: user.entitlementGrants.length,
+        grantedBytes,
+        consumedBytes,
         remainingBytes,
+        online: user.onlinePresence.length > 0,
+        onlineNodeCount: new Set(
+          user.onlinePresence.map((presence) => presence.nodeId),
+        ).size,
         onlineClients: user.onlinePresence.reduce(
           (total, presence) => total + presence.concurrentClients,
           0,
         ),
-        lifetimeOrderCents: orders._sum.amountCents ?? 0,
+        recentTraffic: recentTraffic.items,
       },
     };
+  }
+
+  async getCustomerDailyTraffic(id: string, query: DailyTrafficQuery) {
+    await this.requireCustomer(id);
+    return this.customerTraffic.daily(id, query);
   }
 
   async getCustomerEntitlements(id: string, query: PageQuery) {

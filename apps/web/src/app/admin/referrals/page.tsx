@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { CustomSelect } from "@/components/custom-select";
 import { DataTable } from "@/components/data-table";
-import { MetricCard } from "@/components/metric-card";
+import { Icon } from "@/components/icon";
 import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
@@ -126,25 +126,51 @@ export default function AdminReferralsPage() {
   return (
     <ConsoleShell title="拉新管理" subtitle="管理邀请归因、奖励结算与退款追回" scope="Growth" navItems={adminNav} requireRole="admin">
       {error ? <div className="feedback error">{error}</div> : null}
-      <div className="metric-grid">
-        <MetricCard label="邀请总数" value={String(summary?.total ?? 0)} footnote={`${summary?.pending ?? 0} 待成交`} />
-        <MetricCard label="奖励成功" value={String(summary?.rewarded ?? 0)} footnote={`${summary?.reversed ?? 0} 已追回`} />
-        <MetricCard label="余额奖励" value={formatMoney(summary?.issuedRewardCents ?? 0)} footnote={`已追回 ${formatMoney(summary?.recoveredCents ?? 0)}`} />
-        <MetricCard label="未追回余额" value={formatMoney(summary?.unrecoveredCents ?? 0)} footnote={`流量已发 ${formatBytes(summary?.issuedTrafficBytes ?? 0)}`} />
+      <div className="referral-metric-grid">
+        {[
+          { label: "邀请总数", value: String(summary?.total ?? 0), footnote: `${summary?.pending ?? 0} 待成交`, icon: "group" },
+          { label: "奖励成功", value: String(summary?.rewarded ?? 0), footnote: `${summary?.reversed ?? 0} 已追回`, icon: "schedule" },
+          { label: "余额奖励", value: formatMoney(summary?.issuedRewardCents ?? 0), footnote: `已追回 ${formatMoney(summary?.recoveredCents ?? 0)}`, icon: "payments" },
+          { label: "未追回余额", value: formatMoney(summary?.unrecoveredCents ?? 0), footnote: `流量已发 ${formatBytes(summary?.issuedTrafficBytes ?? 0)}`, icon: "warning" },
+        ].map((metric) => (
+          <article className="referral-metric success" key={metric.label}>
+            <div className="referral-metric-head">
+              <span>{metric.label}</span>
+              <Icon name={metric.icon} />
+            </div>
+            <strong>{metric.value}</strong>
+            <small>{metric.footnote}</small>
+          </article>
+        ))}
       </div>
 
       <Panel title="活动设置" copy="修改金额只影响此后注册的新邀请关系。">
         {settings ? (
-          <div className="inline-form">
-            <label className="field">
-              <span className="fine-print">活动状态</span>
-              <CustomSelect value={settings.enabled ? "enabled" : "disabled"} onChange={(value) => setSettings({ ...settings, enabled: value === "enabled" })} options={[{ value: "enabled", label: "开启" }, { value: "disabled", label: "关闭" }]} />
-            </label>
+          <div className="referral-admin-settings">
+            <div className="setting-toggle-row">
+              <div className="setting-toggle-copy">
+                <strong>邀请活动</strong>
+                <span>关闭后不接受新邀请，已有待成交关系仍可结算。</span>
+              </div>
+              <label className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={settings.enabled}
+                  onChange={(event) =>
+                    setSettings({ ...settings, enabled: event.target.checked })
+                  }
+                />
+                <span className="toggle-track"><span /></span>
+                <span className="toggle-label">
+                  {settings.enabled ? "开启" : "关闭"}
+                </span>
+              </label>
+            </div>
             <label className="field">
               <span className="fine-print">邀请人奖励（分）</span>
               <input className="control" type="number" min={0} max={100000} value={settings.inviterRewardCents} onChange={(event) => setSettings({ ...settings, inviterRewardCents: Number(event.target.value) })} />
             </label>
-            <label className="field">
+            <label className="field referral-fixed-reward">
               <span className="fine-print">被邀请人奖励</span>
               <input className="control" readOnly value={formatBytes(settings.inviteeRewardBytes)} />
             </label>

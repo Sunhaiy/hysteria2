@@ -335,6 +335,7 @@ describe('UsageSyncService', () => {
 
   it('exposes cleanup for the external worker without scheduling it in the API', async () => {
     const cleanupOldData = jest.fn().mockResolvedValue({
+      deletedDestinationBatches: 1,
       deletedSnapshots: 2,
       deletedAuthEvents: 3,
     });
@@ -346,10 +347,16 @@ describe('UsageSyncService', () => {
       {} as never,
     );
 
-    await expect(service.cleanup(30)).resolves.toEqual({
+    const policy = {
+      destinationDays: 7,
+      onlineDays: 7,
+      authEventDays: 30,
+    };
+    await expect(service.cleanup(policy)).resolves.toEqual({
+      deletedDestinationBatches: 1,
       deletedSnapshots: 2,
       deletedAuthEvents: 3,
     });
-    expect(cleanupOldData).toHaveBeenCalledWith(30);
+    expect(cleanupOldData).toHaveBeenCalledWith(policy);
   });
 });

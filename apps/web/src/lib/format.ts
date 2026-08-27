@@ -1,10 +1,15 @@
 export function formatBytes(bytes: number) {
-  const gb = 1024 * 1024 * 1024;
-  const tb = gb * 1024;
-  if (bytes >= tb) {
-    return `${(bytes / tb).toFixed(2)} TB`;
+  if (!Number.isFinite(bytes)) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const sign = bytes < 0 ? -1 : 1;
+  let value = Math.abs(bytes);
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
   }
-  return `${(bytes / gb).toFixed(1)} GB`;
+  const rounded = Number((value * sign).toFixed(2));
+  return `${rounded} ${units[unitIndex]}`;
 }
 
 export function formatTrafficLimit(bytes: number) {

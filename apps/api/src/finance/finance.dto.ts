@@ -43,3 +43,9 @@ export class CreateNodeCostDto {
   @IsString()
   note?: string;
 }
+
+export class UpsertAnnualOperatingCostDto {
+  @IsInt()
+  @Min(0)
+  totalCostCents!: number;
+}

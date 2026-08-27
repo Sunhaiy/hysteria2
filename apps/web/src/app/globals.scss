@@ -4600,6 +4600,60 @@ select.control {
   gap: 16px;
 }
 
+.metric-grid.admin-primary-metrics {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.customer-summary-grid .metric-card {
+  min-height: 142px;
+}
+
+.customer-quota-card,
+.customer-traffic-card {
+  align-content: start;
+}
+
+.customer-traffic-card .echart {
+  margin-top: -2px;
+}
+
+.annual-break-even-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.8fr) minmax(360px, 1.2fr);
+  gap: 20px;
+  align-items: end;
+}
+
+.annual-cost-form {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.45fr) minmax(180px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.annual-break-even-summary {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel-alt);
+}
+
+.referral-admin-settings {
+  display: grid;
+  grid-template-columns: minmax(300px, 1.5fr) minmax(180px, 0.7fr) minmax(
+      180px,
+      0.7fr
+    ) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.referral-admin-settings .setting-toggle-row {
+  min-height: 68px;
+}
+
 .admin-overview-row {
   display: grid;
   grid-template-columns: minmax(220px, 0.8fr) minmax(220px, 0.8fr) minmax(
@@ -5328,6 +5382,15 @@ select.control {
 }
 
 @media (max-width: 1200px) {
+  .metric-grid.admin-primary-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .annual-break-even-layout,
+  .referral-admin-settings {
+    grid-template-columns: 1fr;
+  }
+
   .admin-chart-grid,
   .admin-overview-row,
   .portal-access-layout {
@@ -5340,6 +5403,14 @@ select.control {
 }
 
 @media (max-width: 720px) {
+  .metric-grid.admin-primary-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .annual-cost-form {
+    grid-template-columns: 1fr;
+  }
+
   .referral-page-heading,
   .referral-code-row {
     align-items: flex-start;

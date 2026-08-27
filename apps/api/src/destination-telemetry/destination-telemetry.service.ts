@@ -4,11 +4,9 @@ import { domainToASCII } from 'node:url';
 import {
   BadRequestException,
   Injectable,
-  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
 import {
   AdminPermission,
   DestinationTargetType,
@@ -36,8 +34,6 @@ interface DestinationQuery {
 
 @Injectable()
 export class DestinationTelemetryService {
-  private readonly logger = new Logger(DestinationTelemetryService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -305,23 +301,6 @@ export class DestinationTelemetryService {
       });
     });
     return { userId, permissions: input.permissions };
-  }
-
-  @Cron('0 20 3 * * *')
-  async cleanupExpiredTelemetry() {
-    const retentionDays = Number.parseInt(
-      process.env.DESTINATION_RETENTION_DAYS ?? '30',
-      10,
-    );
-    const cutoff = new Date(
-      Date.now() - Math.max(retentionDays, 1) * 24 * 60 * 60 * 1000,
-    );
-    const deleted = await this.prisma.destinationImportBatch.deleteMany({
-      where: { observedAt: { lt: cutoff } },
-    });
-    if (deleted.count > 0) {
-      this.logger.log(`Deleted ${deleted.count} destination telemetry batches`);
-    }
   }
 
   private normalizeTarget(raw: string) {

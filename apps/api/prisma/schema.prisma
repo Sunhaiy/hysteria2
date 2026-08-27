@@ -292,6 +292,7 @@ model User {
   referralCode                 ReferralCode?                 @relation("ReferralCodeOwner")
   referralsSent                ReferralAttribution[]         @relation("ReferralInviter")
   referralReceived             ReferralAttribution?          @relation("ReferralInvitee")
+  annualOperatingCosts         AnnualOperatingCost[]         @relation("AnnualOperatingCostUpdatedBy")
 
   @@index([role, status, createdAt, id])
 }
@@ -554,6 +555,8 @@ model Subscription {
   usageRollups          UsageRollup[]
   cycles                SubscriptionCycle[]
   entitlementGrant      EntitlementGrant?
+
+  @@index([status])
 }
 
 model SubscriptionCycle {
@@ -751,6 +754,7 @@ model AuthEvent {
 
   @@index([userId, createdAt])
   @@index([reason, submittedTokenPreview, remoteAddr, createdAt])
+  @@index([createdAt, granted])
 }
 
 model UsageRollup {
@@ -794,6 +798,7 @@ model DestinationImportBatch {
 
   @@unique([nodeId, externalId])
   @@index([receivedAt])
+  @@index([observedAt])
 }
 
 model DestinationVisitRollup {
@@ -1135,6 +1140,7 @@ model EntitlementGrant {
   @@index([userId, kind, status, endsAt])
   @@index([accessAccountId, status, endsAt])
   @@index([accessProfileId, status])
+  @@index([kind, status, startsAt, endsAt, userId])
 }
 
 model QuotaBucket {
@@ -1327,6 +1333,17 @@ model NodeCost {
   node              Node      @relation(fields: [nodeId], references: [id], onDelete: Restrict)
 
   @@index([nodeId, effectiveFrom, effectiveTo])
+}
+
+model AnnualOperatingCost {
+  year           Int      @id
+  totalCostCents Int
+  updatedById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  updatedBy      User?    @relation("AnnualOperatingCostUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([updatedAt])
 }
 
 model NodeServiceCheck {

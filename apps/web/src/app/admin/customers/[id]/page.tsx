@@ -53,9 +53,13 @@ type Customer = {
   createdAt: string;
   summary: {
     activeGrantCount: number;
+    grantedBytes: number;
+    consumedBytes: number;
     remainingBytes: number;
+    online: boolean;
+    onlineNodeCount: number;
     onlineClients: number;
-    lifetimeOrderCents: number;
+    recentTraffic: DailyTrafficItem[];
   };
 };
 type Identity = {
@@ -80,13 +84,27 @@ type AccessData = {
   identities: Identity[];
   presence: PaginatedResponse<Presence>;
 };
-type Usage = {
-  id: string;
-  nodeLabel: string;
-  bucketStart: string;
+type DailyTrafficItem = {
+  date: string;
+  txBytes: number;
+  rxBytes: number;
   physicalBytes: number;
   accountedBytes: number;
-  allocations: Array<{ quotaBucketId: string; accountedBytes: number }>;
+  actualMultiplier: number | null;
+  minMultiplier: number | null;
+  maxMultiplier: number | null;
+};
+type DailyTraffic = {
+  timezone: string;
+  from: string;
+  to: string;
+  totals: {
+    txBytes: number;
+    rxBytes: number;
+    physicalBytes: number;
+    accountedBytes: number;
+  };
+  items: DailyTrafficItem[];
 };
 type Order = {
   id: string;
@@ -135,6 +153,30 @@ const emptyPage = <T,>(): PaginatedResponse<T> => ({
   totalPages: 1,
 });
 
+const emptyDailyTraffic: DailyTraffic = {
+  timezone: "Asia/Shanghai",
+  from: "",
+  to: "",
+  totals: { txBytes: 0, rxBytes: 0, physicalBytes: 0, accountedBytes: 0 },
+  items: [],
+};
+
+function shanghaiDateKey(date = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function shiftDateKey(date: string, days: number) {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days))
+    .toISOString()
+    .slice(0, 10);
+}
+
 export default function CustomerDetailPage() {
   const params = useParams<{ id: string }>();
   const { token } = useAuth();
@@ -145,7 +187,7 @@ export default function CustomerDetailPage() {
     identities: [],
     presence: emptyPage<Presence>(),
   });
-  const [usage, setUsage] = useState(emptyPage<Usage>);
+  const [dailyTraffic, setDailyTraffic] = useState(emptyDailyTraffic);
   const [orders, setOrders] = useState(emptyPage<Order>);
   const [wallet, setWallet] = useState(emptyPage<Wallet>);
   const [timeline, setTimeline] = useState(emptyPage<Timeline>);
@@ -161,31 +203,19 @@ export default function CustomerDetailPage() {
   const [multiplier, setMultiplier] = useState("1");
   const [remainingGb, setRemainingGb] = useState("");
   const [resetUrl, setResetUrl] = useState<string | null>(null);
+  const [trafficDays, setTrafficDays] = useState<7 | 30>(7);
 
   const loadSummary = useCallback(
     async (signal?: AbortSignal) => {
       if (!token || !params.id) return;
       setError(null);
       try {
-        const [nextCustomer, nextCatalog] = await Promise.all([
-          apiRequest<Customer>(`/api/admin/customers/${params.id}`, {
-            token,
-            signal,
-          }),
-          catalog
-            ? Promise.resolve(catalog)
-            : apiRequest<Catalog>("/api/admin/catalog", { token, signal }),
-        ]);
+        const nextCustomer = await apiRequest<Customer>(
+          `/api/admin/customers/${params.id}`,
+          { token, signal },
+        );
         setCustomer(nextCustomer);
-        setCatalog(nextCatalog);
         setMultiplier(String(nextCustomer.trafficMultiplier));
-        const firstPlanOffer = nextCatalog.products
-          .filter(
-            (product) => product.kind === "plan" && product.status === "active",
-          )
-          .flatMap((product) => product.offers)
-          .find((offer) => offer.active && !offer.archivedAt);
-        setOfferId((current) => current || firstPlanOffer?.id || "");
       } catch (cause) {
         if (cause instanceof DOMException && cause.name === "AbortError")
           return;
@@ -194,7 +224,7 @@ export default function CustomerDetailPage() {
         );
       }
     },
-    [catalog, params.id, token],
+    [params.id, token],
   );
 
   useEffect(() => {
@@ -208,6 +238,30 @@ export default function CustomerDetailPage() {
       controller.abort();
     };
   }, [loadSummary, reloadKey]);
+
+  useEffect(() => {
+    if (!token || view !== "entitlements" || catalog) return;
+    const controller = new AbortController();
+    void apiRequest<Catalog>("/api/admin/catalog", {
+      token,
+      signal: controller.signal,
+    })
+      .then((nextCatalog) => {
+        setCatalog(nextCatalog);
+        const firstPlanOffer = nextCatalog.products
+          .filter(
+            (product) => product.kind === "plan" && product.status === "active",
+          )
+          .flatMap((product) => product.offers)
+          .find((offer) => offer.active && !offer.archivedAt);
+        setOfferId((current) => current || firstPlanOffer?.id || "");
+      })
+      .catch((cause) => {
+        if (cause instanceof DOMException && cause.name === "AbortError") return;
+        setError(cause instanceof ApiError ? cause.message : "商品目录加载失败。");
+      });
+    return () => controller.abort();
+  }, [catalog, token, view]);
 
   useEffect(() => {
     if (!token || !params.id) return;
@@ -228,10 +282,15 @@ export default function CustomerDetailPage() {
                 { token, signal: controller.signal },
               ).then(setAccess)
             : view === "traffic"
-              ? apiRequest<PaginatedResponse<Usage>>(
-                  `/api/admin/customers/${params.id}/traffic?${suffix}`,
-                  { token, signal: controller.signal },
-                ).then(setUsage)
+              ? (() => {
+                  const to = shanghaiDateKey();
+                  const from = shiftDateKey(to, 1 - trafficDays);
+                  const query = new URLSearchParams({ from, to });
+                  return apiRequest<DailyTraffic>(
+                    `/api/admin/customers/${params.id}/traffic/daily?${query}`,
+                    { token, signal: controller.signal },
+                  ).then(setDailyTraffic);
+                })()
               : view === "finance"
                 ? Promise.all([
                     apiRequest<PaginatedResponse<Order>>(
@@ -268,7 +327,7 @@ export default function CustomerDetailPage() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [page, params.id, reloadKey, token, view]);
+  }, [page, params.id, reloadKey, token, trafficDays, view]);
 
   const planOffers = useMemo(
     () =>
@@ -288,7 +347,7 @@ export default function CustomerDetailPage() {
   );
 
   const trafficChartOption = useMemo<EChartsOption>(() => {
-    const points = [...usage.items].reverse();
+    const points = dailyTraffic.items;
     return {
       tooltip: {
         trigger: "axis",
@@ -303,7 +362,7 @@ export default function CustomerDetailPage() {
       xAxis: {
         type: "category",
         boundaryGap: false,
-        data: points.map((item) => formatDateTime(item.bucketStart)),
+        data: points.map((item) => item.date.slice(5).replace("-", "/")),
       },
       yAxis: {
         type: "value",
@@ -326,7 +385,27 @@ export default function CustomerDetailPage() {
         },
       ],
     };
-  }, [usage.items]);
+  }, [dailyTraffic.items]);
+
+  const recentTrafficOption = useMemo<EChartsOption>(
+    () => ({
+      animationDuration: 400,
+      grid: { left: 0, right: 0, top: 5, bottom: 0 },
+      xAxis: { type: "category", show: false },
+      yAxis: { type: "value", show: false },
+      series: [
+        {
+          type: "line",
+          smooth: true,
+          symbol: "none",
+          lineStyle: { width: 2 },
+          areaStyle: { opacity: 0.1 },
+          data: customer?.summary.recentTraffic.map((item) => item.physicalBytes) ?? [],
+        },
+      ],
+    }),
+    [customer],
+  );
 
   async function act(
     path: string,
@@ -376,9 +455,7 @@ export default function CustomerDetailPage() {
       ? grants
       : view === "access"
         ? access.presence
-        : view === "traffic"
-          ? usage
-          : view === "finance"
+        : view === "finance"
             ? orders
             : timeline;
   const pagination = {
@@ -475,27 +552,57 @@ export default function CustomerDetailPage() {
         </div>
       ) : null}
       <div className="page-stack">
-        <div className="metric-grid">
+        <div className="metric-grid customer-summary-grid">
           <MetricCard
             label="有效权益"
             value={String(customer.summary.activeGrantCount)}
             footnote="套餐与独立流量包"
           />
-          <MetricCard
-            label="剩余额度"
-            value={formatBytes(customer.summary.remainingBytes)}
-            footnote={`实际倍率 ${customer.effectiveTrafficMultiplier}x`}
-          />
+          <article className="metric-card customer-quota-card">
+            <span className="metric-label">剩余额度</span>
+            <strong className="metric-value">
+              {formatBytes(customer.summary.remainingBytes)}
+            </strong>
+            <div className="bar-track" aria-label="额度使用进度">
+              <span
+                className="bar-fill bar-fill-success"
+                style={{
+                  width: `${Math.min(
+                    100,
+                    customer.summary.grantedBytes
+                      ? (customer.summary.consumedBytes /
+                          customer.summary.grantedBytes) *
+                          100
+                      : 0,
+                  )}%`,
+                }}
+              />
+            </div>
+            <span className="metric-footnote">
+              已用 {formatBytes(customer.summary.consumedBytes)} · {customer.effectiveTrafficMultiplier}x
+            </span>
+          </article>
           <MetricCard
             label="活跃连接"
             value={String(customer.summary.onlineClients)}
-            footnote="同一设备可能产生多条连接"
+            footnote={`${customer.summary.online ? "在线" : "离线"} · ${customer.summary.onlineNodeCount} 个连接节点 · 同一设备可能产生多条连接`}
           />
-          <MetricCard
-            label="累计成交"
-            value={formatMoney(customer.summary.lifetimeOrderCents)}
-            footnote={`钱包余额 ${formatMoney(customer.balanceCents)}`}
-          />
+          <article className="metric-card customer-traffic-card">
+            <span className="metric-label">最近 7 日流量</span>
+            <strong className="metric-value">
+              {formatBytes(
+                customer.summary.recentTraffic.reduce(
+                  (sum, item) => sum + item.physicalBytes,
+                  0,
+                ),
+              )}
+            </strong>
+            <EChart
+              option={recentTrafficOption}
+              height={58}
+              ariaLabel="客户最近七日流量趋势"
+            />
+          </article>
         </div>
         <div className="segmented-control" aria-label="客户详情视图">
           {(
@@ -703,12 +810,12 @@ export default function CustomerDetailPage() {
                       <div className="admin-subscription-links">
                         {[
                           {
-                            label: "v2rayN / Hiddify",
-                            value: identity.subscriptionUrl,
-                          },
-                          {
                             label: "Clash / Mihomo",
                             value: identity.mihomoSubscriptionUrl,
+                          },
+                          {
+                            label: "v2rayN / Hiddify",
+                            value: identity.subscriptionUrl,
                           },
                         ].map((link) => (
                           <div
@@ -787,8 +894,22 @@ export default function CustomerDetailPage() {
             <Panel
               title="流量趋势"
               copy="对比节点上报的实际流量与倍率计费后的流量。"
+              action={
+                <div className="segmented-control compact" aria-label="流量日期范围">
+                  {([7, 30] as const).map((days) => (
+                    <button
+                      key={days}
+                      type="button"
+                      className={trafficDays === days ? "active" : ""}
+                      onClick={() => setTrafficDays(days)}
+                    >
+                      {days} 天
+                    </button>
+                  ))}
+                </div>
+              }
             >
-              {usage.items.length ? (
+              {dailyTraffic.items.some((item) => item.physicalBytes > 0) ? (
                 <EChart
                   option={trafficChartOption}
                   height={320}
@@ -798,21 +919,33 @@ export default function CustomerDetailPage() {
                 <div className="empty-state">暂无流量记录</div>
               )}
             </Panel>
-            <Panel title="流量与额度分摊">
+            <Panel
+              title="每日流量"
+              copy={`合计物理流量 ${formatBytes(dailyTraffic.totals.physicalBytes)} · 计费流量 ${formatBytes(dailyTraffic.totals.accountedBytes)}`}
+            >
               <DataTable
                 loading={loading}
                 error={error}
-                pagination={pagination}
                 emptyText="暂无流量记录"
-                headers={["时间", "节点", "物理流量", "计费流量", "额度分摊"]}
-                rows={usage.items.map((item) => [
-                  formatDateTime(item.bucketStart),
-                  item.nodeLabel,
+                headers={[
+                  "日期",
+                  "上传",
+                  "下载",
+                  "物理流量",
+                  "计费流量",
+                  "实际倍率",
+                ]}
+                rows={[...dailyTraffic.items].reverse().map((item) => [
+                  item.date,
+                  formatBytes(item.txBytes),
+                  formatBytes(item.rxBytes),
                   formatBytes(item.physicalBytes),
                   formatBytes(item.accountedBytes),
-                  item.allocations
-                    .map((allocation) => formatBytes(allocation.accountedBytes))
-                    .join(" + ") || "未分摊",
+                  item.actualMultiplier == null
+                    ? "-"
+                    : item.minMultiplier === item.maxMultiplier
+                      ? `${item.actualMultiplier}x`
+                      : `${item.actualMultiplier}x (${item.minMultiplier}x-${item.maxMultiplier}x)`,
                 ])}
               />
             </Panel>

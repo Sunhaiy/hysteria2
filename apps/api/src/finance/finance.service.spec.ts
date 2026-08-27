@@ -197,4 +197,113 @@ describe('FinanceService', () => {
     ).rejects.toThrow('Refund exceeds the refundable amount');
     expect(tx.refund.create).not.toHaveBeenCalled();
   });
+
+  it('calculates annual break-even from Beijing-year recognized revenue', async () => {
+    const prisma = {
+      annualOperatingCost: {
+        findUnique: jest.fn().mockResolvedValue({
+          year: 2027,
+          totalCostCents: 10_000,
+          updatedAt: new Date('2027-02-01T00:00:00.000Z'),
+          updatedBy: { email: 'admin@example.com' },
+        }),
+      },
+      manualOrder: {
+        aggregate: jest
+          .fn()
+          .mockResolvedValue({ _sum: { amountCents: 12_500 } }),
+      },
+      refund: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amountCents: 500 } }),
+      },
+    };
+    const service = new FinanceService(prisma as never);
+
+    await expect(service.annualBreakEven(2027)).resolves.toMatchObject({
+      year: 2027,
+      status: 'recovered',
+      annualCostCents: 10_000,
+      recognizedRevenueCents: 12_500,
+      refundCents: 500,
+      netRevenueCents: 12_000,
+      progressPercent: 100,
+      differenceCents: 2_000,
+      remainingCents: 0,
+      profitCents: 2_000,
+    });
+    expect(prisma.manualOrder.aggregate).toHaveBeenCalledWith({
+      where: {
+        status: 'APPLIED',
+        processedAt: {
+          gte: new Date('2026-12-31T16:00:00.000Z'),
+          lt: new Date('2027-12-31T16:00:00.000Z'),
+        },
+      },
+      _sum: { amountCents: true },
+    });
+    expect(prisma.refund.aggregate).toHaveBeenCalledWith({
+      where: {
+        status: 'APPLIED',
+        processedAt: {
+          gte: new Date('2026-12-31T16:00:00.000Z'),
+          lt: new Date('2027-12-31T16:00:00.000Z'),
+        },
+      },
+      _sum: { amountCents: true },
+    });
+  });
+
+  it('returns an unconfigured annual break-even result without mixing node costs', async () => {
+    const prisma = {
+      annualOperatingCost: { findUnique: jest.fn().mockResolvedValue(null) },
+      manualOrder: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amountCents: 2000 } }),
+      },
+      refund: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amountCents: 100 } }),
+      },
+      nodeCost: { aggregate: jest.fn() },
+    };
+    const service = new FinanceService(prisma as never);
+
+    await expect(service.annualBreakEven(2026)).resolves.toMatchObject({
+      status: 'unconfigured',
+      annualCostCents: null,
+      netRevenueCents: 1900,
+      progressPercent: null,
+      differenceCents: null,
+    });
+    expect(prisma.nodeCost.aggregate).not.toHaveBeenCalled();
+  });
+
+  it('upserts one annual cost with the editing administrator', async () => {
+    const prisma = {
+      annualOperatingCost: {
+        upsert: jest.fn().mockResolvedValue({
+          year: 2026,
+          totalCostCents: 88_000,
+          updatedAt: new Date('2026-08-27T00:00:00.000Z'),
+          updatedBy: { email: 'admin@example.com' },
+        }),
+      },
+    };
+    const service = new FinanceService(prisma as never);
+
+    await service.upsertAnnualOperatingCost(
+      2026,
+      { totalCostCents: 88_000 },
+      'admin_1',
+    );
+
+    expect(prisma.annualOperatingCost.upsert).toHaveBeenCalledWith({
+      where: { year: 2026 },
+      create: {
+        year: 2026,
+        totalCostCents: 88_000,
+        updatedById: 'admin_1',
+      },
+      update: { totalCostCents: 88_000, updatedById: 'admin_1' },
+      include: { updatedBy: { select: { email: true } } },
+    });
+  });
 });

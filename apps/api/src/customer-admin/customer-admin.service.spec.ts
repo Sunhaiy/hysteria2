@@ -36,7 +36,7 @@ describe('CustomerAdminService list filtering', () => {
 
   it('matches only current active subscriptions for a plan and fresh online presence', async () => {
     const prisma = createListPrisma();
-    const service = new CustomerAdminService(prisma as never);
+    const service = new CustomerAdminService(prisma as never, {} as never);
 
     await service.listUsers({ planId: 'plan_1', online: 'true' });
 
@@ -62,7 +62,7 @@ describe('CustomerAdminService list filtering', () => {
 
   it('inverts the fresh-presence predicate for offline customers', async () => {
     const prisma = createListPrisma();
-    const service = new CustomerAdminService(prisma as never);
+    const service = new CustomerAdminService(prisma as never, {} as never);
 
     await service.listUsers({ online: 'false' });
 
@@ -79,7 +79,7 @@ describe('CustomerAdminService list filtering', () => {
 
   it('matches every customer with legacy or unified plan history', async () => {
     const prisma = createListPrisma();
-    const service = new CustomerAdminService(prisma as never);
+    const service = new CustomerAdminService(prisma as never, {} as never);
 
     await service.listUsers({ subscriptionHistory: 'ever' });
 
@@ -139,7 +139,7 @@ describe('CustomerAdminService list filtering', () => {
         count: jest.fn().mockResolvedValue(1),
       },
     };
-    const service = new CustomerAdminService(prisma as never);
+    const service = new CustomerAdminService(prisma as never, {} as never);
 
     const result = await service.listUsers({ q: 'user@example.com' });
 
@@ -181,7 +181,7 @@ describe('CustomerAdminService subscription links', () => {
         operation(tx),
       ),
     };
-    const service = new CustomerAdminService(prisma as never);
+    const service = new CustomerAdminService(prisma as never, {} as never);
 
     const result = await service.rotateAccessToken('user_1', 'admin_1');
 
@@ -223,7 +223,7 @@ describe('CustomerAdminService subscription links', () => {
         operation(tx),
       ),
     };
-    const service = new CustomerAdminService(prisma as never);
+    const service = new CustomerAdminService(prisma as never, {} as never);
 
     await service.revokeAccessToken('user_1', 'token_1', 'admin_1');
 
@@ -262,7 +262,7 @@ describe('CustomerAdminService quota policy', () => {
         operation(tx),
       ),
     };
-    const service = new CustomerAdminService(prisma as never);
+    const service = new CustomerAdminService(prisma as never, {} as never);
 
     await expect(
       service.adjustQuotaBucket(
@@ -286,7 +286,7 @@ describe('CustomerAdminService quota policy', () => {
     'rejects an invalid traffic multiplier before opening a transaction',
     async (multiplier) => {
       const prisma = { $transaction: jest.fn() };
-      const service = new CustomerAdminService(prisma as never);
+      const service = new CustomerAdminService(prisma as never, {} as never);
 
       await expect(
         service.setTrafficMultiplier('user_1', multiplier, 'admin_1'),

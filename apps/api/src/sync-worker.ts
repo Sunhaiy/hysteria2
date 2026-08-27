@@ -14,6 +14,12 @@ function intervalFromEnv(name: string, fallback: number, minimum: number) {
   return Number.isFinite(configured) ? Math.max(configured, minimum) : fallback;
 }
 
+function retentionDaysFromEnv(name: string, fallback: number) {
+  const legacy = process.env.DATA_RETENTION_DAYS;
+  const configured = Number.parseInt(process.env[name] ?? legacy ?? '', 10);
+  return Number.isFinite(configured) ? Math.max(configured, 1) : fallback;
+}
+
 class RecurringTask {
   private timer: NodeJS.Timeout | undefined;
   private inFlight: Promise<void> | undefined;
@@ -154,13 +160,20 @@ async function bootstrap() {
         cleanupIntervalMs,
         5 * 60_000,
         async () => {
-          const retentionDays = Number.parseInt(
-            process.env.DATA_RETENTION_DAYS ?? '30',
-            10,
-          );
-          const result = await sync.cleanup(Math.max(retentionDays, 1));
+          const policy = {
+            destinationDays: retentionDaysFromEnv(
+              'DESTINATION_RETENTION_DAYS',
+              7,
+            ),
+            onlineDays: retentionDaysFromEnv('ONLINE_RETENTION_DAYS', 7),
+            authEventDays: retentionDaysFromEnv(
+              'AUTH_EVENT_RETENTION_DAYS',
+              30,
+            ),
+          };
+          const result = await sync.cleanup(policy);
           logger.log(
-            `Cleanup removed ${result.deletedSnapshots} snapshots and ${result.deletedAuthEvents} auth events`,
+            `Cleanup removed ${result.deletedDestinationBatches} destination batches, ${result.deletedSnapshots} online snapshots, and ${result.deletedAuthEvents} auth events`,
           );
         },
         false,

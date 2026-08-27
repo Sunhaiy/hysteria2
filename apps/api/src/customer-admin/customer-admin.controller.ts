@@ -30,6 +30,7 @@ import {
   CustomerAdminService,
   type CustomerQuery,
 } from './customer-admin.service';
+import type { DailyTrafficQuery } from './customer-traffic.service';
 
 @Controller('api/admin/customers')
 @UseGuards(JwtAuthGuard, AdminGuard)
@@ -81,6 +82,11 @@ export class CustomerAdminController {
     @CurrentPrincipal() principal: SessionPrincipal,
   ) {
     return this.customers.revokeAccessToken(id, tokenId, principal.sub);
+  }
+
+  @Get(':id/traffic/daily')
+  dailyTraffic(@Param('id') id: string, @Query() query: DailyTrafficQuery) {
+    return this.customers.getCustomerDailyTraffic(id, query);
   }
 
   @Get(':id/traffic')

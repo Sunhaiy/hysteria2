@@ -8,7 +8,11 @@ import { Prisma, RefundMethod, RefundStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { pageResponse, parsePage } from '../common/pagination';
 import { ReferralService } from '../referrals/referral.service';
-import type { CreateNodeCostDto, CreateRefundDto } from './finance.dto';
+import type {
+  CreateNodeCostDto,
+  CreateRefundDto,
+  UpsertAnnualOperatingCostDto,
+} from './finance.dto';
 
 export interface FinanceQuery {
   from?: string;
@@ -392,6 +396,102 @@ export class FinanceService {
     });
   }
 
+  async upsertAnnualOperatingCost(
+    year: number,
+    input: UpsertAnnualOperatingCostDto,
+    actorId: string,
+  ) {
+    this.requireReportYear(year);
+    const cost = await this.prisma.annualOperatingCost.upsert({
+      where: { year },
+      create: {
+        year,
+        totalCostCents: input.totalCostCents,
+        updatedById: actorId,
+      },
+      update: {
+        totalCostCents: input.totalCostCents,
+        updatedById: actorId,
+      },
+      include: { updatedBy: { select: { email: true } } },
+    });
+    return {
+      year: cost.year,
+      totalCostCents: cost.totalCostCents,
+      updatedByEmail: cost.updatedBy?.email ?? null,
+      updatedAt: cost.updatedAt.toISOString(),
+    };
+  }
+
+  async annualBreakEven(year: number) {
+    this.requireReportYear(year);
+    const range = this.shanghaiYearRange(year);
+    const [cost, revenue, refunds] = await Promise.all([
+      this.prisma.annualOperatingCost.findUnique({
+        where: { year },
+        include: { updatedBy: { select: { email: true } } },
+      }),
+      this.prisma.manualOrder.aggregate({
+        where: {
+          status: 'APPLIED',
+          processedAt: { gte: range.from, lt: range.to },
+        },
+        _sum: { amountCents: true },
+      }),
+      this.prisma.refund.aggregate({
+        where: {
+          status: RefundStatus.APPLIED,
+          processedAt: { gte: range.from, lt: range.to },
+        },
+        _sum: { amountCents: true },
+      }),
+    ]);
+    const recognizedRevenueCents = revenue._sum.amountCents ?? 0;
+    const refundCents = refunds._sum.amountCents ?? 0;
+    const netRevenueCents = recognizedRevenueCents - refundCents;
+    const annualCostCents = cost?.totalCostCents ?? null;
+    const differenceCents =
+      annualCostCents == null ? null : netRevenueCents - annualCostCents;
+    const status =
+      annualCostCents == null
+        ? 'unconfigured'
+        : differenceCents != null && differenceCents >= 0
+          ? 'recovered'
+          : 'not_recovered';
+    const progressPercent =
+      annualCostCents == null
+        ? null
+        : annualCostCents === 0
+          ? 100
+          : Math.min(
+              100,
+              Math.max(
+                0,
+                Math.round((netRevenueCents / annualCostCents) * 1000) / 10,
+              ),
+            );
+
+    return {
+      year,
+      timezone: 'Asia/Shanghai',
+      currency: 'CNY',
+      range: { from: range.from.toISOString(), to: range.to.toISOString() },
+      status,
+      annualCostCents,
+      recognizedRevenueCents,
+      refundCents,
+      netRevenueCents,
+      progressPercent,
+      differenceCents,
+      remainingCents:
+        differenceCents == null ? null : Math.max(-differenceCents, 0),
+      profitCents:
+        differenceCents == null ? null : Math.max(differenceCents, 0),
+      updatedByEmail: cost?.updatedBy?.email ?? null,
+      updatedAt: cost?.updatedAt.toISOString() ?? null,
+    };
+  }
+
   async exportCsv(kind: string, query: FinanceQuery) {
     const records: Array<Record<string, unknown>> = [];
     let page = 1;
@@ -435,6 +535,21 @@ export class FinanceService {
       throw new BadRequestException('Invalid report date range');
     }
     return { from, to };
+  }
+
+  private requireReportYear(year: number) {
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+      throw new BadRequestException(
+        'Report year must be between 2000 and 2100',
+      );
+    }
+  }
+
+  private shanghaiYearRange(year: number) {
+    return {
+      from: new Date(`${year}-01-01T00:00:00+08:00`),
+      to: new Date(`${year + 1}-01-01T00:00:00+08:00`),
+    };
   }
 
   private orderWhere(

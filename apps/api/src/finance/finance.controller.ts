@@ -3,7 +3,9 @@ import {
   Controller,
   Get,
   Param,
+  ParseIntPipe,
   Post,
+  Put,
   Query,
   Res,
   UseGuards,
@@ -13,7 +15,11 @@ import { AdminGuard } from '../common/admin.guard';
 import type { SessionPrincipal } from '../common/auth.types';
 import { CurrentPrincipal } from '../common/current-principal.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
-import { CreateNodeCostDto, CreateRefundDto } from './finance.dto';
+import {
+  CreateNodeCostDto,
+  CreateRefundDto,
+  UpsertAnnualOperatingCostDto,
+} from './finance.dto';
 import { FinanceService, type FinanceQuery } from './finance.service';
 
 @Controller('api/admin/finance')
@@ -58,6 +64,20 @@ export class FinanceController {
   @Post('node-costs')
   createNodeCost(@Body() body: CreateNodeCostDto) {
     return this.finance.createNodeCost(body);
+  }
+
+  @Put('annual-costs/:year')
+  upsertAnnualCost(
+    @Param('year', ParseIntPipe) year: number,
+    @Body() body: UpsertAnnualOperatingCostDto,
+    @CurrentPrincipal() principal: SessionPrincipal,
+  ) {
+    return this.finance.upsertAnnualOperatingCost(year, body, principal.sub);
+  }
+
+  @Get('annual-break-even')
+  annualBreakEven(@Query('year', ParseIntPipe) year: number) {
+    return this.finance.annualBreakEven(year);
   }
 
   @Get('export')

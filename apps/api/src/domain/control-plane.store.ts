@@ -30,6 +30,12 @@ const bytesInGiB = 1024 * 1024 * 1024;
 const reconnectGraceMs = 2 * 60_000;
 const rejectedAuthDedupeMs = 15 * 60_000;
 
+export interface DataRetentionPolicy {
+  destinationDays: number;
+  onlineDays: number;
+  authEventDays: number;
+}
+
 function remoteHost(remoteAddr?: string) {
   if (!remoteAddr) return undefined;
 
@@ -4367,19 +4373,23 @@ export class ControlPlaneStoreService {
     ) as Partial<T>;
   }
 
-  async cleanupOldData(retentionDays: number) {
-    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
-
-    const [snapshots, events] = await Promise.all([
+  async cleanupOldData(policy: DataRetentionPolicy, now = new Date()) {
+    const cutoffFor = (days: number) =>
+      new Date(now.getTime() - Math.max(days, 1) * 24 * 60 * 60 * 1000);
+    const [destinations, snapshots, events] = await Promise.all([
+      this.prisma.destinationImportBatch.deleteMany({
+        where: { observedAt: { lt: cutoffFor(policy.destinationDays) } },
+      }),
       this.prisma.onlineSnapshot.deleteMany({
-        where: { capturedAt: { lt: cutoff } },
+        where: { capturedAt: { lt: cutoffFor(policy.onlineDays) } },
       }),
       this.prisma.authEvent.deleteMany({
-        where: { createdAt: { lt: cutoff } },
+        where: { createdAt: { lt: cutoffFor(policy.authEventDays) } },
       }),
     ]);
 
     return {
+      deletedDestinationBatches: destinations.count,
       deletedSnapshots: snapshots.count,
       deletedAuthEvents: events.count,
     };

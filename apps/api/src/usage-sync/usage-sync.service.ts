@@ -5,7 +5,10 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { ControlPlaneStoreService } from '../domain/control-plane.store';
+import {
+  ControlPlaneStoreService,
+  type DataRetentionPolicy,
+} from '../domain/control-plane.store';
 import { NodeControlService } from '../domain/node-control.service';
 import { EntitlementService } from '../entitlement/entitlement.service';
 import { NodeAdapterRegistry } from '../integrations/node.adapter';
@@ -24,8 +27,8 @@ export class UsageSyncService {
     private readonly nodes: NodeControlService,
   ) {}
 
-  async cleanup(retentionDays: number) {
-    return this.store.cleanupOldData(retentionDays);
+  async cleanup(policy: DataRetentionPolicy) {
+    return this.store.cleanupOldData(policy);
   }
 
   async syncAllNodes() {

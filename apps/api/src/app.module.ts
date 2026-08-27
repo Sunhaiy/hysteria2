@@ -9,6 +9,7 @@ import { CatalogModule } from './catalog/catalog.module';
 import { CommerceModule } from './commerce/commerce.module';
 import { DomainModule } from './domain/domain.module';
 import { DestinationTelemetryModule } from './destination-telemetry/destination-telemetry.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { EntitlementModule } from './entitlement/entitlement.module';
 import { HealthModule } from './health/health.module';
 import { FinanceModule } from './finance/finance.module';
@@ -57,6 +58,7 @@ import { TicketsModule } from './tickets/tickets.module';
     SettingsModule,
     MailModule,
     DomainModule,
+    DashboardModule,
     DestinationTelemetryModule,
     EntitlementModule,
     CommerceModule,
