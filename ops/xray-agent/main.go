@@ -338,7 +338,6 @@ func systemctlProperty(ctx context.Context, unit string, property string) (strin
 		unit,
 		"--property",
 		property,
-		"--value",
 	).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf(
@@ -347,7 +346,22 @@ func systemctlProperty(ctx context.Context, unit string, property string) (strin
 			strings.TrimSpace(string(output)),
 		)
 	}
-	return strings.TrimSpace(string(output)), nil
+	value, err := parseSystemctlProperty(output, property)
+	if err != nil {
+		return "", fmt.Errorf("read %s for service: %w", property, err)
+	}
+	return value, nil
+}
+
+func parseSystemctlProperty(output []byte, property string) (string, error) {
+	prefix := property + "="
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix)), nil
+		}
+	}
+	return "", fmt.Errorf("systemctl output is missing %s", property)
 }
 
 func mapSystemdState(activeState string) string {

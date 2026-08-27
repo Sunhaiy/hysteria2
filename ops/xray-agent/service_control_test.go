@@ -120,3 +120,42 @@ func TestParseServiceAllowlistRejectsArbitraryUnits(t *testing.T) {
 		t.Fatal("expected unsupported logical service to be rejected")
 	}
 }
+
+func TestParseSystemctlPropertySupportsLegacyOutput(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		property string
+		expected string
+	}{
+		{
+			name:     "active state",
+			output:   "ActiveState=active\n",
+			property: "ActiveState",
+			expected: "active",
+		},
+		{
+			name:     "main PID with CRLF",
+			output:   "MainPID=25320\r\n",
+			property: "MainPID",
+			expected: "25320",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			value, err := parseSystemctlProperty([]byte(test.output), test.property)
+			if err != nil {
+				t.Fatalf("parse property: %v", err)
+			}
+			if value != test.expected {
+				t.Fatalf("expected %q, got %q", test.expected, value)
+			}
+		})
+	}
+}
+
+func TestParseSystemctlPropertyRejectsMissingProperty(t *testing.T) {
+	if _, err := parseSystemctlProperty([]byte("SubState=running\n"), "MainPID"); err == nil {
+		t.Fatal("expected missing property to fail")
+	}
+}
