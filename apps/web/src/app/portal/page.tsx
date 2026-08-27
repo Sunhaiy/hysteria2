@@ -235,7 +235,6 @@ export default function PortalPage() {
               ),
             );
             const deviceLimit = overview.subscription.deviceLimitSnapshot;
-            const availableDevices = Math.max(0, deviceLimit - overview.online);
             const recentTx = chartData.reduce((sum, item) => sum + item.txBytes, 0);
             const recentRx = chartData.reduce((sum, item) => sum + item.rxBytes, 0);
             const recentTotal = recentTx + recentRx;
@@ -255,23 +254,6 @@ export default function PortalPage() {
                 },
               ],
             };
-            const deviceOption: EChartsOption = {
-              tooltip: { trigger: "item" },
-              legend: { bottom: 0 },
-              series: [
-                {
-                  type: "pie",
-                  radius: ["54%", "76%"],
-                  center: ["50%", "44%"],
-                  label: { show: false },
-                  data: [
-                    { name: "在线", value: overview.online },
-                    { name: "可用", value: availableDevices },
-                  ],
-                },
-              ],
-            };
-
             return (
               <div className="portal-analytics">
                 {overview.alerts?.length ? (
@@ -303,9 +285,9 @@ export default function PortalPage() {
                     }
                   />
                   <MetricCard
-                    label="在线设备"
-                    value={`${overview.online}/${deviceLimit}`}
-                    footnote={`仍可接入 ${availableDevices} 台设备`}
+                    label="连接状态"
+                    value={overview.online > 0 ? "在线" : "离线"}
+                    footnote={`${overview.online} 条活跃连接；活跃连接不等于设备数量`}
                   />
                   <MetricCard
                     label="套餐到期"
@@ -360,12 +342,20 @@ export default function PortalPage() {
                       <div className="portal-chart-empty compact">近 7 天暂无流量</div>
                     )}
                   </Panel>
-                  <Panel title="设备容量" copy={`${overview.online} 台在线设备`}>
-                    <EChart
-                      option={deviceOption}
-                      height={240}
-                      ariaLabel="在线设备与可用设备数量"
-                    />
+                  <Panel title="接入状态" copy="最近 45 秒节点会话投影">
+                    <div className="portal-device-status">
+                      <Icon name="plug" />
+                      <div>
+                        <span>当前状态</span>
+                        <strong>{overview.online > 0 ? "在线" : "离线"}</strong>
+                      </div>
+                      <span className={`badge ${overview.online > 0 ? "success" : "neutral"}`}>
+                        {overview.online} 条连接
+                      </span>
+                    </div>
+                    <p className="fine-print portal-device-note">
+                      套餐设备上限为 {deviceLimit} 台；节点连接数包含测速、故障转移和并发会话，不代表唯一设备数。
+                    </p>
                   </Panel>
                   <Panel title="快捷操作" copy="常用入口集中在这里。">
                     <div className="admin-quick-actions">

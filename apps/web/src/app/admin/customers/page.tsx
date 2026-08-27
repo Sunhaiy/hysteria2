@@ -279,7 +279,7 @@ export default function CustomersPage() {
                   className={`badge ${customer.online ? "success" : "neutral"}`}
                   key={`${customer.id}-online`}
                 >
-                  {customer.online ? `${customer.onlineClients} 个连接` : "离线"}
+                  {customer.online ? "在线" : "离线"}
                 </span>,
                 formatMoney(customer.balanceCents),
                 customer.primaryAccessTokenLastUsedAt

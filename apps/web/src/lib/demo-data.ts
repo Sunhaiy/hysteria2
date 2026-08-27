@@ -20,7 +20,7 @@ export const portalNav = [
 
 export const adminMetrics = [
   { label: "活跃订阅", value: "118", footnote: "过去 24h 新增 6" },
-  { label: "在线设备", value: "276", footnote: "Core 档位占 64%" },
+  { label: "活跃连接", value: "276", footnote: "Core 档位占 64%" },
   { label: "当月入账", value: "¥42,680", footnote: "人工订单 16 笔" },
   { label: "节点利用率", value: "72%", footnote: "HK-01 Core 峰值 84%" },
 ];

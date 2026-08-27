@@ -21,7 +21,7 @@ const FEATURES = [
   { icon: "puzzle", title: "灵活套餐组合", copy: "限速/不限速、设备数、周期流量自由搭配，随时升级。" },
   { icon: "lock", title: "安全鉴权", copy: "会话可即时吊销、登录限流防撞库，账号更安心。" },
   { icon: "key", title: "多种登录方式", copy: "邮箱验证码注册，支持 Google、GitHub 一键登录。" },
-  { icon: "monitoring", title: "实时流量统计", copy: "用量日志、在线设备、到期与余额一目了然。" },
+  { icon: "monitoring", title: "实时流量统计", copy: "用量日志、活跃连接、到期与余额一目了然。" },
 ];
 
 const STEPS = [

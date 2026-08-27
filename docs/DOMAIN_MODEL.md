@@ -42,7 +42,10 @@ stability window, but they do not receive new business rules.
 
 - **OnlinePresence** is the current `(user, node)` online projection. It contains
   connection count and observation time, never a client IP. Data older than 45
-  seconds is stale.
+  seconds is stale. Connection count is not a unique-device count: one Clash or
+  Hysteria2 client can open sessions on several nodes for health checks,
+  failover, and concurrent requests. UIs must not label this projection as
+  devices or subtract it from an access profile's device limit.
 - **NodeHealthSnapshot** records one protocol-aware probe result. The latest row
   is the current health projection; older rows are retained only for bounded
   operational history.

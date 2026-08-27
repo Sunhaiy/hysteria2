@@ -33,6 +33,10 @@ test("referral page has responsive metrics and a designed empty state", () => {
   assert.match(page, /referral-empty-state/);
   assert.match(
     styles,
+    /\.referral-metric::before\s*\{[^}]*background:\s*var\(--status-success\);/s,
+  );
+  assert.match(
+    styles,
     /@media \(max-width: 520px\)[\s\S]*\.referral-metric-grid/,
   );
 });

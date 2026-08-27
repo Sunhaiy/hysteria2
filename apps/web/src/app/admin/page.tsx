@@ -183,7 +183,7 @@ export default function AdminDashboardPage() {
         <MetricCard label="累计总流量" value={formatBytes(usage?.totals.totalBytes ?? 0)} footnote={`上传 ${formatBytes(usage?.totals.txBytes ?? 0)} · 下载 ${formatBytes(usage?.totals.rxBytes ?? 0)}`} />
         <MetricCard label="近 24 小时" value={formatBytes(usage?.totals.last24HoursBytes ?? 0)} footnote={`近 7 天 ${formatBytes(usage?.totals.last7DaysBytes ?? 0)}`} />
         <MetricCard label="活跃订阅" value={`${activeSubscriptions.length}/${subscriptions.length}`} footnote={`${users.length} 位用户 · ${restrictedUsers.length} 位受限`} />
-        <MetricCard label="当前在线设备" value={String(totalConcurrent)} footnote={`${activeNodes.length} 个活跃节点承载`} />
+        <MetricCard label="当前活跃连接" value={String(totalConcurrent)} footnote={`${activeNodes.length} 个活跃节点承载`} />
       </section>
 
       <section className="metric-grid admin-primary-metrics">

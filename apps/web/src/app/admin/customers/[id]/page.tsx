@@ -487,9 +487,9 @@ export default function CustomerDetailPage() {
             footnote={`实际倍率 ${customer.effectiveTrafficMultiplier}x`}
           />
           <MetricCard
-            label="在线设备"
+            label="活跃连接"
             value={String(customer.summary.onlineClients)}
-            footnote="45 秒内当前投影"
+            footnote="同一设备可能产生多条连接"
           />
           <MetricCard
             label="累计成交"

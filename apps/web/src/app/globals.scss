@@ -3642,6 +3642,11 @@ select.control {
   font-size: 13px;
 }
 
+.portal-device-note {
+  margin: 12px 0 0;
+  line-height: 1.6;
+}
+
 .portal-device-progress {
   height: 7px;
   margin-top: 12px;
@@ -5123,7 +5128,7 @@ select.control {
   inset: 0 auto 0 0;
   width: 3px;
   content: "";
-  background: var(--metric-tone, var(--accent-500));
+  background: var(--status-success);
 }
 
 .referral-metric.info {
