@@ -96,6 +96,70 @@ describe('NodeRuntimeCommandService', () => {
     expect(transactionClient.auditLog.create).not.toHaveBeenCalled();
   });
 
+  it('queues automatic traffic-limit stops as a system audit event', async () => {
+    type CommandInput = {
+      data: { requestedById: string | null; action: string };
+    };
+    type AuditInput = {
+      data: {
+        actorId: string | null;
+        action: string;
+        metadata: Record<string, string>;
+      };
+    };
+    let commandInput: CommandInput | undefined;
+    let auditInput: AuditInput | undefined;
+    const transactionClient = {
+      node: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'node-1',
+          protocol: 'VLESS_REALITY',
+          controlApiBaseUrl: null,
+          controlApiSecret: null,
+        }),
+      },
+      nodeRuntimeCommand: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn((input: CommandInput) => {
+          commandInput = input;
+          return Promise.resolve({
+            ...queued,
+            requestedById: null,
+            idempotencyKey: 'node-traffic-limit:node-1:cycle:observed',
+          });
+        }),
+      },
+      auditLog: {
+        create: jest.fn((input: AuditInput) => {
+          auditInput = input;
+          return Promise.resolve({});
+        }),
+      },
+    };
+    const prisma = {
+      $transaction: jest.fn(transactionWith(transactionClient)),
+    };
+    const service = createService({ prisma });
+
+    await service.requestSystemStop(
+      'node-1',
+      'node-traffic-limit:node-1:cycle:observed',
+      { limitBytes: '100', usedBytes: '101' },
+    );
+
+    expect(commandInput?.data).toMatchObject({
+      requestedById: null,
+      action: 'STOP',
+    });
+    expect(auditInput?.data.actorId).toBeNull();
+    expect(auditInput?.data.action).toBe('node.runtime.stop.auto_requested');
+    expect(auditInput?.data.metadata).toMatchObject({
+      limitBytes: '100',
+      usedBytes: '101',
+    });
+  });
+
   it('executes a claimed stop command and records the observed inactive state', async () => {
     const transactionClient = {
       nodeRuntimeCommand: {

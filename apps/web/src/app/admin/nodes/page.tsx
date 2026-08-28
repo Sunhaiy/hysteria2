@@ -10,7 +10,7 @@ import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
-import { formatDateTime } from "@/lib/format";
+import { formatBytes, formatDateTime } from "@/lib/format";
 
 type Endpoint = {
   id: string;
@@ -52,6 +52,28 @@ type Endpoint = {
   runtimeError?: string | null;
   speedUpMbps: number;
   speedDownMbps: number;
+  trafficGuard?: {
+    enabled: boolean;
+    configured: boolean;
+    limitGiB?: number | null;
+    limitBytes?: number | null;
+    resetDay: number;
+    usedBytes: number;
+    remainingBytes?: number | null;
+    usagePercent: number;
+    thresholdReached: boolean;
+    cycleStart: string;
+    cycleEnd: string;
+    nextResetAt: string;
+    stopCommandStatus?: string | null;
+    status:
+      | "disabled"
+      | "unavailable"
+      | "monitoring"
+      | "limit_reached"
+      | "stop_queued"
+      | "stopped";
+  };
   latestRuntimeCommand?: {
     id: string;
     action: "start" | "stop" | "status";
@@ -101,6 +123,11 @@ type NodeForm = {
   speedUpMbps: number;
   speedDownMbps: number;
 };
+type TrafficLimitForm = {
+  enabled: boolean;
+  monthlyLimitGiB: string;
+  resetDay: number;
+};
 
 const emptyServerForm: ServerForm = {
   slug: "",
@@ -126,6 +153,11 @@ const emptyNodeForm: NodeForm = {
   allowInsecureTls: false,
   speedUpMbps: 0,
   speedDownMbps: 0,
+};
+const emptyTrafficLimitForm: TrafficLimitForm = {
+  enabled: false,
+  monthlyLimitGiB: "1000",
+  resetDay: 1,
 };
 
 const protocolName = (protocol: Endpoint["protocol"]) =>
@@ -168,6 +200,17 @@ const runtimeStateDetail = (node: Endpoint) =>
             : node.runtimeControlConfigured
               ? "等待状态采集"
               : "未配置服务管理";
+const trafficGuardStatusName = (
+  status: NonNullable<Endpoint["trafficGuard"]>["status"],
+) =>
+  ({
+    disabled: "未启用",
+    unavailable: "服务管理未配置",
+    monitoring: "监控中",
+    limit_reached: "已达上限",
+    stop_queued: "正在自动停止",
+    stopped: "已自动停止",
+  })[status];
 
 export default function NodesPage() {
   const { token } = useAuth();
@@ -176,11 +219,19 @@ export default function NodesPage() {
   const [feedback, setFeedback] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [drawer, setDrawer] = useState<"server" | "node" | null>(null);
+  const [drawer, setDrawer] = useState<"server" | "node" | "traffic" | null>(
+    null,
+  );
   const [serverForm, setServerForm] = useState<ServerForm>(emptyServerForm);
   const [nodeForm, setNodeForm] = useState<NodeForm>(emptyNodeForm);
+  const [trafficLimitForm, setTrafficLimitForm] = useState<TrafficLimitForm>(
+    emptyTrafficLimitForm,
+  );
   const [editingServer, setEditingServer] = useState<Server | null>(null);
   const [editingNode, setEditingNode] = useState<Endpoint | null>(null);
+  const [editingTrafficNode, setEditingTrafficNode] = useState<Endpoint | null>(
+    null,
+  );
 
   const load = useCallback(
     async (signal?: AbortSignal, showLoading = true) => {
@@ -343,6 +394,17 @@ export default function NodesPage() {
     setError(null);
   }
 
+  function openTrafficLimitDrawer(node: Endpoint) {
+    setEditingTrafficNode(node);
+    setTrafficLimitForm({
+      enabled: node.trafficGuard?.enabled ?? false,
+      monthlyLimitGiB: String(node.trafficGuard?.limitGiB ?? 1000),
+      resetDay: node.trafficGuard?.resetDay ?? 1,
+    });
+    setDrawer("traffic");
+    setError(null);
+  }
+
   async function saveServer(event: FormEvent) {
     event.preventDefault();
     if (!token) return;
@@ -438,6 +500,43 @@ export default function NodesPage() {
       await load();
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "节点新增失败。");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function saveTrafficLimit(event: FormEvent) {
+    event.preventDefault();
+    if (!token || !editingTrafficNode) return;
+    const monthlyLimitGiB = Number(trafficLimitForm.monthlyLimitGiB);
+    if (!Number.isFinite(monthlyLimitGiB) || monthlyLimitGiB < 1) {
+      setError("月度流量上限至少为 1 GiB。");
+      return;
+    }
+    const busyKey = `traffic-${editingTrafficNode.id}`;
+    setBusyId(busyKey);
+    setError(null);
+    try {
+      await apiRequest(
+        `/api/admin/node-ops/nodes/${editingTrafficNode.id}/traffic-limit`,
+        {
+          method: "PUT",
+          token,
+          body: {
+            enabled: trafficLimitForm.enabled,
+            monthlyLimitGiB,
+            resetDay: trafficLimitForm.resetDay,
+          },
+        },
+      );
+      setDrawer(null);
+      setEditingTrafficNode(null);
+      setFeedback(`${editingTrafficNode.label} 的流量保护策略已更新。`);
+      await load();
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError ? cause.message : "流量保护策略保存失败。",
+      );
     } finally {
       setBusyId(null);
     }
@@ -703,6 +802,49 @@ export default function NodesPage() {
                           </small>
                         </div>
                       </div>
+                      <div className="node-traffic-guard">
+                        <div className="node-traffic-guard-heading">
+                          <span className="fine-print">本周期双向流量</span>
+                          <span
+                            className={`badge ${node.trafficGuard?.status === "monitoring" ? "success" : node.trafficGuard?.thresholdReached ? "danger" : "neutral"}`}
+                          >
+                            {node.trafficGuard
+                              ? trafficGuardStatusName(node.trafficGuard.status)
+                              : "未配置"}
+                          </span>
+                        </div>
+                        {node.trafficGuard?.limitBytes ? (
+                          <>
+                            <strong>
+                              {formatBytes(node.trafficGuard.usedBytes)} /{" "}
+                              {formatBytes(node.trafficGuard.limitBytes)}
+                            </strong>
+                            <div
+                              className="node-traffic-progress"
+                              role="progressbar"
+                              aria-label={`${node.label} 月度流量`}
+                              aria-valuemin={0}
+                              aria-valuemax={100}
+                              aria-valuenow={Math.min(
+                                100,
+                                Math.round(node.trafficGuard.usagePercent),
+                              )}
+                            >
+                              <span
+                                style={{
+                                  width: `${Math.min(100, node.trafficGuard.usagePercent)}%`,
+                                }}
+                              />
+                            </div>
+                            <small>
+                              每月 {node.trafficGuard.resetDay} 日重置 ·{" "}
+                              {node.trafficGuard.usagePercent.toFixed(2)}%
+                            </small>
+                          </>
+                        ) : (
+                          <small>尚未设置月度上限</small>
+                        )}
+                      </div>
                     </div>
                     <div className="node-endpoint-states">
                       <div className="node-state-block">
@@ -809,6 +951,15 @@ export default function NodesPage() {
                       >
                         <Icon name="edit" />
                         编辑节点
+                      </button>
+                      <button
+                        className="ghost-button compact"
+                        disabled={busyId === `traffic-${node.id}`}
+                        type="button"
+                        onClick={() => openTrafficLimitDrawer(node)}
+                      >
+                        <Icon name="data_usage" />
+                        流量保护
                       </button>
                       <button
                         className="danger-button compact"
@@ -1201,6 +1352,103 @@ export default function NodesPage() {
             />
             <span>允许不安全 TLS</span>
           </label>
+        </form>
+      </Drawer>
+      <Drawer
+        open={drawer === "traffic"}
+        onClose={() => setDrawer(null)}
+        title={
+          editingTrafficNode
+            ? `流量保护 · ${editingTrafficNode.label}`
+            : "流量保护"
+        }
+        footer={
+          <div className="toolbar-actions">
+            <button
+              className="action-button"
+              type="submit"
+              form="traffic-limit-form"
+              disabled={
+                !editingTrafficNode ||
+                busyId === `traffic-${editingTrafficNode.id}` ||
+                (trafficLimitForm.enabled &&
+                  !editingTrafficNode.runtimeControlConfigured)
+              }
+            >
+              保存策略
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => setDrawer(null)}
+            >
+              取消
+            </button>
+          </div>
+        }
+      >
+        {drawer === "traffic" && error ? (
+          <div className="feedback error">{error}</div>
+        ) : null}
+        <form
+          id="traffic-limit-form"
+          className="form-grid"
+          onSubmit={saveTrafficLimit}
+        >
+          <label className="field span-2">
+            <span className="fine-print">月度双向流量上限（GiB）</span>
+            <input
+              className="control"
+              type="number"
+              min={1}
+              max={1_000_000}
+              step={0.01}
+              required
+              value={trafficLimitForm.monthlyLimitGiB}
+              onChange={(event) =>
+                setTrafficLimitForm((current) => ({
+                  ...current,
+                  monthlyLimitGiB: event.target.value,
+                }))
+              }
+            />
+          </label>
+          <label className="field span-2">
+            <span className="fine-print">每月重置日</span>
+            <input
+              className="control"
+              type="number"
+              min={1}
+              max={28}
+              required
+              value={trafficLimitForm.resetDay}
+              onChange={(event) =>
+                setTrafficLimitForm((current) => ({
+                  ...current,
+                  resetDay: Number(event.target.value),
+                }))
+              }
+            />
+          </label>
+          <label className="field checkbox-row span-2">
+            <input
+              type="checkbox"
+              disabled={!editingTrafficNode?.runtimeControlConfigured}
+              checked={trafficLimitForm.enabled}
+              onChange={(event) =>
+                setTrafficLimitForm((current) => ({
+                  ...current,
+                  enabled: event.target.checked,
+                }))
+              }
+            />
+            <span>达到上限时自动停止运行服务</span>
+          </label>
+          <div className="feedback span-2">
+            {editingTrafficNode?.runtimeControlConfigured
+              ? "按上传与下载物理流量合计。达限后只停止运行服务，不删除节点或订阅；新周期不会自动启动。"
+              : "当前节点尚未配置服务管理，可以保存上限，但暂不能启用自动停服。"}
+          </div>
         </form>
       </Drawer>
     </ConsoleShell>

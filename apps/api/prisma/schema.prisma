@@ -485,6 +485,9 @@ model Node {
   capacityUsers               Int?
   speedUpMbps                 Int
   speedDownMbps               Int
+  trafficLimitEnabled         Boolean                  @default(false)
+  trafficLimitBytes           BigInt?
+  trafficLimitResetDay        Int                      @default(1)
   lastSyncAt                  DateTime?
   lastSyncError               String?
   lastUserSyncAt              DateTime?

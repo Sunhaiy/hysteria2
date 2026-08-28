@@ -1,9 +1,34 @@
 import { NodeOpsService } from './node-ops.service';
 
+function transactionWith<Client>(client: Client) {
+  return <Result>(operation: (tx: Client) => Promise<Result>) =>
+    operation(client);
+}
+
 describe('NodeOpsService server lifecycle', () => {
   it('deletes an empty server', async () => {
-    const nodeUpdateMany = jest.fn().mockResolvedValue({ count: 0 });
-    const serverUpdate = jest.fn().mockResolvedValue({ id: 'server_1' });
+    type NodeUpdateInput = {
+      where: { serverId: string; retiredAt: null };
+      data: { active: boolean; lifecycleStatus: string; retiredAt: Date };
+    };
+    type ServerUpdateInput = {
+      where: { id: string };
+      data: { active: boolean; retiredAt: Date };
+    };
+    let nodeUpdateInput: NodeUpdateInput | undefined;
+    let serverUpdateInput: ServerUpdateInput | undefined;
+    const nodeUpdateMany = jest.fn((input: NodeUpdateInput) => {
+      nodeUpdateInput = input;
+      return Promise.resolve({ count: 0 });
+    });
+    const serverUpdate = jest.fn((input: ServerUpdateInput) => {
+      serverUpdateInput = input;
+      return Promise.resolve({ id: 'server_1' });
+    });
+    const transactionClient = {
+      node: { updateMany: nodeUpdateMany },
+      nodeServer: { update: serverUpdate },
+    };
     const prisma = {
       nodeServer: {
         findUnique: jest.fn().mockResolvedValue({
@@ -12,37 +37,33 @@ describe('NodeOpsService server lifecycle', () => {
           endpoints: [],
         }),
       },
-      $transaction: jest.fn(async (callback) =>
-        callback({
-          node: { updateMany: nodeUpdateMany },
-          nodeServer: { update: serverUpdate },
-        }),
-      ),
+      $transaction: jest.fn(transactionWith(transactionClient)),
     };
-    const service = new NodeOpsService(prisma as never);
+    const service = new NodeOpsService(prisma as never, {} as never);
 
     await service.deleteServer('server_1');
 
-    expect(nodeUpdateMany).toHaveBeenCalledWith({
-      where: { serverId: 'server_1', retiredAt: null },
-      data: expect.objectContaining({
-        active: false,
-        lifecycleStatus: 'DISABLED',
-        retiredAt: expect.any(Date),
-      }),
+    expect(nodeUpdateInput?.where).toEqual({
+      serverId: 'server_1',
+      retiredAt: null,
     });
-    expect(serverUpdate).toHaveBeenCalledWith({
-      where: { id: 'server_1' },
-      data: expect.objectContaining({
-        active: false,
-        retiredAt: expect.any(Date),
-      }),
+    expect(nodeUpdateInput?.data).toMatchObject({
+      active: false,
+      lifecycleStatus: 'DISABLED',
     });
+    expect(nodeUpdateInput?.data.retiredAt).toBeInstanceOf(Date);
+    expect(serverUpdateInput?.where).toEqual({ id: 'server_1' });
+    expect(serverUpdateInput?.data.active).toBe(false);
+    expect(serverUpdateInput?.data.retiredAt).toBeInstanceOf(Date);
   });
 
   it('retires a server together with disabled inactive endpoints', async () => {
     const nodeUpdateMany = jest.fn().mockResolvedValue({ count: 2 });
     const serverUpdate = jest.fn().mockResolvedValue({ id: 'server_1' });
+    const transactionClient = {
+      node: { updateMany: nodeUpdateMany },
+      nodeServer: { update: serverUpdate },
+    };
     const prisma = {
       nodeServer: {
         findUnique: jest.fn().mockResolvedValue({
@@ -66,14 +87,9 @@ describe('NodeOpsService server lifecycle', () => {
           ],
         }),
       },
-      $transaction: jest.fn(async (callback) =>
-        callback({
-          node: { updateMany: nodeUpdateMany },
-          nodeServer: { update: serverUpdate },
-        }),
-      ),
+      $transaction: jest.fn(transactionWith(transactionClient)),
     };
-    const service = new NodeOpsService(prisma as never);
+    const service = new NodeOpsService(prisma as never, {} as never);
 
     await service.deleteServer('server_1');
 
@@ -100,7 +116,7 @@ describe('NodeOpsService server lifecycle', () => {
       },
       $transaction: jest.fn(),
     };
-    const service = new NodeOpsService(prisma as never);
+    const service = new NodeOpsService(prisma as never, {} as never);
 
     await expect(service.deleteServer('server_1')).rejects.toThrow(
       '请先停用服务器下的全部节点',
@@ -127,7 +143,7 @@ describe('NodeOpsService server lifecycle', () => {
       },
       $transaction: jest.fn(),
     };
-    const service = new NodeOpsService(prisma as never);
+    const service = new NodeOpsService(prisma as never, {} as never);
 
     await expect(service.deleteServer('server_1')).rejects.toThrow(
       '服务器仍有在线连接',

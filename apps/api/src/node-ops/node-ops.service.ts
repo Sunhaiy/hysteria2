@@ -16,6 +16,7 @@ import type {
   SaveNodeServerDto,
   UpdateNodeOperationsDto,
 } from './node-ops.dto';
+import { NodeTrafficGuardService } from './node-traffic-guard.service';
 
 const runningRuntimeStates = new Set<NodeRuntimeState>([
   NodeRuntimeState.ACTIVE,
@@ -25,7 +26,10 @@ const runningRuntimeStates = new Set<NodeRuntimeState>([
 
 @Injectable()
 export class NodeOpsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly trafficGuard: NodeTrafficGuardService,
+  ) {}
 
   async overview() {
     const freshSince = new Date(Date.now() - 45_000);
@@ -65,6 +69,10 @@ export class NodeOpsService {
         orderBy: { createdAt: 'asc' },
       }),
     ]);
+    const trafficGuards = await this.trafficGuard.project(
+      [...servers.flatMap((server) => server.endpoints), ...unassignedNodes],
+      new Date(),
+    );
 
     type Endpoint = (typeof servers)[number]['endpoints'][number];
     const presentEndpoint = (node: Endpoint) => {
@@ -120,6 +128,7 @@ export class NodeOpsService {
         runtimeError: node.runtimeError,
         speedUpMbps: node.speedUpMbps,
         speedDownMbps: node.speedDownMbps,
+        trafficGuard: trafficGuards.get(node.id),
         latestRuntimeCommand: runtimeCommand
           ? {
               id: runtimeCommand.id,

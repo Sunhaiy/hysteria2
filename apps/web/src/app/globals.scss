@@ -455,6 +455,35 @@ details.field-section .field-section-body {
   scrollbar-width: thin;
 }
 
+.nav-section,
+.nav-section-links {
+  display: grid;
+  min-width: 0;
+}
+
+.nav-section {
+  gap: 5px;
+}
+
+.nav-section + .nav-section {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid
+    color-mix(in srgb, var(--border-default) 72%, transparent);
+}
+
+.nav-section-links {
+  gap: 4px;
+}
+
+.nav-section .nav-label {
+  padding: 0 10px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 18px;
+}
+
 .nav-link {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) auto;
@@ -676,14 +705,24 @@ details.field-section .field-section-body {
 
 .offer-editor-row {
   display: grid;
-  grid-template-columns: 80px minmax(0, 0.7fr) minmax(0, 0.7fr) minmax(
-      240px,
-      1.6fr
-    );
+  grid-template-columns: 80px minmax(120px, 1fr) minmax(140px, 1fr);
   align-items: end;
   gap: 12px;
   padding: 12px 0;
   border-bottom: 1px solid var(--border-default);
+}
+
+.offer-editor-row .field,
+.offer-editor-row .control {
+  min-width: 0;
+}
+
+.offer-editor-row .control {
+  width: 100%;
+}
+
+.offer-editor-store {
+  grid-column: 2 / -1;
 }
 
 .catalog-node-selector {
@@ -751,6 +790,10 @@ details.field-section .field-section-body {
   .plan-switch-form,
   .checkout-facts {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .offer-editor-store {
+    grid-column: auto;
   }
 
   .subscription-admin-link {
@@ -3996,6 +4039,8 @@ select.control {
     grid-template-columns: 1fr;
     gap: 4px;
     align-content: start;
+    height: 100%;
+    max-height: 100%;
     min-height: 0;
     overflow-x: hidden;
     overflow-y: auto;
@@ -4003,6 +4048,19 @@ select.control {
     overscroll-behavior: contain;
     scrollbar-color: var(--border-strong) transparent;
     scrollbar-width: thin;
+  }
+
+  .sidebar.open .nav-section {
+    gap: 5px;
+  }
+
+  .sidebar.open .nav-section + .nav-section {
+    margin-top: 10px;
+    padding-top: 10px;
+  }
+
+  .sidebar.open .nav-label {
+    display: block;
   }
 
   .sidebar.open .nav-link {
@@ -4647,10 +4705,9 @@ select.control {
 
 .referral-admin-settings {
   display: grid;
-  grid-template-columns: minmax(300px, 1.5fr) minmax(180px, 0.7fr) minmax(
-      180px,
-      0.7fr
-    ) auto;
+  grid-template-columns:
+    minmax(300px, 1.5fr) minmax(180px, 0.7fr) minmax(180px, 0.7fr)
+    auto;
   gap: 12px;
   align-items: end;
 }
@@ -4983,6 +5040,48 @@ select.control {
 .node-endpoint-telemetry {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.node-traffic-guard {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 6px;
+  min-width: 0;
+}
+
+.node-traffic-guard-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.node-traffic-guard-heading .badge {
+  min-height: 22px;
+  padding: 2px 7px;
+}
+
+.node-traffic-progress {
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--bg-panel-alt);
+  box-shadow: inset 0 0 0 1px var(--border-default);
+}
+
+.node-traffic-progress span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--accent-500);
+}
+
+.node-traffic-guard small {
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .node-endpoint-states {

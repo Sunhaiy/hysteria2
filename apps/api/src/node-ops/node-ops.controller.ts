@@ -19,10 +19,12 @@ import {
   SaveNodePoolDto,
   SaveNodeServerDto,
   RequestNodeRuntimeCommandDto,
+  UpdateNodeTrafficLimitDto,
   UpdateNodeOperationsDto,
 } from './node-ops.dto';
 import { NodeOpsService } from './node-ops.service';
 import { NodeRuntimeCommandService } from './node-runtime-command.service';
+import { NodeTrafficGuardService } from './node-traffic-guard.service';
 
 @Controller('api/admin/node-ops')
 @UseGuards(JwtAuthGuard, AdminGuard)
@@ -30,6 +32,7 @@ export class NodeOpsController {
   constructor(
     private readonly nodes: NodeOpsService,
     private readonly runtime: NodeRuntimeCommandService,
+    private readonly trafficGuard: NodeTrafficGuardService,
   ) {}
 
   @Get()
@@ -66,6 +69,15 @@ export class NodeOpsController {
   @Patch('nodes/:id')
   updateNode(@Param('id') id: string, @Body() body: UpdateNodeOperationsDto) {
     return this.nodes.updateNode(id, body);
+  }
+
+  @Put('nodes/:id/traffic-limit')
+  updateTrafficLimit(
+    @Param('id') id: string,
+    @Body() body: UpdateNodeTrafficLimitDto,
+    @CurrentPrincipal() principal: SessionPrincipal,
+  ) {
+    return this.trafficGuard.updatePolicy(id, body, principal.sub);
   }
 
   @Post('nodes/:id/runtime-commands')

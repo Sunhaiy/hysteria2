@@ -26,6 +26,9 @@ type Offer = {
   isDefault: boolean;
   archivedAt?: string | null;
 };
+type OfferDraft = Offer & {
+  trafficGbInput: string;
+};
 type Product = {
   id: string;
   slug: string;
@@ -83,20 +86,32 @@ type ProductForm = {
   defaultTrafficMultiplier: number;
   accent: string;
   sortOrder: number;
-  offers: Offer[];
+  offers: OfferDraft[];
+};
+const GB = 1024 ** 3;
+const trafficBytesToGbInput = (trafficBytes: number) =>
+  String(Math.round((trafficBytes / GB) * 100) / 100);
+const trafficGbToBytes = (trafficGbInput: string) => {
+  const trafficGb = Number(trafficGbInput);
+  return Number.isFinite(trafficGb) && trafficGb > 0
+    ? Math.round(trafficGb * GB)
+    : 0;
 };
 const offerTemplate = (
   period: Offer["billingPeriod"],
   kind: ProductForm["kind"],
   index: number,
-): Offer => ({
+): OfferDraft => ({
   slug: `${kind === "plan" ? "plan" : "pack"}-${period}`,
   name:
     period === "monthly" ? "月付" : period === "quarterly" ? "季付" : "年付",
   billingPeriod: period,
   intervalMonths: period === "monthly" ? 1 : period === "quarterly" ? 3 : 12,
   trafficBytes:
-    (kind === "plan" ? 200 : period === "quarterly" ? 50 : 200) * 1024 ** 3,
+    (kind === "plan" ? 200 : period === "quarterly" ? 50 : 200) * GB,
+  trafficGbInput: String(
+    kind === "plan" ? 200 : period === "quarterly" ? 50 : 200,
+  ),
   priceCents: kind === "plan" ? [1800, 5000, 18000][index] : [900, 3000][index],
   storeUrl: "",
   active: true,
@@ -187,7 +202,10 @@ export default function CatalogPage() {
           sortOrder: product.sortOrder,
           offers: product.offers
             .filter((offer) => !offer.archivedAt)
-            .map((offer) => ({ ...offer })),
+            .map((offer) => ({
+              ...offer,
+              trafficGbInput: trafficBytesToGbInput(offer.trafficBytes),
+            })),
         }
       : emptyForm();
     setForm(next);
@@ -214,7 +232,10 @@ export default function CatalogPage() {
     }));
   }
 
-  function updateOffer(period: Offer["billingPeriod"], patch: Partial<Offer>) {
+  function updateOffer(
+    period: Offer["billingPeriod"],
+    patch: Partial<OfferDraft>,
+  ) {
     setForm((current) => ({
       ...current,
       offers: current.offers.map((offer) =>
@@ -226,6 +247,13 @@ export default function CatalogPage() {
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!token) return;
+    const invalidOffer = form.offers.find(
+      (offer) => trafficGbToBytes(offer.trafficGbInput) < 1,
+    );
+    if (invalidOffer) {
+      setError(`${invalidOffer.name}的额度必须大于 0 GB。`);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -234,7 +262,7 @@ export default function CatalogPage() {
         slug: offer.slug.trim(),
         name: offer.name.trim(),
         billingPeriod: offer.billingPeriod,
-        trafficBytes: offer.trafficBytes,
+        trafficBytes: trafficGbToBytes(offer.trafficGbInput),
         priceCents: offer.priceCents,
         storeUrl: offer.storeUrl?.trim() || undefined,
         active: offer.active,
@@ -611,11 +639,7 @@ export default function CatalogPage() {
           </label>
           <label className="field">
             <span className="fine-print">设备数量</span>
-            <input
-              className="control"
-              value="不限设备"
-              disabled
-            />
+            <input className="control" value="不限设备" disabled />
           </label>
           <label className="field">
             <span className="fine-print">默认倍率</span>
@@ -656,23 +680,22 @@ export default function CatalogPage() {
                     }
                   />
                 </label>
-                <label className="field">
+                <label className="field offer-editor-quota">
                   <span className="fine-print">额度（GB）</span>
                   <input
                     className="control"
                     type="number"
-                    min={1}
-                    value={Math.round(offer.trafficBytes / 1024 ** 3)}
+                    min={0.01}
+                    step={0.01}
+                    value={offer.trafficGbInput}
                     onChange={(event) =>
                       updateOffer(offer.billingPeriod, {
-                        trafficBytes: Math.round(
-                          Number(event.target.value) * 1024 ** 3,
-                        ),
+                        trafficGbInput: event.target.value,
                       })
                     }
                   />
                 </label>
-                <label className="field">
+                <label className="field offer-editor-store">
                   <span className="fine-print">该周期店铺链接</span>
                   <input
                     className="control"

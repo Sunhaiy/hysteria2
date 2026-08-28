@@ -3,8 +3,10 @@ import {
   IsBoolean,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
+  Max,
   Min,
   MaxLength,
   ValidateNested,
@@ -101,4 +103,19 @@ export class RequestNodeRuntimeCommandDto {
   @IsString()
   @MaxLength(128)
   idempotencyKey!: string;
+}
+
+export class UpdateNodeTrafficLimitDto {
+  @IsBoolean()
+  enabled!: boolean;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(1)
+  @Max(1_000_000)
+  monthlyLimitGiB!: number;
+
+  @IsInt()
+  @Min(1)
+  @Max(28)
+  resetDay!: number;
 }

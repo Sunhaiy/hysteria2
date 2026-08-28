@@ -37,6 +37,33 @@ test("catalog offers expose period-specific shop URLs and plan traffic policy", 
   assert.doesNotMatch(catalog, /访问策略/);
 });
 
+test("catalog offer quota inputs stay fully visible and editable", async () => {
+  const [catalog, styles] = await Promise.all([
+    source("app/admin/catalog/page.tsx"),
+    source("app/globals.scss"),
+  ]);
+
+  assert.match(catalog, /trafficGbInput:\s*string/);
+  assert.match(catalog, /value=\{offer\.trafficGbInput\}/);
+  assert.match(
+    catalog,
+    /onChange=\{\(event\)\s*=>\s*updateOffer\(offer\.billingPeriod,\s*\{\s*trafficGbInput:\s*event\.target\.value/s,
+  );
+  assert.match(
+    catalog,
+    /trafficBytes:\s*trafficGbToBytes\(offer\.trafficGbInput\)/,
+  );
+  assert.match(
+    styles,
+    /\.offer-editor-row\s*\{[^}]*grid-template-columns:[^;]*80px[^;]*minmax\(120px,[^;]*minmax\(140px,/s,
+  );
+  assert.match(styles, /\.offer-editor-row \.control\s*\{[^}]*width:\s*100%/s);
+  assert.match(
+    styles,
+    /\.offer-editor-store\s*\{[^}]*grid-column:\s*2\s*\/\s*-1/s,
+  );
+});
+
 test("node operations separate access and runtime service controls", async () => {
   const nodes = await source("app/admin/nodes/page.tsx");
 
@@ -55,6 +82,24 @@ test("node operations separate access and runtime service controls", async () =>
   assert.match(nodes, /编辑节点/);
   assert.match(nodes, /节点管理地址/);
   assert.doesNotMatch(nodes, /Agent/);
+});
+
+test("admin navigation is grouped and nodes expose monthly traffic protection", async () => {
+  const [copy, sidebar, nodes] = await Promise.all([
+    source("lib/copy.ts"),
+    source("components/sidebar-nav.tsx"),
+    source("app/admin/nodes/page.tsx"),
+  ]);
+
+  assert.match(copy, /group:\s*"客户与支持"/);
+  assert.match(copy, /group:\s*"商品与财务"/);
+  assert.match(copy, /group:\s*"节点运营"/);
+  assert.match(copy, /group:\s*"系统"/);
+  assert.match(sidebar, /nav-section/);
+  assert.match(sidebar, /item\.group/);
+  assert.match(nodes, /traffic-limit/);
+  assert.match(nodes, /月度双向流量上限/);
+  assert.match(nodes, /达到上限时自动停止运行服务/);
 });
 
 test("customer traffic statistics include an accounted-usage chart", async () => {

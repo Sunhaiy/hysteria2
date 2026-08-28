@@ -4,6 +4,7 @@ import { OperationsService } from './operations/operations.service';
 import { SyncWorkerModule } from './sync-worker.module';
 import { UsageSyncService } from './usage-sync/usage-sync.service';
 import { NodeRuntimeCommandService } from './node-ops/node-runtime-command.service';
+import { NodeTrafficGuardService } from './node-ops/node-traffic-guard.service';
 
 const logger = new Logger('UsageSyncWorker');
 const minimumIntervalMs = 10_000;
@@ -92,6 +93,7 @@ async function bootstrap() {
   const sync = app.get(UsageSyncService);
   const operations = app.get(OperationsService);
   const runtime = app.get(NodeRuntimeCommandService);
+  const trafficGuard = app.get(NodeTrafficGuardService);
   const syncIntervalMs = intervalFromEnv(
     'NODE_SYNC_INTERVAL_MS',
     60_000,
@@ -125,6 +127,11 @@ async function bootstrap() {
   const runtimeStatusIntervalMs = intervalFromEnv(
     'NODE_RUNTIME_STATUS_INTERVAL_MS',
     30_000,
+    minimumIntervalMs,
+  );
+  const trafficGuardIntervalMs = intervalFromEnv(
+    'NODE_TRAFFIC_GUARD_INTERVAL_MS',
+    60_000,
     minimumIntervalMs,
   );
   let stopping = false;
@@ -230,6 +237,19 @@ async function bootstrap() {
       logger.warn(`Recovered ${recovered.count} interrupted runtime commands`);
     }
     tasks.push(
+      new RecurringTask(
+        'Node traffic limit enforcement',
+        trafficGuardIntervalMs,
+        20_000,
+        async () => {
+          const result = await trafficGuard.enforce();
+          if (result.queued > 0) {
+            logger.warn(
+              `Queued ${result.queued} automatic node stop command(s) after traffic limits were reached`,
+            );
+          }
+        },
+      ),
       new RecurringTask(
         'Node runtime command execution',
         runtimeCommandPollIntervalMs,

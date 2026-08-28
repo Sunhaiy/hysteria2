@@ -41,6 +41,35 @@ export class NodeRuntimeCommandService {
     input: RequestNodeRuntimeCommandDto,
     requestedById: string,
   ) {
+    return this.enqueue(
+      nodeId,
+      input,
+      requestedById,
+      `node.runtime.${input.action}.requested`,
+    );
+  }
+
+  async requestSystemStop(
+    nodeId: string,
+    idempotencyKey: string,
+    metadata: Record<string, string>,
+  ) {
+    return this.enqueue(
+      nodeId,
+      { action: 'stop', idempotencyKey },
+      null,
+      'node.runtime.stop.auto_requested',
+      metadata,
+    );
+  }
+
+  private async enqueue(
+    nodeId: string,
+    input: RequestNodeRuntimeCommandDto,
+    requestedById: string | null,
+    auditAction: string,
+    auditMetadata: Record<string, string> = {},
+  ) {
     const action = input.action.toUpperCase() as NodeRuntimeAction;
     try {
       const command = await this.prisma.$transaction(async (tx) => {
@@ -103,10 +132,10 @@ export class NodeRuntimeCommandService {
         await tx.auditLog.create({
           data: {
             actorId: requestedById,
-            action: `node.runtime.${input.action}.requested`,
+            action: auditAction,
             targetType: 'node',
             targetId: nodeId,
-            metadata: { commandId: created.id },
+            metadata: { commandId: created.id, ...auditMetadata },
           },
         });
         return created;

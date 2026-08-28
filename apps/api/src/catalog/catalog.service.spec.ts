@@ -317,6 +317,7 @@ describe('CatalogService publishing rules', () => {
       { data: Record<string, unknown> },
     ];
     expect(offerUpdate.data).toMatchObject({
+      trafficBytes: BigInt(offers[0].trafficBytes),
       storeUrl: 'https://store.example.com/core/monthly',
     });
     const [grantUpdate] = tx.entitlementGrant.updateMany.mock
