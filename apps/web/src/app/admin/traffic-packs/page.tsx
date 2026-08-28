@@ -235,7 +235,7 @@ export default function AdminTrafficPacksPage() {
 
       <Panel
         title="商品列表"
-        copy="流量包不会改变会员当前套餐的节点、速率、设备数或订阅周期。"
+        copy="流量包不会改变会员当前套餐的节点、速率或订阅周期。"
       >
         {loading && products.length === 0 ? (
           <div className="skeleton-rows">

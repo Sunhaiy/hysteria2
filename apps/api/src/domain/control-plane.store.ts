@@ -1717,21 +1717,6 @@ export class ControlPlaneStoreService {
       );
     }
 
-    const onlineCount = await this.presence.countForUser(user.id);
-    const reconnecting = await this.isRecentReconnect(
-      user.id,
-      input.remoteAddr,
-    );
-    if (onlineCount >= subscription.deviceLimitSnapshot && !reconnecting) {
-      return this.rejectAuth(
-        'device_limit_exceeded',
-        input,
-        token.id,
-        user.id,
-        node.id,
-      );
-    }
-
     await this.markTokenUsed(token.id);
     await this.recordAuthEvent({
       userId: user.id,

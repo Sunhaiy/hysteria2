@@ -562,7 +562,7 @@ export default function AdminOrdersPage() {
 
           {selectedPlan ? (
             <div className="feedback info">
-              到账时同步 {selectedPlan.name} 的流量、带宽、设备数和节点组绑定。
+              到账时同步 {selectedPlan.name} 的流量、带宽和节点组绑定。
             </div>
           ) : null}
 

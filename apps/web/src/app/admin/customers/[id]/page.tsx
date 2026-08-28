@@ -703,7 +703,7 @@ export default function CustomerDetailPage() {
                   "商品",
                   "类型",
                   "有效期",
-                  "速率与设备",
+                  "速率与接入",
                   "额度",
                   "操作",
                 ]}
@@ -715,7 +715,7 @@ export default function CustomerDetailPage() {
                     </span>,
                     grant.kind === "plan" ? "套餐月度额度" : "一次性流量包",
                     `${formatDateTime(bucket.startsAt)} - ${formatDateTime(bucket.endsAt)}`,
-                    `${grant.speedDownMbps} Mbps · ${grant.deviceLimit} 台`,
+                    `${grant.speedDownMbps} Mbps · 不限设备`,
                     `${formatBytes(bucket.remainingBytes)} / ${formatBytes(bucket.grantedBytes)}`,
                     <button
                       className="ghost-button compact"

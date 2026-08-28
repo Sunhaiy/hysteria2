@@ -20,7 +20,6 @@ describe('HysteriaAuthService', () => {
       store as never,
       entitlements as never,
       store as never,
-      { countForUser: store.getCurrentOnlineCount } as never,
     );
   });
 
@@ -64,5 +63,40 @@ describe('HysteriaAuthService', () => {
     expect(store.recordAuthEvent).toHaveBeenCalledWith(
       expect.objectContaining({ granted: true, reason: 'ok' }),
     );
+  });
+
+  it('does not reject access when node probes exceed the legacy device limit', async () => {
+    store.findAccessToken.mockResolvedValue({
+      id: 'token_1',
+      userId: 'usr_lin',
+    });
+    store.getNodeForControl.mockResolvedValue({
+      id: 'node_hk_core',
+      active: true,
+      protocol: 'hysteria2',
+    });
+    store.getSessionIdentity.mockResolvedValue({
+      id: 'usr_lin',
+      status: 'active',
+    });
+    store.getCurrentOnlineCount.mockResolvedValue(3);
+    store.isRecentReconnect.mockResolvedValue(false);
+    entitlements.getNodeAccess.mockResolvedValue({
+      allowed: true,
+      deviceLimit: 1,
+    });
+
+    await expect(
+      service.authorize({
+        nodeId: 'node_hk_core',
+        tokenValue: 'hy2_live_lin_primary',
+        remoteAddr: '198.51.100.10:44321',
+      }),
+    ).resolves.toEqual({ ok: true, id: 'usr_lin' });
+    expect(store.recordAuthEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ granted: true, reason: 'ok' }),
+    );
+    expect(store.getCurrentOnlineCount).not.toHaveBeenCalled();
+    expect(store.isRecentReconnect).not.toHaveBeenCalled();
   });
 });

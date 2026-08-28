@@ -404,7 +404,7 @@ export default function CatalogPage() {
                         `${offer.name} ${formatBytes(offer.trafficBytes)}`,
                     )
                     .join(" · "),
-              `${product.access.speedDownMbps} Mbps · ${product.access.deviceLimit} 台`,
+              `${product.access.speedDownMbps} Mbps · 不限设备`,
               product.access.servers.map((server) => server.name).join(" · ") ||
                 "未绑定",
               <span
@@ -610,19 +610,11 @@ export default function CatalogPage() {
             />
           </label>
           <label className="field">
-            <span className="fine-print">设备数上限</span>
+            <span className="fine-print">设备数量</span>
             <input
               className="control"
-              type="number"
-              min={1}
-              step={1}
-              value={form.deviceLimit}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  deviceLimit: Number(event.target.value),
-                }))
-              }
+              value="不限设备"
+              disabled
             />
           </label>
           <label className="field">

@@ -234,7 +234,6 @@ export default function PortalPage() {
                   DAY_MS,
               ),
             );
-            const deviceLimit = overview.subscription.deviceLimitSnapshot;
             const recentTx = chartData.reduce((sum, item) => sum + item.txBytes, 0);
             const recentRx = chartData.reduce((sum, item) => sum + item.rxBytes, 0);
             const recentTotal = recentTx + recentRx;
@@ -354,7 +353,7 @@ export default function PortalPage() {
                       </span>
                     </div>
                     <p className="fine-print portal-device-note">
-                      套餐设备上限为 {deviceLimit} 台；节点连接数包含测速、故障转移和并发会话，不代表唯一设备数。
+                      当前不限设备数量；节点连接数包含测速、故障转移和并发会话，不代表唯一设备数。
                     </p>
                   </Panel>
                   <Panel title="快捷操作" copy="常用入口集中在这里。">
@@ -390,7 +389,7 @@ export default function PortalPage() {
                       <div><span>订阅状态</span><strong>正常使用中</strong></div>
                       <div><span>上行速率</span><strong>{overview.subscription.speedUpMbpsSnapshot} Mbps</strong></div>
                       <div><span>下行速率</span><strong>{overview.subscription.speedDownMbpsSnapshot} Mbps</strong></div>
-                      <div><span>设备上限</span><strong>{deviceLimit} 台</strong></div>
+                      <div><span>设备数量</span><strong>不限设备</strong></div>
                       <div><span>账户余额</span><strong>¥{((overview.balanceCents ?? 0) / 100).toFixed(2)}</strong></div>
                     </div>
                   </Panel>

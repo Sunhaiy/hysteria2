@@ -56,7 +56,7 @@ Hysteria 2 原生节点可以很快跑起来，但一旦进入多用户、套餐
 ### Hysteria 集成
 
 - `POST /integrations/hysteria/auth` 作为 Hysteria `auth.type: http` 后端
-- 支持按用户 token 做放行、封禁、剩余流量和设备数判断
+- 支持按用户 token 做放行、封禁和剩余流量判断；在线连接仅用于监控，不限制设备数
 - 支持 Traffic Stats API 用量读取和在线会话读取
 
 ### VLESS + REALITY 集成

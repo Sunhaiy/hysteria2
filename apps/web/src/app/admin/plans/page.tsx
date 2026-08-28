@@ -500,13 +500,11 @@ export default function AdminPlansPage() {
               <span className="field-hint">{formatMoney(form.priceCents)}</span>
             </label>
             <label className="field">
-              <span className="fine-print">设备数上限</span>
+              <span className="fine-print">设备数量</span>
               <input
                 className="control"
-                type="number"
-                min="1"
-                value={form.deviceLimit}
-                onChange={(e) => set("deviceLimit", Number(e.target.value))}
+                value="不限设备"
+                disabled
               />
             </label>
           </div>

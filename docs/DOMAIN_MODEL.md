@@ -45,7 +45,9 @@ stability window, but they do not receive new business rules.
   seconds is stale. Connection count is not a unique-device count: one Clash or
   Hysteria2 client can open sessions on several nodes for health checks,
   failover, and concurrent requests. UIs must not label this projection as
-  devices or subtract it from an access profile's device limit.
+  devices or use it to deny access. `deviceLimit` remains a compatibility
+  snapshot for old releases, but current Hysteria2 and VLESS access is not
+  device-limited.
 - **NodeHealthSnapshot** records one protocol-aware probe result. The latest row
   is the current health projection; older rows are retained only for bounded
   operational history.

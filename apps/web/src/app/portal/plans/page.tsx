@@ -298,7 +298,7 @@ export default function PortalPlansPage() {
                 <div className="plan-spec-item">
                   <Icon name="account_circle" />
                   <span>
-                    设备<strong>{product.access.deviceLimit} 台</strong>
+                    设备<strong>不限</strong>
                   </span>
                 </div>
               </div>
@@ -490,7 +490,7 @@ export default function PortalPlansPage() {
                 <span>速率 / 设备</span>
                 <strong>
                   {formatSpeedLimit(checkout.product.access.speedDownMbps)} ·{" "}
-                  {checkout.product.access.deviceLimit} 台
+                  不限设备
                 </strong>
               </div>
             </div>
