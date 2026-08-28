@@ -141,7 +141,7 @@ export class DestinationTelemetryService {
 
   async status() {
     const nodes = await this.prisma.node.findMany({
-      where: { active: true },
+      where: { active: true, retiredAt: null },
       select: {
         id: true,
         label: true,

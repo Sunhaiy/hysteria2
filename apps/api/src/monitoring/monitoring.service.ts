@@ -40,6 +40,7 @@ export class MonitoringService {
   async runChecks(now = new Date()) {
     const [nodes, pendingBatches, deniedAuth] = await Promise.all([
       this.prisma.node.findMany({
+        where: { retiredAt: null },
         include: {
           serviceChecks: { orderBy: { checkedAt: 'desc' }, take: 1 },
           healthSnapshots: { orderBy: { checkedAt: 'desc' }, take: 1 },
@@ -228,9 +229,12 @@ export class MonitoringService {
         ],
       }),
       this.prisma.node.findMany({
+        where: { retiredAt: null },
         include: { serviceChecks: { orderBy: { checkedAt: 'desc' }, take: 1 } },
       }),
-      this.prisma.nodeServer.count({ where: { active: true } }),
+      this.prisma.nodeServer.count({
+        where: { active: true, retiredAt: null },
+      }),
     ]);
     return {
       checkIntervalSeconds: 60,

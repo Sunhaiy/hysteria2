@@ -174,6 +174,7 @@ export class OperationsService {
     const freshSince = new Date(Date.now() - presenceFreshnessMs);
     const [nodes, online, alerts] = await Promise.all([
       this.prisma.node.findMany({
+        where: { retiredAt: null },
         include: {
           server: true,
           healthSnapshots: { orderBy: { checkedAt: 'desc' }, take: 1 },

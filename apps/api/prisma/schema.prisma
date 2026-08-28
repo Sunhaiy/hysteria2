@@ -438,18 +438,20 @@ model PlanOffer {
 }
 
 model NodeServer {
-  id        String   @id @default(cuid())
-  slug      String   @unique
+  id        String    @id @default(cuid())
+  slug      String    @unique
   name      String
-  hostname  String   @unique
+  hostname  String    @unique
   region    String?
   provider  String?
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  active    Boolean   @default(true)
+  retiredAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   endpoints Node[]
 
   @@index([active, createdAt])
+  @@index([retiredAt, active, createdAt])
 }
 
 model Node {
@@ -492,6 +494,7 @@ model Node {
   destinationTelemetryVersion String?
   destinationTelemetryLastAt  DateTime?
   destinationTelemetryError   String?
+  retiredAt                   DateTime?
   createdAt                   DateTime                 @default(now())
   updatedAt                   DateTime                 @updatedAt
   planBindings                PlanBinding[]
@@ -514,6 +517,7 @@ model Node {
 
   @@unique([hostname, port])
   @@index([serverId, active])
+  @@index([retiredAt, active, createdAt])
 }
 
 model PlanBinding {

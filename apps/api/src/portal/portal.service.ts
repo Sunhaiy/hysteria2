@@ -406,7 +406,10 @@ export class PortalService {
             orderBy: { createdAt: 'asc' },
           }),
       this.prisma.node.findMany({
-        where: { id: { in: access.nodes.map((node) => node.id) } },
+        where: {
+          id: { in: access.nodes.map((node) => node.id) },
+          retiredAt: null,
+        },
       }),
     ]);
     if (!token) throw new NotFoundException('No active access identity');

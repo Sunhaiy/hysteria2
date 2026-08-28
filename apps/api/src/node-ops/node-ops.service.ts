@@ -4,13 +4,24 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { NodeLifecycleStatus, NodeProtocol, Prisma } from '@prisma/client';
+import {
+  NodeLifecycleStatus,
+  NodeProtocol,
+  NodeRuntimeState,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
   SaveNodePoolDto,
   SaveNodeServerDto,
   UpdateNodeOperationsDto,
 } from './node-ops.dto';
+
+const runningRuntimeStates = new Set<NodeRuntimeState>([
+  NodeRuntimeState.ACTIVE,
+  NodeRuntimeState.ACTIVATING,
+  NodeRuntimeState.DEACTIVATING,
+]);
 
 @Injectable()
 export class NodeOpsService {
@@ -38,8 +49,10 @@ export class NodeOpsService {
     };
     const [servers, unassignedNodes] = await Promise.all([
       this.prisma.nodeServer.findMany({
+        where: { retiredAt: null },
         include: {
           endpoints: {
+            where: { retiredAt: null },
             include: endpointInclude,
             orderBy: [{ protocol: 'asc' }, { createdAt: 'asc' }],
           },
@@ -47,7 +60,7 @@ export class NodeOpsService {
         orderBy: { createdAt: 'asc' },
       }),
       this.prisma.node.findMany({
-        where: { serverId: null },
+        where: { serverId: null, retiredAt: null },
         include: endpointInclude,
         orderBy: { createdAt: 'asc' },
       }),
@@ -179,7 +192,9 @@ export class NodeOpsService {
   }
 
   async updateServer(id: string, input: SaveNodeServerDto) {
-    const existing = await this.prisma.nodeServer.findUnique({ where: { id } });
+    const existing = await this.prisma.nodeServer.findFirst({
+      where: { id, retiredAt: null },
+    });
     if (!existing) throw new NotFoundException('Node server not found');
     return this.prisma.nodeServer.update({
       where: { id },
@@ -188,17 +203,68 @@ export class NodeOpsService {
   }
 
   async deleteServer(id: string) {
+    const freshSince = new Date(Date.now() - 45_000);
     const server = await this.prisma.nodeServer.findUnique({
       where: { id },
-      select: { id: true, _count: { select: { endpoints: true } } },
+      select: {
+        id: true,
+        retiredAt: true,
+        endpoints: {
+          where: { retiredAt: null },
+          select: {
+            id: true,
+            active: true,
+            lifecycleStatus: true,
+            runtimeState: true,
+            onlinePresence: {
+              where: {
+                observedAt: { gte: freshSince },
+                concurrentClients: { gt: 0 },
+              },
+              select: { concurrentClients: true },
+              take: 1,
+            },
+          },
+        },
+      },
     });
-    if (!server) throw new NotFoundException('Node server not found');
-    if (server._count.endpoints > 0) {
-      throw new ConflictException(
-        'Move or delete every node on this server before deleting it',
-      );
+    if (!server || server.retiredAt) {
+      throw new NotFoundException('Node server not found');
     }
-    await this.prisma.nodeServer.delete({ where: { id } });
+    if (
+      server.endpoints.some(
+        (node) =>
+          node.active || node.lifecycleStatus !== NodeLifecycleStatus.DISABLED,
+      )
+    ) {
+      throw new ConflictException('请先停用服务器下的全部节点，再删除服务器');
+    }
+    if (server.endpoints.some((node) => node.onlinePresence.length > 0)) {
+      throw new ConflictException('服务器仍有在线连接，暂不能删除');
+    }
+    if (
+      server.endpoints.some((node) =>
+        runningRuntimeStates.has(node.runtimeState),
+      )
+    ) {
+      throw new ConflictException('请先停止服务器下的全部运行服务');
+    }
+
+    const retiredAt = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.node.updateMany({
+        where: { serverId: id, retiredAt: null },
+        data: {
+          active: false,
+          lifecycleStatus: NodeLifecycleStatus.DISABLED,
+          retiredAt,
+        },
+      });
+      await tx.nodeServer.update({
+        where: { id },
+        data: { active: false, retiredAt },
+      });
+    });
   }
 
   async createPool(input: SaveNodePoolDto) {
@@ -256,6 +322,11 @@ export class NodeOpsService {
   }
 
   async updateNode(id: string, input: UpdateNodeOperationsDto) {
+    const existing = await this.prisma.node.findFirst({
+      where: { id, retiredAt: null },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundException('Node not found');
     const lifecycleStatus =
       input.lifecycleStatus.toUpperCase() as NodeLifecycleStatus;
     const updated = await this.prisma.node.update({
@@ -283,7 +354,9 @@ export class NodeOpsService {
     if (nodeIds.length === 0 || new Set(nodeIds).size !== nodeIds.length) {
       throw new BadRequestException('A pool requires unique member nodes');
     }
-    const count = await tx.node.count({ where: { id: { in: nodeIds } } });
+    const count = await tx.node.count({
+      where: { id: { in: nodeIds }, retiredAt: null },
+    });
     if (count !== nodeIds.length) throw new BadRequestException('Unknown node');
   }
 

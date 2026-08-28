@@ -59,6 +59,12 @@ stability window, but they do not receive new business rules.
 observed systemd state. Disabling access does not stop a service; stopping a
 service does not silently rewrite access policy.
 
+Deleting a server or node from the operations UI is a **retirement**, not a
+physical database delete. Retirement is allowed only after access is disabled,
+the runtime is stopped, and current online presence is empty. Retired topology
+is excluded from subscriptions, worker polling, and current operations views,
+while immutable usage, cost, and audit history remains queryable.
+
 The API process serves projections only. The standalone worker owns full sync,
 online collection, health probing, and manual-check consumption.
 

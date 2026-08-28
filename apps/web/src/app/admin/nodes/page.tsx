@@ -469,7 +469,7 @@ export default function NodesPage() {
     if (
       !token ||
       !window.confirm(
-        `确认删除服务器“${server.name}”？只有不包含节点的服务器可以删除。`,
+        `确认删除服务器“${server.name}”及其已停用节点？历史流量和审计记录会保留。`,
       )
     )
       return;
@@ -615,13 +615,30 @@ export default function NodesPage() {
                     <button
                       className="danger-button compact"
                       disabled={
-                        busyId === server.id || server.endpoints.length > 0
+                        busyId === server.id ||
+                        server.endpoints.some(
+                          (node) =>
+                            node.active ||
+                            node.lifecycleStatus !== "disabled" ||
+                            node.onlineUsers > 0 ||
+                            ["active", "activating", "deactivating"].includes(
+                              node.runtimeState,
+                            ),
+                        )
                       }
                       type="button"
                       title={
-                        server.endpoints.length
-                          ? "请先移动或删除服务器下的全部节点"
-                          : "删除服务器"
+                        server.endpoints.some(
+                          (node) =>
+                            node.active ||
+                            node.lifecycleStatus !== "disabled" ||
+                            node.onlineUsers > 0 ||
+                            ["active", "activating", "deactivating"].includes(
+                              node.runtimeState,
+                            ),
+                        )
+                          ? "请先停用节点、停止运行服务并确认没有在线连接"
+                          : "安全删除服务器并保留历史记录"
                       }
                       onClick={() => void deleteServer(server)}
                     >

@@ -4,12 +4,22 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { NodeProtocol, Prisma } from '@prisma/client';
+import {
+  NodeLifecycleStatus,
+  NodeProtocol,
+  NodeRuntimeState,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SecretCipherService } from '../security/secret-cipher.service';
 
 const onlinePresenceFreshnessMs = 45_000;
 const syncFreshnessMs = 150_000;
+const runningRuntimeStates = new Set<NodeRuntimeState>([
+  NodeRuntimeState.ACTIVE,
+  NodeRuntimeState.ACTIVATING,
+  NodeRuntimeState.DEACTIVATING,
+]);
 
 export type NodeProtocolInput = 'hysteria2' | 'vless_reality';
 
@@ -48,6 +58,7 @@ export class NodeControlService {
 
   async getNodes() {
     const nodes = await this.prisma.node.findMany({
+      where: { retiredAt: null },
       orderBy: { createdAt: 'desc' },
     });
     if (nodes.length === 0) return [];
@@ -79,19 +90,24 @@ export class NodeControlService {
   }
 
   async getNodeById(nodeId: string) {
-    const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
+    const node = await this.prisma.node.findFirst({
+      where: { id: nodeId, retiredAt: null },
+    });
     return node ? this.presentNode(node) : undefined;
   }
 
   async getNodesForControl() {
     const nodes = await this.prisma.node.findMany({
+      where: { retiredAt: null },
       orderBy: { createdAt: 'desc' },
     });
     return nodes.map((node) => this.presentNodeForControl(node));
   }
 
   async getNodeForControl(nodeId: string) {
-    const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
+    const node = await this.prisma.node.findFirst({
+      where: { id: nodeId, retiredAt: null },
+    });
     return node ? this.presentNodeForControl(node) : undefined;
   }
 
@@ -134,8 +150,8 @@ export class NodeControlService {
 
   async patchNode(nodeId: string, input: PatchNodeInput) {
     try {
-      const current = await this.prisma.node.findUnique({
-        where: { id: nodeId },
+      const current = await this.prisma.node.findFirst({
+        where: { id: nodeId, retiredAt: null },
       });
       if (!current) throw new NotFoundException(`Unknown node: ${nodeId}`);
       this.validateNodeConfiguration({
@@ -200,11 +216,39 @@ export class NodeControlService {
   }
 
   async deleteNode(nodeId: string) {
-    try {
-      await this.prisma.node.delete({ where: { id: nodeId } });
-    } catch (error) {
-      this.handlePrismaError(error);
+    const node = await this.prisma.node.findFirst({
+      where: { id: nodeId, retiredAt: null },
+      select: {
+        id: true,
+        active: true,
+        lifecycleStatus: true,
+        runtimeState: true,
+        onlinePresence: {
+          where: {
+            observedAt: {
+              gte: new Date(Date.now() - onlinePresenceFreshnessMs),
+            },
+            concurrentClients: { gt: 0 },
+          },
+          select: { id: true },
+          take: 1,
+        },
+      },
+    });
+    if (!node) throw new NotFoundException(`Unknown node: ${nodeId}`);
+    if (node.active || node.lifecycleStatus !== NodeLifecycleStatus.DISABLED) {
+      throw new ConflictException('请先停用节点，再删除节点');
     }
+    if (node.onlinePresence.length > 0) {
+      throw new ConflictException('节点仍有在线连接，暂不能删除');
+    }
+    if (runningRuntimeStates.has(node.runtimeState)) {
+      throw new ConflictException('请先停止节点运行服务，再删除节点');
+    }
+    await this.prisma.node.update({
+      where: { id: nodeId },
+      data: { active: false, retiredAt: new Date() },
+    });
   }
 
   async markUserSyncSuccess(nodeId: string) {

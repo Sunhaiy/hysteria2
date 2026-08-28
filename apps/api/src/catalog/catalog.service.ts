@@ -57,6 +57,7 @@ export class CatalogService {
         this.prisma.accessProfile.findMany({
           include: {
             nodeBindings: {
+              where: { node: { retiredAt: null } },
               include: { node: true },
               orderBy: { priority: 'asc' },
             },
@@ -65,6 +66,7 @@ export class CatalogService {
         }),
         this.loadUnifiedProducts(),
         this.prisma.node.findMany({
+          where: { retiredAt: null },
           include: { server: true },
           orderBy: [{ serverId: 'asc' }, { createdAt: 'asc' }],
         }),
@@ -849,7 +851,7 @@ export class CatalogService {
     if (input.nodeIds) {
       await this.validateNodes(tx, input.nodeIds);
       const nodes = await tx.node.findMany({
-        where: { id: { in: input.nodeIds } },
+        where: { id: { in: input.nodeIds }, retiredAt: null },
         select: { id: true, active: true, lifecycleStatus: true },
       });
       if (
@@ -1028,7 +1030,9 @@ export class CatalogService {
     if (nodeIds.length === 0) {
       throw new BadRequestException('At least one node is required');
     }
-    const count = await tx.node.count({ where: { id: { in: nodeIds } } });
+    const count = await tx.node.count({
+      where: { id: { in: nodeIds }, retiredAt: null },
+    });
     if (count !== nodeIds.length) throw new BadRequestException('Unknown node');
   }
 

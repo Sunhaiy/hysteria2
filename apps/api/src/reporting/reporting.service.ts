@@ -25,6 +25,7 @@ export class ReportingService {
         },
       }),
       this.prisma.node.findMany({
+        where: { retiredAt: null },
         select: { active: true, lastSyncAt: true, lastSyncError: true },
       }),
       this.prisma.usageImportBatch.count({

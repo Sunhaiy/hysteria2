@@ -128,7 +128,7 @@ export class ControlPlaneStoreService {
         this.prisma.user.count(),
         this.prisma.plan.count(),
         this.prisma.subscription.count(),
-        this.prisma.node.count(),
+        this.prisma.node.count({ where: { retiredAt: null } }),
       ],
     );
 
@@ -3984,7 +3984,9 @@ export class ControlPlaneStoreService {
   }
 
   private async mustGetNodeRecord(nodeId: string) {
-    const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
+    const node = await this.prisma.node.findFirst({
+      where: { id: nodeId, retiredAt: null },
+    });
     if (!node) throw new NotFoundException(`Unknown node: ${nodeId}`);
     return node;
   }
@@ -4182,7 +4184,9 @@ export class ControlPlaneStoreService {
       throw new BadRequestException('Selected node is not bound to this plan');
     }
 
-    const node = await tx.node.findUnique({ where: { id: nodeId } });
+    const node = await tx.node.findUnique({
+      where: { id: nodeId, retiredAt: null },
+    });
     if (!node) throw new NotFoundException(`Unknown node: ${nodeId}`);
 
     return { plan, nodeId, node };

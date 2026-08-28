@@ -57,7 +57,7 @@ export class NodeRuntimeCommandService {
         }
 
         const node = await tx.node.findUnique({
-          where: { id: nodeId },
+          where: { id: nodeId, retiredAt: null },
           select: {
             id: true,
             protocol: true,

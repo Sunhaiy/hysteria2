@@ -50,6 +50,8 @@ test("node operations separate access and runtime service controls", async () =>
   assert.match(nodes, /node-endpoint-list/);
   assert.match(nodes, /编辑服务器/);
   assert.match(nodes, /删除服务器/);
+  assert.match(nodes, /历史流量和审计记录会保留/);
+  assert.match(nodes, /安全删除服务器并保留历史记录/);
   assert.match(nodes, /编辑节点/);
   assert.match(nodes, /节点管理地址/);
   assert.doesNotMatch(nodes, /Agent/);
