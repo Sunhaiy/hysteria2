@@ -1,0 +1,15 @@
+[Unit]
+Description=Hysteria2 UDP port hopping redirect
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/hysteria-port-hopping.env
+ExecStart=/usr/local/sbin/hysteria-port-hopping apply
+ExecReload=/usr/local/sbin/hysteria-port-hopping apply
+ExecStop=/usr/local/sbin/hysteria-port-hopping remove
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
