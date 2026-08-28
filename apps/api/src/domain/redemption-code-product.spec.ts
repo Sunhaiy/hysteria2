@@ -83,7 +83,7 @@ describe('Traffic pack product redemption', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('recognizes a plan CDK at the bound offer price instead of its face value', async () => {
+  it('redeems a plan CDK through its access profile when legacy bindings are retired', async () => {
     const now = new Date('2026-08-24T08:00:00.000Z');
     jest.useFakeTimers().setSystemTime(now);
     const user = {
@@ -95,6 +95,7 @@ describe('Traffic pack product redemption', () => {
     const plan = {
       id: 'plan_pro',
       name: 'Pro 500',
+      accessProfileId: 'profile_pro',
       durationDays: 30,
       trafficBytes: 500n,
       speedUpMbps: 40,
@@ -189,12 +190,25 @@ describe('Traffic pack product redemption', () => {
         ),
       },
       plan: { findUnique: jest.fn().mockResolvedValue(plan) },
-      planBinding: {
+      accessProfileNode: {
         findMany: jest
           .fn()
           .mockResolvedValue([{ nodeId: 'node_reality', priority: 0 }]),
       },
-      node: { findUnique: jest.fn().mockResolvedValue({ id: 'node_reality' }) },
+      planBinding: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ nodeId: 'node_retired', priority: 0 }]),
+      },
+      node: {
+        findUnique: jest
+          .fn()
+          .mockImplementation((input: { where: { id: string } }) =>
+            Promise.resolve(
+              input.where.id === 'node_reality' ? { id: 'node_reality' } : null,
+            ),
+          ),
+      },
     };
     const prisma = {
       ...tx,
@@ -225,6 +239,21 @@ describe('Traffic pack product redemption', () => {
       amountCents: 8900,
       basePriceCents: 8900,
     });
+    expect(tx.accessProfileNode.findMany).toHaveBeenCalledWith({
+      where: {
+        accessProfileId: 'profile_pro',
+        node: {
+          active: true,
+          lifecycleStatus: 'ACTIVE',
+          retiredAt: null,
+        },
+      },
+      orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
+    });
+    expect(tx.planBinding.findMany).not.toHaveBeenCalled();
+    const [subscriptionCreate] = tx.subscription.create.mock
+      .calls[0] as unknown as [{ data: Record<string, unknown> }];
+    expect(subscriptionCreate.data.nodeId).toBe('node_reality');
     jest.useRealTimers();
   });
 

@@ -4152,27 +4152,43 @@ export class ControlPlaneStoreService {
     const plan = await tx.plan.findUnique({ where: { id: input.planId } });
     if (!plan) throw new NotFoundException(`Unknown plan: ${input.planId}`);
 
-    const bindings = await tx.planBinding.findMany({
-      where: { planId: input.planId },
-      orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
-    });
+    const serviceableNode = {
+      active: true,
+      lifecycleStatus: 'ACTIVE' as const,
+      retiredAt: null,
+    };
+    const bindings: Array<{ nodeId: string }> = plan.accessProfileId
+      ? await tx.accessProfileNode.findMany({
+          where: {
+            accessProfileId: plan.accessProfileId,
+            node: serviceableNode,
+          },
+          orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
+        })
+      : await tx.planBinding.findMany({
+          where: {
+            planId: input.planId,
+            node: serviceableNode,
+          },
+          orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
+        });
 
     const nodeId = input.requestedNodeId ?? bindings[0]?.nodeId ?? null;
     if (!nodeId) {
-      throw new BadRequestException(
-        'Plan has no bound nodes; add a node binding to this plan first',
-      );
+      throw new BadRequestException('套餐暂时没有可用节点，请联系管理员');
     }
 
     const bindingAllowed = bindings.some((b) => b.nodeId === nodeId);
     if (!bindingAllowed) {
-      throw new BadRequestException('Selected node is not bound to this plan');
+      throw new BadRequestException('所选节点当前不可用于这个套餐');
     }
 
     const node = await tx.node.findUnique({
-      where: { id: nodeId, retiredAt: null },
+      where: { id: nodeId, ...serviceableNode },
     });
-    if (!node) throw new NotFoundException(`Unknown node: ${nodeId}`);
+    if (!node) {
+      throw new BadRequestException('套餐节点当前不可用，请稍后重试');
+    }
 
     return { plan, nodeId, node };
   }
