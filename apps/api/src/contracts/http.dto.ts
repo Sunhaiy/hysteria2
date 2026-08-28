@@ -9,6 +9,7 @@ import {
   IsOptional,
   IsString,
   Length,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -517,6 +518,28 @@ export class CreateNodeDto {
   port!: number;
 
   @IsOptional()
+  @IsBoolean()
+  portHoppingEnabled?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(65534)
+  portHoppingStart?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(2)
+  @Max(65535)
+  portHoppingEnd?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(5)
+  @Max(300)
+  portHoppingIntervalSeconds?: number;
+
+  @IsOptional()
   @IsString()
   obfsPassword?: string;
 
@@ -598,6 +621,28 @@ export class UpdateNodeDto {
   @IsInt()
   @Min(1)
   port?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  portHoppingEnabled?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(65534)
+  portHoppingStart?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(2)
+  @Max(65535)
+  portHoppingEnd?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(5)
+  @Max(300)
+  portHoppingIntervalSeconds?: number;
 
   @IsOptional()
   @IsString()

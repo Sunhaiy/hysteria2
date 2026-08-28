@@ -18,6 +18,10 @@ type Endpoint = {
   protocol: "hysteria2" | "vless_reality";
   hostname: string;
   port: number;
+  portHoppingEnabled: boolean;
+  portHoppingStart?: number | null;
+  portHoppingEnd?: number | null;
+  portHoppingIntervalSeconds: number;
   lifecycleStatus: "active" | "draining" | "maintenance" | "disabled";
   active: boolean;
   tags: string[];
@@ -111,6 +115,10 @@ type NodeForm = {
   label: string;
   hostname: string;
   port: number;
+  portHoppingEnabled: boolean;
+  portHoppingStart: number;
+  portHoppingEnd: number;
+  portHoppingIntervalSeconds: number;
   obfsPassword: string;
   sni: string;
   realityPublicKey: string;
@@ -142,6 +150,10 @@ const emptyNodeForm: NodeForm = {
   label: "",
   hostname: "",
   port: 443,
+  portHoppingEnabled: false,
+  portHoppingStart: 20000,
+  portHoppingEnd: 29999,
+  portHoppingIntervalSeconds: 30,
   obfsPassword: "",
   sni: "",
   realityPublicKey: "",
@@ -372,6 +384,10 @@ export default function NodesPage() {
             label: node.label,
             hostname: node.hostname,
             port: node.port,
+            portHoppingEnabled: node.portHoppingEnabled,
+            portHoppingStart: node.portHoppingStart ?? 20000,
+            portHoppingEnd: node.portHoppingEnd ?? 29999,
+            portHoppingIntervalSeconds: node.portHoppingIntervalSeconds ?? 30,
             obfsPassword: node.obfsPassword ?? "",
             sni: node.sni ?? "",
             realityPublicKey: node.realityPublicKey ?? "",
@@ -461,6 +477,20 @@ export default function NodesPage() {
             label: nodeForm.label.trim(),
             hostname: nodeForm.hostname.trim(),
             port: nodeForm.port,
+            portHoppingEnabled:
+              nodeForm.protocol === "hysteria2" && nodeForm.portHoppingEnabled,
+            portHoppingStart:
+              nodeForm.protocol === "hysteria2"
+                ? nodeForm.portHoppingStart
+                : undefined,
+            portHoppingEnd:
+              nodeForm.protocol === "hysteria2"
+                ? nodeForm.portHoppingEnd
+                : undefined,
+            portHoppingIntervalSeconds:
+              nodeForm.protocol === "hysteria2"
+                ? nodeForm.portHoppingIntervalSeconds
+                : undefined,
             obfsPassword:
               nodeForm.protocol === "hysteria2"
                 ? nodeForm.obfsPassword.trim() || undefined
@@ -762,6 +792,13 @@ export default function NodesPage() {
                       <span className="mono">
                         {node.hostname}:{node.port}
                       </span>
+                      {node.portHoppingEnabled &&
+                      node.portHoppingStart &&
+                      node.portHoppingEnd ? (
+                        <span className="badge success">
+                          端口跳跃 {node.portHoppingStart}-{node.portHoppingEnd}
+                        </span>
+                      ) : null}
                       <span className="fine-print">
                         {node.accessProfiles.length
                           ? node.accessProfiles
@@ -1184,6 +1221,74 @@ export default function NodesPage() {
               }
             />
           </label>
+          {nodeForm.protocol === "hysteria2" ? (
+            <>
+              <label className="field checkbox-row span-2">
+                <input
+                  type="checkbox"
+                  checked={nodeForm.portHoppingEnabled}
+                  onChange={(event) =>
+                    setNodeForm((current) => ({
+                      ...current,
+                      portHoppingEnabled: event.target.checked,
+                    }))
+                  }
+                />
+                <span>启用 UDP 端口跳跃</span>
+              </label>
+              <label className="field">
+                <span className="fine-print">起始端口</span>
+                <input
+                  className="control"
+                  type="number"
+                  min={1}
+                  max={65534}
+                  disabled={!nodeForm.portHoppingEnabled}
+                  value={nodeForm.portHoppingStart}
+                  onChange={(event) =>
+                    setNodeForm((current) => ({
+                      ...current,
+                      portHoppingStart: Number(event.target.value),
+                    }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span className="fine-print">结束端口</span>
+                <input
+                  className="control"
+                  type="number"
+                  min={2}
+                  max={65535}
+                  disabled={!nodeForm.portHoppingEnabled}
+                  value={nodeForm.portHoppingEnd}
+                  onChange={(event) =>
+                    setNodeForm((current) => ({
+                      ...current,
+                      portHoppingEnd: Number(event.target.value),
+                    }))
+                  }
+                />
+              </label>
+              <label className="field span-2">
+                <span className="fine-print">跳跃间隔（秒）</span>
+                <input
+                  className="control"
+                  type="number"
+                  min={5}
+                  max={300}
+                  disabled={!nodeForm.portHoppingEnabled}
+                  value={nodeForm.portHoppingIntervalSeconds}
+                  onChange={(event) =>
+                    setNodeForm((current) => ({
+                      ...current,
+                      portHoppingIntervalSeconds: Number(event.target.value),
+                    }))
+                  }
+                />
+              </label>
+            </>
+          ) : null}
           <label className="field">
             <span className="fine-print">SNI</span>
             <input

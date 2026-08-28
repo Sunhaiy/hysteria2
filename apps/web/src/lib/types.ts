@@ -222,6 +222,10 @@ export interface NodeRecord {
   label: string;
   hostname: string;
   port: number;
+  portHoppingEnabled?: boolean;
+  portHoppingStart?: number | null;
+  portHoppingEnd?: number | null;
+  portHoppingIntervalSeconds?: number;
   obfsPassword?: string | null;
   sni?: string | null;
   pinSHA256?: string | null;

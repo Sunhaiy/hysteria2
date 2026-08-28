@@ -269,4 +269,53 @@ describe('PortalService VLESS + REALITY access', () => {
     expect(subscription.content).toContain('type: hysteria2');
     expect(subscription.nodeCount).toBe(1);
   });
+
+  it('adds a v2rayN mport and native client hopping config when enabled', async () => {
+    const node = {
+      id: 'node_hy2_hopping',
+      label: 'US Hopping',
+      protocol: 'HYSTERIA2' as const,
+      hostname: '203.0.113.20',
+      port: 59620,
+      portHoppingEnabled: true,
+      portHoppingStart: 20000,
+      portHoppingEnd: 29999,
+      portHoppingIntervalSeconds: 30,
+      sni: 'www.bing.com',
+      obfsPassword: 'obfs-secret',
+      pinSHA256: null,
+      allowInsecureTls: false,
+      realityPublicKey: null,
+      realityShortId: null,
+      realityFingerprint: null,
+      realitySpiderX: null,
+      vlessFlow: null,
+    };
+    const store = {
+      getAccessBundle: jest.fn().mockResolvedValue({
+        token: {
+          token: 'hy2_0123456789abcdef01234567',
+          vlessUuid: '67fbc500-3f3c-4ab9-a076-3e17c56bb3a1',
+        },
+        node,
+        nodes: [node],
+        subscription: {
+          speedUpMbpsSnapshot: 0,
+          speedDownMbpsSnapshot: 0,
+          endsAt: '2026-09-01T00:00:00.000Z',
+        },
+        trafficRemaining: 1024,
+      }),
+    };
+    const service = new PortalService(store as never, {} as never, {} as never);
+
+    const access = await service.getAccess('usr_lin');
+    const uri = new URL(access.uri);
+
+    expect(uri.searchParams.get('mport')).toBe('20000-29999');
+    expect(access.configSnippet).toContain(
+      'server: 203.0.113.20:59620,20000-29999',
+    );
+    expect(access.configSnippet).toContain('hopInterval: 30s');
+  });
 });

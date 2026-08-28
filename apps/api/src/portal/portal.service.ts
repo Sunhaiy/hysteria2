@@ -12,6 +12,25 @@ import { PrismaService } from '../prisma/prisma.service';
 import { buildMihomoProfile } from './mihomo-profile';
 import { apiPublicUrl } from '../common/public-url';
 
+type SubscriptionNode = {
+  protocol: 'HYSTERIA2' | 'VLESS_REALITY';
+  hostname: string;
+  port: number;
+  portHoppingEnabled?: boolean;
+  portHoppingStart?: number | null;
+  portHoppingEnd?: number | null;
+  portHoppingIntervalSeconds?: number;
+  sni: string | null;
+  obfsPassword: string | null;
+  pinSHA256: string | null;
+  allowInsecureTls: boolean;
+  realityPublicKey: string | null;
+  realityShortId: string | null;
+  realityFingerprint: string | null;
+  realitySpiderX: string | null;
+  vlessFlow: string | null;
+};
+
 @Injectable()
 export class PortalService {
   constructor(
@@ -439,20 +458,7 @@ export class PortalService {
 
   private buildConfigSnippet(
     credential: { token: string; vlessUuid: string },
-    node: {
-      protocol: 'HYSTERIA2' | 'VLESS_REALITY';
-      hostname: string;
-      port: number;
-      sni: string | null;
-      obfsPassword: string | null;
-      pinSHA256: string | null;
-      allowInsecureTls: boolean;
-      realityPublicKey: string | null;
-      realityShortId: string | null;
-      realityFingerprint: string | null;
-      realitySpiderX: string | null;
-      vlessFlow: string | null;
-    },
+    node: SubscriptionNode,
     bandwidth: { up: number; down: number },
   ) {
     if (node.protocol === 'VLESS_REALITY') {
@@ -495,8 +501,9 @@ export class PortalService {
             bandwidth.down > 0 ? `  down: ${bandwidth.down} mbps` : null,
           ]
         : [];
+    const hoppingRange = this.portHoppingRange(node);
     return [
-      `server: ${this.formatHost(node.hostname)}:${node.port}`,
+      `server: ${this.formatHost(node.hostname)}:${node.port}${hoppingRange ? `,${hoppingRange}` : ''}`,
       `auth: ${credential.token}`,
       'tls:',
       `  sni: ${node.sni ?? node.hostname}`,
@@ -509,6 +516,11 @@ export class PortalService {
         ? `  salamander:\n    password: ${node.obfsPassword}`
         : null,
       ...bandwidthLines,
+      hoppingRange ? 'transport:' : null,
+      hoppingRange ? '  udp:' : null,
+      hoppingRange
+        ? `    hopInterval: ${node.portHoppingIntervalSeconds ?? 30}s`
+        : null,
       'socks5:',
       '  listen: 127.0.0.1:1080',
       'http:',
@@ -589,20 +601,7 @@ export class PortalService {
 
   private buildNodeUri(
     credential: { token: string; vlessUuid: string },
-    node: {
-      protocol: 'HYSTERIA2' | 'VLESS_REALITY';
-      hostname: string;
-      port: number;
-      sni: string | null;
-      obfsPassword: string | null;
-      pinSHA256: string | null;
-      allowInsecureTls: boolean;
-      realityPublicKey: string | null;
-      realityShortId: string | null;
-      realityFingerprint: string | null;
-      realitySpiderX: string | null;
-      vlessFlow: string | null;
-    },
+    node: SubscriptionNode,
     label?: string,
   ) {
     const params = new URLSearchParams();
@@ -622,6 +621,8 @@ export class PortalService {
     }
 
     if (node.sni) params.set('sni', node.sni);
+    const hoppingRange = this.portHoppingRange(node);
+    if (hoppingRange) params.set('mport', hoppingRange);
     if (node.obfsPassword) {
       params.set('obfs', 'salamander');
       params.set('obfs-password', node.obfsPassword);
@@ -632,6 +633,14 @@ export class PortalService {
     const query = params.toString();
     const fragment = label ? `#${encodeURIComponent(label)}` : '';
     return `hysteria2://${encodeURIComponent(credential.token)}@${this.formatHost(node.hostname)}:${node.port}/${query ? `?${query}` : ''}${fragment}`;
+  }
+
+  private portHoppingRange(node: SubscriptionNode) {
+    return node.portHoppingEnabled &&
+      node.portHoppingStart &&
+      node.portHoppingEnd
+      ? `${node.portHoppingStart}-${node.portHoppingEnd}`
+      : null;
   }
 
   private formatHost(hostname: string) {

@@ -5,6 +5,10 @@ export type MihomoNode = {
   protocol: 'HYSTERIA2' | 'VLESS_REALITY';
   hostname: string;
   port: number;
+  portHoppingEnabled?: boolean;
+  portHoppingStart?: number | null;
+  portHoppingEnd?: number | null;
+  portHoppingIntervalSeconds?: number;
   sni: string | null;
   obfsPassword: string | null;
   pinSHA256: string | null;
@@ -84,11 +88,19 @@ function buildHysteriaProxy(
   credential: MihomoCredential,
   node: MihomoNode,
 ) {
+  const hoppingRange =
+    node.portHoppingEnabled && node.portHoppingStart && node.portHoppingEnd
+      ? `${node.portHoppingStart}-${node.portHoppingEnd}`
+      : undefined;
   return withoutUndefined({
     name,
     type: 'hysteria2',
     server: node.hostname,
     port: node.port,
+    ports: hoppingRange,
+    'hop-interval': hoppingRange
+      ? (node.portHoppingIntervalSeconds ?? 30)
+      : undefined,
     password: credential.token,
     sni: node.sni ?? node.hostname,
     'skip-cert-verify': node.allowInsecureTls,

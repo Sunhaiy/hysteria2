@@ -29,6 +29,10 @@ export interface SaveNodeInput {
   label: string;
   hostname: string;
   port: number;
+  portHoppingEnabled?: boolean;
+  portHoppingStart?: number | null;
+  portHoppingEnd?: number | null;
+  portHoppingIntervalSeconds?: number;
   obfsPassword?: string;
   sni?: string;
   pinSHA256?: string;
@@ -122,6 +126,10 @@ export class NodeControlService {
           label: input.label,
           hostname: input.hostname,
           port: input.port,
+          portHoppingEnabled: input.portHoppingEnabled ?? false,
+          portHoppingStart: input.portHoppingStart ?? null,
+          portHoppingEnd: input.portHoppingEnd ?? null,
+          portHoppingIntervalSeconds: input.portHoppingIntervalSeconds ?? 30,
           obfsPassword: input.obfsPassword,
           sni: input.sni,
           pinSHA256: input.pinSHA256,
@@ -156,6 +164,20 @@ export class NodeControlService {
       if (!current) throw new NotFoundException(`Unknown node: ${nodeId}`);
       this.validateNodeConfiguration({
         protocol: input.protocol ?? this.fromDbNodeProtocol(current.protocol),
+        port: input.port ?? current.port,
+        portHoppingEnabled:
+          input.portHoppingEnabled ?? current.portHoppingEnabled,
+        portHoppingStart:
+          input.portHoppingStart !== undefined
+            ? input.portHoppingStart
+            : current.portHoppingStart,
+        portHoppingEnd:
+          input.portHoppingEnd !== undefined
+            ? input.portHoppingEnd
+            : current.portHoppingEnd,
+        portHoppingIntervalSeconds:
+          input.portHoppingIntervalSeconds ??
+          current.portHoppingIntervalSeconds,
         sni: input.sni !== undefined ? input.sni : current.sni,
         realityPublicKey:
           input.realityPublicKey !== undefined
@@ -184,6 +206,10 @@ export class NodeControlService {
           label: input.label,
           hostname: input.hostname,
           port: input.port,
+          portHoppingEnabled: input.portHoppingEnabled,
+          portHoppingStart: input.portHoppingStart,
+          portHoppingEnd: input.portHoppingEnd,
+          portHoppingIntervalSeconds: input.portHoppingIntervalSeconds,
           obfsPassword: input.obfsPassword,
           sni: input.sni,
           pinSHA256: input.pinSHA256,
@@ -346,6 +372,10 @@ export class NodeControlService {
       label: node.label,
       hostname: node.hostname,
       port: node.port,
+      portHoppingEnabled: node.portHoppingEnabled,
+      portHoppingStart: node.portHoppingStart,
+      portHoppingEnd: node.portHoppingEnd,
+      portHoppingIntervalSeconds: node.portHoppingIntervalSeconds,
       obfsPassword: node.obfsPassword,
       sni: node.sni,
       pinSHA256: node.pinSHA256,
@@ -397,6 +427,11 @@ export class NodeControlService {
 
   private validateNodeConfiguration(input: {
     protocol: NodeProtocolInput;
+    port?: number;
+    portHoppingEnabled?: boolean;
+    portHoppingStart?: number | null;
+    portHoppingEnd?: number | null;
+    portHoppingIntervalSeconds?: number;
     sni?: string | null;
     realityPublicKey?: string | null;
     realityShortId?: string | null;
@@ -407,6 +442,42 @@ export class NodeControlService {
       throw new BadRequestException(
         'Runtime control agent secret is required when its URL is set',
       );
+    }
+    if (input.portHoppingEnabled) {
+      if (input.protocol !== 'hysteria2') {
+        throw new BadRequestException(
+          'Port hopping is only available for Hysteria2 nodes',
+        );
+      }
+      const start = input.portHoppingStart;
+      const end = input.portHoppingEnd;
+      const rangeIsValid =
+        Number.isInteger(start) &&
+        Number.isInteger(end) &&
+        (start as number) >= 1 &&
+        (end as number) <= 65_535 &&
+        (start as number) < (end as number) &&
+        (end as number) - (start as number) <= 20_000;
+      if (!rangeIsValid) {
+        throw new BadRequestException(
+          'Port hopping requires a valid range of at most 20001 UDP ports',
+        );
+      }
+      if (
+        input.port &&
+        input.port >= (start as number) &&
+        input.port <= (end as number)
+      ) {
+        throw new BadRequestException(
+          'The primary Hysteria2 port must be outside the hopping range',
+        );
+      }
+      const interval = input.portHoppingIntervalSeconds ?? 30;
+      if (!Number.isInteger(interval) || interval < 5 || interval > 300) {
+        throw new BadRequestException(
+          'Port hopping interval must be between 5 and 300 seconds',
+        );
+      }
     }
     if (input.protocol !== 'vless_reality') return;
     if (!input.sni?.trim()) {

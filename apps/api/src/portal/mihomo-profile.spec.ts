@@ -94,6 +94,29 @@ describe('buildMihomoProfile', () => {
     expect(profile.rules).toEqual(['MATCH,节点选择']);
   });
 
+  it('emits Mihomo port hopping only for enabled Hysteria2 nodes', () => {
+    const profile = parseProfile(
+      buildMihomoProfile(credential, [
+        {
+          ...nodes[1],
+          portHoppingEnabled: true,
+          portHoppingStart: 20000,
+          portHoppingEnd: 29999,
+          portHoppingIntervalSeconds: 30,
+        },
+        { ...nodes[1], label: 'US Legacy' },
+      ]),
+    );
+
+    expect(profile.proxies[0]).toMatchObject({
+      port: 5401,
+      ports: '20000-29999',
+      'hop-interval': 30,
+    });
+    expect(profile.proxies[1]).not.toHaveProperty('ports');
+    expect(profile.proxies[1]).not.toHaveProperty('hop-interval');
+  });
+
   it('rejects incomplete VLESS REALITY endpoints', () => {
     expect(() =>
       buildMihomoProfile(credential, [{ ...nodes[0], realityPublicKey: null }]),

@@ -485,6 +485,10 @@ model Node {
   capacityUsers               Int?
   speedUpMbps                 Int
   speedDownMbps               Int
+  portHoppingEnabled          Boolean                  @default(false)
+  portHoppingStart            Int?
+  portHoppingEnd              Int?
+  portHoppingIntervalSeconds  Int                      @default(30)
   trafficLimitEnabled         Boolean                  @default(false)
   trafficLimitBytes           BigInt?
   trafficLimitResetDay        Int                      @default(1)

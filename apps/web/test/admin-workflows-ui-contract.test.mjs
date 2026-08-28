@@ -84,6 +84,19 @@ test("node operations separate access and runtime service controls", async () =>
   assert.doesNotMatch(nodes, /Agent/);
 });
 
+test("Hysteria2 nodes expose bounded UDP port hopping controls", async () => {
+  const nodes = await source("app/admin/nodes/page.tsx");
+
+  assert.match(nodes, /启用 UDP 端口跳跃/);
+  assert.match(nodes, /portHoppingStart/);
+  assert.match(nodes, /portHoppingEnd/);
+  assert.match(nodes, /portHoppingIntervalSeconds/);
+  assert.match(nodes, /min=\{1\}[\s\S]*max=\{65534\}/);
+  assert.match(nodes, /min=\{2\}[\s\S]*max=\{65535\}/);
+  assert.match(nodes, /min=\{5\}[\s\S]*max=\{300\}/);
+  assert.match(nodes, /nodeForm\.protocol === "hysteria2"/);
+});
+
 test("admin navigation is grouped and nodes expose monthly traffic protection", async () => {
   const [copy, sidebar, nodes] = await Promise.all([
     source("lib/copy.ts"),
