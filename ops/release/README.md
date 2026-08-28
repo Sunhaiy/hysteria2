@@ -58,7 +58,9 @@ bash ops/release/control-plane-preflight.sh
 ```
 
 The preflight compares the private inventory with the production database and
-fails if a managed node is missing, extra, or has mismatched Agent credentials.
+decrypts Agent credentials at rest before comparison. It fails if a current
+managed node is missing, extra, or has mismatched Agent credentials. Retired
+nodes are deliberately excluded and must not remain in the private inventory.
 It then requires healthy API/Web endpoints, completed Prisma migrations,
 reachable Agent status endpoints in their declared state, a non-empty
 subscription, and active control plane units. It records every remote service

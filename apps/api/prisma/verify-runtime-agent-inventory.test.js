@@ -1,8 +1,10 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const { createCipheriv } = require('node:crypto');
 const test = require('node:test');
 const {
+  createSecretDecryptor,
   parseInventory,
   runtimeTarget,
   verifyCoverage,
@@ -16,6 +18,22 @@ const vlessNode = {
   controlApiBaseUrl: null,
   controlApiSecret: null,
 };
+
+function encryptFixture(value, key) {
+  const iv = Buffer.alloc(12, 1);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([
+    cipher.update(value, 'utf8'),
+    cipher.final(),
+  ]);
+  return [
+    'enc',
+    'v1',
+    iv.toString('base64url'),
+    cipher.getAuthTag().toString('base64url'),
+    encrypted.toString('base64url'),
+  ].join(':');
+}
 
 test('uses the VLESS traffic Agent for runtime control', () => {
   assert.deepEqual(runtimeTarget(vlessNode), {
@@ -65,4 +83,36 @@ test('rejects mismatched secrets and stale inventory rows', () => {
     'node_old|http://10.0.0.9:9010|secret|xray|inactive\n',
   );
   assert.throws(() => verifyCoverage([], stale), /unknown node node_old/);
+});
+
+test('decrypts database Agent secrets before inventory comparison', () => {
+  const key = Buffer.alloc(32, 7);
+  const decrypt = createSecretDecryptor(key.toString('base64'));
+  const entries = parseInventory(
+    'node_us_reality|http://10.0.0.8:9010|traffic-secret|xray|active\n',
+  );
+
+  assert.equal(
+    verifyCoverage(
+      [
+        {
+          ...vlessNode,
+          trafficApiSecret: encryptFixture('traffic-secret', key),
+        },
+      ],
+      entries,
+      decrypt,
+    ),
+    1,
+  );
+});
+
+test('does not require retired nodes in the runtime inventory', () => {
+  assert.equal(
+    verifyCoverage(
+      [{ ...vlessNode, retiredAt: new Date('2026-08-27T00:00:00Z') }],
+      new Map(),
+    ),
+    0,
+  );
 });

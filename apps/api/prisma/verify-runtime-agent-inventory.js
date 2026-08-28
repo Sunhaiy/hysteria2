@@ -2,12 +2,45 @@
 'use strict';
 
 const fs = require('node:fs');
+const { createDecipheriv } = require('node:crypto');
 const path = require('node:path');
 const dotenv = require('dotenv');
 const { PrismaClient } = require('@prisma/client');
 
+const encryptedSecretPrefix = 'enc:v1:';
+
 function normalizedUrl(value) {
   return value.trim().replace(/\/+$/, '');
+}
+
+function createSecretDecryptor(encodedKey) {
+  const trimmedKey = encodedKey?.trim();
+  const key = trimmedKey ? Buffer.from(trimmedKey, 'base64') : null;
+  if (key && key.length !== 32) {
+    throw new Error('SETTINGS_ENCRYPTION_KEY must be 32 bytes in base64');
+  }
+  return (value) => {
+    if (!value || !value.startsWith(encryptedSecretPrefix)) return value;
+    if (!key) {
+      throw new Error(
+        'SETTINGS_ENCRYPTION_KEY is required to verify encrypted Agent secrets',
+      );
+    }
+    const [, , ivValue, tagValue, encryptedValue] = value.split(':');
+    if (!ivValue || !tagValue || !encryptedValue) {
+      throw new Error('Encrypted Agent secret has an invalid format');
+    }
+    const decipher = createDecipheriv(
+      'aes-256-gcm',
+      key,
+      Buffer.from(ivValue, 'base64url'),
+    );
+    decipher.setAuthTag(Buffer.from(tagValue, 'base64url'));
+    return Buffer.concat([
+      decipher.update(Buffer.from(encryptedValue, 'base64url')),
+      decipher.final(),
+    ]).toString('utf8');
+  };
 }
 
 function parseInventory(contents) {
@@ -51,38 +84,39 @@ function parseInventory(contents) {
   return entries;
 }
 
-function runtimeTarget(node) {
+function runtimeTarget(node, decryptSecret = (value) => value) {
+  if (node.retiredAt) return null;
   const controlUrl = node.controlApiBaseUrl?.trim() ?? '';
-  const controlSecret = node.controlApiSecret?.trim() ?? '';
-  if (Boolean(controlUrl) !== Boolean(controlSecret)) {
+  const storedControlSecret = node.controlApiSecret?.trim() ?? '';
+  if (Boolean(controlUrl) !== Boolean(storedControlSecret)) {
     throw new Error(`Node ${node.id} has incomplete runtime Agent credentials`);
   }
-  if (controlUrl && controlSecret) {
+  if (controlUrl && storedControlSecret) {
     return {
       baseUrl: normalizedUrl(controlUrl),
-      secret: controlSecret,
+      secret: decryptSecret(storedControlSecret),
       service: node.protocol === 'VLESS_REALITY' ? 'xray' : 'hysteria2',
     };
   }
   if (node.protocol === 'VLESS_REALITY') {
     const trafficUrl = node.trafficApiBaseUrl?.trim() ?? '';
-    const trafficSecret = node.trafficApiSecret?.trim() ?? '';
-    if (!trafficUrl || !trafficSecret) {
+    const storedTrafficSecret = node.trafficApiSecret?.trim() ?? '';
+    if (!trafficUrl || !storedTrafficSecret) {
       throw new Error(`VLESS node ${node.id} is missing its Agent credentials`);
     }
     return {
       baseUrl: normalizedUrl(trafficUrl),
-      secret: trafficSecret,
+      secret: decryptSecret(storedTrafficSecret),
       service: 'xray',
     };
   }
   return null;
 }
 
-function verifyCoverage(nodes, entries) {
+function verifyCoverage(nodes, entries, decryptSecret) {
   const managedNodeIds = new Set();
   for (const node of nodes) {
-    const target = runtimeTarget(node);
+    const target = runtimeTarget(node, decryptSecret);
     if (!target) continue;
     managedNodeIds.add(node.id);
     const entry = entries.get(node.id);
@@ -125,11 +159,16 @@ async function main() {
 
   dotenv.config({ path: path.resolve(__dirname, '..', '.env'), quiet: true });
   const entries = parseInventory(fs.readFileSync(resolvedPath, 'utf8'));
+  const decryptSecret = createSecretDecryptor(
+    process.env.SETTINGS_ENCRYPTION_KEY,
+  );
   const prisma = new PrismaClient();
   try {
     const nodes = await prisma.node.findMany({
+      where: { retiredAt: null },
       select: {
         id: true,
+        retiredAt: true,
         protocol: true,
         trafficApiBaseUrl: true,
         trafficApiSecret: true,
@@ -137,7 +176,7 @@ async function main() {
         controlApiSecret: true,
       },
     });
-    const count = verifyCoverage(nodes, entries);
+    const count = verifyCoverage(nodes, entries, decryptSecret);
     process.stdout.write(
       `Runtime Agent inventory covers all ${count} managed node(s).\n`,
     );
@@ -154,6 +193,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  createSecretDecryptor,
   normalizedUrl,
   parseInventory,
   runtimeTarget,

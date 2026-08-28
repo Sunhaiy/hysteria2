@@ -30,6 +30,7 @@ would also couple page latency to a node and make retries unsafe.
   disconnects them and requires explicit confirmation.
 - Hysteria2 endpoints using a native statistics API need a separate control
   agent URL and secret.
-- A release is blocked until every managed agent exposes the status endpoint.
+- A release is blocked until every non-retired managed agent exposes the status
+  endpoint. Retired nodes are excluded from the runtime inventory.
 - Production smoke tests are allowed only on a dedicated endpoint whose initial
   runtime state is inactive.
