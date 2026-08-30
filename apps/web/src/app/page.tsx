@@ -1,207 +1,356 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { BrandLogo } from "@/components/brand-logo";
 import { HeroGlobe } from "@/components/hero-globe";
 import { Icon } from "@/components/icon";
 import { useSite } from "@/components/site-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { apiRequest } from "@/lib/api";
+import { sortCatalogProductsByPrice } from "@/lib/catalog-sort";
+import { formatSpeedLimit, formatTrafficLimit } from "@/lib/format";
 
-const PILLS = [
-  { icon: "bolt", title: "高速稳定", copy: "优质线路，极速体验" },
-  { icon: "shield", title: "隐私安全", copy: "强加密保护，安全无忧" },
-  { icon: "globe", title: "全球节点", copy: "多地区线路自由选择" },
+type PublicOffer = {
+  id: string;
+  name: string;
+  billingPeriod: "monthly" | "quarterly" | "yearly" | "legacy";
+  intervalMonths: number | null;
+  legacyDurationDays: number | null;
+  trafficBytes: number;
+  priceCents: number;
+  currency: string;
+  active: boolean;
+  isDefault: boolean;
+  archivedAt: string | null;
+};
+
+type PublicProduct = {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  accent?: string | null;
+  featured: boolean;
+  purchaseLimitPerUser?: number | null;
+  trafficReset: "monthly" | "never";
+  access: {
+    speedUpMbps: number;
+    speedDownMbps: number;
+    deviceLimit: number;
+    availableServerCount: number;
+  };
+  offers: PublicOffer[];
+};
+
+type PublicCatalog = { products: PublicProduct[] };
+
+const CAPABILITIES = [
+  {
+    icon: "shield",
+    title: "稳定接入",
+    copy: "多线路自动切换，连接状态持续可用",
+  },
+  {
+    icon: "plug",
+    title: "双订阅支持",
+    copy: "Clash 与 v2rayN 订阅同步更新",
+  },
+  {
+    icon: "globe",
+    title: "全球线路",
+    copy: "多地区节点按优先级灵活选择",
+  },
 ];
 
-const TRUST = ["AES-256 加密", "无日志政策", "多平台支持", "7×24 自助"];
+function primaryOffer(product: PublicProduct) {
+  return (
+    product.offers.find((offer) => offer.billingPeriod === "monthly") ??
+    product.offers.find((offer) => offer.isDefault) ??
+    product.offers[0]
+  );
+}
 
-const FEATURES = [
-  { icon: "bolt", title: "秒级自助开通", copy: "余额钱包 + CDK 兑换，付款即到账，套餐立即生效。" },
-  { icon: "plug", title: "多协议原生接入", copy: "支持 Hysteria 2 与 VLESS + REALITY，一键复制 URI、扫码或订阅导入。" },
-  { icon: "puzzle", title: "灵活套餐组合", copy: "限速/不限速、周期流量自由搭配，多设备直接接入。" },
-  { icon: "lock", title: "安全鉴权", copy: "会话可即时吊销、登录限流防撞库，账号更安心。" },
-  { icon: "key", title: "多种登录方式", copy: "邮箱验证码注册，支持 Google、GitHub 一键登录。" },
-  { icon: "monitoring", title: "实时流量统计", copy: "用量日志、活跃连接、到期与余额一目了然。" },
-];
+function offerPeriod(offer: PublicOffer) {
+  if (offer.billingPeriod === "legacy") {
+    return `${offer.legacyDurationDays ?? "-"} 天`;
+  }
+  if (offer.billingPeriod === "monthly") return "月";
+  return `${offer.intervalMonths ?? "-"} 个月`;
+}
 
-const STEPS = [
-  { n: "01", title: "注册账号", copy: "邮箱验证码或第三方账号，30 秒完成。" },
-  { n: "02", title: "充值 / 兑换", copy: "余额充值或输入 CDK 卡密，立即到账。" },
-  { n: "03", title: "选择套餐", copy: "挑选合适套餐自助开通，立即生效。" },
-  { n: "04", title: "连接即用", copy: "复制接入信息导入客户端，畅享高速。" },
-];
+function priceParts(priceCents: number) {
+  const [whole, fraction] = (priceCents / 100).toFixed(2).split(".");
+  return { whole, fraction };
+}
 
 export default function HomePage() {
   const site = useSite();
+  const [catalog, setCatalog] = useState<PublicCatalog>({ products: [] });
+  const [catalogState, setCatalogState] = useState<
+    "loading" | "ready" | "error"
+  >("loading");
 
   useEffect(() => {
-    const els = document.querySelectorAll<HTMLElement>(".reveal");
-    const io = new IntersectionObserver(
+    const controller = new AbortController();
+    void apiRequest<PublicCatalog>("/api/catalog", {
+      signal: controller.signal,
+    })
+      .then((result) => {
+        setCatalog(result);
+        setCatalogState("ready");
+      })
+      .catch((cause: unknown) => {
+        if (cause instanceof DOMException && cause.name === "AbortError")
+          return;
+        setCatalogState("error");
+      });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const elements = document.querySelectorAll<HTMLElement>(".home-reveal");
+    const observer = new IntersectionObserver(
       (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add("in");
-            io.unobserve(entry.target);
-          }
-        });
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          entry.target.classList.add("is-visible");
+          observer.unobserve(entry.target);
+        }
       },
       { threshold: 0.12 },
     );
-    els.forEach((el) => io.observe(el));
-    return () => io.disconnect();
-  }, []);
+    elements.forEach((element) => observer.observe(element));
+    return () => observer.disconnect();
+  }, [catalogState]);
+
+  const products = useMemo(
+    () => sortCatalogProductsByPrice(catalog.products).slice(0, 6),
+    [catalog.products],
+  );
 
   return (
-    <main className="lp">
-      <header className="lp-nav">
-        <div className="lp-brand">
-          <span className="lp-logo" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="22" height="22">
-              <path d="M4 5h4l4 9 4-9h4l-6 14h-4z" fill="var(--accent-500)" />
-            </svg>
-          </span>
-          <span>{site.name}</span>
-          <span className="lp-brand-tag">VPN</span>
-        </div>
-        <nav className="lp-nav-links">
-          <Link className="lp-nav-login" href="/login">
-            <Icon name="login" />
-            <span>登录</span>
-          </Link>
-          <ThemeToggle className="lp-icon-btn" />
-          <Link className="lp-btn lp-btn-primary" href="/register">
-            立即使用
-          </Link>
+    <main className="home">
+      <header className="home-header">
+        <Link
+          className="home-header-brand"
+          href="/"
+          aria-label={`${site.name} 首页`}
+        >
+          <BrandLogo />
+        </Link>
+        <nav className="home-nav" aria-label="首页导航">
+          <a href="#top">首页</a>
+          <a href="#capabilities">服务能力</a>
+          <a href="#plans">套餐</a>
         </nav>
+        <div className="home-header-actions">
+          <ThemeToggle className="home-icon-button" />
+          <Link className="home-login" href="/login">
+            登录
+          </Link>
+          <Link
+            className="home-button home-button-primary home-header-cta"
+            href="/register"
+          >
+            注册
+          </Link>
+        </div>
       </header>
 
-      <section id="top" className="lp-hero">
-        <div className="lp-hero-text">
-          <h1 className="lp-hero-title reveal">
-            自由连接
-            <br />
-            全球无限可能
-          </h1>
-          <p className="lp-hero-sub reveal">
-            稳定、安全、快速的 {site.name} 服务，保护你的隐私，畅享全球网络。
-          </p>
-          <div className="lp-hero-cta reveal">
-            <Link className="lp-btn lp-btn-primary lp-btn-lg" href="/register">
-              立即体验 <span aria-hidden="true">›</span>
-            </Link>
-            <Link className="lp-btn lp-btn-ghost lp-btn-lg" href="/portal">
-              查看套餐
-            </Link>
-          </div>
-          <div className="lp-pills reveal">
-            {PILLS.map((p) => (
-              <div key={p.title} className="lp-pill">
-                <span className="lp-pill-icon"><Icon name={p.icon} /></span>
-                <div>
-                  <div className="lp-pill-title">{p.title}</div>
-                  <div className="lp-pill-copy">{p.copy}</div>
-                </div>
-              </div>
-            ))}
-          </div>
+      <section id="top" className="home-hero">
+        <div className="home-hero-scene" aria-hidden="true">
+          <HeroGlobe className="home-globe-art" />
+          <span className="home-orbit-label home-orbit-label-one">US</span>
+          <span className="home-orbit-label home-orbit-label-two">JP</span>
+          <span className="home-orbit-label home-orbit-label-three">HK</span>
         </div>
-
-        <div className="lp-hero-visual reveal">
-          <HeroGlobe />
-          <div className="lp-card lp-card-status">
-            <div className="lp-card-row">
-              <span className="lp-card-label">已连接</span>
-              <span className="lp-dot-online" />
+        <div className="home-hero-inner">
+          <div className="home-hero-copy">
+            <div className="home-live-label home-reveal">
+              <span aria-hidden="true" />
+              全球网络服务中
             </div>
-            <div className="lp-card-time">00:12:36</div>
-            <div className="lp-bars">
-              <span /><span /><span /><span />
+            <h1 className="home-hero-title home-reveal">
+              欢迎来到
+              <br />
+              <strong>{site.name}</strong>
+            </h1>
+            <p className="home-hero-description home-reveal">
+              为日常浏览、学习与工作提供稳定、安全的全球网络连接，
+              在不同设备之间保持一致体验。
+            </p>
+            <div className="home-hero-actions home-reveal">
+              <Link
+                className="home-button home-button-primary home-button-large"
+                href="/register"
+              >
+                开始使用
+                <Icon name="arrow_forward" />
+              </Link>
+              <a
+                className="home-button home-button-secondary home-button-large"
+                href="#plans"
+              >
+                查看套餐
+              </a>
             </div>
-          </div>
-          <div className="lp-card lp-card-speed">
-            <div className="lp-card-label">连接速度</div>
-            <div className="lp-card-speed-value">120 Mbps</div>
-            <svg className="lp-spark" viewBox="0 0 100 28" preserveAspectRatio="none">
-              <polyline points="0,22 18,18 34,20 52,9 70,13 86,5 100,7" fill="none" stroke="var(--accent-500)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </div>
-          <div className="lp-card lp-card-node">
-            <div className="lp-card-label">节点位置</div>
-            <div className="lp-card-node-row">
-              <span>📍 美国 · cn2</span>
-              <span className="lp-chev">⌄</span>
+            <div
+              className="home-protocols home-reveal"
+              aria-label="支持的协议与客户端"
+            >
+              <span>Hysteria 2</span>
+              <span>VLESS Reality</span>
+              <span>Clash</span>
+              <span>v2rayN</span>
             </div>
           </div>
         </div>
       </section>
 
-      <div className="lp-trust">
-        <span className="lp-trust-lead">值得信赖的 {site.name} 服务</span>
-        {TRUST.map((t) => (
-          <span key={t} className="lp-trust-item">
-            {t}
-          </span>
-        ))}
-      </div>
-
-      <section id="features" className="lp-section">
-        <span className="lp-eyebrow reveal">为什么选择 {site.name}</span>
-        <h2 className="lp-section-title reveal">一站式会员与流量管理</h2>
-        <div className="lp-feature-grid">
-          {FEATURES.map((f, i) => (
-            <article
-              key={f.title}
-              className="lp-feature reveal"
-              style={{ transitionDelay: `${(i % 3) * 80}ms` }}
-            >
-              <div className="lp-feature-icon"><Icon name={f.icon} /></div>
-              <h3 className="lp-feature-title">{f.title}</h3>
-              <p className="lp-feature-copy">{f.copy}</p>
+      <section
+        id="capabilities"
+        className="home-capabilities"
+        aria-label="服务能力"
+      >
+        <div className="home-capabilities-inner">
+          {CAPABILITIES.map((item) => (
+            <article className="home-capability home-reveal" key={item.title}>
+              <span className="home-capability-icon">
+                <Icon name={item.icon} />
+              </span>
+              <div>
+                <h2>{item.title}</h2>
+                <p>{item.copy}</p>
+              </div>
             </article>
           ))}
         </div>
       </section>
 
-      <section id="how" className="lp-section">
-        <span className="lp-eyebrow reveal">使用流程</span>
-        <h2 className="lp-section-title reveal">四步开始畅连</h2>
-        <div className="lp-steps">
-          {STEPS.map((s, i) => (
-            <div
-              key={s.n}
-              className="lp-step reveal"
-              style={{ transitionDelay: `${i * 80}ms` }}
-            >
-              <div className="lp-step-n">{s.n}</div>
-              <h3 className="lp-step-title">{s.title}</h3>
-              <p className="lp-step-copy">{s.copy}</p>
-            </div>
-          ))}
+      <section id="plans" className="home-plans">
+        <div className="home-section-heading home-reveal">
+          <span>灵活选择</span>
+          <h2>选择适合你的套餐</h2>
+          <p>从轻量体验到高流量需求，每个档位都保持清晰透明。</p>
+        </div>
+
+        {catalogState === "loading" ? (
+          <div className="home-plan-grid" aria-label="套餐加载中">
+            {Array.from({ length: 6 }, (_, index) => (
+              <div className="home-plan-card home-plan-skeleton" key={index} />
+            ))}
+          </div>
+        ) : null}
+
+        {catalogState === "error" ? (
+          <div className="home-catalog-state">
+            <Icon name="warning" />
+            <span>套餐暂时无法加载，请登录后在用户中心查看。</span>
+            <Link href="/login">进入用户中心</Link>
+          </div>
+        ) : null}
+
+        {catalogState === "ready" && products.length ? (
+          <div className="home-plan-grid">
+            {products.map((product, index) => {
+              const offer = primaryOffer(product);
+              if (!offer) return null;
+              const price = priceParts(offer.priceCents);
+              const highlighted =
+                product.featured || product.name.toLowerCase() === "pro";
+              return (
+                <article
+                  className={`home-plan-card home-reveal${highlighted ? " is-featured" : ""}`}
+                  key={product.id}
+                  style={{ transitionDelay: `${(index % 3) * 70}ms` }}
+                >
+                  <div className="home-plan-head">
+                    <div className="home-plan-labels">
+                      <span className="home-plan-index">0{index + 1}</span>
+                      {highlighted ? (
+                        <span className="home-plan-badge">推荐</span>
+                      ) : null}
+                      {product.purchaseLimitPerUser ? (
+                        <span className="home-plan-limit">每账号限购一次</span>
+                      ) : null}
+                    </div>
+                    <h3>{product.name}</h3>
+                    <p>{product.description || "稳定线路与实时订阅更新"}</p>
+                  </div>
+                  <div className="home-plan-specs">
+                    <span>
+                      <small>每月流量</small>
+                      <strong>{formatTrafficLimit(offer.trafficBytes)}</strong>
+                    </span>
+                    <span>
+                      <small>连接速率</small>
+                      <strong>
+                        {formatSpeedLimit(
+                          Math.max(
+                            product.access.speedUpMbps,
+                            product.access.speedDownMbps,
+                          ),
+                        )}
+                      </strong>
+                    </span>
+                    <span>
+                      <small>可用线路</small>
+                      <strong>
+                        {product.access.availableServerCount || "多"} 台
+                      </strong>
+                    </span>
+                  </div>
+                  <div className="home-plan-price">
+                    <span className="home-plan-currency">¥</span>
+                    <strong>{price.whole}</strong>
+                    <span className="home-plan-fraction">
+                      .{price.fraction}
+                    </span>
+                    <small>/ {offerPeriod(offer)}</small>
+                  </div>
+                  <Link className="home-plan-action" href="/register">
+                    选择此套餐
+                    <Icon name="arrow_forward" />
+                  </Link>
+                </article>
+              );
+            })}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="home-connect">
+        <div className="home-connect-visual" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+          <span />
+          <span />
+        </div>
+        <div className="home-connect-content home-reveal">
+          <span className="home-connect-kicker">保持连接</span>
+          <h2>一次订阅，随处使用</h2>
+          <p>订阅持续更新可用线路，在电脑和手机之间保持相同的连接入口。</p>
+          <Link
+            className="home-button home-button-light home-button-large"
+            href="/register"
+          >
+            创建账户
+            <Icon name="arrow_forward" />
+          </Link>
         </div>
       </section>
 
-      <section className="lp-cta reveal">
-        <h2 className="lp-cta-title">准备好开始了吗？</h2>
-        <p className="lp-cta-copy">现在注册，几分钟内即可拥有属于你的高速连接。</p>
-        <div className="lp-hero-cta">
-          <Link className="lp-btn lp-btn-primary lp-btn-lg" href="/register">
-            免费注册
-          </Link>
-          <Link className="lp-btn lp-btn-ghost lp-btn-lg" href="/portal">
-            进入用户中心
-          </Link>
-        </div>
-      </section>
-
-      <footer className="lp-footer">
-        <span className="lp-brand">{site.name}</span>
-        <div className="lp-footer-links">
+      <footer className="home-footer">
+        <BrandLogo />
+        <div className="home-footer-links">
           <Link href="/login">登录</Link>
           <Link href="/register">注册</Link>
           <Link href="/portal">用户中心</Link>
         </div>
-        <span className="lp-footer-note">
-          © {new Date().getFullYear()} {site.name} · Powered by Hysteria 2
+        <span>
+          © {new Date().getFullYear()} {site.name}
         </span>
       </footer>
     </main>

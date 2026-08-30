@@ -6,9 +6,9 @@ import {
 } from '@nestjs/common';
 import {
   BillingPeriod,
-  CatalogProductKind,
   EntitlementGrantKind,
   EntitlementGrantStatus,
+  OrderKind,
   Prisma,
   QuotaBucketKind,
   QuotaAdjustmentMode,
@@ -47,7 +47,64 @@ export class EntitlementService {
     }
     const account = await this.ensureAccessAccount(order.userId, client);
     const product = order.catalogOffer.product;
-    const accessProfileId = product.accessProfileId;
+    let accessProfileId =
+      order.accessProfileIdSnapshot ?? product.accessProfileId;
+    let speedUpMbps = order.speedUpMbpsSnapshot ?? product.speedUpMbps;
+    let speedDownMbps = order.speedDownMbpsSnapshot ?? product.speedDownMbps;
+    let deviceLimit = order.deviceLimitSnapshot;
+    const kind =
+      order.kind === OrderKind.TRAFFIC_PACK
+        ? EntitlementGrantKind.TRAFFIC_PACK
+        : EntitlementGrantKind.PLAN;
+    const requiresActivePlan =
+      order.requiresActivePlanSnapshot ?? product.requiresActivePlan;
+    if (kind === EntitlementGrantKind.TRAFFIC_PACK && requiresActivePlan) {
+      const now = order.processedAt ?? order.createdAt;
+      const activePlanGrant = await client.entitlementGrant.findFirst({
+        where: {
+          userId: order.userId,
+          kind: EntitlementGrantKind.PLAN,
+          status: EntitlementGrantStatus.ACTIVE,
+          startsAt: { lte: now },
+          endsAt: { gt: now },
+        },
+        orderBy: { endsAt: 'desc' },
+      });
+      const activeLegacyPlan = activePlanGrant
+        ? null
+        : await client.subscription.findFirst({
+            where: {
+              userId: order.userId,
+              status: SubscriptionStatus.ACTIVE,
+              startsAt: { lte: now },
+              endsAt: { gt: now },
+            },
+            include: {
+              plan: { include: { catalogProduct: true } },
+            },
+            orderBy: { endsAt: 'desc' },
+          });
+      const legacyAccessProfileId =
+        activeLegacyPlan?.plan.accessProfileId ??
+        activeLegacyPlan?.plan.catalogProduct?.accessProfileId;
+      if (!activePlanGrant && (!activeLegacyPlan || !legacyAccessProfileId)) {
+        throw new BadRequestException(
+          'An active plan entitlement is required for this traffic pack',
+        );
+      }
+      accessProfileId = activePlanGrant
+        ? activePlanGrant.accessProfileId
+        : legacyAccessProfileId!;
+      speedUpMbps = activePlanGrant
+        ? activePlanGrant.speedUpMbpsSnapshot
+        : activeLegacyPlan!.speedUpMbpsSnapshot;
+      speedDownMbps = activePlanGrant
+        ? activePlanGrant.speedDownMbpsSnapshot
+        : activeLegacyPlan!.speedDownMbpsSnapshot;
+      deviceLimit = activePlanGrant
+        ? activePlanGrant.deviceLimitSnapshot
+        : activeLegacyPlan!.deviceLimitSnapshot;
+    }
     if (!accessProfileId) {
       throw new BadRequestException(
         'Catalog product access profile is missing',
@@ -56,20 +113,17 @@ export class EntitlementService {
     const profile = await client.accessProfile.findUniqueOrThrow({
       where: { id: accessProfileId },
     });
-    if (product.kind === CatalogProductKind.PLAN) {
+    if (kind === EntitlementGrantKind.PLAN) {
       await client.accessAccount.update({
         where: { id: account.id },
         data: {
           trafficMultiplierBasisPoints:
+            order.trafficMultiplierBasisPointsSnapshot ??
             product.defaultTrafficMultiplierBasisPoints,
         },
       });
     }
     const startsAt = order.processedAt ?? order.createdAt;
-    const kind =
-      product.kind === CatalogProductKind.PLAN
-        ? EntitlementGrantKind.PLAN
-        : EntitlementGrantKind.TRAFFIC_PACK;
 
     if (kind === EntitlementGrantKind.PLAN) {
       await client.entitlementGrant.updateMany({
@@ -103,9 +157,9 @@ export class EntitlementService {
             status: EntitlementGrantStatus.ACTIVE,
             endsAt: order.entitlementExpiresAt,
             accessProfileId,
-            speedUpMbpsSnapshot: product.speedUpMbps,
-            speedDownMbpsSnapshot: product.speedDownMbps,
-            deviceLimitSnapshot: profile.deviceLimit,
+            speedUpMbpsSnapshot: speedUpMbps,
+            speedDownMbpsSnapshot: speedDownMbps,
+            deviceLimitSnapshot: deviceLimit ?? profile.deviceLimit,
           },
         })
       : await client.entitlementGrant.create({
@@ -120,9 +174,9 @@ export class EntitlementService {
             startsAt,
             endsAt: order.entitlementExpiresAt,
             accessProfileId,
-            speedUpMbpsSnapshot: product.speedUpMbps,
-            speedDownMbpsSnapshot: product.speedDownMbps,
-            deviceLimitSnapshot: profile.deviceLimit,
+            speedUpMbpsSnapshot: speedUpMbps,
+            speedDownMbpsSnapshot: speedDownMbps,
+            deviceLimitSnapshot: deviceLimit ?? profile.deviceLimit,
           },
         });
     const bounds =
@@ -145,7 +199,7 @@ export class EntitlementService {
             : QuotaBucketKind.TRAFFIC_PACK,
         startsAt: bounds.startsAt,
         endsAt: bounds.endsAt,
-        grantedBytes: order.catalogOffer.trafficBytes,
+        grantedBytes: order.trafficBytes ?? order.catalogOffer.trafficBytes,
       },
       update: { endsAt: bounds.endsAt },
     });
@@ -182,16 +236,45 @@ export class EntitlementService {
       },
       orderBy: { endsAt: 'asc' },
     });
-    const usable = grants.filter((grant) =>
-      grant.quotaBuckets.some(
-        (bucket) => bucket.grantedBytes > bucket.consumedBytes,
-      ),
+    const activePlanGrants = grants.filter(
+      (grant) => grant.kind === EntitlementGrantKind.PLAN,
     );
+    const needsLegacyPlan =
+      activePlanGrants.length === 0 &&
+      grants.some((grant) => grant.product.requiresActivePlan);
+    const hasLegacyPlan =
+      needsLegacyPlan &&
+      (await this.prisma.subscription.count({
+        where: {
+          userId,
+          status: SubscriptionStatus.ACTIVE,
+          startsAt: { lte: now },
+          endsAt: { gt: now },
+        },
+      })) > 0;
+    const usable = grants.filter(
+      (grant) =>
+        (!grant.product.requiresActivePlan ||
+          activePlanGrants.length > 0 ||
+          hasLegacyPlan) &&
+        grant.quotaBuckets.some(
+          (bucket) => bucket.grantedBytes > bucket.consumedBytes,
+        ),
+    );
+    const accessSources = [
+      ...activePlanGrants,
+      ...usable.filter(
+        (grant) =>
+          grant.kind !== EntitlementGrantKind.PLAN &&
+          (!grant.product.requiresActivePlan ||
+            (activePlanGrants.length === 0 && hasLegacyPlan)),
+      ),
+    ];
     const nodes = new Map<
       string,
       { id: string; label: string; priority: number; region: string | null }
     >();
-    for (const grant of usable) {
+    for (const grant of accessSources) {
       for (const binding of grant.accessProfile.nodeBindings) {
         if (!binding.node.active || binding.node.lifecycleStatus !== 'ACTIVE') {
           continue;
@@ -224,13 +307,13 @@ export class EntitlementService {
       allowed: true,
       reason: 'ok' as const,
       speedUpMbps: Math.max(
-        ...usable.map((grant) => grant.speedUpMbpsSnapshot),
+        ...accessSources.map((grant) => grant.speedUpMbpsSnapshot),
       ),
       speedDownMbps: Math.max(
-        ...usable.map((grant) => grant.speedDownMbpsSnapshot),
+        ...accessSources.map((grant) => grant.speedDownMbpsSnapshot),
       ),
       deviceLimit: Math.max(
-        ...usable.map((grant) => grant.deviceLimitSnapshot),
+        ...accessSources.map((grant) => grant.deviceLimitSnapshot),
       ),
       remainingBytes: Number(
         usable
@@ -744,14 +827,53 @@ export class EntitlementService {
       },
       include: {
         grant: {
-          select: { legacySubscriptionId: true, legacyTrafficPackId: true },
+          select: {
+            kind: true,
+            legacySubscriptionId: true,
+            legacyTrafficPackId: true,
+            product: { select: { requiresActivePlan: true } },
+          },
         },
       },
       orderBy: [{ endsAt: 'asc' }, { createdAt: 'asc' }],
     });
-    const usableV2Buckets = v2Buckets.filter(
-      (bucket) => bucket.grantedBytes > bucket.consumedBytes,
+    const hasPlanDependentBucket = v2Buckets.some(
+      (bucket) => bucket.grant.product?.requiresActivePlan,
     );
+    const hasActivePlanAt =
+      !hasPlanDependentBucket ||
+      (await tx.entitlementGrant.count({
+        where: {
+          accessAccountId: account.id,
+          kind: EntitlementGrantKind.PLAN,
+          status: EntitlementGrantStatus.ACTIVE,
+          startsAt: { lte: bucketStart },
+          endsAt: { gt: bucketStart },
+        },
+      })) > 0 ||
+      (await tx.subscription.count({
+        where: {
+          accessAccountId: account.id,
+          status: SubscriptionStatus.ACTIVE,
+          startsAt: { lte: bucketStart },
+          endsAt: { gt: bucketStart },
+        },
+      })) > 0;
+    const usableV2Buckets = v2Buckets
+      .filter(
+        (bucket) =>
+          bucket.grantedBytes > bucket.consumedBytes &&
+          (!bucket.grant.product?.requiresActivePlan || hasActivePlanAt),
+      )
+      .sort((left, right) => {
+        const leftPlan = left.grant.kind === EntitlementGrantKind.PLAN;
+        const rightPlan = right.grant.kind === EntitlementGrantKind.PLAN;
+        if (leftPlan !== rightPlan) return leftPlan ? -1 : 1;
+        return (
+          left.endsAt.getTime() - right.endsAt.getTime() ||
+          left.createdAt.getTime() - right.createdAt.getTime()
+        );
+      });
     if (usableV2Buckets.length > 0) {
       const allocations: Array<{
         quotaBucketId: string;

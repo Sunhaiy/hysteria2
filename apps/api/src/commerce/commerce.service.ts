@@ -23,6 +23,11 @@ import { ControlPlaneStoreService } from '../domain/control-plane.store';
 import { PrismaService } from '../prisma/prisma.service';
 import { EntitlementService } from '../entitlement/entitlement.service';
 import { ReferralService } from '../referrals/referral.service';
+import {
+  assertCatalogPurchaseEligibility,
+  assertCatalogPurchaseLimit,
+} from './purchase-eligibility';
+import { parseCatalogOfferSnapshot } from './catalog-offer-snapshot';
 
 export type CheckoutInput =
   | { offerId: string; discountCode?: string }
@@ -37,6 +42,18 @@ export interface CheckoutResult {
   productName?: string;
   chargedCents?: number;
   entitlementExpiresAt?: string;
+}
+
+export interface EpaySettlementInput {
+  attemptId: string;
+  userId: string;
+  offerId: string;
+  merchantOrderNo: string;
+  gatewayTradeNo: string;
+  amountCents: number;
+  basePriceCents: number;
+  entitlementSnapshot: Prisma.JsonValue | null;
+  paidAt: Date;
 }
 
 @Injectable()
@@ -56,6 +73,13 @@ export class CommerceService {
     }
 
     const product = await this.resolveQuoteProduct(input);
+    if (product.purchaseRules) {
+      await assertCatalogPurchaseEligibility(
+        this.prisma,
+        userId,
+        product.purchaseRules,
+      );
+    }
 
     const discount = input.discountCode
       ? await this.previewDiscount(
@@ -236,6 +260,40 @@ export class CommerceService {
         );
       },
       { isolationLevel: 'Serializable' },
+    );
+  }
+
+  async fulfillEpayPayment(
+    tx: Prisma.TransactionClient,
+    input: EpaySettlementInput,
+  ) {
+    const idempotencyKey = `epay:${input.merchantOrderNo}`;
+    const existing = await tx.manualOrder.findUnique({
+      where: {
+        userId_idempotencyKey: {
+          userId: input.userId,
+          idempotencyKey,
+        },
+      },
+    });
+    if (existing) {
+      return this.replayCheckout(existing, { offerId: input.offerId });
+    }
+    return this.createOfferCheckout(
+      tx,
+      input.userId,
+      { offerId: input.offerId },
+      idempotencyKey,
+      {
+        externalPayment: {
+          attemptId: input.attemptId,
+          gatewayTradeNo: input.gatewayTradeNo,
+          amountCents: input.amountCents,
+          basePriceCents: input.basePriceCents,
+          entitlementSnapshot: input.entitlementSnapshot,
+          paidAt: input.paidAt,
+        },
+      },
     );
   }
 
@@ -437,8 +495,22 @@ export class CommerceService {
     userId: string,
     input: Extract<CheckoutInput, { offerId: string }>,
     idempotencyKey: string,
-    options: { complimentary?: boolean; actorId?: string } = {},
+    options: {
+      complimentary?: boolean;
+      actorId?: string;
+      externalPayment?: {
+        attemptId: string;
+        gatewayTradeNo: string;
+        amountCents: number;
+        basePriceCents: number;
+        entitlementSnapshot: Prisma.JsonValue | null;
+        paidAt: Date;
+      };
+    } = {},
   ): Promise<CheckoutResult> {
+    if (options.complimentary && options.externalPayment) {
+      throw new BadRequestException('Checkout payment source is ambiguous');
+    }
     const [user, offer] = await Promise.all([
       tx.user.findUnique({ where: { id: userId } }),
       tx.catalogOffer.findUnique({
@@ -455,45 +527,92 @@ export class CommerceService {
     if (user.status !== UserStatus.ACTIVE) {
       throw new BadRequestException('Account is not active');
     }
-    if (!offer || offer.archivedAt) {
+    if (!offer || (offer.archivedAt && !options.externalPayment)) {
       throw new NotFoundException('Catalog offer not found');
     }
-    const legacyDurationDays =
-      offer.billingPeriod === BillingPeriod.LEGACY
+    const snapshot = options.externalPayment
+      ? parseCatalogOfferSnapshot(options.externalPayment.entitlementSnapshot)
+      : null;
+    if (
+      snapshot &&
+      (snapshot.offerId !== offer.id || snapshot.productId !== offer.product.id)
+    ) {
+      throw new ConflictException('External payment snapshot does not match');
+    }
+    const productKind = snapshot?.productKind ?? offer.product.kind;
+    const billingPeriod = snapshot?.billingPeriod ?? offer.billingPeriod;
+    const intervalMonths = snapshot?.intervalMonths ?? offer.intervalMonths;
+    const legacyDurationDays = snapshot
+      ? snapshot.legacyDurationDays
+      : offer.billingPeriod === BillingPeriod.LEGACY
         ? (offer.legacyPlanOffer?.legacyDurationDays ??
           offer.product.legacyPlan?.durationDays ??
           null)
         : null;
+    const trafficBytes = snapshot
+      ? BigInt(snapshot.trafficBytes)
+      : offer.trafficBytes;
+    const currency = snapshot?.currency ?? offer.currency;
+    const accessProfileId =
+      snapshot?.accessProfileId ?? offer.product.accessProfileId;
+    const accessProfile = snapshot
+      ? await tx.accessProfile.findUnique({
+          where: { id: snapshot.accessProfileId },
+        })
+      : offer.product.accessProfile;
+    const speedUpMbps = snapshot?.speedUpMbps ?? accessProfile?.speedUpMbps;
+    const speedDownMbps =
+      snapshot?.speedDownMbps ?? accessProfile?.speedDownMbps;
+    const deviceLimit = snapshot?.deviceLimit ?? accessProfile?.deviceLimit;
+    const requiresActivePlan =
+      snapshot?.requiresActivePlan ?? offer.product.requiresActivePlan;
+    const legacyPlanId = snapshot?.legacyPlanId ?? offer.product.legacyPlanId;
+    const legacyPlanOfferId =
+      snapshot?.legacyPlanOfferId ?? offer.legacyPlanOfferId;
+    const legacyTrafficPackProductId =
+      snapshot?.legacyTrafficPackProductId ??
+      offer.product.legacyTrafficPackProductId;
     const hasValidDuration =
-      offer.billingPeriod === BillingPeriod.LEGACY
+      billingPeriod === BillingPeriod.LEGACY
         ? Boolean(legacyDurationDays && legacyDurationDays > 0)
-        : Boolean(offer.intervalMonths && offer.intervalMonths > 0);
+        : Boolean(intervalMonths && intervalMonths > 0);
     if (
-      !offer.active ||
-      offer.product.status !== CatalogProductStatus.ACTIVE ||
-      !offer.product.accessProfileId ||
-      !offer.product.accessProfile?.active ||
+      (!options.externalPayment &&
+        (!offer.active ||
+          offer.product.status !== CatalogProductStatus.ACTIVE ||
+          !offer.product.accessProfile?.active)) ||
+      !accessProfileId ||
+      !accessProfile ||
+      speedUpMbps === undefined ||
+      speedDownMbps === undefined ||
+      deviceLimit === undefined ||
       !hasValidDuration
     ) {
       throw new BadRequestException('Catalog offer is not purchasable');
     }
-    if (
-      options.complimentary &&
-      offer.product.kind !== CatalogProductKind.PLAN
-    ) {
+    if (options.complimentary && productKind !== CatalogProductKind.PLAN) {
       throw new BadRequestException(
         'Complimentary grants require a plan offer',
       );
     }
-    const nodeId = await this.resolveServiceableNodeId(
-      tx,
-      offer.product.accessProfileId,
-    );
+    if (options.externalPayment) {
+      await assertCatalogPurchaseLimit(tx, userId, {
+        kind: productKind,
+        purchaseLimitPerUser:
+          snapshot?.purchaseLimitPerUser ?? offer.product.purchaseLimitPerUser,
+        purchaseLimitKey:
+          snapshot?.purchaseLimitKey ?? offer.product.purchaseLimitKey,
+        requiresActivePlan,
+      });
+    } else {
+      await assertCatalogPurchaseEligibility(tx, userId, offer.product);
+    }
+    const nodeId = await this.resolveServiceableNodeId(tx, accessProfileId);
     if (!nodeId) {
       throw new BadRequestException('Catalog offer has no serviceable node');
     }
     const discount =
-      !options.complimentary && input.discountCode
+      !options.complimentary && !options.externalPayment && input.discountCode
         ? await this.reserveDiscount(
             tx,
             userId,
@@ -503,8 +622,15 @@ export class CommerceService {
         : null;
     const chargedCents = options.complimentary
       ? 0
-      : Math.max(offer.priceCents - (discount?.discountCents ?? 0), 0);
-    if (!options.complimentary) {
+      : options.externalPayment
+        ? options.externalPayment.amountCents
+        : Math.max(offer.priceCents - (discount?.discountCents ?? 0), 0);
+    const basePriceCents =
+      options.externalPayment?.basePriceCents ?? offer.priceCents;
+    if (chargedCents < 0 || chargedCents > basePriceCents) {
+      throw new BadRequestException('External payment amount is invalid');
+    }
+    if (!options.complimentary && !options.externalPayment) {
       const debit = await tx.user.updateMany({
         where: { id: userId, balanceCents: { gte: chargedCents } },
         data: { balanceCents: { decrement: chargedCents } },
@@ -514,10 +640,10 @@ export class CommerceService {
       }
     }
 
-    const purchasedAt = new Date();
+    const purchasedAt = options.externalPayment?.paidAt ?? new Date();
     const expiryOffer = {
-      billingPeriod: offer.billingPeriod,
-      intervalMonths: offer.intervalMonths,
+      billingPeriod,
+      intervalMonths,
       legacyDurationDays,
     };
     const entitlementExpiresAt = this.offerExpiry(purchasedAt, expiryOffer);
@@ -528,10 +654,20 @@ export class CommerceService {
     });
     let subscriptionId: string | undefined;
     let trafficPackId: string | undefined;
+    const activePlanSubscription = requiresActivePlan
+      ? await tx.subscription.findFirst({
+          where: {
+            userId,
+            status: SubscriptionStatus.ACTIVE,
+            startsAt: { lte: purchasedAt },
+            endsAt: { gt: purchasedAt },
+          },
+          orderBy: { endsAt: 'desc' },
+        })
+      : null;
 
-    if (offer.product.kind === CatalogProductKind.PLAN) {
-      const plan = offer.product.legacyPlan;
-      if (!plan) {
+    if (productKind === CatalogProductKind.PLAN) {
+      if (!legacyPlanId) {
         throw new BadRequestException('Plan compatibility mapping is missing');
       }
       const existing = await tx.subscription.findFirst({
@@ -543,7 +679,11 @@ export class CommerceService {
         },
         orderBy: { endsAt: 'desc' },
       });
-      if (existing && existing.planId === plan.id && !options.complimentary) {
+      if (
+        existing &&
+        existing.planId === legacyPlanId &&
+        !options.complimentary
+      ) {
         const extensionBase =
           existing.endsAt > purchasedAt ? existing.endsAt : purchasedAt;
         const extendedEndsAt = this.offerExpiry(extensionBase, expiryOffer);
@@ -552,13 +692,13 @@ export class CommerceService {
           data: {
             nodeId,
             accessAccountId: account.id,
-            planOfferId: offer.legacyPlanOfferId,
+            planOfferId: legacyPlanOfferId,
             status: SubscriptionStatus.ACTIVE,
             endsAt: extendedEndsAt,
-            includedTrafficBytes: offer.trafficBytes,
-            speedUpMbpsSnapshot: offer.product.accessProfile.speedUpMbps,
-            speedDownMbpsSnapshot: offer.product.accessProfile.speedDownMbps,
-            deviceLimitSnapshot: offer.product.accessProfile.deviceLimit,
+            includedTrafficBytes: trafficBytes,
+            speedUpMbpsSnapshot: speedUpMbps,
+            speedDownMbpsSnapshot: speedDownMbps,
+            deviceLimitSnapshot: deviceLimit,
           },
         });
         subscriptionId = updated.id;
@@ -577,22 +717,22 @@ export class CommerceService {
         const subscription = await tx.subscription.create({
           data: {
             userId,
-            planId: plan.id,
+            planId: legacyPlanId,
             nodeId,
             accessAccountId: account.id,
-            planOfferId: offer.legacyPlanOfferId,
+            planOfferId: legacyPlanOfferId,
             status: SubscriptionStatus.ACTIVE,
             startsAt: purchasedAt,
             endsAt: entitlementExpiresAt,
-            includedTrafficBytes: offer.trafficBytes,
-            speedUpMbpsSnapshot: offer.product.accessProfile.speedUpMbps,
-            speedDownMbpsSnapshot: offer.product.accessProfile.speedDownMbps,
-            deviceLimitSnapshot: offer.product.accessProfile.deviceLimit,
+            includedTrafficBytes: trafficBytes,
+            speedUpMbpsSnapshot: speedUpMbps,
+            speedDownMbpsSnapshot: speedDownMbps,
+            deviceLimitSnapshot: deviceLimit,
             cycles: {
               create: {
                 startsAt: purchasedAt,
                 endsAt: this.firstCycleEnd(purchasedAt, entitlementExpiresAt),
-                grantedBytes: offer.trafficBytes,
+                grantedBytes: trafficBytes,
               },
             },
           },
@@ -603,13 +743,13 @@ export class CommerceService {
       const pack = await tx.trafficPack.create({
         data: {
           userId,
-          subscriptionId: null,
+          subscriptionId: activePlanSubscription?.id ?? null,
           accessAccountId: account.id,
-          trafficPackProductId: offer.product.legacyTrafficPackProductId,
-          accessProfileId: offer.product.accessProfileId,
-          label: `${offer.product.name} · ${offer.name}`,
-          totalBytes: offer.trafficBytes,
-          remainingBytes: offer.trafficBytes,
+          trafficPackProductId: legacyTrafficPackProductId,
+          accessProfileId,
+          label: `${snapshot?.productName ?? offer.product.name} · ${snapshot?.offerName ?? offer.name}`,
+          totalBytes: trafficBytes,
+          remainingBytes: trafficBytes,
           status: TrafficPackStatus.ACTIVE,
           expiresAt: entitlementExpiresAt,
         },
@@ -620,40 +760,43 @@ export class CommerceService {
     const order = await tx.manualOrder.create({
       data: {
         userId,
-        planId:
-          offer.product.kind === CatalogProductKind.PLAN
-            ? offer.product.legacyPlanId
-            : null,
-        planOfferId: offer.legacyPlanOfferId,
+        planId: productKind === CatalogProductKind.PLAN ? legacyPlanId : null,
+        planOfferId: legacyPlanOfferId,
         trafficPackProductId:
-          offer.product.kind === CatalogProductKind.TRAFFIC_PACK
-            ? offer.product.legacyTrafficPackProductId
+          productKind === CatalogProductKind.TRAFFIC_PACK
+            ? legacyTrafficPackProductId
             : null,
         catalogOfferId: offer.id,
         status: OrderStatus.APPLIED,
         kind:
-          offer.product.kind === CatalogProductKind.PLAN
+          productKind === CatalogProductKind.PLAN
             ? OrderKind.RENEWAL
             : OrderKind.TRAFFIC_PACK,
-        source: options.complimentary ? OrderSource.ADMIN : OrderSource.WALLET,
+        source: options.complimentary
+          ? OrderSource.ADMIN
+          : options.externalPayment
+            ? OrderSource.PAYMENT
+            : OrderSource.WALLET,
         amountCents: chargedCents,
-        basePriceCents: offer.priceCents,
+        basePriceCents,
         discountCents: options.complimentary
-          ? offer.priceCents
-          : (discount?.discountCents ?? 0),
-        currency: offer.currency,
-        productSlugSnapshot: offer.slug,
-        productNameSnapshot: `${offer.product.name} · ${offer.name}`,
+          ? basePriceCents
+          : options.externalPayment
+            ? basePriceCents - chargedCents
+            : (discount?.discountCents ?? 0),
+        currency,
+        productSlugSnapshot: snapshot?.offerSlug ?? offer.slug,
+        productNameSnapshot: `${snapshot?.productName ?? offer.product.name} · ${snapshot?.offerName ?? offer.name}`,
         validityDays:
-          offer.product.kind === CatalogProductKind.TRAFFIC_PACK
+          productKind === CatalogProductKind.TRAFFIC_PACK
             ? Math.round(
                 (entitlementExpiresAt.getTime() - purchasedAt.getTime()) /
                   (24 * 60 * 60 * 1000),
               )
             : null,
-        trafficBytes: offer.trafficBytes,
+        trafficBytes,
         entitlementExpiresAt:
-          offer.product.kind === CatalogProductKind.PLAN && subscriptionId
+          productKind === CatalogProductKind.PLAN && subscriptionId
             ? (
                 await tx.subscription.findUniqueOrThrow({
                   where: { id: subscriptionId },
@@ -661,9 +804,16 @@ export class CommerceService {
                 })
               ).endsAt
             : entitlementExpiresAt,
-        billingPeriodSnapshot: offer.billingPeriod,
-        intervalMonthsSnapshot: offer.intervalMonths,
-        accessProfileIdSnapshot: offer.product.accessProfileId,
+        billingPeriodSnapshot: billingPeriod,
+        intervalMonthsSnapshot: intervalMonths,
+        accessProfileIdSnapshot: accessProfileId,
+        speedUpMbpsSnapshot: speedUpMbps,
+        speedDownMbpsSnapshot: speedDownMbps,
+        deviceLimitSnapshot: deviceLimit,
+        trafficMultiplierBasisPointsSnapshot:
+          snapshot?.trafficMultiplierBasisPoints ??
+          offer.product.defaultTrafficMultiplierBasisPoints,
+        requiresActivePlanSnapshot: requiresActivePlan,
         idempotencyKey,
         processedAt: purchasedAt,
       },
@@ -673,7 +823,37 @@ export class CommerceService {
         data: { codeId: discount.codeId, userId, orderId: order.id },
       });
     }
-    if (!options.complimentary) {
+    if (options.externalPayment) {
+      await Promise.all([
+        tx.paymentRecord.create({
+          data: {
+            orderId: order.id,
+            userId,
+            source: 'EPAY',
+            status: 'SETTLED',
+            amountCents: chargedCents,
+            currency,
+            externalRef: options.externalPayment.gatewayTradeNo,
+            paidAt: purchasedAt,
+            reconciledAt: purchasedAt,
+          },
+        }),
+        tx.auditLog.create({
+          data: {
+            action: 'EPAY_PAYMENT_SETTLED',
+            targetType: 'ManualOrder',
+            targetId: order.id,
+            metadata: {
+              userId,
+              offerId: offer.id,
+              attemptId: options.externalPayment.attemptId,
+              gatewayTradeNo: options.externalPayment.gatewayTradeNo,
+              paidCents: chargedCents,
+            },
+          },
+        }),
+      ]);
+    } else if (!options.complimentary) {
       const wallet = await tx.walletTransaction.create({
         data: {
           userId,
@@ -1072,6 +1252,7 @@ export class CommerceService {
           offer.product.kind === CatalogProductKind.PLAN
             ? ('plan_offer' as const)
             : ('traffic_pack' as const),
+        purchaseRules: offer.product,
       };
     }
     if (input.kind === 'traffic_pack') {
@@ -1101,6 +1282,7 @@ export class CommerceService {
         name: product.name,
         priceCents: product.priceCents,
         kind: 'traffic_pack' as const,
+        purchaseRules: null,
       };
     }
     const { plan, offer } = await this.resolvePlanOffer(this.prisma, input);
@@ -1109,6 +1291,7 @@ export class CommerceService {
       name: `${plan.name} · ${offer.name}`,
       priceCents: offer.priceCents,
       kind: 'plan_offer' as const,
+      purchaseRules: null,
     };
   }
 

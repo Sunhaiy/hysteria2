@@ -116,6 +116,29 @@ export class UpdateSettingsDto {
   purchaseMode?: 'balance' | 'cdk';
 
   @IsOptional()
+  @IsIn(['store', 'epay'])
+  checkoutMode?: 'store' | 'epay';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  epayGatewayUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  epayMerchantId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(256)
+  epayMerchantKey?: string;
+
+  @IsOptional()
+  @IsIn(['alipay', 'wxpay', 'qqpay'])
+  epayPaymentType?: 'alipay' | 'wxpay' | 'qqpay';
+
+  @IsOptional()
   @IsString()
   @MaxLength(20)
   buyButtonText?: string;

@@ -23,7 +23,7 @@ test("catalog offers expose period-specific shop URLs and plan traffic policy", 
 
   assert.match(catalog, /storeUrl/);
   assert.match(catalog, /该周期店铺链接/);
-  assert.match(plans, /offer\.storeUrl/);
+  assert.match(plans, /offer\?\.storeUrl/);
   assert.match(
     plans,
     /branding\.purchaseMode === "cdk"[\s\S]*branding\.cdkButtonUrl/,

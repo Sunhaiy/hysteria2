@@ -267,6 +267,7 @@ export class ReferralService {
     }
     const planGrant = await tx.entitlementGrant.findUnique({
       where: { id: planGrantId },
+      include: { product: true },
     });
     if (
       !planGrant ||
@@ -274,6 +275,9 @@ export class ReferralService {
       planGrant.kind !== 'PLAN'
     ) {
       throw new ConflictException('Qualifying plan entitlement is missing');
+    }
+    if (!planGrant.product.referralEligible) {
+      return { settled: false } as const;
     }
 
     const rewardedAt = new Date();

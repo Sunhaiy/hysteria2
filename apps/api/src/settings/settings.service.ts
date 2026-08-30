@@ -15,6 +15,26 @@ export interface SmtpConfig {
   configured: boolean;
 }
 
+export type CheckoutMode = 'store' | 'epay';
+export type EpayPaymentType = 'alipay' | 'wxpay' | 'qqpay';
+
+export interface EpayConfig {
+  checkoutMode: CheckoutMode;
+  gatewayUrl?: string;
+  merchantId?: string;
+  merchantKey?: string;
+  paymentType: EpayPaymentType;
+  configured: boolean;
+}
+
+export interface EpaySettingsUpdate {
+  checkoutMode?: CheckoutMode;
+  epayGatewayUrl?: string;
+  epayMerchantId?: string;
+  epayMerchantKey?: string;
+  epayPaymentType?: EpayPaymentType;
+}
+
 export type TutorialUploadPlatform = 'windows' | 'android' | 'macos';
 
 export interface TutorialAssetRecord {
@@ -342,6 +362,7 @@ export class SettingsService {
     const map = await this.all();
     const mode = map.get('portal.purchaseMode');
     const configuredShopUrl = map.get('portal.cdkButtonUrl')?.trim() || '';
+    const epay = await this.getEpayConfig();
     return {
       // "balance" = self-serve wallet checkout; "cdk" = buy a CDK at the shop
       // link then redeem it.
@@ -350,7 +371,103 @@ export class SettingsService {
       cdkButtonText: map.get('portal.cdkButtonText') || 'cdk充值',
       cdkButtonUrl:
         configuredShopUrl === '/portal/redeem' ? '' : configuredShopUrl,
+      checkoutMode: epay.checkoutMode,
+      epayConfigured: epay.configured,
     };
+  }
+
+  async getEpayConfig(): Promise<EpayConfig> {
+    const map = await this.all();
+    const storedKey = map.get('epay.merchantKey');
+    const paymentType = map.get('epay.paymentType');
+    const gatewayUrl = map.get('epay.gatewayUrl')?.trim() || undefined;
+    const merchantId = map.get('epay.merchantId')?.trim() || undefined;
+    const merchantKey = storedKey ? this.cipher.decrypt(storedKey) : undefined;
+    const checkoutMode: CheckoutMode =
+      map.get('payment.checkoutMode') === 'epay' ? 'epay' : 'store';
+    const normalizedPaymentType: EpayPaymentType =
+      paymentType === 'wxpay' || paymentType === 'qqpay'
+        ? paymentType
+        : 'alipay';
+    return {
+      checkoutMode,
+      gatewayUrl,
+      merchantId,
+      merchantKey,
+      paymentType: normalizedPaymentType,
+      configured: Boolean(gatewayUrl && merchantId && merchantKey),
+    };
+  }
+
+  async prepareEpaySettingsUpdate(input: EpaySettingsUpdate) {
+    const current = await this.getEpayConfig();
+    const updates: Record<string, string> = {};
+    const gatewayUrl =
+      input.epayGatewayUrl === undefined
+        ? current.gatewayUrl
+        : this.normalizeEpayGatewayUrl(input.epayGatewayUrl);
+    const merchantId =
+      input.epayMerchantId === undefined
+        ? current.merchantId
+        : input.epayMerchantId.trim() || undefined;
+    const merchantKey = input.epayMerchantKey?.trim() || current.merchantKey;
+    const paymentType = input.epayPaymentType ?? current.paymentType;
+    const checkoutMode = input.checkoutMode ?? current.checkoutMode;
+
+    if (merchantId && !/^[A-Za-z0-9_-]{1,64}$/.test(merchantId)) {
+      throw new BadRequestException('易支付商户 ID 格式不正确');
+    }
+    if (checkoutMode === 'epay' && !(gatewayUrl && merchantId && merchantKey)) {
+      throw new BadRequestException(
+        '启用易支付前请完整填写网关、商户 ID 和商户密钥',
+      );
+    }
+    if (input.checkoutMode !== undefined) {
+      updates['payment.checkoutMode'] = checkoutMode;
+    }
+    if (input.epayGatewayUrl !== undefined) {
+      updates['epay.gatewayUrl'] = gatewayUrl ?? '';
+    }
+    if (input.epayMerchantId !== undefined) {
+      updates['epay.merchantId'] = merchantId ?? '';
+    }
+    if (input.epayMerchantKey?.trim()) {
+      updates['epay.merchantKey'] = input.epayMerchantKey.trim();
+    }
+    if (input.epayPaymentType !== undefined) {
+      updates['epay.paymentType'] = paymentType;
+    }
+    return updates;
+  }
+
+  private normalizeEpayGatewayUrl(value: string) {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    let url: URL;
+    try {
+      url = new URL(trimmed);
+    } catch {
+      throw new BadRequestException('易支付网关地址不是有效 URL');
+    }
+    if (
+      !['http:', 'https:'].includes(url.protocol) ||
+      url.username ||
+      url.password
+    ) {
+      throw new BadRequestException('易支付网关地址格式不正确');
+    }
+    const localHost =
+      url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+    if (
+      process.env.NODE_ENV === 'production' &&
+      url.protocol !== 'https:' &&
+      !localHost
+    ) {
+      throw new BadRequestException('生产环境的易支付网关必须使用 HTTPS');
+    }
+    url.hash = '';
+    url.search = '';
+    return url.toString().replace(/\/$/, '');
   }
 
   /** OAuth credentials: DB settings take precedence, env vars are the fallback. */

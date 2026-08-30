@@ -439,9 +439,12 @@ export class PortalService {
     const primary = nodes[0];
     if (!primary) throw new NotFoundException('No serviceable access node');
     const accessGrants = access.grants ?? [];
-    const endsAt = accessGrants.reduce(
+    const expiryGrants = accessGrants.some((grant) => grant.kind === 'plan')
+      ? accessGrants.filter((grant) => grant.kind === 'plan')
+      : accessGrants;
+    const endsAt = expiryGrants.reduce(
       (latest, grant) => (grant.endsAt > latest ? grant.endsAt : latest),
-      accessGrants[0]?.endsAt ?? new Date().toISOString(),
+      expiryGrants[0]?.endsAt ?? new Date().toISOString(),
     );
     return {
       token,

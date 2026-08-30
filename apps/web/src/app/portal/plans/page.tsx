@@ -40,6 +40,15 @@ type Product = {
   description?: string | null;
   storeUrl?: string | null;
   accent?: string | null;
+  featured: boolean;
+  purchaseLimitPerUser?: number | null;
+  requiresActivePlan: boolean;
+  purchaseEligibility?: {
+    eligible: boolean;
+    used: number;
+    remaining: number | null;
+    reason?: string | null;
+  };
   trafficReset: "monthly" | "never";
   access: {
     profileName?: string | null;
@@ -70,6 +79,21 @@ type Branding = {
   buyButtonText: string;
   cdkButtonText: string;
   cdkButtonUrl: string;
+  checkoutMode: "store" | "epay";
+  epayConfigured: boolean;
+};
+type EpayPayment = {
+  id: string;
+  status: "pending" | "settled" | "expired" | "failed";
+  amountCents: number;
+  productName: string;
+  expiresAt: string;
+  orderId: string | null;
+  gateway?: {
+    url: string;
+    method: "POST";
+    fields: Record<string, string>;
+  };
 };
 
 const periodName = {
@@ -83,6 +107,8 @@ const defaultBranding: Branding = {
   buyButtonText: "购买",
   cdkButtonText: "CDK 充值",
   cdkButtonUrl: "",
+  checkoutMode: "store",
+  epayConfigured: false,
 };
 
 function durationName(offer: Offer) {
@@ -109,7 +135,6 @@ export default function PortalPlansPage() {
     offer: Offer;
   } | null>(null);
   const [quote, setQuote] = useState<Quote | null>(null);
-  const [discountCode, setDiscountCode] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -163,13 +188,30 @@ export default function PortalPlansPage() {
     }),
     [catalog.products],
   );
-  const checkoutStoreUrl =
-    checkout?.offer.storeUrl ||
-    checkout?.product.storeUrl ||
-    branding.cdkButtonUrl ||
-    null;
+  function submitGateway(payment: EpayPayment) {
+    if (!payment.gateway) {
+      throw new Error("支付网关信息不可用，请重新创建订单。");
+    }
+    const target = new URL(payment.gateway.url);
+    if (!["http:", "https:"].includes(target.protocol)) {
+      throw new Error("支付网关地址无效。");
+    }
+    const form = document.createElement("form");
+    form.method = payment.gateway.method;
+    form.action = target.toString();
+    form.style.display = "none";
+    for (const [name, value] of Object.entries(payment.gateway.fields)) {
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = name;
+      input.value = value;
+      form.appendChild(input);
+    }
+    document.body.appendChild(form);
+    form.submit();
+  }
 
-  async function fetchQuote(offer: Offer, code = "") {
+  async function fetchQuote(offer: Offer) {
     if (!token) return;
     setBusy(true);
     setError(null);
@@ -178,7 +220,7 @@ export default function PortalPlansPage() {
         await apiRequest<Quote>("/api/portal/commerce/quote", {
           method: "POST",
           token,
-          body: { offerId: offer.id, discountCode: code.trim() || undefined },
+          body: { offerId: offer.id },
         }),
       );
     } catch (cause) {
@@ -192,7 +234,6 @@ export default function PortalPlansPage() {
   function openCheckout(product: Product, offer: Offer) {
     setCheckout({ product, offer });
     setQuote(null);
-    setDiscountCode("");
     setError(null);
     setIdempotencyKey(crypto.randomUUID());
     void fetchQuote(offer);
@@ -203,22 +244,24 @@ export default function PortalPlansPage() {
     setBusy(true);
     setError(null);
     try {
-      await apiRequest("/api/portal/commerce/checkout", {
-        method: "POST",
-        token,
-        headers: { "Idempotency-Key": idempotencyKey },
-        body: {
-          offerId: checkout.offer.id,
-          discountCode: discountCode.trim() || undefined,
+      const payment = await apiRequest<EpayPayment>(
+        "/api/portal/payments/epay",
+        {
+          method: "POST",
+          token,
+          headers: { "Idempotency-Key": idempotencyKey },
+          body: {
+            offerId: checkout.offer.id,
+          },
         },
-      });
-      setCheckout(null);
-      setFeedback(
-        checkout.product.kind === "plan"
-          ? "套餐已立即生效。"
-          : "流量包已发放，可独立接入节点。",
       );
-      await load();
+      if (payment.status === "settled") {
+        setCheckout(null);
+        setFeedback("订单已经支付并到账。");
+        await load();
+        return;
+      }
+      submitGateway(payment);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "结算失败。");
     } finally {
@@ -240,14 +283,17 @@ export default function PortalPlansPage() {
         const accent = normalizePlanAccent(product.accent ?? "green");
         const isCurrent =
           product.kind === "plan" && product.name === currentPlanName;
+        const eligible = product.purchaseEligibility?.eligible !== false;
+        const unavailableReason = product.purchaseEligibility?.reason;
         const purchaseStoreUrl =
           offer?.storeUrl ||
           product.storeUrl ||
           (branding.purchaseMode === "cdk" ? branding.cdkButtonUrl : "") ||
           null;
+        const useStore = branding.checkoutMode === "store";
         return (
           <article
-            className={`plan-card premium-plan-card${isCurrent ? " current" : ""}`}
+            className={`plan-card premium-plan-card${isCurrent ? " current" : ""}${product.featured ? " featured" : ""}${eligible ? "" : " unavailable"}`}
             data-plan-accent={accent}
             key={product.id}
           >
@@ -257,6 +303,14 @@ export default function PortalPlansPage() {
             />
             <div className="plan-card-head">
               <div className="plan-card-copy">
+                <div className="plan-card-labels">
+                  {product.featured ? (
+                    <span className="badge success">推荐</span>
+                  ) : null}
+                  {product.purchaseLimitPerUser ? (
+                    <span className="badge info">每账号仅限一次</span>
+                  ) : null}
+                </div>
                 <h2 className="panel-title plan-card-title">
                   <span aria-hidden="true" />
                   {product.name}
@@ -271,7 +325,11 @@ export default function PortalPlansPage() {
                   {offer ? formatMoney(offer.priceCents) : "暂不可售"}
                 </div>
                 <span className="fine-print">
-                  {offer ? offerPeriodName(offer) : "-"}
+                  {offer
+                    ? product.kind === "traffic_pack"
+                      ? "365 天有效"
+                      : offerPeriodName(offer)
+                    : "-"}
                 </span>
               </div>
             </div>
@@ -280,25 +338,32 @@ export default function PortalPlansPage() {
                 <div className="plan-spec-item">
                   <Icon name="bolt" />
                   <span>
-                    上行
+                    {product.kind === "plan" ? "上行" : "接入"}
                     <strong>
-                      {formatSpeedLimit(product.access.speedUpMbps)}
+                      {product.kind === "plan"
+                        ? formatSpeedLimit(product.access.speedUpMbps)
+                        : "继承套餐"}
                     </strong>
                   </span>
                 </div>
                 <div className="plan-spec-item">
                   <Icon name="monitoring" />
                   <span>
-                    下行
+                    {product.kind === "plan" ? "下行" : "有效期"}
                     <strong>
-                      {formatSpeedLimit(product.access.speedDownMbps)}
+                      {product.kind === "plan"
+                        ? formatSpeedLimit(product.access.speedDownMbps)
+                        : "365 天"}
                     </strong>
                   </span>
                 </div>
                 <div className="plan-spec-item">
                   <Icon name="account_circle" />
                   <span>
-                    设备<strong>不限</strong>
+                    {product.kind === "plan" ? "设备" : "额度"}
+                    <strong>
+                      {product.kind === "plan" ? "不限" : "可叠加"}
+                    </strong>
                   </span>
                 </div>
               </div>
@@ -343,7 +408,7 @@ export default function PortalPlansPage() {
                 </div>
               ) : null}
               <div className="plan-card-footer">
-                {offer && purchaseStoreUrl ? (
+                {useStore && offer && purchaseStoreUrl && eligible ? (
                   <a
                     className="action-button"
                     href={purchaseStoreUrl}
@@ -351,31 +416,44 @@ export default function PortalPlansPage() {
                     rel="noopener noreferrer"
                   >
                     <Icon name="payments" />
-                    {isCurrent
-                      ? "购买续费 CDK"
-                      : product.kind === "plan"
-                        ? branding.buyButtonText
-                        : "购买流量包"}
+                    {isCurrent ? "前往店铺续费" : branding.buyButtonText}
                   </a>
                 ) : (
                   <button
                     className="action-button"
                     type="button"
-                    disabled={!offer}
-                    onClick={() => offer && openCheckout(product, offer)}
+                    disabled={
+                      !offer ||
+                      !eligible ||
+                      (useStore && !purchaseStoreUrl) ||
+                      (!useStore && !branding.epayConfigured)
+                    }
+                    onClick={() =>
+                      offer && eligible && openCheckout(product, offer)
+                    }
                   >
-                    {isCurrent
-                      ? "续费套餐"
-                      : product.kind === "plan"
-                        ? branding.buyButtonText
-                        : "购买流量包"}
+                    {!eligible
+                      ? product.purchaseLimitPerUser
+                        ? "已体验"
+                        : "暂不可购买"
+                      : useStore && !purchaseStoreUrl
+                        ? "未配置店铺链接"
+                        : !useStore && !branding.epayConfigured
+                          ? "支付暂不可用"
+                          : isCurrent
+                            ? "立即续费"
+                            : "立即购买"}
                   </button>
                 )}
                 <div className="plan-card-status">
-                  {isCurrent ? (
+                  {unavailableReason ? (
+                    <span className="plan-unavailable-reason">
+                      {unavailableReason}
+                    </span>
+                  ) : isCurrent ? (
                     <span className="badge success">当前套餐</span>
                   ) : product.kind === "traffic_pack" ? (
-                    <span className="badge info">独立接入</span>
+                    <span className="badge info">订阅附加包</span>
                   ) : null}
                 </div>
               </div>
@@ -385,6 +463,37 @@ export default function PortalPlansPage() {
       })}
     </section>
   );
+
+  const renderPlanGroups = (products: Product[]) => {
+    const tierNames = [
+      { title: "入门", copy: "轻量体验与日常基础使用" },
+      { title: "主流", copy: "覆盖大多数日常与影音需求" },
+      { title: "重度", copy: "大流量与高速接入" },
+    ];
+    const tiers = Array.from(
+      { length: Math.ceil(products.length / 2) },
+      (_, index) => ({
+        ...(tierNames[index] ?? {
+          title: `更多 ${index - tierNames.length + 1}`,
+          copy: "更多可选套餐",
+        }),
+        items: products.slice(index * 2, index * 2 + 2),
+      }),
+    );
+    return (
+      <div className="catalog-tier-groups">
+        {tiers.map((tier) => (
+          <section className="catalog-tier-group" key={tier.title}>
+            <div className="catalog-tier-heading">
+              <span>{tier.title}</span>
+              <small>{tier.copy}</small>
+            </div>
+            {renderProducts(tier.items)}
+          </section>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <ConsoleShell
@@ -418,16 +527,16 @@ export default function PortalPlansPage() {
             ))}
           </section>
         ) : (
-          renderProducts(groups.plans)
+          renderPlanGroups(groups.plans)
         )}
         <div className="shop-section-heading">
           <div>
-            <h2 className="section-title">独立流量包</h2>
+            <h2 className="section-title">订阅流量包</h2>
             <span className="panel-copy">
-              无需先购买套餐，一次性总量在有效期内按最早到期顺序使用。
+              需要有效套餐，套餐月度额度用完后自动使用，可在 365 天内叠加。
             </span>
           </div>
-          <span className="badge success">可独立接入</span>
+          <span className="badge success">继承当前套餐</span>
         </div>
         {!loading ? renderProducts(groups.packs) : null}
         {!loading && !catalog.products.length ? (
@@ -444,13 +553,13 @@ export default function PortalPlansPage() {
           <div className="toolbar-actions">
             <button
               className="action-button"
-              disabled={busy || !quote?.sufficient}
+              disabled={busy || !quote || branding.checkoutMode !== "epay"}
               type="button"
               onClick={() => void confirm()}
             >
               {busy
                 ? "处理中..."
-                : `支付 ${formatMoney(quote?.finalPriceCents ?? 0)}`}
+                : `前往支付 ${formatMoney(quote?.finalPriceCents ?? 0)}`}
             </button>
             <button
               className="ghost-button"
@@ -496,26 +605,9 @@ export default function PortalPlansPage() {
             </div>
             {checkout.product.kind === "traffic_pack" ? (
               <div className="feedback info">
-                该流量包提供独立节点权限，不要求已有套餐。
+                该流量包需要有效套餐，接入节点和速率跟随当前套餐。
               </div>
             ) : null}
-            <label className="field">
-              <span className="fine-print">优惠码</span>
-              <div className="inline-form">
-                <input
-                  className="control mono"
-                  value={discountCode}
-                  onChange={(event) => setDiscountCode(event.target.value)}
-                />
-                <button
-                  className="ghost-button"
-                  type="button"
-                  onClick={() => void fetchQuote(checkout.offer, discountCode)}
-                >
-                  应用
-                </button>
-              </div>
-            </label>
             {quote ? (
               <div className="checkout-facts">
                 <div>
@@ -527,42 +619,13 @@ export default function PortalPlansPage() {
                   <strong>-{formatMoney(quote.discountCents)}</strong>
                 </div>
                 <div>
-                  <span>钱包余额</span>
-                  <strong>{formatMoney(quote.balanceCents)}</strong>
-                </div>
-                <div>
                   <span>应付</span>
                   <strong>{formatMoney(quote.finalPriceCents)}</strong>
                 </div>
               </div>
             ) : null}
-            <div className="checkout-store-actions">
-              {checkoutStoreUrl ? (
-                <a
-                  className="action-button checkout-store-link"
-                  href={checkoutStoreUrl}
-                  target={
-                    checkoutStoreUrl.startsWith("http") ? "_blank" : undefined
-                  }
-                  rel={
-                    checkoutStoreUrl.startsWith("http")
-                      ? "noopener noreferrer"
-                      : undefined
-                  }
-                >
-                  <Icon name="payments" />
-                  前往店铺购买
-                </a>
-              ) : (
-                <button
-                  className="action-button checkout-store-link"
-                  type="button"
-                  disabled
-                >
-                  <Icon name="payments" />
-                  前往店铺购买
-                </button>
-              )}
+            <div className="feedback info">
+              点击后将跳转到支付页面。支付完成后，套餐或流量权益会自动到账。
             </div>
           </div>
         ) : null}

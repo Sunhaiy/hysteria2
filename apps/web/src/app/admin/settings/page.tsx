@@ -35,6 +35,19 @@ interface SettingsResponse {
     cdkButtonText: string;
     cdkButtonUrl: string;
   };
+  payment: {
+    checkoutMode: "store" | "epay";
+    epay: {
+      gatewayUrl: string;
+      merchantId: string;
+      merchantKeySet: boolean;
+      paymentType: "alipay" | "wxpay" | "qqpay";
+      configured: boolean;
+      notifyUrl: string;
+      returnUrl: string;
+      successUrl: string;
+    };
+  };
   site: {
     name: string;
     description: string;
@@ -85,12 +98,20 @@ export default function AdminSettingsPage() {
   const [siteBrowserTitle, setSiteBrowserTitle] = useState("");
   const [siteIconUrl, setSiteIconUrl] = useState("");
   const [savingSite, setSavingSite] = useState(false);
-  const [purchaseMode, setPurchaseMode] = useState<"balance" | "cdk">(
-    "balance",
-  );
   const [buyButtonText, setBuyButtonText] = useState("");
   const [cdkButtonText, setCdkButtonText] = useState("");
   const [cdkButtonUrl, setCdkButtonUrl] = useState("");
+  const [checkoutMode, setCheckoutMode] = useState<"store" | "epay">("store");
+  const [epayGatewayUrl, setEpayGatewayUrl] = useState("");
+  const [epayMerchantId, setEpayMerchantId] = useState("");
+  const [epayMerchantKey, setEpayMerchantKey] = useState("");
+  const [epayMerchantKeySet, setEpayMerchantKeySet] = useState(false);
+  const [epayPaymentType, setEpayPaymentType] = useState<
+    "alipay" | "wxpay" | "qqpay"
+  >("alipay");
+  const [epayConfigured, setEpayConfigured] = useState(false);
+  const [epayNotifyUrl, setEpayNotifyUrl] = useState("");
+  const [epayReturnUrl, setEpayReturnUrl] = useState("");
   const [savingBranding, setSavingBranding] = useState(false);
   const applySettings = useCallback((data: SettingsResponse) => {
     setHost(data.smtp.host);
@@ -113,10 +134,18 @@ export default function AdminSettingsPage() {
     setSiteDescription(data.site.description);
     setSiteBrowserTitle(data.site.browserTitle);
     setSiteIconUrl(data.site.iconUrl);
-    setPurchaseMode(data.branding.purchaseMode);
     setBuyButtonText(data.branding.buyButtonText);
     setCdkButtonText(data.branding.cdkButtonText);
     setCdkButtonUrl(data.branding.cdkButtonUrl);
+    setCheckoutMode(data.payment.checkoutMode);
+    setEpayGatewayUrl(data.payment.epay.gatewayUrl);
+    setEpayMerchantId(data.payment.epay.merchantId);
+    setEpayMerchantKey("");
+    setEpayMerchantKeySet(data.payment.epay.merchantKeySet);
+    setEpayPaymentType(data.payment.epay.paymentType);
+    setEpayConfigured(data.payment.epay.configured);
+    setEpayNotifyUrl(data.payment.epay.notifyUrl);
+    setEpayReturnUrl(data.payment.epay.returnUrl);
   }, []);
 
   const load = useCallback(async () => {
@@ -292,13 +321,30 @@ export default function AdminSettingsPage() {
     setSavingBranding(true);
     setError(null);
     try {
+      const body: Record<string, unknown> = {
+        checkoutMode,
+        epayGatewayUrl,
+        epayMerchantId,
+        epayPaymentType,
+        purchaseMode: checkoutMode === "store" ? "cdk" : "balance",
+        buyButtonText,
+        cdkButtonText,
+        cdkButtonUrl,
+      };
+      if (epayMerchantKey.trim()) {
+        body.epayMerchantKey = epayMerchantKey;
+      }
       const data = await apiRequest<SettingsResponse>("/api/admin/settings", {
         method: "PATCH",
         token,
-        body: { purchaseMode, buyButtonText, cdkButtonText, cdkButtonUrl },
+        body,
       });
       applySettings(data);
-      showToast("前台购买设置已保存");
+      showToast(
+        data.payment.checkoutMode === "store"
+          ? "已启用店铺链接购买"
+          : "已启用易支付",
+      );
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "保存失败。");
     } finally {
@@ -645,50 +691,161 @@ export default function AdminSettingsPage() {
           </Panel>
 
           <Panel
-            title="前台购买设置"
-            copy="选择会员点「购买」的行为：余额购买走站内钱包结算；CDK购买会弹出输入框，会员去店铺（下方链接）买卡后回来兑换。链接可填站内路径（/portal/redeem）或完整外链（http 开头，新标签打开）。"
+            title="购买与支付"
+            copy="会员购买时只会使用当前选择的一个渠道。店铺模式直接跳转商品或周期链接；易支付模式在站内创建订单并跳转支付网关。"
           >
             <div className="form-grid">
-              <label className="field">
-                <span className="fine-print">购买方式</span>
-                <CustomSelect
-                  value={purchaseMode}
-                  onChange={(v) => setPurchaseMode(v as "balance" | "cdk")}
-                  options={[
-                    { value: "balance", label: "余额购买（站内钱包结算）" },
-                    { value: "cdk", label: "CDK购买（去店铺买卡后兑换）" },
-                  ]}
-                />
-              </label>
-              <div className="two-col">
-                <label className="field">
-                  <span className="fine-print">购买按钮文案</span>
-                  <input
-                    className="control"
-                    value={buyButtonText}
-                    onChange={(event) => setBuyButtonText(event.target.value)}
-                    placeholder="购买"
-                  />
-                </label>
-                <label className="field">
-                  <span className="fine-print">CDK 按钮文案</span>
-                  <input
-                    className="control"
-                    value={cdkButtonText}
-                    onChange={(event) => setCdkButtonText(event.target.value)}
-                    placeholder="cdk充值"
-                  />
-                </label>
+              <div className="field">
+                <span className="fine-print">当前购买渠道</span>
+                <div className="segmented-control" aria-label="购买渠道">
+                  <button
+                    className={checkoutMode === "store" ? "active" : ""}
+                    type="button"
+                    aria-pressed={checkoutMode === "store"}
+                    onClick={() => setCheckoutMode("store")}
+                  >
+                    店铺链接
+                  </button>
+                  <button
+                    className={checkoutMode === "epay" ? "active" : ""}
+                    type="button"
+                    aria-pressed={checkoutMode === "epay"}
+                    onClick={() => setCheckoutMode("epay")}
+                  >
+                    易支付
+                  </button>
+                </div>
               </div>
-              <label className="field">
-                <span className="fine-print">CDK 按钮链接</span>
-                <input
-                  className="control"
-                  value={cdkButtonUrl}
-                  onChange={(event) => setCdkButtonUrl(event.target.value)}
-                  placeholder="/portal/redeem 或 https://t.me/yourbot"
-                />
-              </label>
+              {checkoutMode === "store" ? (
+                <>
+                  <div className="two-col">
+                    <label className="field">
+                      <span className="fine-print">购买按钮文案</span>
+                      <input
+                        className="control"
+                        value={buyButtonText}
+                        onChange={(event) =>
+                          setBuyButtonText(event.target.value)
+                        }
+                        placeholder="立即购买"
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="fine-print">兑换入口文案</span>
+                      <input
+                        className="control"
+                        value={cdkButtonText}
+                        onChange={(event) =>
+                          setCdkButtonText(event.target.value)
+                        }
+                        placeholder="CDK 兑换"
+                      />
+                    </label>
+                  </div>
+                  <label className="field">
+                    <span className="fine-print">全局店铺链接</span>
+                    <input
+                      className="control"
+                      value={cdkButtonUrl}
+                      onChange={(event) => setCdkButtonUrl(event.target.value)}
+                      placeholder="https://shop.example.com"
+                    />
+                    <span className="fine-print">
+                      商品或周期配置了独立链接时优先使用；未配置时回退到这里。
+                    </span>
+                  </label>
+                </>
+              ) : (
+                <>
+                  <div className="list-row">
+                    <span className="muted">网关状态</span>
+                    <span
+                      className={`badge ${epayConfigured ? "success" : "warn"}`}
+                    >
+                      {epayConfigured ? "配置完整" : "等待配置"}
+                    </span>
+                  </div>
+                  <label className="field">
+                    <span className="fine-print">易支付网关地址</span>
+                    <input
+                      className="control mono"
+                      value={epayGatewayUrl}
+                      onChange={(event) =>
+                        setEpayGatewayUrl(event.target.value)
+                      }
+                      placeholder="https://pay.example.com"
+                    />
+                    <span className="fine-print">
+                      可填写网关根地址或完整 submit.php 地址，线上必须使用
+                      HTTPS。
+                    </span>
+                  </label>
+                  <div className="two-col">
+                    <label className="field">
+                      <span className="fine-print">商户 ID</span>
+                      <input
+                        className="control mono"
+                        value={epayMerchantId}
+                        onChange={(event) =>
+                          setEpayMerchantId(event.target.value)
+                        }
+                        autoComplete="off"
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="fine-print">默认支付方式</span>
+                      <CustomSelect
+                        value={epayPaymentType}
+                        onChange={(value) =>
+                          setEpayPaymentType(
+                            value as "alipay" | "wxpay" | "qqpay",
+                          )
+                        }
+                        options={[
+                          { value: "alipay", label: "支付宝" },
+                          { value: "wxpay", label: "微信支付" },
+                          { value: "qqpay", label: "QQ 钱包" },
+                        ]}
+                      />
+                    </label>
+                  </div>
+                  <label className="field">
+                    <span className="fine-print">商户密钥</span>
+                    <input
+                      className="control mono"
+                      type="password"
+                      value={epayMerchantKey}
+                      onChange={(event) =>
+                        setEpayMerchantKey(event.target.value)
+                      }
+                      placeholder={
+                        epayMerchantKeySet
+                          ? "已设置（留空保持不变）"
+                          : "填写易支付商户密钥"
+                      }
+                      autoComplete="new-password"
+                    />
+                  </label>
+                  <div className="two-col">
+                    <label className="field">
+                      <span className="fine-print">异步通知地址</span>
+                      <input
+                        className="control mono"
+                        value={epayNotifyUrl}
+                        readOnly
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="fine-print">同步返回地址</span>
+                      <input
+                        className="control mono"
+                        value={epayReturnUrl}
+                        readOnly
+                      />
+                    </label>
+                  </div>
+                </>
+              )}
             </div>
             <div className="toolbar-actions">
               <button
@@ -697,7 +854,7 @@ export default function AdminSettingsPage() {
                 disabled={savingBranding}
                 onClick={() => void saveBranding()}
               >
-                {savingBranding ? "保存中..." : "保存购买设置"}
+                {savingBranding ? "保存中..." : "保存并切换渠道"}
               </button>
             </div>
           </Panel>

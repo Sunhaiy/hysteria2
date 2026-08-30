@@ -87,6 +87,46 @@ describe('SettingsService cache', () => {
     });
   });
 
+  it('keeps store checkout as the safe default and requires complete 易支付 credentials', async () => {
+    const prisma = { setting: { findMany: jest.fn().mockResolvedValue([]) } };
+    const cache = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+    };
+    const cipher = {
+      encrypt: jest.fn((value: string) => value),
+      decrypt: jest.fn((value: string) => value),
+    };
+    const service = new SettingsService(
+      prisma as never,
+      cipher as never,
+      cache as never,
+    );
+
+    await expect(service.getEpayConfig()).resolves.toMatchObject({
+      checkoutMode: 'store',
+      configured: false,
+    });
+    await expect(
+      service.prepareEpaySettingsUpdate({ checkoutMode: 'epay' }),
+    ).rejects.toThrow('启用易支付前请完整填写');
+    await expect(
+      service.prepareEpaySettingsUpdate({
+        checkoutMode: 'epay',
+        epayGatewayUrl: 'https://pay.example.com',
+        epayMerchantId: '1001',
+        epayMerchantKey: 'secret',
+        epayPaymentType: 'wxpay',
+      }),
+    ).resolves.toEqual({
+      'payment.checkoutMode': 'epay',
+      'epay.gatewayUrl': 'https://pay.example.com',
+      'epay.merchantId': '1001',
+      'epay.merchantKey': 'secret',
+      'epay.paymentType': 'wxpay',
+    });
+  });
+
   it('returns an enabled announcement once per login session', async () => {
     const acknowledgements = new Map<string, string>();
     const prisma = {

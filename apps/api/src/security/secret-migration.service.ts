@@ -6,6 +6,7 @@ const secretSettingKeys = [
   'smtp.pass',
   'oauth.google.secret',
   'oauth.github.secret',
+  'epay.merchantKey',
 ];
 
 @Injectable()

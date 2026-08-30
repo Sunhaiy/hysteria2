@@ -42,7 +42,7 @@ describe('CatalogService publishing rules', () => {
     expect(tx.accessProfile.findUnique).not.toHaveBeenCalled();
   });
 
-  it('requires monthly, quarterly, and yearly offers before publishing a plan', async () => {
+  it('requires a monthly offer before publishing a plan', async () => {
     const tx = {
       accessProfile: { findUnique: jest.fn().mockResolvedValue(profile) },
     };
@@ -77,12 +77,10 @@ describe('CatalogService publishing rules', () => {
           },
         ],
       }),
-    ).rejects.toThrow(
-      'Published plans require monthly, quarterly and yearly offers',
-    );
+    ).rejects.toThrow('Published plans require a monthly offer');
   });
 
-  it('allows only quarterly and yearly offers for a published traffic pack', async () => {
+  it('requires a yearly-valid offer for a published traffic pack', async () => {
     const tx = {
       accessProfile: { findUnique: jest.fn().mockResolvedValue(profile) },
     };
@@ -115,19 +113,9 @@ describe('CatalogService publishing rules', () => {
             priceCents: 1000,
             active: true,
           },
-          {
-            slug: 'invalid-pack-yearly',
-            name: 'Yearly',
-            billingPeriod: 'yearly',
-            trafficBytes: 400,
-            priceCents: 3000,
-            active: true,
-          },
         ],
       }),
-    ).rejects.toThrow(
-      'Published traffic packs require quarterly and yearly offers',
-    );
+    ).rejects.toThrow('Published traffic packs require a yearly-valid offer');
   });
 
   it('creates a product-owned node binding instead of mutating a shared profile', async () => {
@@ -463,6 +451,91 @@ describe('CatalogService publishing rules', () => {
 
     await service.archiveOffer('offer_1');
 
-    expect(cache.del).toHaveBeenCalledWith('catalog:portal:v1');
+    expect(cache.del).toHaveBeenCalledWith('catalog:portal:v2');
+  });
+
+  it('returns only public plan fields for the landing page', async () => {
+    const service = serviceWith({});
+    jest.spyOn(service, 'getPortalCatalog').mockResolvedValue({
+      products: [
+        {
+          id: 'product_1',
+          slug: 'pro',
+          kind: 'plan',
+          status: 'active',
+          name: 'Pro',
+          description: 'Everyday plan',
+          accent: 'green',
+          featured: true,
+          purchaseLimitPerUser: null,
+          purchaseLimitKey: null,
+          requiresActivePlan: false,
+          referralEligible: true,
+          accessProfileId: 'profile_1',
+          trafficReset: 'monthly',
+          quotaCadence: 'monthly_reset',
+          access: {
+            profileName: 'Private profile name',
+            speedUpMbps: 200,
+            speedDownMbps: 200,
+            deviceLimit: 99,
+            servers: [
+              {
+                id: 'server_secret',
+                name: 'Internal server name',
+                region: 'US',
+                nodes: [
+                  {
+                    id: 'node_secret',
+                    label: 'Internal node name',
+                    protocol: 'hysteria2',
+                    serverId: 'server_secret',
+                    serverName: 'Internal server name',
+                    region: 'US',
+                    provider: null,
+                    lifecycleStatus: 'active',
+                    priority: 0,
+                    serviceable: true,
+                  },
+                ],
+              },
+            ],
+            nodePools: [],
+          },
+          offers: [
+            {
+              id: 'offer_1',
+              slug: 'pro-monthly',
+              name: '月付',
+              billingPeriod: 'monthly',
+              intervalMonths: 1,
+              legacyDurationDays: null,
+              trafficBytes: 120 * 1024 ** 3,
+              priceCents: 1690,
+              storeUrl: 'https://private-store.example.com',
+              currency: 'CNY',
+              active: true,
+              isDefault: true,
+              archivedAt: null,
+            },
+          ],
+          createdAt: '2026-08-28T00:00:00.000Z',
+          updatedAt: '2026-08-28T00:00:00.000Z',
+        },
+      ],
+      plans: [],
+      trafficPacks: [],
+    } as never);
+
+    const catalog = await service.getPublicCatalog();
+
+    expect(catalog.products[0]).toMatchObject({
+      id: 'product_1',
+      name: 'Pro',
+      access: { availableServerCount: 1 },
+      offers: [{ id: 'offer_1', priceCents: 1690 }],
+    });
+    expect(catalog.products[0]).not.toHaveProperty('access.servers');
+    expect(catalog.products[0].offers[0]).not.toHaveProperty('storeUrl');
   });
 });

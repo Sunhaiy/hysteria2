@@ -11,6 +11,7 @@ import { DomainModule } from './domain/domain.module';
 import { DestinationTelemetryModule } from './destination-telemetry/destination-telemetry.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { EntitlementModule } from './entitlement/entitlement.module';
+import { EpayModule } from './epay/epay.module';
 import { HealthModule } from './health/health.module';
 import { FinanceModule } from './finance/finance.module';
 import { HysteriaAuthModule } from './hysteria-auth/hysteria-auth.module';
@@ -62,6 +63,7 @@ import { TicketsModule } from './tickets/tickets.module';
     DestinationTelemetryModule,
     EntitlementModule,
     CommerceModule,
+    EpayModule,
     IntegrationsModule,
     AuthModule,
     AuditModule,

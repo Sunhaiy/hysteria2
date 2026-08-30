@@ -12,7 +12,7 @@ import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { TestEmailDto, UpdateSettingsDto } from '../contracts/http.dto';
 import { MailService } from '../mail/mail.service';
 import { SettingsService } from './settings.service';
-import { apiPublicUrl } from '../common/public-url';
+import { apiPublicUrl, webPublicUrl } from '../common/public-url';
 
 @Controller('api/admin/settings')
 @UseGuards(JwtAuthGuard, AdminGuard)
@@ -31,6 +31,7 @@ export class AdminSettingsController {
     const tutorial = await this.settings.getTutorialConfig();
     const registrationEnabled = await this.settings.isRegistrationEnabled();
     const announcement = await this.settings.getAnnouncementConfig();
+    const epay = await this.settings.getEpayConfig();
     const callbackBase = process.env.OAUTH_CALLBACK_BASE || apiPublicUrl();
     return {
       smtp: {
@@ -63,6 +64,19 @@ export class AdminSettingsController {
       tutorial,
       registrationEnabled,
       announcement,
+      payment: {
+        checkoutMode: epay.checkoutMode,
+        epay: {
+          gatewayUrl: epay.gatewayUrl ?? '',
+          merchantId: epay.merchantId ?? '',
+          merchantKeySet: Boolean(epay.merchantKey),
+          paymentType: epay.paymentType,
+          configured: epay.configured,
+          notifyUrl: `${apiPublicUrl()}/api/payments/epay/notify`,
+          returnUrl: `${apiPublicUrl()}/api/payments/epay/return`,
+          successUrl: `${webPublicUrl()}/portal/orders?payment=success`,
+        },
+      },
     };
   }
 
@@ -127,6 +141,7 @@ export class AdminSettingsController {
     if (body.cdkButtonUrl !== undefined) {
       updates['portal.cdkButtonUrl'] = body.cdkButtonUrl.trim();
     }
+    Object.assign(updates, await this.settings.prepareEpaySettingsUpdate(body));
     if (body.tutorialWindowsClient !== undefined)
       updates['tutorial.windows.client'] = body.tutorialWindowsClient.trim();
     if (body.tutorialWindowsSteps !== undefined)

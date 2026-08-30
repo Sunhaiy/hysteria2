@@ -4,23 +4,23 @@ import test from "node:test";
 
 const sourceUrl = new URL("../src/app/portal/plans/page.tsx", import.meta.url);
 
-test("member catalog keeps the established plan cards and shop entry", async () => {
+test("member catalog keeps plan cards and uses exactly one purchase channel", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
   assert.match(source, /<ShaderAnimation/);
   assert.match(source, /data-plan-accent=/);
-  assert.match(source, /className="action-button checkout-store-link"/);
-  assert.match(source, /href=\{checkoutStoreUrl\}/);
   assert.match(source, /href=\{purchaseStoreUrl\}/);
   assert.match(
     source,
     /branding\.purchaseMode === "cdk"[\s\S]*branding\.cdkButtonUrl/,
   );
-  assert.match(source, /前往店铺购买/);
+  assert.match(source, /branding\.checkoutMode === "store"/);
+  assert.match(source, /\/api\/portal\/payments\/epay/);
+  assert.doesNotMatch(source, /checkout-store-link/);
   assert.match(source, /formatTrafficLimit/);
   assert.match(source, /formatSpeedLimit/);
   assert.match(source, /当前套餐/);
-  assert.match(source, /续费套餐/);
+  assert.match(source, /立即续费/);
   assert.doesNotMatch(source, /api\/portal\/wallet/);
   assert.doesNotMatch(source, /余额 \{formatMoney\(wallet\.balanceCents\)\}/);
   assert.doesNotMatch(source, /使用 CDK 兑换/);

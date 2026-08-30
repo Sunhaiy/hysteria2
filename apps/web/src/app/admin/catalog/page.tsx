@@ -40,6 +40,11 @@ type Product = {
   defaultTrafficMultiplier: number;
   accent: string;
   sortOrder: number;
+  featured: boolean;
+  purchaseLimitPerUser?: number | null;
+  purchaseLimitKey?: string | null;
+  requiresActivePlan: boolean;
+  referralEligible: boolean;
   quotaCadence: string;
   access: {
     profileName?: string | null;
@@ -86,6 +91,11 @@ type ProductForm = {
   defaultTrafficMultiplier: number;
   accent: string;
   sortOrder: number;
+  featured: boolean;
+  purchaseLimitPerUser: number;
+  purchaseLimitKey: string;
+  requiresActivePlan: boolean;
+  referralEligible: boolean;
   offers: OfferDraft[];
 };
 const GB = 1024 ** 3;
@@ -134,10 +144,15 @@ const emptyForm = (kind: ProductForm["kind"] = "plan"): ProductForm => ({
   sortOrder: 0,
   offers: (kind === "plan"
     ? ["monthly", "quarterly", "yearly"]
-    : ["quarterly", "yearly"]
+    : ["yearly"]
   ).map((period, index) =>
     offerTemplate(period as Offer["billingPeriod"], kind, index),
   ),
+  featured: false,
+  purchaseLimitPerUser: 0,
+  purchaseLimitKey: "",
+  requiresActivePlan: kind === "traffic_pack",
+  referralEligible: kind === "plan",
 });
 
 export default function CatalogPage() {
@@ -200,6 +215,11 @@ export default function CatalogPage() {
           defaultTrafficMultiplier: product.defaultTrafficMultiplier,
           accent: product.accent,
           sortOrder: product.sortOrder,
+          featured: product.featured,
+          purchaseLimitPerUser: product.purchaseLimitPerUser ?? 0,
+          purchaseLimitKey: product.purchaseLimitKey ?? "",
+          requiresActivePlan: product.requiresActivePlan,
+          referralEligible: product.referralEligible,
           offers: product.offers
             .filter((offer) => !offer.archivedAt)
             .map((offer) => ({
@@ -229,6 +249,12 @@ export default function CatalogPage() {
       defaultTrafficMultiplier: current.defaultTrafficMultiplier,
       status: current.status,
       sortOrder: current.sortOrder,
+      featured: kind === "plan" ? current.featured : false,
+      purchaseLimitPerUser:
+        kind === "plan" ? current.purchaseLimitPerUser : 0,
+      purchaseLimitKey: kind === "plan" ? current.purchaseLimitKey : "",
+      requiresActivePlan: kind === "traffic_pack",
+      referralEligible: kind === "plan",
     }));
   }
 
@@ -289,6 +315,17 @@ export default function CatalogPage() {
             defaultTrafficMultiplier: form.defaultTrafficMultiplier,
             accent: form.accent,
             sortOrder: form.sortOrder,
+            featured: form.featured,
+            purchaseLimitPerUser:
+              form.purchaseLimitPerUser > 0
+                ? form.purchaseLimitPerUser
+                : undefined,
+            purchaseLimitKey:
+              form.purchaseLimitPerUser > 0
+                ? form.purchaseLimitKey.trim() || form.slug.trim()
+                : undefined,
+            requiresActivePlan: form.requiresActivePlan,
+            referralEligible: form.referralEligible,
             offers,
           },
         },
@@ -342,7 +379,7 @@ export default function CatalogPage() {
           <MetricCard
             label="上架商品"
             value={String(activeProducts.length)}
-            footnote="套餐与独立流量包"
+            footnote="套餐与订阅附加包"
           />
           <MetricCard
             label="套餐"
@@ -359,7 +396,7 @@ export default function CatalogPage() {
                 (product) => product.kind === "traffic_pack",
               ).length,
             )}
-            footnote="独立接入，3 / 12 个月"
+            footnote="附加额度，365 天有效"
           />
           <MetricCard
             label="可用节点"
@@ -432,7 +469,14 @@ export default function CatalogPage() {
                         `${offer.name} ${formatBytes(offer.trafficBytes)}`,
                     )
                     .join(" · "),
-              `${product.access.speedDownMbps} Mbps · 不限设备`,
+              <span className="list" key={`${product.id}-rules`}>
+                <span>{product.access.speedDownMbps} Mbps · 不限设备</span>
+                {product.featured ? <small>前台推荐</small> : null}
+                {product.purchaseLimitPerUser ? (
+                  <small>每账号限购 {product.purchaseLimitPerUser} 次</small>
+                ) : null}
+                {product.requiresActivePlan ? <small>需有效套餐</small> : null}
+              </span>,
               product.access.servers.map((server) => server.name).join(" · ") ||
                 "未绑定",
               <span
@@ -658,6 +702,85 @@ export default function CatalogPage() {
               }
             />
           </label>
+          {form.kind === "plan" ? (
+            <>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={form.featured}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      featured: event.target.checked,
+                    }))
+                  }
+                />
+                <span>在会员商城标记为推荐套餐</span>
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={form.referralEligible}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      referralEligible: event.target.checked,
+                    }))
+                  }
+                />
+                <span>该套餐 CDK 可触发邀请奖励</span>
+              </label>
+              <label className="field">
+                <span className="fine-print">每账号终身限购次数</span>
+                <input
+                  className="control"
+                  type="number"
+                  min={0}
+                  max={1000}
+                  step={1}
+                  value={form.purchaseLimitPerUser}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      purchaseLimitPerUser: Number(event.target.value),
+                    }))
+                  }
+                />
+                <small>填 0 表示不限购；Go 填 1。</small>
+              </label>
+              {form.purchaseLimitPerUser > 0 ? (
+                <label className="field">
+                  <span className="fine-print">限购规则标识</span>
+                  <input
+                    className="control mono"
+                    value={form.purchaseLimitKey}
+                    placeholder="trial-go"
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        purchaseLimitKey: event.target.value,
+                      }))
+                    }
+                  />
+                  <small>新版商品沿用同一标识，历史购买仍计入限制。</small>
+                </label>
+              ) : null}
+            </>
+          ) : (
+            <label className="checkbox-row form-grid-wide">
+              <input
+                type="checkbox"
+                checked={form.requiresActivePlan}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    requiresActivePlan: event.target.checked,
+                  }))
+                }
+              />
+              <span>仅作为订阅附加包，需要有效套餐并继承套餐接入</span>
+            </label>
+          )}
           <div className="offer-editor-list">
             <strong>销售规格</strong>
             {form.offers.map((offer) => (

@@ -82,6 +82,7 @@ describe('ReferralService plan CDK settlement', () => {
           speedUpMbpsSnapshot: 100,
           speedDownMbpsSnapshot: 500,
           deviceLimitSnapshot: 3,
+          product: { referralEligible: true },
         }),
         create: jest.fn().mockResolvedValue({ id: 'bonus_grant_1' }),
       },
@@ -147,6 +148,38 @@ describe('ReferralService plan CDK settlement', () => {
       },
     });
     jest.useRealTimers();
+  });
+
+  it('does not reward a referral for an ineligible trial plan', async () => {
+    const tx = {
+      referralAttribution: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'attribution_1',
+          inviteeId: 'invitee_1',
+          status: 'PENDING',
+        }),
+        updateMany: jest.fn(),
+      },
+      entitlementGrant: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'go_grant',
+          userId: 'invitee_1',
+          kind: 'PLAN',
+          product: { referralEligible: false },
+        }),
+      },
+    };
+    const service = new ReferralService({} as never, {} as never);
+
+    await expect(
+      service.settlePlanCdkReward(
+        tx as never,
+        'invitee_1',
+        'order_go',
+        'go_grant',
+      ),
+    ).resolves.toEqual({ settled: false });
+    expect(tx.referralAttribution.updateMany).not.toHaveBeenCalled();
   });
 });
 

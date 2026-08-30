@@ -74,6 +74,11 @@ online collection, health probing, and manual-check consumption.
 
 - **ManualOrder** is the order compatibility ledger. Revenue is recognized only
   after its entitlement is applied.
+- **EpayPaymentAttempt** is a signed external-payment intent. It snapshots the
+  gateway credentials and entitlement terms used when the intent was created,
+  so later settings or catalog edits cannot invalidate or alter settlement.
+  Verified callbacks are idempotent. Fulfillment failures remain retryable and
+  record their reason and attempt count for reconciliation.
 - A complimentary admin grant records the offer list price and an equal
   discount, with zero charged revenue.
 - A plan CDK references a concrete `CatalogOffer`. Its revenue snapshot is the

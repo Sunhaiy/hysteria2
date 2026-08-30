@@ -22,7 +22,7 @@ import type {
   SaveCatalogProductDto,
 } from './catalog.dto';
 
-const portalCatalogCacheKey = 'catalog:portal:v1';
+const portalCatalogCacheKey = 'catalog:portal:v2';
 
 @Injectable()
 export class CatalogService {
@@ -112,20 +112,69 @@ export class CatalogService {
     };
   }
 
-  async getPortalCatalog() {
+  async getPortalCatalog(userId?: string) {
     const cached = await this.cache.get(portalCatalogCacheKey);
+    let result: Awaited<ReturnType<CatalogService['buildPortalCatalog']>>;
     if (cached) {
       try {
-        return JSON.parse(cached) as Awaited<
+        result = JSON.parse(cached) as Awaited<
           ReturnType<CatalogService['buildPortalCatalog']>
         >;
       } catch {
         await this.cache.del(portalCatalogCacheKey);
+        result = await this.buildPortalCatalog();
+        await this.cache.set(
+          portalCatalogCacheKey,
+          JSON.stringify(result),
+          300,
+        );
       }
+    } else {
+      result = await this.buildPortalCatalog();
+      await this.cache.set(portalCatalogCacheKey, JSON.stringify(result), 300);
     }
-    const result = await this.buildPortalCatalog();
-    await this.cache.set(portalCatalogCacheKey, JSON.stringify(result), 300);
-    return result;
+    return userId ? this.addPurchaseEligibility(result, userId) : result;
+  }
+
+  async getPublicCatalog() {
+    const catalog = await this.getPortalCatalog();
+    return {
+      products: catalog.products
+        .filter((product) => product.kind === 'plan')
+        .map((product) => ({
+          id: product.id,
+          slug: product.slug,
+          name: product.name,
+          description: product.description,
+          accent: product.accent,
+          featured: product.featured,
+          purchaseLimitPerUser: product.purchaseLimitPerUser,
+          trafficReset: product.trafficReset,
+          access: {
+            speedUpMbps: product.access.speedUpMbps,
+            speedDownMbps: product.access.speedDownMbps,
+            deviceLimit: product.access.deviceLimit,
+            availableServerCount: product.access.servers.filter((server) =>
+              server.nodes.some((node) => node.serviceable),
+            ).length,
+          },
+          offers: product.offers
+            .filter((offer) => offer.active && !offer.archivedAt)
+            .map((offer) => ({
+              id: offer.id,
+              name: offer.name,
+              billingPeriod: offer.billingPeriod,
+              intervalMonths: offer.intervalMonths,
+              legacyDurationDays: offer.legacyDurationDays,
+              trafficBytes: offer.trafficBytes,
+              priceCents: offer.priceCents,
+              currency: offer.currency,
+              active: offer.active,
+              isDefault: offer.isDefault,
+              archivedAt: offer.archivedAt,
+            })),
+        })),
+    };
   }
 
   private async buildPortalCatalog() {
@@ -270,6 +319,19 @@ export class CatalogService {
           speedUpMbps: input.speedUpMbps,
           speedDownMbps: input.speedDownMbps,
           defaultTrafficMultiplierBasisPoints: defaultMultiplierBasisPoints,
+          featured: input.featured ?? false,
+          purchaseLimitPerUser: input.purchaseLimitPerUser,
+          purchaseLimitKey: input.purchaseLimitPerUser
+            ? input.purchaseLimitKey?.trim() || input.slug.trim()
+            : null,
+          requiresActivePlan:
+            kind === CatalogProductKind.TRAFFIC_PACK
+              ? (input.requiresActivePlan ?? true)
+              : false,
+          referralEligible:
+            kind === CatalogProductKind.PLAN
+              ? (input.referralEligible ?? true)
+              : false,
           accent:
             input.accent ??
             (kind === CatalogProductKind.PLAN ? 'green' : 'teal'),
@@ -418,6 +480,23 @@ export class CatalogService {
           speedUpMbps: input.speedUpMbps,
           speedDownMbps: input.speedDownMbps,
           defaultTrafficMultiplierBasisPoints: defaultMultiplierBasisPoints,
+          featured: input.featured,
+          purchaseLimitPerUser:
+            input.purchaseLimitPerUser === undefined
+              ? existing.purchaseLimitPerUser
+              : input.purchaseLimitPerUser,
+          purchaseLimitKey:
+            input.purchaseLimitPerUser === undefined
+              ? existing.purchaseLimitKey
+              : input.purchaseLimitPerUser
+                ? input.purchaseLimitKey?.trim() || input.slug.trim()
+                : null,
+          requiresActivePlan:
+            kind === CatalogProductKind.TRAFFIC_PACK
+              ? input.requiresActivePlan
+              : false,
+          referralEligible:
+            kind === CatalogProductKind.PLAN ? input.referralEligible : false,
           accent: input.accent,
           sortOrder: input.sortOrder,
         },
@@ -785,6 +864,11 @@ export class CatalogService {
           (product.defaultTrafficMultiplierBasisPoints ?? 10_000) / 10_000,
         accent: product.accent,
         sortOrder: product.sortOrder,
+        featured: product.featured,
+        purchaseLimitPerUser: product.purchaseLimitPerUser,
+        purchaseLimitKey: product.purchaseLimitKey,
+        requiresActivePlan: product.requiresActivePlan,
+        referralEligible: product.referralEligible,
         accessProfileId: product.accessProfileId,
         access: {
           profileName: product.accessProfile?.name ?? null,
@@ -830,22 +914,24 @@ export class CatalogService {
     if (new Set(periods).size !== periods.length) {
       throw new BadRequestException('Offer billing periods must be unique');
     }
-    const required =
-      input.kind === 'plan'
-        ? ['monthly', 'quarterly', 'yearly']
-        : ['quarterly', 'yearly'];
     if (
       input.status === 'active' &&
-      (periods.length !== required.length ||
-        required.some(
-          (period) => !periods.includes(period as (typeof periods)[number]),
-        ))
+      input.kind === 'plan' &&
+      !periods.includes('monthly')
+    ) {
+      throw new BadRequestException('Published plans require a monthly offer');
+    }
+    if (
+      input.status === 'active' &&
+      input.kind === 'traffic_pack' &&
+      !periods.includes('yearly')
     ) {
       throw new BadRequestException(
-        input.kind === 'plan'
-          ? 'Published plans require monthly, quarterly and yearly offers'
-          : 'Published traffic packs require quarterly and yearly offers',
+        'Published traffic packs require a yearly-valid offer',
       );
+    }
+    if (input.purchaseLimitPerUser && !input.purchaseLimitKey?.trim()) {
+      input.purchaseLimitKey = input.slug.trim();
     }
 
     if (input.nodeIds) {
@@ -931,6 +1017,110 @@ export class CatalogService {
       }
     }
     return profile;
+  }
+
+  private async addPurchaseEligibility(
+    catalog: Awaited<ReturnType<CatalogService['buildPortalCatalog']>>,
+    userId: string,
+  ) {
+    const limitKeys = [
+      ...new Set(
+        catalog.products
+          .map((product) => product.purchaseLimitKey)
+          .filter((key): key is string => Boolean(key)),
+      ),
+    ];
+    const now = new Date();
+    const [orders, activeGrantCount, activeSubscriptionCount] =
+      await Promise.all([
+        limitKeys.length
+          ? this.prisma.manualOrder.findMany({
+              where: {
+                userId,
+                status: 'APPLIED',
+                OR: [
+                  {
+                    catalogOffer: {
+                      product: { purchaseLimitKey: { in: limitKeys } },
+                    },
+                  },
+                  {
+                    plan: {
+                      catalogProduct: {
+                        purchaseLimitKey: { in: limitKeys },
+                      },
+                    },
+                  },
+                ],
+              },
+              select: {
+                catalogOffer: {
+                  select: {
+                    product: { select: { purchaseLimitKey: true } },
+                  },
+                },
+                plan: {
+                  select: {
+                    catalogProduct: {
+                      select: { purchaseLimitKey: true },
+                    },
+                  },
+                },
+              },
+            })
+          : Promise.resolve([]),
+        this.prisma.entitlementGrant.count({
+          where: {
+            userId,
+            kind: 'PLAN',
+            status: 'ACTIVE',
+            startsAt: { lte: now },
+            endsAt: { gt: now },
+          },
+        }),
+        this.prisma.subscription.count({
+          where: {
+            userId,
+            status: 'ACTIVE',
+            startsAt: { lte: now },
+            endsAt: { gt: now },
+          },
+        }),
+      ]);
+    const usedByKey = new Map<string, number>();
+    for (const order of orders) {
+      const key =
+        order.catalogOffer?.product.purchaseLimitKey ??
+        order.plan?.catalogProduct?.purchaseLimitKey;
+      if (key) usedByKey.set(key, (usedByKey.get(key) ?? 0) + 1);
+    }
+    const hasActivePlan = activeGrantCount > 0 || activeSubscriptionCount > 0;
+    return {
+      ...catalog,
+      products: catalog.products.map((product) => {
+        const used = product.purchaseLimitKey
+          ? (usedByKey.get(product.purchaseLimitKey) ?? 0)
+          : 0;
+        const remaining = product.purchaseLimitPerUser
+          ? Math.max(product.purchaseLimitPerUser - used, 0)
+          : null;
+        const limitReached = remaining === 0;
+        const needsPlan = product.requiresActivePlan && !hasActivePlan;
+        return {
+          ...product,
+          purchaseEligibility: {
+            eligible: !limitReached && !needsPlan,
+            used,
+            remaining,
+            reason: limitReached
+              ? '该账号已经使用过体验套餐'
+              : needsPlan
+                ? '需要先开通有效套餐'
+                : null,
+          },
+        };
+      }),
+    };
   }
 
   private groupAvailableNodes(

@@ -10,6 +10,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AdminGuard } from '../common/admin.guard';
+import type { SessionPrincipal } from '../common/auth.types';
+import { CurrentPrincipal } from '../common/current-principal.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import {
   CreateAccessProfileDto,
@@ -74,12 +76,23 @@ export class CatalogController {
   }
 }
 
-@Controller('api/portal/catalog')
-export class PortalCatalogController {
+@Controller('api/catalog')
+export class PublicCatalogController {
   constructor(private readonly catalog: CatalogService) {}
 
   @Get()
   getCatalog() {
-    return this.catalog.getPortalCatalog();
+    return this.catalog.getPublicCatalog();
+  }
+}
+
+@Controller('api/portal/catalog')
+@UseGuards(JwtAuthGuard)
+export class PortalCatalogController {
+  constructor(private readonly catalog: CatalogService) {}
+
+  @Get()
+  getCatalog(@CurrentPrincipal() principal: SessionPrincipal) {
+    return this.catalog.getPortalCatalog(principal.sub);
   }
 }

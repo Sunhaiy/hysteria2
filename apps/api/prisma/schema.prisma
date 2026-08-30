@@ -179,12 +179,20 @@ enum PaymentRecordSource {
   WALLET
   CDK
   MANUAL
+  EPAY
 }
 
 enum PaymentRecordStatus {
   PENDING
   SETTLED
   VOID
+}
+
+enum EpayPaymentStatus {
+  PENDING
+  SETTLED
+  EXPIRED
+  FAILED
 }
 
 enum RefundMethod {
@@ -283,6 +291,7 @@ model User {
   adminPermissions             AdminPermissionGrant[]
   entitlementGrants            EntitlementGrant[]
   paymentRecords               PaymentRecord[]
+  epayPaymentAttempts          EpayPaymentAttempt[]
   walletLedger                 WalletLedgerEntry[]           @relation("WalletLedgerTargetUser")
   walletActions                WalletLedgerEntry[]           @relation("WalletLedgerActor")
   processedRefunds             Refund[]                      @relation("RefundProcessedBy")
@@ -641,43 +650,49 @@ model QuotaAdjustment {
 }
 
 model ManualOrder {
-  id                      String               @id @default(cuid())
-  userId                  String
-  processedById           String?
-  planId                  String?
-  trafficPackProductId    String?
-  planOfferId             String?
-  catalogOfferId          String?
-  status                  OrderStatus          @default(PENDING)
-  kind                    OrderKind
-  source                  OrderSource          @default(LEGACY)
-  amountCents             Int
-  basePriceCents          Int?
-  discountCents           Int                  @default(0)
-  currency                String               @default("CNY")
-  productSlugSnapshot     String?
-  productNameSnapshot     String?
-  durationDays            Int?
-  validityDays            Int?
-  trafficBytes            BigInt?
-  entitlementExpiresAt    DateTime?
-  billingPeriodSnapshot   BillingPeriod?
-  intervalMonthsSnapshot  Int?
-  accessProfileIdSnapshot String?
-  idempotencyKey          String?
-  note                    String?
-  createdAt               DateTime             @default(now())
-  processedAt             DateTime?
-  user                    User                 @relation("ManualOrderTargetUser", fields: [userId], references: [id], onDelete: Cascade)
-  processedBy             User?                @relation("ManualOrderProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
-  plan                    Plan?                @relation(fields: [planId], references: [id], onDelete: SetNull)
-  trafficPackProduct      TrafficPackProduct?  @relation(fields: [trafficPackProductId], references: [id], onDelete: SetNull)
-  planOffer               PlanOffer?           @relation(fields: [planOfferId], references: [id], onDelete: SetNull)
-  catalogOffer            CatalogOffer?        @relation(fields: [catalogOfferId], references: [id], onDelete: SetNull)
-  paymentRecords          PaymentRecord[]
-  refunds                 Refund[]
-  walletLedger            WalletLedgerEntry[]
-  qualifyingReferral      ReferralAttribution?
+  id                                   String               @id @default(cuid())
+  userId                               String
+  processedById                        String?
+  planId                               String?
+  trafficPackProductId                 String?
+  planOfferId                          String?
+  catalogOfferId                       String?
+  status                               OrderStatus          @default(PENDING)
+  kind                                 OrderKind
+  source                               OrderSource          @default(LEGACY)
+  amountCents                          Int
+  basePriceCents                       Int?
+  discountCents                        Int                  @default(0)
+  currency                             String               @default("CNY")
+  productSlugSnapshot                  String?
+  productNameSnapshot                  String?
+  durationDays                         Int?
+  validityDays                         Int?
+  trafficBytes                         BigInt?
+  entitlementExpiresAt                 DateTime?
+  billingPeriodSnapshot                BillingPeriod?
+  intervalMonthsSnapshot               Int?
+  accessProfileIdSnapshot              String?
+  speedUpMbpsSnapshot                  Int?
+  speedDownMbpsSnapshot                Int?
+  deviceLimitSnapshot                  Int?
+  trafficMultiplierBasisPointsSnapshot Int?
+  requiresActivePlanSnapshot           Boolean?
+  idempotencyKey                       String?
+  note                                 String?
+  createdAt                            DateTime             @default(now())
+  processedAt                          DateTime?
+  user                                 User                 @relation("ManualOrderTargetUser", fields: [userId], references: [id], onDelete: Cascade)
+  processedBy                          User?                @relation("ManualOrderProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
+  plan                                 Plan?                @relation(fields: [planId], references: [id], onDelete: SetNull)
+  trafficPackProduct                   TrafficPackProduct?  @relation(fields: [trafficPackProductId], references: [id], onDelete: SetNull)
+  planOffer                            PlanOffer?           @relation(fields: [planOfferId], references: [id], onDelete: SetNull)
+  catalogOffer                         CatalogOffer?        @relation(fields: [catalogOfferId], references: [id], onDelete: SetNull)
+  paymentRecords                       PaymentRecord[]
+  epayPaymentAttempt                   EpayPaymentAttempt?
+  refunds                              Refund[]
+  walletLedger                         WalletLedgerEntry[]
+  qualifyingReferral                   ReferralAttribution?
 
   @@unique([userId, idempotencyKey])
   @@index([trafficPackProductId, createdAt])
@@ -1080,6 +1095,11 @@ model CatalogProduct {
   defaultTrafficMultiplierBasisPoints Int                  @default(10000)
   accent                              String               @default("green")
   sortOrder                           Int                  @default(0)
+  featured                            Boolean              @default(false)
+  purchaseLimitPerUser                Int?
+  purchaseLimitKey                    String?
+  requiresActivePlan                  Boolean              @default(false)
+  referralEligible                    Boolean              @default(true)
   systemManaged                       Boolean              @default(false)
   createdAt                           DateTime             @default(now())
   updatedAt                           DateTime             @updatedAt
@@ -1091,30 +1111,32 @@ model CatalogProduct {
 
   @@index([kind, status, sortOrder])
   @@index([accessProfileId, status])
+  @@index([purchaseLimitKey])
 }
 
 model CatalogOffer {
-  id                String             @id @default(cuid())
-  productId         String
-  legacyPlanOfferId String?            @unique
-  slug              String             @unique
-  name              String
-  billingPeriod     BillingPeriod
-  intervalMonths    Int?
-  trafficBytes      BigInt
-  priceCents        Int
-  storeUrl          String?
-  currency          String             @default("CNY")
-  active            Boolean            @default(true)
-  isDefault         Boolean            @default(false)
-  archivedAt        DateTime?
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  product           CatalogProduct     @relation(fields: [productId], references: [id], onDelete: Restrict)
-  legacyPlanOffer   PlanOffer?         @relation(fields: [legacyPlanOfferId], references: [id], onDelete: SetNull)
-  orders            ManualOrder[]
-  entitlementGrants EntitlementGrant[]
-  redemptionCodes   RedemptionCode[]
+  id                  String               @id @default(cuid())
+  productId           String
+  legacyPlanOfferId   String?              @unique
+  slug                String               @unique
+  name                String
+  billingPeriod       BillingPeriod
+  intervalMonths      Int?
+  trafficBytes        BigInt
+  priceCents          Int
+  storeUrl            String?
+  currency            String               @default("CNY")
+  active              Boolean              @default(true)
+  isDefault           Boolean              @default(false)
+  archivedAt          DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  product             CatalogProduct       @relation(fields: [productId], references: [id], onDelete: Restrict)
+  legacyPlanOffer     PlanOffer?           @relation(fields: [legacyPlanOfferId], references: [id], onDelete: SetNull)
+  orders              ManualOrder[]
+  entitlementGrants   EntitlementGrant[]
+  redemptionCodes     RedemptionCode[]
+  epayPaymentAttempts EpayPaymentAttempt[]
 
   @@unique([productId, billingPeriod])
   @@index([productId, active, archivedAt])
@@ -1242,6 +1264,43 @@ model PaymentRecord {
 
   @@index([status, paidAt])
   @@index([userId, createdAt])
+}
+
+model EpayPaymentAttempt {
+  id                     String            @id @default(cuid())
+  userId                 String
+  offerId                String
+  orderId                String?           @unique
+  merchantOrderNo        String            @unique
+  gatewayTradeNo         String?           @unique
+  idempotencyKey         String
+  activeKey              String?           @unique
+  status                 EpayPaymentStatus @default(PENDING)
+  paymentType            String
+  gatewayUrlSnapshot     String?
+  merchantIdSnapshot     String?
+  merchantKeyCiphertext  String?
+  amountCents            Int
+  basePriceCents         Int
+  currency               String            @default("CNY")
+  productNameSnapshot    String
+  entitlementSnapshot    Json?
+  settlementFailureCount Int               @default(0)
+  lastSettlementError    String?
+  lastSettlementFailedAt DateTime?
+  expiresAt              DateTime
+  settledAt              DateTime?
+  failedAt               DateTime?
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+  user                   User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  offer                  CatalogOffer      @relation(fields: [offerId], references: [id], onDelete: Restrict)
+  order                  ManualOrder?      @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+  @@index([status, expiresAt])
+  @@index([offerId, status])
 }
 
 model WalletLedgerEntry {

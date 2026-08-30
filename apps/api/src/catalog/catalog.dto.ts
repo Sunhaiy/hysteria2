@@ -7,6 +7,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
   Min,
   ValidateNested,
@@ -231,6 +232,29 @@ export class SaveCatalogProductDto {
   @IsOptional()
   @IsInt()
   sortOrder?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  featured?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(1000)
+  purchaseLimitPerUser?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  purchaseLimitKey?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  requiresActivePlan?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  referralEligible?: boolean;
 
   @IsArray()
   @ValidateNested({ each: true })

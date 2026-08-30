@@ -25,6 +25,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { pageResponse, parsePage, type PageQuery } from '../common/pagination';
 import { OnlinePresenceService } from './online-presence.service';
 import { resolvePlanRedemptionWindow } from '../commerce/plan-redemption-policy';
+import { assertCatalogPurchaseEligibility } from '../commerce/purchase-eligibility';
 
 const bytesInGiB = 1024 * 1024 * 1024;
 const reconnectGraceMs = 2 * 60_000;
@@ -2465,119 +2466,122 @@ export class ControlPlaneStoreService {
     const timestamp = new Date();
 
     try {
-      const result = await this.prisma.$transaction(async (tx) => {
-        const code = await tx.redemptionCode.findUnique({
-          where: { id: existing.id },
-          include: {
-            plan: true,
-            catalogOffer: {
-              include: { product: { include: { legacyPlan: true } } },
+      const result = await this.prisma.$transaction(
+        async (tx) => {
+          const code = await tx.redemptionCode.findUnique({
+            where: { id: existing.id },
+            include: {
+              plan: true,
+              catalogOffer: {
+                include: { product: { include: { legacyPlan: true } } },
+              },
+              createdBy: true,
+              redeemedBy: true,
+              trafficPackProduct: true,
             },
-            createdBy: true,
-            redeemedBy: true,
-            trafficPackProduct: true,
-          },
-        });
+          });
 
-        if (!code) throw new NotFoundException('兑换码不存在');
-        if (code.status !== RedemptionCodeStatus.ACTIVE)
-          throw new BadRequestException('兑换码当前不可使用');
-        if (code.usedCount >= code.maxUses)
-          throw new BadRequestException('兑换码已用完');
+          if (!code) throw new NotFoundException('兑换码不存在');
+          if (code.status !== RedemptionCodeStatus.ACTIVE)
+            throw new BadRequestException('兑换码当前不可使用');
+          if (code.usedCount >= code.maxUses)
+            throw new BadRequestException('兑换码已用完');
 
-        // One use per user per code.
-        const priorUse = await tx.redemptionUse.findUnique({
-          where: { codeId_userId: { codeId: code.id, userId } },
-        });
-        if (priorUse) throw new BadRequestException('你已经使用过这张兑换码');
+          // One use per user per code.
+          const priorUse = await tx.redemptionUse.findUnique({
+            where: { codeId_userId: { codeId: code.id, userId } },
+          });
+          if (priorUse) throw new BadRequestException('你已经使用过这张兑换码');
 
-        const reserved = await tx.redemptionCode.updateMany({
-          where: {
-            id: code.id,
-            status: RedemptionCodeStatus.ACTIVE,
-            usedCount: { lt: code.maxUses },
-          },
-          data: { usedCount: { increment: 1 } },
-        });
-        if (reserved.count !== 1) {
-          throw new BadRequestException('兑换码已用完');
-        }
+          const reserved = await tx.redemptionCode.updateMany({
+            where: {
+              id: code.id,
+              status: RedemptionCodeStatus.ACTIVE,
+              usedCount: { lt: code.maxUses },
+            },
+            data: { usedCount: { increment: 1 } },
+          });
+          if (reserved.count !== 1) {
+            throw new BadRequestException('兑换码已用完');
+          }
 
-        const openSubscription = await this.findOpenSubscriptionForUser(
-          tx,
-          userId,
-        );
-
-        let order: Awaited<
-          ReturnType<typeof this.applyPlanRedemptionCode>
-        > | null = null;
-        if (code.kind === RedemptionCodeKind.PLAN) {
-          order = await this.applyPlanRedemptionCode(tx, {
+          const openSubscription = await this.findOpenSubscriptionForUser(
+            tx,
             userId,
-            code,
-            openSubscription,
-            redeemedAt: timestamp,
-          });
-        } else if (code.kind === RedemptionCodeKind.TRAFFIC_PACK) {
-          order = await this.applyTrafficPackRedemptionCode(tx, {
-            userId,
-            code,
-            openSubscription,
-            redeemedAt: timestamp,
-          });
-        } else if (code.kind === RedemptionCodeKind.BALANCE) {
-          await tx.user.update({
-            where: { id: userId },
-            data: { balanceCents: { increment: code.amountCents } },
-          });
-          await tx.walletTransaction.create({
-            data: {
+          );
+
+          let order: Awaited<
+            ReturnType<typeof this.applyPlanRedemptionCode>
+          > | null = null;
+          if (code.kind === RedemptionCodeKind.PLAN) {
+            order = await this.applyPlanRedemptionCode(tx, {
               userId,
-              amountCents: code.amountCents,
-              kind: 'TOPUP',
-              note: `兑换码充值 ${code.code}`,
+              code,
+              openSubscription,
+              redeemedAt: timestamp,
+            });
+          } else if (code.kind === RedemptionCodeKind.TRAFFIC_PACK) {
+            order = await this.applyTrafficPackRedemptionCode(tx, {
+              userId,
+              code,
+              openSubscription,
+              redeemedAt: timestamp,
+            });
+          } else if (code.kind === RedemptionCodeKind.BALANCE) {
+            await tx.user.update({
+              where: { id: userId },
+              data: { balanceCents: { increment: code.amountCents } },
+            });
+            await tx.walletTransaction.create({
+              data: {
+                userId,
+                amountCents: code.amountCents,
+                kind: 'TOPUP',
+                note: `兑换码充值 ${code.code}`,
+              },
+            });
+          }
+
+          await tx.redemptionUse.create({
+            data: { codeId: code.id, userId, orderId: order?.id ?? null },
+          });
+
+          if (onApplied) {
+            await onApplied({ tx, code, order });
+          }
+
+          const nextUsedCount = code.usedCount + 1;
+          const exhausted = nextUsedCount >= code.maxUses;
+          const redeemedCode = await tx.redemptionCode.update({
+            where: { id: code.id },
+            data: {
+              status: exhausted
+                ? RedemptionCodeStatus.REDEEMED
+                : RedemptionCodeStatus.ACTIVE,
+              redeemedById: userId,
+              redeemedAt: timestamp,
+            },
+            include: {
+              plan: true,
+              catalogOffer: {
+                include: { product: { include: { legacyPlan: true } } },
+              },
+              createdBy: true,
+              redeemedBy: true,
+              trafficPackProduct: true,
             },
           });
-        }
 
-        await tx.redemptionUse.create({
-          data: { codeId: code.id, userId, orderId: order?.id ?? null },
-        });
+          const user = await tx.user.findUnique({ where: { id: userId } });
 
-        if (onApplied) {
-          await onApplied({ tx, code, order });
-        }
-
-        const nextUsedCount = code.usedCount + 1;
-        const exhausted = nextUsedCount >= code.maxUses;
-        const redeemedCode = await tx.redemptionCode.update({
-          where: { id: code.id },
-          data: {
-            status: exhausted
-              ? RedemptionCodeStatus.REDEEMED
-              : RedemptionCodeStatus.ACTIVE,
-            redeemedById: userId,
-            redeemedAt: timestamp,
-          },
-          include: {
-            plan: true,
-            catalogOffer: {
-              include: { product: { include: { legacyPlan: true } } },
-            },
-            createdBy: true,
-            redeemedBy: true,
-            trafficPackProduct: true,
-          },
-        });
-
-        const user = await tx.user.findUnique({ where: { id: userId } });
-
-        return {
-          code: redeemedCode,
-          order,
-          balanceCents: user?.balanceCents ?? 0,
-        };
-      });
+          return {
+            code: redeemedCode,
+            order,
+            balanceCents: user?.balanceCents ?? 0,
+          };
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
 
       return {
         code: this.presentRedemptionCode(result.code),
@@ -2585,6 +2589,12 @@ export class ControlPlaneStoreService {
         balanceCents: result.balanceCents,
       };
     } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2034'
+      ) {
+        throw new ConflictException('兑换请求发生并发冲突，请重试');
+      }
       this.handlePrismaError(error);
     }
   }
@@ -3304,6 +3314,7 @@ export class ControlPlaneStoreService {
         'Plan redemption code is missing a valid offer',
       );
     }
+    await assertCatalogPurchaseEligibility(tx, input.userId, offer.product);
     const redemptionWindow = resolvePlanRedemptionWindow({
       mode: input.code.planMode,
       currentPlanId: input.openSubscription?.planId,
@@ -3579,6 +3590,9 @@ export class ControlPlaneStoreService {
         ? input.code.catalogOffer
         : null;
     const legacyProduct = input.code.trafficPackProduct;
+    if (offer) {
+      await assertCatalogPurchaseEligibility(tx, input.userId, offer.product);
+    }
     const accessProfileId =
       offer?.product.accessProfileId ?? legacyProduct?.accessProfileId;
     const legacyTrafficPackProductId =
@@ -3650,6 +3664,10 @@ export class ControlPlaneStoreService {
     await tx.trafficPack.create({
       data: {
         userId: input.userId,
+        subscriptionId:
+          offer?.product.requiresActivePlan && input.openSubscription
+            ? input.openSubscription.id
+            : null,
         accessAccountId: account.id,
         trafficPackProductId: legacyTrafficPackProductId,
         accessProfileId,
