@@ -26,7 +26,11 @@ test("member catalog uses store links or 易支付 without wallet checkout", asy
   assert.match(plans, /paymentType/);
   assert.match(plans, /"alipay"/);
   assert.match(plans, /"wxpay"/);
-  assert.match(plans, /window\.location\.assign\(storeUrl\)/);
+  assert.match(
+    plans,
+    /window\.open\(storeUrl, "_blank", "noopener,noreferrer"\)/,
+  );
+  assert.doesNotMatch(plans, /window\.location\.assign\(storeUrl\)/);
   assert.doesNotMatch(plans, /href=\{purchaseStoreUrl\}/);
   assert.doesNotMatch(plans, /\/api\/portal\/commerce\/checkout/);
   assert.doesNotMatch(plans, /钱包余额/);

@@ -20,7 +20,11 @@ test("member catalog keeps plan cards and uses exactly one purchase channel", as
   assert.match(source, /paymentType === "alipay"/);
   assert.match(source, /paymentType === "wxpay"/);
   assert.match(source, /paymentType,\s*\}/);
-  assert.match(source, /window\.location\.assign\(storeUrl\)/);
+  assert.match(
+    source,
+    /window\.open\(storeUrl, "_blank", "noopener,noreferrer"\)/,
+  );
+  assert.doesNotMatch(source, /window\.location\.assign\(storeUrl\)/);
   assert.match(
     source,
     /branding\.purchaseMode === "cdk"[\s\S]*branding\.cdkButtonUrl/,

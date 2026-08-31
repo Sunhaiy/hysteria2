@@ -312,7 +312,7 @@ export default function PortalPlansPage() {
         setError("该规格尚未配置有效的店铺链接。");
         return;
       }
-      window.location.assign(storeUrl);
+      window.open(storeUrl, "_blank", "noopener,noreferrer");
       return;
     }
     if (!token) return;

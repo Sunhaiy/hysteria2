@@ -38,7 +38,11 @@ test("catalog offers expose period-specific shop URLs and plan traffic policy", 
     plans,
     /branding\.purchaseMode === "cdk"[\s\S]*branding\.cdkButtonUrl/,
   );
-  assert.match(plans, /window\.location\.assign\(storeUrl\)/);
+  assert.match(
+    plans,
+    /window\.open\(storeUrl, "_blank", "noopener,noreferrer"\)/,
+  );
+  assert.doesNotMatch(plans, /window\.location\.assign\(storeUrl\)/);
   assert.doesNotMatch(plans, /href=\{purchaseStoreUrl\}/);
   assert.match(catalog, /默认倍率/);
   assert.match(catalog, /上行限速/);
