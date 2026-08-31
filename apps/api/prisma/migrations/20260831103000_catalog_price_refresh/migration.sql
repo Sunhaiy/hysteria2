@@ -140,12 +140,12 @@ UPDATE "QuotaBucket" AS bucket
 SET
   "grantedBytes" = 1099511627776,
   "updatedAt" = CURRENT_TIMESTAMP
-FROM "EntitlementGrant" AS grant
-WHERE bucket."grantId" = grant."id"
-  AND grant."productId" = 'catalog_plan_bc534fcbb40f0f9e06'
-  AND grant."kind" = 'PLAN'
-  AND grant."status" = 'ACTIVE'
-  AND grant."endsAt" > CURRENT_TIMESTAMP
+FROM "EntitlementGrant" AS entitlement
+WHERE bucket."grantId" = entitlement."id"
+  AND entitlement."productId" = 'catalog_plan_bc534fcbb40f0f9e06'
+  AND entitlement."kind" = 'PLAN'
+  AND entitlement."status" = 'ACTIVE'
+  AND entitlement."endsAt" > CURRENT_TIMESTAMP
   AND bucket."endsAt" > CURRENT_TIMESTAMP;
 
 DO $$
