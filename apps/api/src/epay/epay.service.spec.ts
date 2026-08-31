@@ -1,4 +1,8 @@
-import { EpayPaymentStatus } from '@prisma/client';
+import {
+  BillingPeriod,
+  CatalogProductKind,
+  EpayPaymentStatus,
+} from '@prisma/client';
 import { EpayService } from './epay.service';
 import { createEpaySignature } from './epay-signature';
 
@@ -33,6 +37,91 @@ describe('EpayService callbacks', () => {
       sign: createEpaySignature(parameters, config.merchantKey),
     };
   }
+
+  it('creates and signs a payment with the payment method selected by the member', async () => {
+    const offer = {
+      id: 'offer_1',
+      slug: 'spark-monthly',
+      name: 'Spark · 月付',
+      billingPeriod: BillingPeriod.MONTHLY,
+      intervalMonths: 1,
+      trafficBytes: BigInt(100 * 1024 * 1024 * 1024),
+      priceCents: 1230,
+      currency: 'CNY',
+      archivedAt: null,
+      productId: 'product_1',
+      legacyPlanOfferId: null,
+      legacyPlanOffer: null,
+      product: {
+        id: 'product_1',
+        slug: 'spark',
+        name: 'Spark',
+        kind: CatalogProductKind.PLAN,
+        accessProfileId: 'profile_1',
+        accessProfile: {
+          speedUpMbps: 20,
+          speedDownMbps: 120,
+          deviceLimit: 100,
+        },
+        defaultTrafficMultiplierBasisPoints: 10000,
+        requiresActivePlan: false,
+        purchaseLimitPerUser: null,
+        purchaseLimitKey: null,
+        legacyPlanId: null,
+        legacyPlan: null,
+        legacyTrafficPackProductId: null,
+      },
+    };
+    let createdData: Record<string, unknown> | undefined;
+    const tx = {
+      epayPaymentAttempt: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
+          createdData = data;
+          return Promise.resolve({
+            ...data,
+            id: 'attempt_1',
+            status: EpayPaymentStatus.PENDING,
+            orderId: null,
+            settlementFailureCount: 0,
+          });
+        }),
+      },
+      catalogOffer: { findUnique: jest.fn().mockResolvedValue(offer) },
+    };
+    const prisma = {
+      catalogOffer: { findUnique: jest.fn().mockResolvedValue(offer) },
+      epayPaymentAttempt: { findFirst: jest.fn() },
+      $transaction: jest.fn((work: (client: typeof tx) => Promise<unknown>) =>
+        work(tx),
+      ),
+    };
+    const service = new EpayService(
+      prisma as never,
+      {
+        getEpayConfig: jest.fn().mockResolvedValue({
+          ...config,
+          checkoutMode: 'epay',
+        }),
+      } as never,
+      {
+        quoteCheckout: jest.fn().mockResolvedValue({
+          productName: 'Spark · 月付',
+          basePriceCents: 1230,
+          finalPriceCents: 1230,
+        }),
+      } as never,
+      cipher as never,
+    );
+
+    await expect(
+      service.createPayment('user_1', 'offer_1', 'key_1', undefined, 'wxpay'),
+    ).resolves.toMatchObject({
+      gateway: { fields: { type: 'wxpay' } },
+    });
+    expect(createdData?.paymentType).toBe('wxpay');
+  });
 
   it('settles repeated callbacks exactly once after switching back to store mode', async () => {
     const attempt = {

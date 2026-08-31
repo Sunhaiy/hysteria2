@@ -26,9 +26,7 @@ type Offer = {
   isDefault: boolean;
   archivedAt?: string | null;
 };
-type OfferDraft = Offer & {
-  trafficGbInput: string;
-};
+type OfferDraft = Offer;
 type Product = {
   id: string;
   slug: string;
@@ -84,12 +82,12 @@ type ProductForm = {
   name: string;
   description: string;
   storeUrl: string;
+  trafficGbInput: string;
   nodeIds: string[];
   deviceLimit: number;
   speedUpMbps: number;
   speedDownMbps: number;
   defaultTrafficMultiplier: number;
-  accent: string;
   sortOrder: number;
   featured: boolean;
   purchaseLimitPerUser: number;
@@ -131,7 +129,6 @@ const offerTemplate = (
           ? 12
           : null,
   trafficBytes: (kind === "plan" ? 200 : 50) * GB,
-  trafficGbInput: String(kind === "plan" ? 200 : 50),
   priceCents: kind === "plan" ? [1800, 5000, 18000][index] : 3200,
   storeUrl: "",
   active: true,
@@ -145,12 +142,12 @@ const emptyForm = (kind: ProductForm["kind"] = "plan"): ProductForm => ({
   name: "",
   description: "",
   storeUrl: "",
+  trafficGbInput: String(kind === "plan" ? 200 : 50),
   nodeIds: [],
   deviceLimit: 5,
   speedUpMbps: 20,
   speedDownMbps: 100,
   defaultTrafficMultiplier: 1,
-  accent: kind === "plan" ? "green" : "teal",
   sortOrder: 0,
   offers: (kind === "plan"
     ? ["monthly", "quarterly", "yearly"]
@@ -208,6 +205,10 @@ export default function CatalogPage() {
 
   function openProduct(product?: Product) {
     setEditing(product ?? null);
+    const quotaOffer =
+      product?.offers.find(
+        (offer) => offer.billingPeriod === "monthly" && !offer.archivedAt,
+      ) ?? product?.offers.find((offer) => !offer.archivedAt);
     const next = product
       ? {
           slug: product.slug,
@@ -216,6 +217,7 @@ export default function CatalogPage() {
           name: product.name,
           description: product.description ?? "",
           storeUrl: product.storeUrl ?? "",
+          trafficGbInput: trafficBytesToGbInput(quotaOffer?.trafficBytes ?? 0),
           nodeIds: product.access.servers.flatMap((server) =>
             server.nodes.map((node) => node.id),
           ),
@@ -223,19 +225,13 @@ export default function CatalogPage() {
           speedUpMbps: product.access.speedUpMbps,
           speedDownMbps: product.access.speedDownMbps,
           defaultTrafficMultiplier: product.defaultTrafficMultiplier,
-          accent: product.accent,
           sortOrder: product.sortOrder,
           featured: product.featured,
           purchaseLimitPerUser: product.purchaseLimitPerUser ?? 0,
           purchaseLimitKey: product.purchaseLimitKey ?? "",
           requiresActivePlan: product.requiresActivePlan,
           referralEligible: product.referralEligible,
-          offers: product.offers
-            .filter((offer) => !offer.archivedAt)
-            .map((offer) => ({
-              ...offer,
-              trafficGbInput: trafficBytesToGbInput(offer.trafficBytes),
-            })),
+          offers: product.offers.filter((offer) => !offer.archivedAt),
         }
       : emptyForm();
     setForm(next);
@@ -282,11 +278,11 @@ export default function CatalogPage() {
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!token) return;
-    const invalidOffer = form.offers.find(
-      (offer) => trafficGbToBytes(offer.trafficGbInput) < 1,
-    );
-    if (invalidOffer) {
-      setError(`${invalidOffer.name}的额度必须大于 0 GB。`);
+    const trafficBytes = trafficGbToBytes(form.trafficGbInput);
+    if (trafficBytes < 1) {
+      setError(
+        `${form.kind === "plan" ? "每月流量" : "流量包额度"}必须大于 0 GB。`,
+      );
       return;
     }
     setBusy(true);
@@ -297,7 +293,7 @@ export default function CatalogPage() {
         slug: offer.slug.trim(),
         name: offer.name.trim(),
         billingPeriod: offer.billingPeriod,
-        trafficBytes: trafficGbToBytes(offer.trafficGbInput),
+        trafficBytes: trafficGbToBytes(form.trafficGbInput),
         priceCents: offer.priceCents,
         storeUrl: offer.storeUrl?.trim() || undefined,
         active: offer.active,
@@ -322,7 +318,6 @@ export default function CatalogPage() {
             speedUpMbps: form.speedUpMbps,
             speedDownMbps: form.speedDownMbps,
             defaultTrafficMultiplier: form.defaultTrafficMultiplier,
-            accent: form.accent,
             sortOrder: form.sortOrder,
             featured: form.featured,
             purchaseLimitPerUser:
@@ -781,7 +776,30 @@ export default function CatalogPage() {
               流量包是永久有效的独立权益，用户无需先购买套餐即可使用所选节点。
             </div>
           )}
-          <div className="offer-editor-list">
+          <label className="field form-grid-wide">
+            <span className="fine-print">
+              {form.kind === "plan" ? "每月流量（GB）" : "流量包额度（GB）"}
+            </span>
+            <input
+              className="control"
+              type="number"
+              min={0.01}
+              step={0.01}
+              value={form.trafficGbInput}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  trafficGbInput: event.target.value,
+                }))
+              }
+            />
+            <small>
+              {form.kind === "plan"
+                ? "月付、季付和年付共享这一份月度额度，每月按订阅起始日重置。"
+                : "购买后一次性到账，永久有效。"}
+            </small>
+          </label>
+          <div className="offer-editor-list form-grid-wide">
             <strong>销售规格</strong>
             {form.offers.map((offer) => (
               <div className="offer-editor-row" key={offer.billingPeriod}>
@@ -799,21 +817,6 @@ export default function CatalogPage() {
                         priceCents: Math.round(
                           Number(event.target.value) * 100,
                         ),
-                      })
-                    }
-                  />
-                </label>
-                <label className="field offer-editor-quota">
-                  <span className="fine-print">额度（GB）</span>
-                  <input
-                    className="control"
-                    type="number"
-                    min={0.01}
-                    step={0.01}
-                    value={offer.trafficGbInput}
-                    onChange={(event) =>
-                      updateOffer(offer.billingPeriod, {
-                        trafficGbInput: event.target.value,
                       })
                     }
                   />

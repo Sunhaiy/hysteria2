@@ -48,6 +48,7 @@ export class EpayService {
     offerId: string,
     idempotencyKey: string,
     discountCode?: string,
+    paymentType?: 'alipay' | 'wxpay',
   ) {
     const normalizedKey = idempotencyKey.trim();
     if (!normalizedKey || normalizedKey.length > 120) {
@@ -58,6 +59,7 @@ export class EpayService {
     }
 
     const config = await this.requireConfiguredEpay(true);
+    const selectedPaymentType = paymentType ?? config.paymentType;
     const [quote, offer] = await Promise.all([
       this.commerce.quoteCheckout(userId, { offerId }),
       this.prisma.catalogOffer.findUnique({
@@ -100,9 +102,12 @@ export class EpayService {
             },
           });
           if (replay) {
-            if (replay.offerId !== offerId) {
+            if (
+              replay.offerId !== offerId ||
+              replay.paymentType !== selectedPaymentType
+            ) {
               throw new ConflictException(
-                'Idempotency-Key was already used for another product',
+                'Idempotency-Key was already used for another purchase',
               );
             }
             return replay;
@@ -112,8 +117,13 @@ export class EpayService {
             where: { activeKey },
           });
           if (active) {
-            if (active.offerId !== offerId) {
-              throw new ConflictException('该商品已有一笔待支付订单');
+            if (
+              active.offerId !== offerId ||
+              active.paymentType !== selectedPaymentType
+            ) {
+              throw new ConflictException(
+                '该商品已有一笔其他规格或支付方式的待支付订单',
+              );
             }
             return active;
           }
@@ -137,7 +147,7 @@ export class EpayService {
               merchantOrderNo: this.createMerchantOrderNo(now),
               idempotencyKey: normalizedKey,
               activeKey,
-              paymentType: config.paymentType,
+              paymentType: selectedPaymentType,
               gatewayUrlSnapshot: config.gatewayUrl,
               merchantIdSnapshot: config.merchantId,
               merchantKeyCiphertext: this.cipher.encrypt(config.merchantKey!),
@@ -164,7 +174,15 @@ export class EpayService {
         },
         orderBy: { createdAt: 'desc' },
       });
-      if (!replay || replay.offerId !== offerId) throw error;
+      if (!replay) throw error;
+      if (
+        replay.offerId !== offerId ||
+        replay.paymentType !== selectedPaymentType
+      ) {
+        throw new ConflictException(
+          '该商品已有一笔其他规格或支付方式的待支付订单',
+        );
+      }
       return this.presentAttempt(replay, config);
     }
   }

@@ -1,4 +1,10 @@
-import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 export class CreateEpayPaymentDto {
   @IsString()
@@ -9,4 +15,8 @@ export class CreateEpayPaymentDto {
   @IsString()
   @MaxLength(120)
   discountCode?: string;
+
+  @IsOptional()
+  @IsIn(['alipay', 'wxpay'])
+  paymentType?: 'alipay' | 'wxpay';
 }

@@ -791,6 +791,7 @@ export class CatalogService {
         accessProfile: {
           include: {
             nodeBindings: {
+              where: { node: { retiredAt: null } },
               include: { node: { include: { server: true } } },
               orderBy: { priority: 'asc' },
             },

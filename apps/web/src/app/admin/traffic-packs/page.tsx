@@ -10,7 +10,6 @@ import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
 import { formatBytes, formatMoney } from "@/lib/format";
-import { normalizePlanAccent, PLAN_ACCENTS } from "@/lib/plan-accents";
 import type {
   AccessProfileRecord,
   CatalogResponse,
@@ -29,7 +28,6 @@ type ProductForm = {
   validityDays: number;
   accessProfileId: string;
   priceCents: number;
-  accent: string;
 };
 
 function emptyForm(accessProfileId = ""): ProductForm {
@@ -42,7 +40,6 @@ function emptyForm(accessProfileId = ""): ProductForm {
     validityDays: 30,
     accessProfileId,
     priceCents: 1000,
-    accent: "teal",
   };
 }
 
@@ -56,7 +53,6 @@ function fromRecord(product: TrafficPackProductRecord): ProductForm {
     validityDays: product.validityDays ?? 30,
     accessProfileId: product.accessProfileId ?? "",
     priceCents: product.priceCents,
-    accent: normalizePlanAccent(product.accent),
   };
 }
 
@@ -141,7 +137,6 @@ export default function AdminTrafficPacksPage() {
       slug: form.slug.trim(),
       name: form.name.trim(),
       description: form.description.trim(),
-      accent: normalizePlanAccent(form.accent),
     };
 
     try {
@@ -256,10 +251,7 @@ export default function AdminTrafficPacksPage() {
                 onClick={() => !product.archivedAt && openEdit(product)}
                 disabled={Boolean(product.archivedAt)}
               >
-                <span
-                  className="admin-plan-name"
-                  data-plan-accent={normalizePlanAccent(product.accent)}
-                >
+                <span className="admin-plan-name">
                   <i aria-hidden="true" />
                   {product.name}
                 </span>
@@ -454,27 +446,6 @@ export default function AdminTrafficPacksPage() {
               onChange={(event) => set("description", event.target.value)}
             />
           </label>
-
-          <fieldset className="plan-accent-picker">
-            <legend className="fine-print">展示主题</legend>
-            <div className="plan-accent-options">
-              {PLAN_ACCENTS.map((accent) => (
-                <button
-                  key={accent.value}
-                  type="button"
-                  className={form.accent === accent.value ? "selected" : ""}
-                  onClick={() => set("accent", accent.value)}
-                  aria-pressed={form.accent === accent.value}
-                >
-                  <span
-                    className="plan-accent-swatch"
-                    style={{ background: accent.color }}
-                  />
-                  <span>{accent.label}</span>
-                </button>
-              ))}
-            </div>
-          </fieldset>
 
           <label className="field checkbox-row">
             <input

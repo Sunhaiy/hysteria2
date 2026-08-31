@@ -33,6 +33,7 @@ export class EpayController {
       body.offerId,
       idempotencyKey,
       body.discountCode,
+      body.paymentType,
     );
   }
 

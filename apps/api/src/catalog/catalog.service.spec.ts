@@ -418,6 +418,39 @@ describe('CatalogService publishing rules', () => {
     });
   });
 
+  it('excludes retired nodes from catalog products before they reach edit forms', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const service = new CatalogService(
+      {
+        plan: { findMany: jest.fn().mockResolvedValue([]) },
+        trafficPackProduct: { findMany: jest.fn().mockResolvedValue([]) },
+        accessProfile: { findMany: jest.fn().mockResolvedValue([]) },
+        node: { findMany: jest.fn().mockResolvedValue([]) },
+        catalogProduct: { findMany },
+      } as never,
+      {} as never,
+    );
+
+    await service.getAdminCatalog();
+
+    const [query] = findMany.mock.calls[0] as unknown as [
+      {
+        include: {
+          accessProfile: {
+            include: {
+              nodeBindings: {
+                where?: { node: { retiredAt: null } };
+              };
+            };
+          };
+        };
+      },
+    ];
+    expect(query.include.accessProfile.include.nodeBindings.where).toEqual({
+      node: { retiredAt: null },
+    });
+  });
+
   it('invalidates the published catalog cache after an offer is archived', async () => {
     const now = new Date('2026-08-24T00:00:00.000Z');
     const tx = {

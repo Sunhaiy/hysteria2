@@ -227,6 +227,19 @@ export default function PortalPage() {
               currentPacks.reduce((sum, pack) => sum + pack.totalBytes, 0);
             const consumed = Math.max(0, totalQuota - overview.remainingBytes);
             const usedBytes = consumed;
+            const remainingPercent = unlimited
+              ? 100
+              : totalQuota > 0
+                ? Math.max(
+                    0,
+                    Math.min(
+                      100,
+                      Math.round(
+                        (overview.remainingBytes / totalQuota) * 1000,
+                      ) / 10,
+                    ),
+                  )
+                : 0;
             const daysRemaining = Math.max(
               0,
               Math.ceil(
@@ -273,16 +286,43 @@ export default function PortalPage() {
                     ))}
                   </section>
                 ) : null}
-                <section className="metric-grid admin-primary-metrics">
-                  <MetricCard
-                    label="剩余总流量"
-                    value={unlimited ? "无限流量" : formatBytes(overview.remainingBytes)}
-                    footnote={
-                      unlimited
-                        ? `当前套餐 ${overview.plan.name} 不限量`
-                        : `总配额 ${formatBytes(totalQuota)} · 已用 ${formatBytes(usedBytes)}`
-                    }
-                  />
+                <section className="metric-grid portal-primary-metrics">
+                  <article className="portal-quota-summary">
+                    <div className="portal-quota-heading">
+                      <span className="metric-label">剩余总流量</span>
+                      <strong>
+                        {unlimited
+                          ? "无限流量"
+                          : formatBytes(overview.remainingBytes)}
+                      </strong>
+                    </div>
+                    <div
+                      className="portal-quota-track"
+                      role="progressbar"
+                      aria-label="剩余总流量比例"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={remainingPercent}
+                      aria-valuetext={
+                        unlimited
+                          ? "无限流量"
+                          : `${formatBytes(overview.remainingBytes)} / ${formatBytes(totalQuota)}`
+                      }
+                    >
+                      <span style={{ width: `${remainingPercent}%` }} />
+                    </div>
+                    <div className="portal-quota-footnote">
+                      {unlimited ? (
+                        <span>当前套餐 {overview.plan.name} 不限流量</span>
+                      ) : (
+                        <>
+                          <span>总额度 {formatBytes(totalQuota)}</span>
+                          <span>已使用 {formatBytes(usedBytes)}</span>
+                          <span>剩余 {remainingPercent}%</span>
+                        </>
+                      )}
+                    </div>
+                  </article>
                   <MetricCard
                     label="连接状态"
                     value={overview.online > 0 ? "在线" : "离线"}

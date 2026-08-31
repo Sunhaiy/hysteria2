@@ -33,12 +33,13 @@ test("catalog offers expose period-specific shop URLs and plan traffic policy", 
 
   assert.match(catalog, /storeUrl/);
   assert.match(catalog, /该周期店铺链接/);
-  assert.match(plans, /offer\?\.storeUrl/);
+  assert.match(plans, /offer\.storeUrl/);
   assert.match(
     plans,
     /branding\.purchaseMode === "cdk"[\s\S]*branding\.cdkButtonUrl/,
   );
-  assert.match(plans, /href=\{purchaseStoreUrl\}/);
+  assert.match(plans, /window\.location\.assign\(storeUrl\)/);
+  assert.doesNotMatch(plans, /href=\{purchaseStoreUrl\}/);
   assert.match(catalog, /默认倍率/);
   assert.match(catalog, /上行限速/);
   assert.match(catalog, /下行限速/);
@@ -47,25 +48,39 @@ test("catalog offers expose period-specific shop URLs and plan traffic policy", 
   assert.doesNotMatch(catalog, /访问策略/);
 });
 
-test("catalog offer quota inputs stay fully visible and editable", async () => {
+test("catalog administration no longer exposes per-product card colors", async () => {
+  const [catalog, legacyPlans, legacyPacks] = await Promise.all([
+    source("app/admin/catalog/page.tsx"),
+    source("app/admin/plans/page.tsx"),
+    source("app/admin/traffic-packs/page.tsx"),
+  ]);
+
+  assert.doesNotMatch(catalog, /form\.accent/);
+  assert.doesNotMatch(catalog, /accent:\s*product\.accent/);
+  assert.doesNotMatch(legacyPlans, /plan-accent-picker/);
+  assert.doesNotMatch(legacyPlans, /PLAN_ACCENTS/);
+  assert.doesNotMatch(legacyPacks, /plan-accent-picker/);
+  assert.doesNotMatch(legacyPacks, /PLAN_ACCENTS/);
+});
+
+test("catalog uses one product quota while offers only edit prices and links", async () => {
   const [catalog, styles] = await Promise.all([
     source("app/admin/catalog/page.tsx"),
     source("app/globals.scss"),
   ]);
 
   assert.match(catalog, /trafficGbInput:\s*string/);
-  assert.match(catalog, /value=\{offer\.trafficGbInput\}/);
+  assert.match(catalog, /value=\{form\.trafficGbInput\}/);
   assert.match(
     catalog,
-    /onChange=\{\(event\)\s*=>\s*updateOffer\(offer\.billingPeriod,\s*\{\s*trafficGbInput:\s*event\.target\.value/s,
+    /trafficBytes:\s*trafficGbToBytes\(form\.trafficGbInput\)/,
   );
-  assert.match(
-    catalog,
-    /trafficBytes:\s*trafficGbToBytes\(offer\.trafficGbInput\)/,
-  );
+  assert.doesNotMatch(catalog, /value=\{offer\.trafficGbInput\}/);
+  assert.match(catalog, /每月流量（GB）/);
+  assert.match(catalog, /流量包额度（GB）/);
   assert.match(
     styles,
-    /\.offer-editor-row\s*\{[^}]*grid-template-columns:[^;]*80px[^;]*minmax\(120px,[^;]*minmax\(140px,/s,
+    /\.offer-editor-row\s*\{[^}]*grid-template-columns:[^;]*80px[^;]*minmax\(120px,/s,
   );
   assert.match(styles, /\.offer-editor-row \.control\s*\{[^}]*width:\s*100%/s);
   assert.match(
