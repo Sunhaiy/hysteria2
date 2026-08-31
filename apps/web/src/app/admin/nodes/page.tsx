@@ -381,6 +381,35 @@ export default function NodesPage() {
     }
   }
 
+  async function startServer(server: Server) {
+    if (!token) return;
+    const warning = server.trafficGuard?.thresholdReached
+      ? "该服务器已超过本周期流量上限。恢复后将关闭当前流量保护，并重新启用全部节点与运行服务。"
+      : "将重新启用全部节点与运行服务。";
+    if (!window.confirm(`确认恢复服务器“${server.name}”？${warning}`)) return;
+    const busyKey = `server-start-${server.id}`;
+    setBusyId(busyKey);
+    setError(null);
+    try {
+      const result = await apiRequest<{
+        trafficProtectionDisabled: boolean;
+      }>(`/api/admin/node-ops/servers/${server.id}/start`, {
+        method: "POST",
+        token,
+      });
+      setFeedback(
+        result.trafficProtectionDisabled
+          ? `${server.name} 已恢复，已触发的流量保护已关闭。`
+          : `${server.name} 已恢复，运行服务启动命令已进入执行队列。`,
+      );
+      await load(undefined, false);
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "服务器恢复失败。");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   function openServerDrawer(server?: Server) {
     setEditingServer(server ?? null);
     setServerForm(
@@ -764,17 +793,27 @@ export default function NodesPage() {
                       <Icon name="add" />
                       新增节点
                     </button>
-                    <button
-                      className="ghost-button compact"
-                      disabled={
-                        !server.active || busyId === `server-stop-${server.id}`
-                      }
-                      type="button"
-                      onClick={() => void stopServer(server)}
-                    >
-                      <Icon name="power_settings_new" />
-                      {server.active ? "停止服务器" : "服务器已停止"}
-                    </button>
+                    {server.active ? (
+                      <button
+                        className="ghost-button compact"
+                        disabled={busyId === `server-stop-${server.id}`}
+                        type="button"
+                        onClick={() => void stopServer(server)}
+                      >
+                        <Icon name="power_settings_new" />
+                        停止服务器
+                      </button>
+                    ) : (
+                      <button
+                        className="action-button compact"
+                        disabled={busyId === `server-start-${server.id}`}
+                        type="button"
+                        onClick={() => void startServer(server)}
+                      >
+                        <Icon name="power_settings_new" />
+                        恢复服务器
+                      </button>
+                    )}
                     <button
                       className="ghost-button compact"
                       disabled={busyId === `traffic-${server.id}`}
@@ -988,7 +1027,12 @@ export default function NodesPage() {
                         ) : (
                           <button
                             className="action-button compact"
-                            disabled={busyId === node.id}
+                            disabled={busyId === node.id || !server.active}
+                            title={
+                              server.active
+                                ? undefined
+                                : "请先恢复整台服务器"
+                            }
                             type="button"
                             onClick={() =>
                               void requestRuntimeCommand(node, "start")

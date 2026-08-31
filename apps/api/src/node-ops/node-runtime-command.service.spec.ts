@@ -96,6 +96,39 @@ describe('NodeRuntimeCommandService', () => {
     expect(transactionClient.auditLog.create).not.toHaveBeenCalled();
   });
 
+  it('rejects a manual start while the parent server is stopped', async () => {
+    const transactionClient = {
+      node: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'node-1',
+          protocol: 'VLESS_REALITY',
+          controlApiBaseUrl: null,
+          controlApiSecret: null,
+          server: { active: false },
+        }),
+      },
+      nodeRuntimeCommand: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findFirst: jest.fn(),
+        create: jest.fn(),
+      },
+      auditLog: { create: jest.fn() },
+    };
+    const prisma = {
+      $transaction: jest.fn(transactionWith(transactionClient)),
+    };
+    const service = createService({ prisma });
+
+    await expect(
+      service.request(
+        'node-1',
+        { action: 'start', idempotencyKey: 'request-start-1' },
+        'admin-1',
+      ),
+    ).rejects.toThrow('服务器已停止，请先恢复整台服务器');
+    expect(transactionClient.nodeRuntimeCommand.create).not.toHaveBeenCalled();
+  });
+
   it('queues automatic traffic-limit stops as a system audit event', async () => {
     type CommandInput = {
       data: { requestedById: string | null; action: string };

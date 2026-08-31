@@ -59,6 +59,15 @@ export class NodeOpsController {
     return this.nodes.stopServer(id, principal.sub);
   }
 
+  @Post('servers/:id/start')
+  @HttpCode(HttpStatus.ACCEPTED)
+  startServer(
+    @Param('id') id: string,
+    @CurrentPrincipal() principal: SessionPrincipal,
+  ) {
+    return this.nodes.startServer(id, principal.sub);
+  }
+
   @Delete('servers/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   deleteServer(@Param('id') id: string) {

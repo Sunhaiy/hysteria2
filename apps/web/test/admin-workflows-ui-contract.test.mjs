@@ -102,6 +102,9 @@ test("node operations separate access and runtime service controls", async () =>
   assert.match(nodes, /停止服务/);
   assert.match(nodes, /停止服务器/);
   assert.match(nodes, /servers\/\$\{server\.id\}\/stop/);
+  assert.match(nodes, /恢复服务器/);
+  assert.match(nodes, /servers\/\$\{server\.id\}\/start/);
+  assert.match(nodes, /请先恢复整台服务器/);
   assert.match(nodes, /当前连接会立即断开/);
   assert.match(nodes, /runtime-commands/);
   assert.match(nodes, /删除节点/);

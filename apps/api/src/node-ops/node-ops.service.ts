@@ -257,6 +257,80 @@ export class NodeOpsService {
     return { serverId: id, disabledEndpoints, queuedStops };
   }
 
+  async startServer(id: string, actorId: string) {
+    const server = await this.prisma.nodeServer.findFirst({
+      where: { id, retiredAt: null },
+      select: {
+        id: true,
+        active: true,
+        trafficLimitEnabled: true,
+        trafficLimitBytes: true,
+        trafficLimitResetDay: true,
+        retiredAt: true,
+        endpoints: {
+          where: { retiredAt: null },
+          select: {
+            id: true,
+            protocol: true,
+            controlApiBaseUrl: true,
+            controlApiSecret: true,
+            runtimeState: true,
+            runtimeStateObservedAt: true,
+            retiredAt: true,
+          },
+        },
+      },
+    });
+    if (!server) throw new NotFoundException('Node server not found');
+
+    const projection = (await this.trafficGuard.project([server])).get(id);
+    const trafficProtectionDisabled = Boolean(
+      server.trafficLimitEnabled && projection?.thresholdReached,
+    );
+    const startedAt = new Date();
+    const enabledEndpoints = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.node.updateMany({
+        where: { serverId: id, retiredAt: null },
+        data: {
+          active: true,
+          lifecycleStatus: NodeLifecycleStatus.ACTIVE,
+        },
+      });
+      await tx.nodeServer.update({
+        where: { id },
+        data: {
+          active: true,
+          ...(trafficProtectionDisabled ? { trafficLimitEnabled: false } : {}),
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: 'server.access.started',
+          targetType: 'node_server',
+          targetId: id,
+          metadata: {
+            startedAt: startedAt.toISOString(),
+            endpointCount: result.count,
+            trafficProtectionDisabled,
+          },
+        },
+      });
+      return result.count;
+    });
+    const queuedStarts = await this.queueServerStarts(
+      server,
+      startedAt,
+      trafficProtectionDisabled,
+    );
+    return {
+      serverId: id,
+      enabledEndpoints,
+      queuedStarts,
+      trafficProtectionDisabled,
+    };
+  }
+
   async deleteServer(id: string) {
     const server = await this.prisma.nodeServer.findUnique({
       where: { id },
@@ -413,6 +487,32 @@ export class NodeOpsService {
             node.id,
             `${keyPrefix}:${server.id}:${node.id}`,
             { serverId: server.id },
+          ),
+        ),
+    );
+    return results.filter((result) => result.status === 'fulfilled').length;
+  }
+
+  private async queueServerStarts(
+    server: {
+      id: string;
+      endpoints: Array<{ id: string; runtimeState: NodeRuntimeState }>;
+    },
+    startedAt: Date,
+    trafficProtectionDisabled: boolean,
+  ) {
+    if (!this.runtime) return 0;
+    const results = await Promise.allSettled(
+      server.endpoints
+        .filter((node) => node.runtimeState !== NodeRuntimeState.ACTIVE)
+        .map((node) =>
+          this.runtime!.requestSystemStart(
+            node.id,
+            `server-start:${server.id}:${node.id}:${startedAt.getTime()}`,
+            {
+              serverId: server.id,
+              trafficProtectionDisabled: String(trafficProtectionDisabled),
+            },
           ),
         ),
     );

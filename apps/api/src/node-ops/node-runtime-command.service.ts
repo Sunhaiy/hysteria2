@@ -63,6 +63,20 @@ export class NodeRuntimeCommandService {
     );
   }
 
+  async requestSystemStart(
+    nodeId: string,
+    idempotencyKey: string,
+    metadata: Record<string, string>,
+  ) {
+    return this.enqueue(
+      nodeId,
+      { action: 'start', idempotencyKey },
+      null,
+      'node.runtime.start.system_requested',
+      metadata,
+    );
+  }
+
   private async enqueue(
     nodeId: string,
     input: RequestNodeRuntimeCommandDto,
@@ -92,9 +106,17 @@ export class NodeRuntimeCommandService {
             protocol: true,
             controlApiBaseUrl: true,
             controlApiSecret: true,
+            server: { select: { active: true } },
           },
         });
         if (!node) throw new NotFoundException('Node not found');
+        if (
+          action === NodeRuntimeAction.START &&
+          node.server &&
+          !node.server.active
+        ) {
+          throw new ConflictException('服务器已停止，请先恢复整台服务器');
+        }
         if (
           node.protocol === NodeProtocol.HYSTERIA2 &&
           (!node.controlApiBaseUrl || !node.controlApiSecret)
