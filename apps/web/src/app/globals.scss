@@ -200,6 +200,18 @@ img {
   font-size: var(--text-tiny);
 }
 
+.badge {
+  height: 24px;
+  justify-content: center;
+  border-color: transparent;
+  background: var(--text-muted);
+  color: var(--bg-canvas);
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .scope-chip {
   width: fit-content;
   color: var(--accent-400);
@@ -208,23 +220,27 @@ img {
 }
 
 .badge.success {
-  border-color: color-mix(in srgb, var(--status-success) 30%, transparent);
-  color: var(--status-success);
+  border-color: transparent;
+  background: var(--status-success);
+  color: #06110a;
 }
 
 .badge.warn {
-  border-color: color-mix(in srgb, var(--status-redirect) 30%, transparent);
-  color: var(--status-redirect);
+  border-color: transparent;
+  background: var(--status-redirect);
+  color: #161006;
 }
 
 .badge.danger {
-  border-color: color-mix(in srgb, var(--status-critical) 30%, transparent);
-  color: var(--status-critical);
+  border-color: transparent;
+  background: var(--status-critical);
+  color: #160606;
 }
 
 .badge.info {
-  border-color: color-mix(in srgb, var(--status-info) 30%, transparent);
-  color: var(--status-info);
+  border-color: transparent;
+  background: var(--status-info);
+  color: #06101f;
 }
 
 .app-shell {
