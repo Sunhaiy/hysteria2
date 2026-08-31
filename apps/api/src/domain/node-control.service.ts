@@ -115,6 +115,11 @@ export class NodeControlService {
     return node ? this.presentNodeForControl(node) : undefined;
   }
 
+  async getNodeForRuntimeCommand(nodeId: string) {
+    const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
+    return node ? this.presentNodeForControl(node) : undefined;
+  }
+
   async createNode(input: SaveNodeInput) {
     try {
       const protocol = input.protocol ?? 'hysteria2';
@@ -396,6 +401,7 @@ export class NodeControlService {
       runtimeStateObservedAt:
         node.runtimeStateObservedAt?.toISOString() ?? null,
       runtimeError: node.runtimeError,
+      retiredAt: node.retiredAt?.toISOString() ?? null,
       active: node.active,
       lifecycleStatus: node.lifecycleStatus.toLowerCase(),
       speedUpMbps: node.speedUpMbps,

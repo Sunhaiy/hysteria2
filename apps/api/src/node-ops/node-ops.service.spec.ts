@@ -1,153 +1,147 @@
 import { NodeOpsService } from './node-ops.service';
 
+type NodeUpdateInput = {
+  where: { serverId: string; retiredAt: null };
+  data: { active: boolean; lifecycleStatus: string; retiredAt?: Date };
+};
+
+type ServerUpdateInput = {
+  where: { id: string };
+  data: { active: boolean; retiredAt?: Date };
+};
+
 function transactionWith<Client>(client: Client) {
   return <Result>(operation: (tx: Client) => Promise<Result>) =>
     operation(client);
 }
 
+function createHarness(
+  endpoints: Array<{ id: string; runtimeState: string }> = [],
+) {
+  const nodeUpdateMany = jest
+    .fn<Promise<{ count: number }>, [NodeUpdateInput]>()
+    .mockResolvedValue({ count: endpoints.length });
+  const serverUpdate = jest
+    .fn<Promise<{ id: string }>, [ServerUpdateInput]>()
+    .mockResolvedValue({ id: 'server_1' });
+  const transactionClient = {
+    node: { updateMany: nodeUpdateMany },
+    nodeServer: { update: serverUpdate },
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
+  };
+  const server = {
+    id: 'server_1',
+    retiredAt: null,
+    endpoints,
+  };
+  const prisma = {
+    nodeServer: {
+      findUnique: jest.fn().mockResolvedValue(server),
+      findFirst: jest.fn().mockResolvedValue(server),
+    },
+    $transaction: jest.fn(transactionWith(transactionClient)),
+  };
+  const runtime = {
+    requestSystemStop: jest.fn().mockResolvedValue({ status: 'queued' }),
+  };
+  const service = new NodeOpsService(
+    prisma as never,
+    {} as never,
+    runtime as never,
+  );
+  return {
+    service,
+    prisma,
+    runtime,
+    nodeUpdateMany,
+    serverUpdate,
+  };
+}
+
 describe('NodeOpsService server lifecycle', () => {
-  it('deletes an empty server', async () => {
-    type NodeUpdateInput = {
-      where: { serverId: string; retiredAt: null };
-      data: { active: boolean; lifecycleStatus: string; retiredAt: Date };
-    };
-    type ServerUpdateInput = {
-      where: { id: string };
-      data: { active: boolean; retiredAt: Date };
-    };
-    let nodeUpdateInput: NodeUpdateInput | undefined;
-    let serverUpdateInput: ServerUpdateInput | undefined;
-    const nodeUpdateMany = jest.fn((input: NodeUpdateInput) => {
-      nodeUpdateInput = input;
-      return Promise.resolve({ count: 0 });
-    });
-    const serverUpdate = jest.fn((input: ServerUpdateInput) => {
-      serverUpdateInput = input;
-      return Promise.resolve({ id: 'server_1' });
-    });
-    const transactionClient = {
-      node: { updateMany: nodeUpdateMany },
-      nodeServer: { update: serverUpdate },
-    };
-    const prisma = {
-      nodeServer: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'server_1',
-          retiredAt: null,
-          endpoints: [],
-        }),
+  it('retires an empty server', async () => {
+    const harness = createHarness();
+
+    await harness.service.deleteServer('server_1');
+
+    expect(harness.runtime.requestSystemStop).not.toHaveBeenCalled();
+    const nodeUpdate = harness.nodeUpdateMany.mock.calls[0][0];
+    const serverUpdate = harness.serverUpdate.mock.calls[0][0];
+    expect(nodeUpdate).toMatchObject({
+      where: { serverId: 'server_1', retiredAt: null },
+      data: {
+        active: false,
+        lifecycleStatus: 'DISABLED',
       },
-      $transaction: jest.fn(transactionWith(transactionClient)),
-    };
-    const service = new NodeOpsService(prisma as never, {} as never);
+    });
+    expect(nodeUpdate.data.retiredAt).toBeInstanceOf(Date);
+    expect(serverUpdate).toMatchObject({
+      where: { id: 'server_1' },
+      data: { active: false },
+    });
+    expect(serverUpdate.data.retiredAt).toBeInstanceOf(Date);
+  });
 
-    await service.deleteServer('server_1');
+  it('retires a serving server and queues every running endpoint stop', async () => {
+    const harness = createHarness([
+      { id: 'node_hy2', runtimeState: 'ACTIVE' },
+      { id: 'node_vless', runtimeState: 'UNKNOWN' },
+      { id: 'node_stopped', runtimeState: 'INACTIVE' },
+    ]);
 
-    expect(nodeUpdateInput?.where).toEqual({
+    await harness.service.deleteServer('server_1');
+
+    expect(harness.runtime.requestSystemStop).toHaveBeenCalledTimes(2);
+    expect(harness.runtime.requestSystemStop).toHaveBeenCalledWith(
+      'node_hy2',
+      'server-delete:server_1:node_hy2',
+      { serverId: 'server_1' },
+    );
+    expect(harness.runtime.requestSystemStop).toHaveBeenCalledWith(
+      'node_vless',
+      'server-delete:server_1:node_vless',
+      { serverId: 'server_1' },
+    );
+    expect(harness.nodeUpdateMany).toHaveBeenCalledTimes(1);
+    expect(harness.serverUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('still retires the server when an endpoint stop cannot be queued', async () => {
+    const harness = createHarness([{ id: 'node_hy2', runtimeState: 'ACTIVE' }]);
+    harness.runtime.requestSystemStop.mockRejectedValue(
+      new Error('agent unavailable'),
+    );
+
+    await harness.service.deleteServer('server_1');
+
+    expect(harness.nodeUpdateMany).toHaveBeenCalledTimes(1);
+    expect(harness.serverUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables an unreachable server before attempting remote stops', async () => {
+    const harness = createHarness([
+      { id: 'node_hy2', runtimeState: 'ACTIVE' },
+      { id: 'node_vless', runtimeState: 'ACTIVE' },
+    ]);
+    harness.runtime.requestSystemStop.mockRejectedValue(
+      new Error('agent unavailable'),
+    );
+
+    await expect(
+      harness.service.stopServer('server_1', 'admin_1'),
+    ).resolves.toMatchObject({
       serverId: 'server_1',
-      retiredAt: null,
+      disabledEndpoints: 2,
+      queuedStops: 0,
     });
-    expect(nodeUpdateInput?.data).toMatchObject({
-      active: false,
-      lifecycleStatus: 'DISABLED',
+
+    expect(harness.nodeUpdateMany).toHaveBeenCalledWith({
+      where: { serverId: 'server_1', retiredAt: null },
+      data: { active: false, lifecycleStatus: 'DISABLED' },
     });
-    expect(nodeUpdateInput?.data.retiredAt).toBeInstanceOf(Date);
-    expect(serverUpdateInput?.where).toEqual({ id: 'server_1' });
-    expect(serverUpdateInput?.data.active).toBe(false);
-    expect(serverUpdateInput?.data.retiredAt).toBeInstanceOf(Date);
-  });
-
-  it('retires a server together with disabled inactive endpoints', async () => {
-    const nodeUpdateMany = jest.fn().mockResolvedValue({ count: 2 });
-    const serverUpdate = jest.fn().mockResolvedValue({ id: 'server_1' });
-    const transactionClient = {
-      node: { updateMany: nodeUpdateMany },
-      nodeServer: { update: serverUpdate },
-    };
-    const prisma = {
-      nodeServer: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'server_1',
-          retiredAt: null,
-          endpoints: [
-            {
-              id: 'node_1',
-              active: false,
-              lifecycleStatus: 'DISABLED',
-              runtimeState: 'INACTIVE',
-              onlinePresence: [],
-            },
-            {
-              id: 'node_2',
-              active: false,
-              lifecycleStatus: 'DISABLED',
-              runtimeState: 'UNKNOWN',
-              onlinePresence: [],
-            },
-          ],
-        }),
-      },
-      $transaction: jest.fn(transactionWith(transactionClient)),
-    };
-    const service = new NodeOpsService(prisma as never, {} as never);
-
-    await service.deleteServer('server_1');
-
-    expect(nodeUpdateMany).toHaveBeenCalledTimes(1);
-    expect(serverUpdate).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps a server while an endpoint is still serving users', async () => {
-    const prisma = {
-      nodeServer: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'server_1',
-          retiredAt: null,
-          endpoints: [
-            {
-              id: 'node_1',
-              active: true,
-              lifecycleStatus: 'ACTIVE',
-              runtimeState: 'ACTIVE',
-              onlinePresence: [{ concurrentClients: 1 }],
-            },
-          ],
-        }),
-      },
-      $transaction: jest.fn(),
-    };
-    const service = new NodeOpsService(prisma as never, {} as never);
-
-    await expect(service.deleteServer('server_1')).rejects.toThrow(
-      '请先停用服务器下的全部节点',
-    );
-    expect(prisma.$transaction).not.toHaveBeenCalled();
-  });
-
-  it('keeps a server while a disabled endpoint still has live connections', async () => {
-    const prisma = {
-      nodeServer: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'server_1',
-          retiredAt: null,
-          endpoints: [
-            {
-              id: 'node_1',
-              active: false,
-              lifecycleStatus: 'DISABLED',
-              runtimeState: 'INACTIVE',
-              onlinePresence: [{ concurrentClients: 1 }],
-            },
-          ],
-        }),
-      },
-      $transaction: jest.fn(),
-    };
-    const service = new NodeOpsService(prisma as never, {} as never);
-
-    await expect(service.deleteServer('server_1')).rejects.toThrow(
-      '服务器仍有在线连接',
-    );
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(harness.serverUpdate).toHaveBeenCalledWith({
+      where: { id: 'server_1' },
+      data: { active: false },
+    });
   });
 });

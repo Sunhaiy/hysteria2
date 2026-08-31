@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  NodeLifecycleStatus,
   NodeProtocol,
   NodeRuntimeCommandStatus,
   NodeRuntimeState,
@@ -17,17 +18,24 @@ import { NodeRuntimeCommandService } from './node-runtime-command.service';
 const bytesPerGiB = BigInt(1024 ** 3);
 const beijingOffsetMs = 8 * 60 * 60 * 1000;
 
-export type NodeTrafficGuardSubject = {
+export type ServerTrafficGuardEndpoint = {
   id: string;
   protocol: NodeProtocol;
   controlApiBaseUrl: string | null;
   controlApiSecret: string | null;
   runtimeState: NodeRuntimeState;
   runtimeStateObservedAt: Date | null;
+  retiredAt: Date | null;
+};
+
+export type ServerTrafficGuardSubject = {
+  id: string;
+  active: boolean;
   trafficLimitEnabled: boolean;
   trafficLimitBytes: bigint | null;
   trafficLimitResetDay: number;
   retiredAt: Date | null;
+  endpoints: ServerTrafficGuardEndpoint[];
 };
 
 type TrafficCycle = { start: Date; end: Date };
@@ -68,35 +76,40 @@ export class NodeTrafficGuardService {
     private readonly runtime: NodeRuntimeCommandService,
   ) {}
 
-  async project(subjects: NodeTrafficGuardSubject[], now = new Date()) {
+  async project(subjects: ServerTrafficGuardSubject[], now = new Date()) {
     return (await this.collect(subjects, now)).projections;
   }
 
   async updatePolicy(
-    nodeId: string,
+    serverId: string,
     input: UpdateNodeTrafficLimitDto,
     actorId: string,
   ) {
-    const existing = await this.prisma.node.findFirst({
-      where: { id: nodeId, retiredAt: null },
-      select: {
-        id: true,
-        protocol: true,
-        controlApiBaseUrl: true,
-        controlApiSecret: true,
+    const existing = await this.prisma.nodeServer.findFirst({
+      where: { id: serverId, retiredAt: null },
+      include: {
+        endpoints: {
+          where: { retiredAt: null },
+          select: {
+            id: true,
+            protocol: true,
+            controlApiBaseUrl: true,
+            controlApiSecret: true,
+            runtimeState: true,
+            runtimeStateObservedAt: true,
+            retiredAt: true,
+          },
+        },
       },
     });
-    if (!existing) throw new NotFoundException('Node not found');
-    if (input.enabled && !this.runtimeControlConfigured(existing)) {
-      throw new BadRequestException('请先配置节点服务管理，再启用自动停服');
-    }
+    if (!existing) throw new NotFoundException('Node server not found');
 
     const trafficLimitBytes = BigInt(
       Math.round(input.monthlyLimitGiB * Number(bytesPerGiB)),
     );
     const updated = await this.prisma.$transaction(async (tx) => {
-      const node = await tx.node.update({
-        where: { id: nodeId },
+      const server = await tx.nodeServer.update({
+        where: { id: serverId },
         data: {
           trafficLimitEnabled: input.enabled,
           trafficLimitBytes,
@@ -106,9 +119,9 @@ export class NodeTrafficGuardService {
       await tx.auditLog.create({
         data: {
           actorId,
-          action: 'node.traffic_limit.updated',
-          targetType: 'node',
-          targetId: nodeId,
+          action: 'server.traffic_limit.updated',
+          targetType: 'node_server',
+          targetId: serverId,
           metadata: {
             enabled: input.enabled,
             monthlyLimitGiB: input.monthlyLimitGiB,
@@ -116,13 +129,31 @@ export class NodeTrafficGuardService {
           },
         },
       });
-      return node;
+      return server;
     });
-    return (await this.project([updated])).get(nodeId);
+    return (
+      await this.project([{ ...updated, endpoints: existing.endpoints }])
+    ).get(serverId);
+  }
+
+  async updatePolicyForNode(
+    nodeId: string,
+    input: UpdateNodeTrafficLimitDto,
+    actorId: string,
+  ) {
+    const node = await this.prisma.node.findFirst({
+      where: { id: nodeId, retiredAt: null },
+      select: { serverId: true },
+    });
+    if (!node) throw new NotFoundException('Node not found');
+    if (!node.serverId) {
+      throw new BadRequestException('未归属服务器的节点不能设置服务器流量保护');
+    }
+    return this.updatePolicy(node.serverId, input, actorId);
   }
 
   async enforce(now = new Date()) {
-    const subjects = await this.prisma.node.findMany({
+    const subjects = await this.prisma.nodeServer.findMany({
       where: {
         retiredAt: null,
         trafficLimitEnabled: true,
@@ -130,65 +161,129 @@ export class NodeTrafficGuardService {
       },
       select: {
         id: true,
-        protocol: true,
-        controlApiBaseUrl: true,
-        controlApiSecret: true,
-        runtimeState: true,
-        runtimeStateObservedAt: true,
+        active: true,
         trafficLimitEnabled: true,
         trafficLimitBytes: true,
         trafficLimitResetDay: true,
         retiredAt: true,
+        endpoints: {
+          where: { retiredAt: null },
+          select: {
+            id: true,
+            protocol: true,
+            controlApiBaseUrl: true,
+            controlApiSecret: true,
+            runtimeState: true,
+            runtimeStateObservedAt: true,
+            retiredAt: true,
+          },
+        },
       },
     });
     const collected = await this.collect(subjects, now);
+    let disabled = 0;
     let queued = 0;
     let skipped = 0;
 
     for (const subject of subjects) {
       const projection = collected.projections.get(subject.id);
-      if (
-        !projection?.configured ||
-        !projection.thresholdReached ||
-        subject.runtimeState !== NodeRuntimeState.ACTIVE
-      ) {
+      if (!projection?.thresholdReached) {
         skipped += 1;
         continue;
       }
-      const cycle = this.trafficCycle(now, subject.trafficLimitResetDay);
-      const idempotencyKey = this.commandKey(subject, cycle.start, now);
-      if (
-        projection.status === 'stop_queued' ||
-        collected.commandsByKey.has(idempotencyKey)
-      ) {
-        skipped += 1;
-        continue;
-      }
-      try {
-        await this.runtime.requestSystemStop(subject.id, idempotencyKey, {
-          cycleStart: cycle.start.toISOString(),
-          cycleEnd: cycle.end.toISOString(),
-          limitBytes: String(subject.trafficLimitBytes),
-          usedBytes: String(collected.usageByNode.get(subject.id) ?? BigInt(0)),
+
+      if (subject.active) {
+        await this.prisma.$transaction(async (tx) => {
+          await tx.node.updateMany({
+            where: { serverId: subject.id, retiredAt: null },
+            data: {
+              active: false,
+              lifecycleStatus: NodeLifecycleStatus.DISABLED,
+            },
+          });
+          await tx.nodeServer.update({
+            where: { id: subject.id },
+            data: { active: false },
+          });
+          await tx.auditLog.create({
+            data: {
+              actorId: null,
+              action: 'server.traffic_limit.access_disabled',
+              targetType: 'node_server',
+              targetId: subject.id,
+              metadata: {
+                cycleStart: projection.cycleStart,
+                cycleEnd: projection.cycleEnd,
+                limitBytes: String(subject.trafficLimitBytes),
+                usedBytes: String(
+                  collected.usageByServer.get(subject.id) ?? BigInt(0),
+                ),
+              },
+            },
+          });
         });
-        queued += 1;
-      } catch (error) {
-        if (error instanceof ConflictException) {
+        disabled += 1;
+      }
+
+      const cycle = this.trafficCycle(now, subject.trafficLimitResetDay);
+      for (const endpoint of subject.endpoints) {
+        if (
+          endpoint.runtimeState === NodeRuntimeState.INACTIVE ||
+          !this.runtimeControlConfigured(endpoint) ||
+          collected.pendingNodeIds.has(endpoint.id)
+        ) {
           skipped += 1;
           continue;
         }
-        throw error;
+        const idempotencyKey = this.commandKey(
+          subject.id,
+          endpoint,
+          cycle.start,
+          now,
+        );
+        if (collected.commandsByKey.has(idempotencyKey)) {
+          skipped += 1;
+          continue;
+        }
+        try {
+          await this.runtime.requestSystemStop(endpoint.id, idempotencyKey, {
+            serverId: subject.id,
+            cycleStart: cycle.start.toISOString(),
+            cycleEnd: cycle.end.toISOString(),
+            limitBytes: String(subject.trafficLimitBytes),
+            usedBytes: String(
+              collected.usageByServer.get(subject.id) ?? BigInt(0),
+            ),
+          });
+          queued += 1;
+        } catch (error) {
+          if (
+            error instanceof ConflictException ||
+            error instanceof BadRequestException ||
+            error instanceof NotFoundException
+          ) {
+            skipped += 1;
+            continue;
+          }
+          throw error;
+        }
       }
     }
-    return { checked: subjects.length, queued, skipped };
+    return { checked: subjects.length, disabled, queued, skipped };
   }
 
-  private async collect(subjects: NodeTrafficGuardSubject[], now: Date) {
+  private async collect(subjects: ServerTrafficGuardSubject[], now: Date) {
     const projections = new Map<string, NodeTrafficGuardProjection>();
     const commandsByKey = new Map<string, GuardCommand>();
-    const usageByNode = new Map<string, bigint>();
+    const usageByServer = new Map<string, bigint>();
+    const pendingNodeIds = new Set<string>();
     if (subjects.length === 0) {
-      return { projections, commandsByKey, usageByNode };
+      return {
+        projections,
+        commandsByKey,
+        usageByServer,
+        pendingNodeIds,
+      };
     }
 
     const cycles = new Map(
@@ -197,19 +292,36 @@ export class NodeTrafficGuardService {
         this.trafficCycle(now, subject.trafficLimitResetDay),
       ]),
     );
+    const endpointOwners = new Map<string, string>();
+    const usageConditions: Prisma.Sql[] = [];
+    const commandConditions: Prisma.NodeRuntimeCommandWhereInput[] = [];
     const limitedSubjects = subjects.filter(
-      (subject) => subject.trafficLimitBytes !== null,
+      (subject) =>
+        subject.trafficLimitEnabled && subject.trafficLimitBytes !== null,
     );
-    let commands: GuardCommand[] = [];
-    if (limitedSubjects.length > 0) {
-      const usageConditions = limitedSubjects.map((subject) => {
-        const cycle = cycles.get(subject.id)!;
-        return Prisma.sql`(
-          rollup."nodeId" = ${subject.id}
+    for (const subject of limitedSubjects) {
+      const cycle = cycles.get(subject.id)!;
+      for (const endpoint of subject.endpoints) {
+        endpointOwners.set(endpoint.id, subject.id);
+        usageConditions.push(Prisma.sql`(
+          rollup."nodeId" = ${endpoint.id}
           AND rollup."bucketStart" >= ${cycle.start}
           AND rollup."bucketStart" < ${cycle.end}
-        )`;
-      });
+        )`);
+        commandConditions.push({
+          nodeId: endpoint.id,
+          idempotencyKey: {
+            startsWith: this.commandPrefix(
+              subject.id,
+              endpoint.id,
+              cycle.start,
+            ),
+          },
+        });
+      }
+    }
+
+    if (usageConditions.length > 0) {
       const usageRows = await this.prisma.$queryRaw<UsageRow[]>(Prisma.sql`
         SELECT
           rollup."nodeId",
@@ -222,46 +334,51 @@ export class NodeTrafficGuardService {
         GROUP BY rollup."nodeId"
       `);
       for (const row of usageRows) {
-        usageByNode.set(row.nodeId, BigInt(row.physicalBytes));
+        const serverId = endpointOwners.get(row.nodeId);
+        if (!serverId) continue;
+        usageByServer.set(
+          serverId,
+          (usageByServer.get(serverId) ?? BigInt(0)) +
+            BigInt(row.physicalBytes),
+        );
       }
-
-      const commandConditions = limitedSubjects.map((subject) => {
-        const cycle = cycles.get(subject.id)!;
-        return {
-          nodeId: subject.id,
-          idempotencyKey: {
-            startsWith: this.commandPrefix(subject.id, cycle.start),
-          },
-        };
-      });
-      commands = await this.prisma.nodeRuntimeCommand.findMany({
-        where: { OR: commandConditions },
-        select: { nodeId: true, status: true, idempotencyKey: true },
-        orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }],
-      });
     }
-    const latestCommandByNode = new Map<string, GuardCommand>();
+
+    const commands =
+      commandConditions.length > 0
+        ? await this.prisma.nodeRuntimeCommand.findMany({
+            where: { OR: commandConditions },
+            select: { nodeId: true, status: true, idempotencyKey: true },
+            orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }],
+          })
+        : [];
+    const latestCommandByServer = new Map<string, GuardCommand>();
     for (const command of commands) {
       commandsByKey.set(command.idempotencyKey, command);
-      if (!latestCommandByNode.has(command.nodeId)) {
-        latestCommandByNode.set(command.nodeId, command);
+      if (
+        command.status === NodeRuntimeCommandStatus.QUEUED ||
+        command.status === NodeRuntimeCommandStatus.RUNNING
+      ) {
+        pendingNodeIds.add(command.nodeId);
+      }
+      const serverId = endpointOwners.get(command.nodeId);
+      if (serverId && !latestCommandByServer.has(serverId)) {
+        latestCommandByServer.set(serverId, command);
       }
     }
 
     for (const subject of subjects) {
       const cycle = cycles.get(subject.id)!;
       const limit = subject.trafficLimitBytes;
-      const used = usageByNode.get(subject.id) ?? BigInt(0);
+      const used = usageByServer.get(subject.id) ?? BigInt(0);
       const remaining = limit === null ? null : limit - used;
       const thresholdReached = limit !== null && used >= limit;
-      const command = latestCommandByNode.get(subject.id);
-      const configured = this.runtimeControlConfigured(subject);
-      const status = this.statusFor(
-        subject,
-        configured,
-        thresholdReached,
-        command,
-      );
+      const command = latestCommandByServer.get(subject.id);
+      const configured =
+        subject.endpoints.length > 0 &&
+        subject.endpoints.every((endpoint) =>
+          this.runtimeControlConfigured(endpoint),
+        );
       projections.set(subject.id, {
         enabled: subject.trafficLimitEnabled,
         configured,
@@ -280,10 +397,10 @@ export class NodeTrafficGuardService {
         cycleEnd: cycle.end.toISOString(),
         nextResetAt: cycle.end.toISOString(),
         stopCommandStatus: command?.status.toLowerCase() ?? null,
-        status,
+        status: this.statusFor(subject, configured, thresholdReached, command),
       });
     }
-    return { projections, commandsByKey, usageByNode };
+    return { projections, commandsByKey, usageByServer, pendingNodeIds };
   }
 
   private trafficCycle(now: Date, resetDay: number): TrafficCycle {
@@ -313,17 +430,18 @@ export class NodeTrafficGuardService {
     );
   }
 
-  private commandPrefix(nodeId: string, cycleStart: Date) {
-    return `node-traffic-limit:${nodeId}:${cycleStart.toISOString()}:`;
+  private commandPrefix(serverId: string, nodeId: string, cycleStart: Date) {
+    return `server-traffic-limit:${serverId}:${cycleStart.toISOString()}:${nodeId}:`;
   }
 
   private commandKey(
-    subject: NodeTrafficGuardSubject,
+    serverId: string,
+    endpoint: ServerTrafficGuardEndpoint,
     cycleStart: Date,
     now: Date,
   ) {
     const retryWindow = Math.floor(now.getTime() / 60_000);
-    return `${this.commandPrefix(subject.id, cycleStart)}${subject.runtimeStateObservedAt?.getTime() ?? 0}:${retryWindow}`;
+    return `${this.commandPrefix(serverId, endpoint.id, cycleStart)}${endpoint.runtimeStateObservedAt?.getTime() ?? 0}:${retryWindow}`;
   }
 
   private safeNumber(value: bigint) {
@@ -335,13 +453,12 @@ export class NodeTrafficGuardService {
   }
 
   private statusFor(
-    subject: NodeTrafficGuardSubject,
+    subject: ServerTrafficGuardSubject,
     configured: boolean,
     thresholdReached: boolean,
     command?: GuardCommand,
   ): NodeTrafficGuardProjection['status'] {
     if (!subject.trafficLimitEnabled) return 'disabled';
-    if (!configured) return 'unavailable';
     if (
       command?.status === NodeRuntimeCommandStatus.QUEUED ||
       command?.status === NodeRuntimeCommandStatus.RUNNING
@@ -350,11 +467,14 @@ export class NodeTrafficGuardService {
     }
     if (
       thresholdReached &&
-      subject.runtimeState === NodeRuntimeState.INACTIVE &&
-      command?.status === NodeRuntimeCommandStatus.SUCCEEDED
+      !subject.active &&
+      subject.endpoints.every(
+        (endpoint) => endpoint.runtimeState === NodeRuntimeState.INACTIVE,
+      )
     ) {
       return 'stopped';
     }
+    if (!configured) return 'unavailable';
     return thresholdReached ? 'limit_reached' : 'monitoring';
   }
 }

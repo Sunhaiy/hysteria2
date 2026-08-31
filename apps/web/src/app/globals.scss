@@ -6124,6 +6124,19 @@ select.control {
   white-space: nowrap;
 }
 
+.server-traffic-guard {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel-alt);
+}
+
+.server-traffic-guard .node-traffic-guard-heading > div {
+  display: grid;
+  gap: 3px;
+}
+
 .node-endpoint-states {
   grid-template-columns: minmax(78px, 0.7fr) minmax(100px, 1fr);
   gap: 12px;

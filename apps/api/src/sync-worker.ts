@@ -245,7 +245,7 @@ async function bootstrap() {
           const result = await trafficGuard.enforce();
           if (result.queued > 0) {
             logger.warn(
-              `Queued ${result.queued} automatic node stop command(s) after traffic limits were reached`,
+              `Queued ${result.queued} automatic endpoint stop command(s) after server traffic limits were reached`,
             );
           }
         },

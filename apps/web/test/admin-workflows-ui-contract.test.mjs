@@ -5,6 +5,16 @@ import test from "node:test";
 const source = (path) =>
   readFile(new URL(`../src/${path}`, import.meta.url), "utf8");
 
+test("public homepage keeps the original landing composition", async () => {
+  const home = await source("app/page.tsx");
+
+  assert.match(home, /<main className="lp">/);
+  assert.match(home, /自由连接/);
+  assert.match(home, /全球无限可能/);
+  assert.doesNotMatch(home, /home-plan-grid/);
+  assert.doesNotMatch(home, /BrandLogo/);
+});
+
 test("customer controls are immediate and expose subscription-link lifecycle", async () => {
   const detail = await source("app/admin/customers/[id]/page.tsx");
 
@@ -71,14 +81,17 @@ test("node operations separate access and runtime service controls", async () =>
   assert.match(nodes, /新增节点/);
   assert.match(nodes, /停止接入/);
   assert.match(nodes, /停止服务/);
+  assert.match(nodes, /停止服务器/);
+  assert.match(nodes, /servers\/\$\{server\.id\}\/stop/);
   assert.match(nodes, /当前连接会立即断开/);
   assert.match(nodes, /runtime-commands/);
   assert.match(nodes, /删除节点/);
   assert.match(nodes, /node-endpoint-list/);
   assert.match(nodes, /编辑服务器/);
   assert.match(nodes, /删除服务器/);
-  assert.match(nodes, /历史流量和审计记录会保留/);
-  assert.match(nodes, /安全删除服务器并保留历史记录/);
+  assert.match(nodes, /历史流量和审计记录仍会保留/);
+  assert.match(nodes, /立即从订阅中移除/);
+  assert.match(nodes, /确认后立即停止并删除服务器/);
   assert.match(nodes, /编辑节点/);
   assert.match(nodes, /节点管理地址/);
   assert.doesNotMatch(nodes, /Agent/);
@@ -111,8 +124,10 @@ test("admin navigation is grouped and nodes expose monthly traffic protection", 
   assert.match(sidebar, /nav-section/);
   assert.match(sidebar, /item\.group/);
   assert.match(nodes, /traffic-limit/);
+  assert.match(nodes, /servers\/\$\{editingTrafficServer\.id\}\/traffic-limit/);
   assert.match(nodes, /月度双向流量上限/);
-  assert.match(nodes, /达到上限时自动停止运行服务/);
+  assert.match(nodes, /达到上限时停止整台服务器的全部节点/);
+  assert.match(nodes, /汇总该服务器全部 HY2 与 VLESS 端点/);
 });
 
 test("customer traffic statistics include an accounted-usage chart", async () => {

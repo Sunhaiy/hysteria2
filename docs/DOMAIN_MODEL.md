@@ -17,6 +17,9 @@ than adding another interpretation to the legacy plan and pool models.
 - **NodeServer** is one physical or virtual server.
 - **Node** is one protocol endpoint on a server. Hysteria2 and VLESS + Reality
   endpoints are separate nodes even when they share a server.
+- A `NodeServer` owns the monthly physical-traffic protection policy. Its usage
+  is the sum of all endpoint rollups; reaching the limit disables the server and
+  its endpoints before queuing per-endpoint runtime stops.
 - **AccessProfileNode** is the direct, prioritized relationship between an
   access profile and a protocol endpoint.
 
@@ -62,10 +65,11 @@ observed systemd state. Disabling access does not stop a service; stopping a
 service does not silently rewrite access policy.
 
 Deleting a server or node from the operations UI is a **retirement**, not a
-physical database delete. Retirement is allowed only after access is disabled,
-the runtime is stopped, and current online presence is empty. Retired topology
-is excluded from subscriptions, worker polling, and current operations views,
-while immutable usage, cost, and audit history remains queryable.
+physical database delete. A confirmed server deletion immediately disables and
+retires the server and every endpoint, while durable stop commands disconnect
+any running services. Retired topology is excluded from subscriptions, worker
+polling, and current operations views, while immutable usage, cost, and audit
+history remains queryable.
 
 The API process serves projections only. The standalone worker owns full sync,
 online collection, health probing, and manual-check consumption.

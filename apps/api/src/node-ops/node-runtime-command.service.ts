@@ -204,25 +204,49 @@ export class NodeRuntimeCommandService {
     if (claimed.count !== 1) return null;
 
     try {
-      const node = await this.nodes.getNodeForControl(command.nodeId);
+      const node = await this.nodes.getNodeForRuntimeCommand(command.nodeId);
       if (!node) throw new Error('Node no longer exists');
-      const result =
-        command.action === NodeRuntimeAction.STATUS
+      let forcedRetirementStop = Boolean(node.retiredAt);
+      let result = forcedRetirementStop
+        ? await this.adapters.controlService(
+            node,
+            'stop',
+            `retirement:${command.idempotencyKey}`,
+          )
+        : command.action === NodeRuntimeAction.STATUS
           ? await this.adapters.getServiceStatus(node)
           : await this.adapters.controlService(
               node,
               command.action === NodeRuntimeAction.START ? 'start' : 'stop',
               command.idempotencyKey,
             );
-      const state = this.parseState(result.status);
+      let state = this.parseState(result.status);
+      if (!forcedRetirementStop && command.action === NodeRuntimeAction.START) {
+        const latest = await this.prisma.node.findUnique({
+          where: { id: command.nodeId },
+          select: { retiredAt: true },
+        });
+        if (latest?.retiredAt) {
+          forcedRetirementStop = true;
+          result = await this.adapters.controlService(
+            node,
+            'stop',
+            `retirement:${command.idempotencyKey}`,
+          );
+          state = this.parseState(result.status);
+        }
+      }
+      const expectedAction = forcedRetirementStop
+        ? NodeRuntimeAction.STOP
+        : command.action;
       if (
-        (command.action === NodeRuntimeAction.START &&
+        (expectedAction === NodeRuntimeAction.START &&
           state !== NodeRuntimeState.ACTIVE) ||
-        (command.action === NodeRuntimeAction.STOP &&
+        (expectedAction === NodeRuntimeAction.STOP &&
           state !== NodeRuntimeState.INACTIVE)
       ) {
         throw new Error(
-          `Agent reported ${result.status} after ${command.action.toLowerCase()}`,
+          `Agent reported ${result.status} after ${expectedAction.toLowerCase()}`,
         );
       }
       const observedAt = this.parseObservedAt(result.observedAt);
@@ -251,7 +275,11 @@ export class NodeRuntimeCommandService {
             action: `node.runtime.${command.action.toLowerCase()}.succeeded`,
             targetType: 'node',
             targetId: command.nodeId,
-            metadata: { commandId: command.id, state: result.status },
+            metadata: {
+              commandId: command.id,
+              state: result.status,
+              forcedRetirementStop,
+            },
           },
         });
       });

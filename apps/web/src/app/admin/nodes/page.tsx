@@ -12,6 +12,29 @@ import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
 import { formatBytes, formatDateTime } from "@/lib/format";
 
+type TrafficGuard = {
+  enabled: boolean;
+  configured: boolean;
+  limitGiB?: number | null;
+  limitBytes?: number | null;
+  resetDay: number;
+  usedBytes: number;
+  remainingBytes?: number | null;
+  usagePercent: number;
+  thresholdReached: boolean;
+  cycleStart: string;
+  cycleEnd: string;
+  nextResetAt: string;
+  stopCommandStatus?: string | null;
+  status:
+    | "disabled"
+    | "unavailable"
+    | "monitoring"
+    | "limit_reached"
+    | "stop_queued"
+    | "stopped";
+};
+
 type Endpoint = {
   id: string;
   label: string;
@@ -56,28 +79,6 @@ type Endpoint = {
   runtimeError?: string | null;
   speedUpMbps: number;
   speedDownMbps: number;
-  trafficGuard?: {
-    enabled: boolean;
-    configured: boolean;
-    limitGiB?: number | null;
-    limitBytes?: number | null;
-    resetDay: number;
-    usedBytes: number;
-    remainingBytes?: number | null;
-    usagePercent: number;
-    thresholdReached: boolean;
-    cycleStart: string;
-    cycleEnd: string;
-    nextResetAt: string;
-    stopCommandStatus?: string | null;
-    status:
-      | "disabled"
-      | "unavailable"
-      | "monitoring"
-      | "limit_reached"
-      | "stop_queued"
-      | "stopped";
-  };
   latestRuntimeCommand?: {
     id: string;
     action: "start" | "stop" | "status";
@@ -97,6 +98,8 @@ type Server = {
   region?: string | null;
   provider?: string | null;
   active: boolean;
+  runtimeControlConfigured: boolean;
+  trafficGuard?: TrafficGuard;
   onlineUsers: number;
   healthyEndpoints: number;
   endpoints: Endpoint[];
@@ -212,9 +215,7 @@ const runtimeStateDetail = (node: Endpoint) =>
             : node.runtimeControlConfigured
               ? "等待状态采集"
               : "未配置服务管理";
-const trafficGuardStatusName = (
-  status: NonNullable<Endpoint["trafficGuard"]>["status"],
-) =>
+const trafficGuardStatusName = (status: TrafficGuard["status"]) =>
   ({
     disabled: "未启用",
     unavailable: "服务管理未配置",
@@ -241,9 +242,8 @@ export default function NodesPage() {
   );
   const [editingServer, setEditingServer] = useState<Server | null>(null);
   const [editingNode, setEditingNode] = useState<Endpoint | null>(null);
-  const [editingTrafficNode, setEditingTrafficNode] = useState<Endpoint | null>(
-    null,
-  );
+  const [editingTrafficServer, setEditingTrafficServer] =
+    useState<Server | null>(null);
 
   const load = useCallback(
     async (signal?: AbortSignal, showLoading = true) => {
@@ -354,6 +354,33 @@ export default function NodesPage() {
     }
   }
 
+  async function stopServer(server: Server) {
+    if (
+      !token ||
+      !window.confirm(
+        `确认停止服务器“${server.name}”？全部节点会立即从订阅和鉴权中移除，当前连接将断开。`,
+      )
+    )
+      return;
+    const busyKey = `server-stop-${server.id}`;
+    setBusyId(busyKey);
+    setError(null);
+    try {
+      await apiRequest(`/api/admin/node-ops/servers/${server.id}/stop`, {
+        method: "POST",
+        token,
+      });
+      setFeedback(
+        `${server.name} 已停止接入，运行服务停止命令已进入执行队列。`,
+      );
+      await load(undefined, false);
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "服务器停止失败。");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   function openServerDrawer(server?: Server) {
     setEditingServer(server ?? null);
     setServerForm(
@@ -410,12 +437,12 @@ export default function NodesPage() {
     setError(null);
   }
 
-  function openTrafficLimitDrawer(node: Endpoint) {
-    setEditingTrafficNode(node);
+  function openTrafficLimitDrawer(server: Server) {
+    setEditingTrafficServer(server);
     setTrafficLimitForm({
-      enabled: node.trafficGuard?.enabled ?? false,
-      monthlyLimitGiB: String(node.trafficGuard?.limitGiB ?? 1000),
-      resetDay: node.trafficGuard?.resetDay ?? 1,
+      enabled: server.trafficGuard?.enabled ?? false,
+      monthlyLimitGiB: String(server.trafficGuard?.limitGiB ?? 1000),
+      resetDay: server.trafficGuard?.resetDay ?? 1,
     });
     setDrawer("traffic");
     setError(null);
@@ -537,18 +564,18 @@ export default function NodesPage() {
 
   async function saveTrafficLimit(event: FormEvent) {
     event.preventDefault();
-    if (!token || !editingTrafficNode) return;
+    if (!token || !editingTrafficServer) return;
     const monthlyLimitGiB = Number(trafficLimitForm.monthlyLimitGiB);
     if (!Number.isFinite(monthlyLimitGiB) || monthlyLimitGiB < 1) {
       setError("月度流量上限至少为 1 GiB。");
       return;
     }
-    const busyKey = `traffic-${editingTrafficNode.id}`;
+    const busyKey = `traffic-${editingTrafficServer.id}`;
     setBusyId(busyKey);
     setError(null);
     try {
       await apiRequest(
-        `/api/admin/node-ops/nodes/${editingTrafficNode.id}/traffic-limit`,
+        `/api/admin/node-ops/servers/${editingTrafficServer.id}/traffic-limit`,
         {
           method: "PUT",
           token,
@@ -560,8 +587,8 @@ export default function NodesPage() {
         },
       );
       setDrawer(null);
-      setEditingTrafficNode(null);
-      setFeedback(`${editingTrafficNode.label} 的流量保护策略已更新。`);
+      setEditingTrafficServer(null);
+      setFeedback(`${editingTrafficServer.name} 的服务器流量保护策略已更新。`);
       await load();
     } catch (cause) {
       setError(
@@ -598,7 +625,7 @@ export default function NodesPage() {
     if (
       !token ||
       !window.confirm(
-        `确认删除服务器“${server.name}”及其已停用节点？历史流量和审计记录会保留。`,
+        `确认删除服务器“${server.name}”？它会立即从订阅中移除，正在运行的节点会进入停止队列，当前连接将断开。历史流量和审计记录仍会保留。`,
       )
     )
       return;
@@ -612,11 +639,7 @@ export default function NodesPage() {
       setFeedback(`${server.name} 已删除。`);
       await load();
     } catch (cause) {
-      setError(
-        cause instanceof ApiError
-          ? cause.message
-          : "请先移动或删除服务器下的全部节点。",
-      );
+      setError(cause instanceof ApiError ? cause.message : "服务器删除失败。");
     } finally {
       setBusyId(null);
     }
@@ -742,33 +765,30 @@ export default function NodesPage() {
                       新增节点
                     </button>
                     <button
-                      className="danger-button compact"
+                      className="ghost-button compact"
                       disabled={
-                        busyId === server.id ||
-                        server.endpoints.some(
-                          (node) =>
-                            node.active ||
-                            node.lifecycleStatus !== "disabled" ||
-                            node.onlineUsers > 0 ||
-                            ["active", "activating", "deactivating"].includes(
-                              node.runtimeState,
-                            ),
-                        )
+                        !server.active || busyId === `server-stop-${server.id}`
                       }
                       type="button"
-                      title={
-                        server.endpoints.some(
-                          (node) =>
-                            node.active ||
-                            node.lifecycleStatus !== "disabled" ||
-                            node.onlineUsers > 0 ||
-                            ["active", "activating", "deactivating"].includes(
-                              node.runtimeState,
-                            ),
-                        )
-                          ? "请先停用节点、停止运行服务并确认没有在线连接"
-                          : "安全删除服务器并保留历史记录"
-                      }
+                      onClick={() => void stopServer(server)}
+                    >
+                      <Icon name="power_settings_new" />
+                      {server.active ? "停止服务器" : "服务器已停止"}
+                    </button>
+                    <button
+                      className="ghost-button compact"
+                      disabled={busyId === `traffic-${server.id}`}
+                      type="button"
+                      onClick={() => openTrafficLimitDrawer(server)}
+                    >
+                      <Icon name="data_usage" />
+                      流量保护
+                    </button>
+                    <button
+                      className="danger-button compact"
+                      disabled={busyId === server.id}
+                      type="button"
+                      title="确认后立即停止并删除服务器"
                       onClick={() => void deleteServer(server)}
                     >
                       删除服务器
@@ -778,6 +798,56 @@ export default function NodesPage() {
               </div>
             }
           >
+            {server.id !== "unassigned" ? (
+              <div className="node-traffic-guard server-traffic-guard">
+                <div className="node-traffic-guard-heading">
+                  <div>
+                    <strong>服务器本周期双向流量</strong>
+                    <span className="fine-print">
+                      汇总该服务器全部 HY2 与 VLESS 端点
+                    </span>
+                  </div>
+                  <span
+                    className={`badge ${server.trafficGuard?.status === "monitoring" ? "success" : server.trafficGuard?.thresholdReached ? "danger" : "neutral"}`}
+                  >
+                    {server.trafficGuard
+                      ? trafficGuardStatusName(server.trafficGuard.status)
+                      : "未配置"}
+                  </span>
+                </div>
+                {server.trafficGuard?.limitBytes ? (
+                  <>
+                    <strong>
+                      {formatBytes(server.trafficGuard.usedBytes)} /{" "}
+                      {formatBytes(server.trafficGuard.limitBytes)}
+                    </strong>
+                    <div
+                      className="node-traffic-progress"
+                      role="progressbar"
+                      aria-label={`${server.name} 月度流量`}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={Math.min(
+                        100,
+                        Math.round(server.trafficGuard.usagePercent),
+                      )}
+                    >
+                      <span
+                        style={{
+                          width: `${Math.min(100, server.trafficGuard.usagePercent)}%`,
+                        }}
+                      />
+                    </div>
+                    <small>
+                      每月 {server.trafficGuard.resetDay} 日重置 ·{" "}
+                      {server.trafficGuard.usagePercent.toFixed(2)}%
+                    </small>
+                  </>
+                ) : (
+                  <small>尚未设置服务器月度上限</small>
+                )}
+              </div>
+            ) : null}
             <div className="node-endpoint-list">
               {server.endpoints.length ? (
                 server.endpoints.map((node) => (
@@ -838,49 +908,6 @@ export default function NodesPage() {
                               : "尚未同步"}
                           </small>
                         </div>
-                      </div>
-                      <div className="node-traffic-guard">
-                        <div className="node-traffic-guard-heading">
-                          <span className="fine-print">本周期双向流量</span>
-                          <span
-                            className={`badge ${node.trafficGuard?.status === "monitoring" ? "success" : node.trafficGuard?.thresholdReached ? "danger" : "neutral"}`}
-                          >
-                            {node.trafficGuard
-                              ? trafficGuardStatusName(node.trafficGuard.status)
-                              : "未配置"}
-                          </span>
-                        </div>
-                        {node.trafficGuard?.limitBytes ? (
-                          <>
-                            <strong>
-                              {formatBytes(node.trafficGuard.usedBytes)} /{" "}
-                              {formatBytes(node.trafficGuard.limitBytes)}
-                            </strong>
-                            <div
-                              className="node-traffic-progress"
-                              role="progressbar"
-                              aria-label={`${node.label} 月度流量`}
-                              aria-valuemin={0}
-                              aria-valuemax={100}
-                              aria-valuenow={Math.min(
-                                100,
-                                Math.round(node.trafficGuard.usagePercent),
-                              )}
-                            >
-                              <span
-                                style={{
-                                  width: `${Math.min(100, node.trafficGuard.usagePercent)}%`,
-                                }}
-                              />
-                            </div>
-                            <small>
-                              每月 {node.trafficGuard.resetDay} 日重置 ·{" "}
-                              {node.trafficGuard.usagePercent.toFixed(2)}%
-                            </small>
-                          </>
-                        ) : (
-                          <small>尚未设置月度上限</small>
-                        )}
                       </div>
                     </div>
                     <div className="node-endpoint-states">
@@ -988,15 +1015,6 @@ export default function NodesPage() {
                       >
                         <Icon name="edit" />
                         编辑节点
-                      </button>
-                      <button
-                        className="ghost-button compact"
-                        disabled={busyId === `traffic-${node.id}`}
-                        type="button"
-                        onClick={() => openTrafficLimitDrawer(node)}
-                      >
-                        <Icon name="data_usage" />
-                        流量保护
                       </button>
                       <button
                         className="danger-button compact"
@@ -1463,8 +1481,8 @@ export default function NodesPage() {
         open={drawer === "traffic"}
         onClose={() => setDrawer(null)}
         title={
-          editingTrafficNode
-            ? `流量保护 · ${editingTrafficNode.label}`
+          editingTrafficServer
+            ? `服务器流量保护 · ${editingTrafficServer.name}`
             : "流量保护"
         }
         footer={
@@ -1474,10 +1492,8 @@ export default function NodesPage() {
               type="submit"
               form="traffic-limit-form"
               disabled={
-                !editingTrafficNode ||
-                busyId === `traffic-${editingTrafficNode.id}` ||
-                (trafficLimitForm.enabled &&
-                  !editingTrafficNode.runtimeControlConfigured)
+                !editingTrafficServer ||
+                busyId === `traffic-${editingTrafficServer.id}`
               }
             >
               保存策略
@@ -1538,7 +1554,6 @@ export default function NodesPage() {
           <label className="field checkbox-row span-2">
             <input
               type="checkbox"
-              disabled={!editingTrafficNode?.runtimeControlConfigured}
               checked={trafficLimitForm.enabled}
               onChange={(event) =>
                 setTrafficLimitForm((current) => ({
@@ -1547,12 +1562,12 @@ export default function NodesPage() {
                 }))
               }
             />
-            <span>达到上限时自动停止运行服务</span>
+            <span>达到上限时停止整台服务器的全部节点</span>
           </label>
           <div className="feedback span-2">
-            {editingTrafficNode?.runtimeControlConfigured
-              ? "按上传与下载物理流量合计。达限后只停止运行服务，不删除节点或订阅；新周期不会自动启动。"
-              : "当前节点尚未配置服务管理，可以保存上限，但暂不能启用自动停服。"}
+            {editingTrafficServer?.runtimeControlConfigured
+              ? "按该服务器全部协议端点的上传与下载物理流量合计。达限后立即从订阅和鉴权中移除，并停止全部运行服务；新周期不会自动恢复。"
+              : "部分节点尚未配置服务管理。达限后仍会立即停止接入并从订阅移除；已配置管理的服务会进入停止队列。"}
           </div>
         </form>
       </Drawer>

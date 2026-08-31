@@ -1,8 +1,8 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   NodeLifecycleStatus,
@@ -17,18 +17,14 @@ import type {
   UpdateNodeOperationsDto,
 } from './node-ops.dto';
 import { NodeTrafficGuardService } from './node-traffic-guard.service';
-
-const runningRuntimeStates = new Set<NodeRuntimeState>([
-  NodeRuntimeState.ACTIVE,
-  NodeRuntimeState.ACTIVATING,
-  NodeRuntimeState.DEACTIVATING,
-]);
+import { NodeRuntimeCommandService } from './node-runtime-command.service';
 
 @Injectable()
 export class NodeOpsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly trafficGuard: NodeTrafficGuardService,
+    @Optional() private readonly runtime?: NodeRuntimeCommandService,
   ) {}
 
   async overview() {
@@ -69,10 +65,7 @@ export class NodeOpsService {
         orderBy: { createdAt: 'asc' },
       }),
     ]);
-    const trafficGuards = await this.trafficGuard.project(
-      [...servers.flatMap((server) => server.endpoints), ...unassignedNodes],
-      new Date(),
-    );
+    const trafficGuards = await this.trafficGuard.project(servers, new Date());
 
     type Endpoint = (typeof servers)[number]['endpoints'][number];
     const presentEndpoint = (node: Endpoint) => {
@@ -132,7 +125,6 @@ export class NodeOpsService {
         runtimeError: node.runtimeError,
         speedUpMbps: node.speedUpMbps,
         speedDownMbps: node.speedDownMbps,
-        trafficGuard: trafficGuards.get(node.id),
         latestRuntimeCommand: runtimeCommand
           ? {
               id: runtimeCommand.id,
@@ -157,6 +149,10 @@ export class NodeOpsService {
         region: server.region,
         provider: server.provider,
         active: server.active,
+        trafficGuard: trafficGuards.get(server.id),
+        runtimeControlConfigured:
+          endpoints.length > 0 &&
+          endpoints.every((endpoint) => endpoint.runtimeControlConfigured),
         onlineUsers: endpoints.reduce(
           (total, endpoint) => total + endpoint.onlineUsers,
           0,
@@ -177,6 +173,8 @@ export class NodeOpsService {
         region: null,
         provider: null,
         active: false,
+        trafficGuard: undefined,
+        runtimeControlConfigured: false,
         onlineUsers: endpoints.reduce(
           (total, endpoint) => total + endpoint.onlineUsers,
           0,
@@ -215,8 +213,51 @@ export class NodeOpsService {
     });
   }
 
+  async stopServer(id: string, actorId: string) {
+    const server = await this.prisma.nodeServer.findFirst({
+      where: { id, retiredAt: null },
+      select: {
+        id: true,
+        endpoints: {
+          where: { retiredAt: null },
+          select: { id: true, runtimeState: true },
+        },
+      },
+    });
+    if (!server) throw new NotFoundException('Node server not found');
+
+    const disabledAt = new Date();
+    const disabledEndpoints = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.node.updateMany({
+        where: { serverId: id, retiredAt: null },
+        data: {
+          active: false,
+          lifecycleStatus: NodeLifecycleStatus.DISABLED,
+        },
+      });
+      await tx.nodeServer.update({
+        where: { id },
+        data: { active: false },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: 'server.access.stopped',
+          targetType: 'node_server',
+          targetId: id,
+          metadata: {
+            disabledAt: disabledAt.toISOString(),
+            endpointCount: result.count,
+          },
+        },
+      });
+      return result.count;
+    });
+    const queuedStops = await this.queueServerStops(server);
+    return { serverId: id, disabledEndpoints, queuedStops };
+  }
+
   async deleteServer(id: string) {
-    const freshSince = new Date(Date.now() - 45_000);
     const server = await this.prisma.nodeServer.findUnique({
       where: { id },
       select: {
@@ -226,17 +267,7 @@ export class NodeOpsService {
           where: { retiredAt: null },
           select: {
             id: true,
-            active: true,
-            lifecycleStatus: true,
             runtimeState: true,
-            onlinePresence: {
-              where: {
-                observedAt: { gte: freshSince },
-                concurrentClients: { gt: 0 },
-              },
-              select: { concurrentClients: true },
-              take: 1,
-            },
           },
         },
       },
@@ -244,24 +275,8 @@ export class NodeOpsService {
     if (!server || server.retiredAt) {
       throw new NotFoundException('Node server not found');
     }
-    if (
-      server.endpoints.some(
-        (node) =>
-          node.active || node.lifecycleStatus !== NodeLifecycleStatus.DISABLED,
-      )
-    ) {
-      throw new ConflictException('请先停用服务器下的全部节点，再删除服务器');
-    }
-    if (server.endpoints.some((node) => node.onlinePresence.length > 0)) {
-      throw new ConflictException('服务器仍有在线连接，暂不能删除');
-    }
-    if (
-      server.endpoints.some((node) =>
-        runningRuntimeStates.has(node.runtimeState),
-      )
-    ) {
-      throw new ConflictException('请先停止服务器下的全部运行服务');
-    }
+
+    await this.queueServerStops(server, 'server-delete');
 
     const retiredAt = new Date();
     await this.prisma.$transaction(async (tx) => {
@@ -342,16 +357,25 @@ export class NodeOpsService {
     if (!existing) throw new NotFoundException('Node not found');
     const lifecycleStatus =
       input.lifecycleStatus.toUpperCase() as NodeLifecycleStatus;
-    const updated = await this.prisma.node.update({
-      where: { id },
-      data: {
-        lifecycleStatus,
-        active: lifecycleStatus !== NodeLifecycleStatus.DISABLED,
-        region: input.region?.trim(),
-        provider: input.provider?.trim(),
-        tags: input.tags,
-        capacityUsers: input.capacityUsers,
-      },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const node = await tx.node.update({
+        where: { id },
+        data: {
+          lifecycleStatus,
+          active: lifecycleStatus !== NodeLifecycleStatus.DISABLED,
+          region: input.region?.trim(),
+          provider: input.provider?.trim(),
+          tags: input.tags,
+          capacityUsers: input.capacityUsers,
+        },
+      });
+      if (lifecycleStatus !== NodeLifecycleStatus.DISABLED && node.serverId) {
+        await tx.nodeServer.updateMany({
+          where: { id: node.serverId, retiredAt: null },
+          data: { active: true },
+        });
+      }
+      return node;
     });
     return {
       id: updated.id,
@@ -371,6 +395,28 @@ export class NodeOpsService {
       where: { id: { in: nodeIds }, retiredAt: null },
     });
     if (count !== nodeIds.length) throw new BadRequestException('Unknown node');
+  }
+
+  private async queueServerStops(
+    server: {
+      id: string;
+      endpoints: Array<{ id: string; runtimeState: NodeRuntimeState }>;
+    },
+    keyPrefix = 'server-stop',
+  ) {
+    if (!this.runtime) return 0;
+    const results = await Promise.allSettled(
+      server.endpoints
+        .filter((node) => node.runtimeState !== NodeRuntimeState.INACTIVE)
+        .map((node) =>
+          this.runtime!.requestSystemStop(
+            node.id,
+            `${keyPrefix}:${server.id}:${node.id}`,
+            { serverId: server.id },
+          ),
+        ),
+    );
+    return results.filter((result) => result.status === 'fulfilled').length;
   }
 
   private serverData(input: SaveNodeServerDto) {

@@ -32,5 +32,8 @@
 - Node access lifecycle and runtime service state are separate. Runtime start,
   stop, and status requests are durable worker-owned commands; API requests do
   not call systemd or node agents directly.
+- Monthly infrastructure traffic protection belongs to `NodeServer` and sums
+  all of its protocol endpoints. Reaching the limit disables access before the
+  worker queues endpoint stop commands.
 
 See `docs/DOMAIN_MODEL.md` and `docs/adr/` for implementation details.

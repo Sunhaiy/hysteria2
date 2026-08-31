@@ -50,6 +50,15 @@ export class NodeOpsController {
     return this.nodes.updateServer(id, body);
   }
 
+  @Post('servers/:id/stop')
+  @HttpCode(HttpStatus.ACCEPTED)
+  stopServer(
+    @Param('id') id: string,
+    @CurrentPrincipal() principal: SessionPrincipal,
+  ) {
+    return this.nodes.stopServer(id, principal.sub);
+  }
+
   @Delete('servers/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   deleteServer(@Param('id') id: string) {
@@ -72,7 +81,16 @@ export class NodeOpsController {
   }
 
   @Put('nodes/:id/traffic-limit')
-  updateTrafficLimit(
+  updateLegacyNodeTrafficLimit(
+    @Param('id') id: string,
+    @Body() body: UpdateNodeTrafficLimitDto,
+    @CurrentPrincipal() principal: SessionPrincipal,
+  ) {
+    return this.trafficGuard.updatePolicyForNode(id, body, principal.sub);
+  }
+
+  @Put('servers/:id/traffic-limit')
+  updateServerTrafficLimit(
     @Param('id') id: string,
     @Body() body: UpdateNodeTrafficLimitDto,
     @CurrentPrincipal() principal: SessionPrincipal,

@@ -182,7 +182,7 @@ describe('NodeRuntimeCommandService', () => {
       }),
     };
     const nodes = {
-      getNodeForControl: jest.fn().mockResolvedValue({
+      getNodeForRuntimeCommand: jest.fn().mockResolvedValue({
         id: 'node-1',
         protocol: 'vless_reality',
         trafficApiBaseUrl: 'https://agent.example.com',
@@ -211,6 +211,51 @@ describe('NodeRuntimeCommandService', () => {
     });
   });
 
+  it('turns a pending command into a stop after the node is retired', async () => {
+    const retiredStart = { ...queued, action: 'START' };
+    const transactionClient = {
+      nodeRuntimeCommand: {
+        findFirst: jest.fn().mockResolvedValue(retiredStart),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      node: { update: jest.fn().mockResolvedValue({}) },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      ...transactionClient,
+      $transaction: jest.fn(transactionWith(transactionClient)),
+    };
+    const adapters = {
+      controlService: jest.fn().mockResolvedValue({
+        service: 'xray',
+        status: 'inactive',
+        observedAt: '2026-08-25T03:00:03.000Z',
+      }),
+    };
+    const nodes = {
+      getNodeForRuntimeCommand: jest.fn().mockResolvedValue({
+        id: 'node-1',
+        protocol: 'vless_reality',
+        trafficApiBaseUrl: 'https://agent.example.com',
+        trafficApiSecret: 'secret',
+        retiredAt: '2026-08-25T03:00:01.000Z',
+      }),
+    };
+    const service = createService({ prisma, adapters, nodes });
+
+    await expect(service.processNext()).resolves.toMatchObject({
+      id: 'command-1',
+      status: 'succeeded',
+      resultState: 'inactive',
+    });
+    expect(adapters.controlService).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'node-1' }),
+      'stop',
+      'retirement:request-1',
+    );
+  });
+
   it('marks the command failed without reporting a successful runtime state', async () => {
     const transactionClient = {
       nodeRuntimeCommand: {
@@ -231,7 +276,7 @@ describe('NodeRuntimeCommandService', () => {
         .mockRejectedValue(new Error('agent unavailable')),
     };
     const nodes = {
-      getNodeForControl: jest.fn().mockResolvedValue({
+      getNodeForRuntimeCommand: jest.fn().mockResolvedValue({
         id: 'node-1',
         protocol: 'vless_reality',
         trafficApiBaseUrl: 'https://agent.example.com',
