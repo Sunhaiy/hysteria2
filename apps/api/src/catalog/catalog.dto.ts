@@ -151,8 +151,8 @@ export class CatalogOfferInputDto {
   @MaxLength(120)
   name!: string;
 
-  @IsIn(['monthly', 'quarterly', 'yearly'])
-  billingPeriod!: 'monthly' | 'quarterly' | 'yearly';
+  @IsIn(['monthly', 'quarterly', 'yearly', 'one_time'])
+  billingPeriod!: 'monthly' | 'quarterly' | 'yearly' | 'one_time';
 
   @IsInt()
   @Min(1)

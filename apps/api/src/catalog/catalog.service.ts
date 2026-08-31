@@ -217,7 +217,7 @@ export class CatalogService {
         return (
           pack.active &&
           !pack.archivedAt &&
-          (pack.validityDays ?? 0) > 0 &&
+          (pack.validityDays === null || pack.validityDays > 0) &&
           Boolean(profile?.active) &&
           Boolean(profile?.nodes.some((node) => node.active))
         );
@@ -288,10 +288,7 @@ export class CatalogService {
             description: input.description?.trim(),
             active: input.status === 'active',
             trafficBytes: BigInt(defaultOffer.trafficBytes),
-            validityDays:
-              this.intervalMonths(
-                this.toBillingPeriod(defaultOffer.billingPeriod),
-              )! * 30,
+            validityDays: null,
             priceCents: defaultOffer.priceCents,
             accent: input.accent ?? 'teal',
             accessProfileId: profile.id,
@@ -326,7 +323,7 @@ export class CatalogService {
             : null,
           requiresActivePlan:
             kind === CatalogProductKind.TRAFFIC_PACK
-              ? (input.requiresActivePlan ?? true)
+              ? (input.requiresActivePlan ?? false)
               : false,
           referralEligible:
             kind === CatalogProductKind.PLAN
@@ -530,9 +527,11 @@ export class CatalogService {
             active: input.status === 'active',
             trafficBytes: BigInt(defaultOffer.trafficBytes),
             validityDays:
-              this.intervalMonths(
-                this.toBillingPeriod(defaultOffer.billingPeriod),
-              )! * 30,
+              defaultOffer.billingPeriod === 'one_time'
+                ? null
+                : this.intervalMonths(
+                    this.toBillingPeriod(defaultOffer.billingPeriod),
+                  )! * 30,
             priceCents: defaultOffer.priceCents,
             accent: input.accent,
             accessProfileId: profile.id,
@@ -921,13 +920,15 @@ export class CatalogService {
     ) {
       throw new BadRequestException('Published plans require a monthly offer');
     }
+    if (input.kind === 'plan' && periods.includes('one_time')) {
+      throw new BadRequestException('Plans cannot use one-time offers');
+    }
     if (
-      input.status === 'active' &&
       input.kind === 'traffic_pack' &&
-      !periods.includes('yearly')
+      (periods.length !== 1 || !periods.includes('one_time'))
     ) {
       throw new BadRequestException(
-        'Published traffic packs require a yearly-valid offer',
+        'Traffic packs require exactly one permanent one-time offer',
       );
     }
     if (input.purchaseLimitPerUser && !input.purchaseLimitKey?.trim()) {
@@ -1297,10 +1298,13 @@ export class CatalogService {
     };
   }
 
-  private toBillingPeriod(period: CreatePlanOfferDto['billingPeriod']) {
+  private toBillingPeriod(
+    period: CreatePlanOfferDto['billingPeriod'] | 'one_time',
+  ) {
     if (period === 'monthly') return BillingPeriod.MONTHLY;
     if (period === 'quarterly') return BillingPeriod.QUARTERLY;
     if (period === 'yearly') return BillingPeriod.YEARLY;
+    if (period === 'one_time') return BillingPeriod.ONE_TIME;
     throw new BadRequestException('Unsupported billing period');
   }
 

@@ -17,8 +17,8 @@ type Offer = {
   id?: string;
   slug: string;
   name: string;
-  billingPeriod: "monthly" | "quarterly" | "yearly";
-  intervalMonths: number;
+  billingPeriod: "monthly" | "quarterly" | "yearly" | "one_time";
+  intervalMonths: number | null;
   trafficBytes: number;
   priceCents: number;
   storeUrl?: string | null;
@@ -114,15 +114,25 @@ const offerTemplate = (
 ): OfferDraft => ({
   slug: `${kind === "plan" ? "plan" : "pack"}-${period}`,
   name:
-    period === "monthly" ? "月付" : period === "quarterly" ? "季付" : "年付",
+    period === "monthly"
+      ? "月付"
+      : period === "quarterly"
+        ? "季付"
+        : period === "yearly"
+          ? "年付"
+          : "一次性",
   billingPeriod: period,
-  intervalMonths: period === "monthly" ? 1 : period === "quarterly" ? 3 : 12,
-  trafficBytes:
-    (kind === "plan" ? 200 : period === "quarterly" ? 50 : 200) * GB,
-  trafficGbInput: String(
-    kind === "plan" ? 200 : period === "quarterly" ? 50 : 200,
-  ),
-  priceCents: kind === "plan" ? [1800, 5000, 18000][index] : [900, 3000][index],
+  intervalMonths:
+    period === "monthly"
+      ? 1
+      : period === "quarterly"
+        ? 3
+        : period === "yearly"
+          ? 12
+          : null,
+  trafficBytes: (kind === "plan" ? 200 : 50) * GB,
+  trafficGbInput: String(kind === "plan" ? 200 : 50),
+  priceCents: kind === "plan" ? [1800, 5000, 18000][index] : 3200,
   storeUrl: "",
   active: true,
   isDefault: index === 0,
@@ -144,14 +154,14 @@ const emptyForm = (kind: ProductForm["kind"] = "plan"): ProductForm => ({
   sortOrder: 0,
   offers: (kind === "plan"
     ? ["monthly", "quarterly", "yearly"]
-    : ["yearly"]
+    : ["one_time"]
   ).map((period, index) =>
     offerTemplate(period as Offer["billingPeriod"], kind, index),
   ),
   featured: false,
   purchaseLimitPerUser: 0,
   purchaseLimitKey: "",
-  requiresActivePlan: kind === "traffic_pack",
+  requiresActivePlan: false,
   referralEligible: kind === "plan",
 });
 
@@ -250,10 +260,9 @@ export default function CatalogPage() {
       status: current.status,
       sortOrder: current.sortOrder,
       featured: kind === "plan" ? current.featured : false,
-      purchaseLimitPerUser:
-        kind === "plan" ? current.purchaseLimitPerUser : 0,
+      purchaseLimitPerUser: kind === "plan" ? current.purchaseLimitPerUser : 0,
       purchaseLimitKey: kind === "plan" ? current.purchaseLimitKey : "",
-      requiresActivePlan: kind === "traffic_pack",
+      requiresActivePlan: false,
       referralEligible: kind === "plan",
     }));
   }
@@ -324,7 +333,8 @@ export default function CatalogPage() {
               form.purchaseLimitPerUser > 0
                 ? form.purchaseLimitKey.trim() || form.slug.trim()
                 : undefined,
-            requiresActivePlan: form.requiresActivePlan,
+            requiresActivePlan:
+              form.kind === "traffic_pack" ? false : form.requiresActivePlan,
             referralEligible: form.referralEligible,
             offers,
           },
@@ -396,7 +406,7 @@ export default function CatalogPage() {
                 (product) => product.kind === "traffic_pack",
               ).length,
             )}
-            footnote="附加额度，365 天有效"
+            footnote="一次购买，永久有效"
           />
           <MetricCard
             label="可用节点"
@@ -767,19 +777,9 @@ export default function CatalogPage() {
               ) : null}
             </>
           ) : (
-            <label className="checkbox-row form-grid-wide">
-              <input
-                type="checkbox"
-                checked={form.requiresActivePlan}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    requiresActivePlan: event.target.checked,
-                  }))
-                }
-              />
-              <span>仅作为订阅附加包，需要有效套餐并继承套餐接入</span>
-            </label>
+            <div className="feedback info form-grid-wide">
+              流量包是永久有效的独立权益，用户无需先购买套餐即可使用所选节点。
+            </div>
           )}
           <div className="offer-editor-list">
             <strong>销售规格</strong>
@@ -819,7 +819,9 @@ export default function CatalogPage() {
                   />
                 </label>
                 <label className="field offer-editor-store">
-                  <span className="fine-print">该周期店铺链接</span>
+                  <span className="fine-print">
+                    {form.kind === "plan" ? "该周期店铺链接" : "店铺链接"}
+                  </span>
                   <input
                     className="control"
                     type="url"

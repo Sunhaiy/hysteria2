@@ -7,7 +7,7 @@ const sourceUrl = new URL("../src/app/portal/plans/page.tsx", import.meta.url);
 test("member catalog keeps plan cards and uses exactly one purchase channel", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
-  assert.match(source, /<ShaderAnimation/);
+  assert.doesNotMatch(source, /<ShaderAnimation/);
   assert.match(source, /data-plan-accent=/);
   assert.match(source, /href=\{purchaseStoreUrl\}/);
   assert.match(
@@ -20,6 +20,8 @@ test("member catalog keeps plan cards and uses exactly one purchase channel", as
   assert.match(source, /formatTrafficLimit/);
   assert.match(source, /formatSpeedLimit/);
   assert.match(source, /当前套餐/);
+  assert.match(source, /永久有效/);
+  assert.match(source, /purchaseNotice/);
   assert.match(source, /立即续费/);
   assert.doesNotMatch(source, /api\/portal\/wallet/);
   assert.doesNotMatch(source, /余额 \{formatMoney\(wallet\.balanceCents\)\}/);

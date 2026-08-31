@@ -141,6 +141,18 @@ export class AdminSettingsController {
     if (body.cdkButtonUrl !== undefined) {
       updates['portal.cdkButtonUrl'] = body.cdkButtonUrl.trim();
     }
+    if (body.purchaseNoticeEnabled !== undefined) {
+      updates['portal.purchaseNotice.enabled'] = String(
+        body.purchaseNoticeEnabled,
+      );
+    }
+    if (body.purchaseNoticeTitle !== undefined) {
+      updates['portal.purchaseNotice.title'] = body.purchaseNoticeTitle.trim();
+    }
+    if (body.purchaseNoticeContent !== undefined) {
+      updates['portal.purchaseNotice.content'] =
+        body.purchaseNoticeContent.trim();
+    }
     Object.assign(updates, await this.settings.prepareEpaySettingsUpdate(body));
     if (body.tutorialWindowsClient !== undefined)
       updates['tutorial.windows.client'] = body.tutorialWindowsClient.trim();

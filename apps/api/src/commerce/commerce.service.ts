@@ -22,6 +22,10 @@ import {
 import { ControlPlaneStoreService } from '../domain/control-plane.store';
 import { PrismaService } from '../prisma/prisma.service';
 import { EntitlementService } from '../entitlement/entitlement.service';
+import {
+  isPermanentBillingPeriod,
+  permanentEntitlementEnd,
+} from '../entitlement/entitlement-lifetime';
 import { ReferralService } from '../referrals/referral.service';
 import {
   assertCatalogPurchaseEligibility,
@@ -164,7 +168,11 @@ export class CommerceService {
                   userId,
                   trafficPackProductId: order.trafficPackProductId,
                   totalBytes: order.trafficBytes,
-                  expiresAt: order.entitlementExpiresAt,
+                  expiresAt: isPermanentBillingPeriod(
+                    order.billingPeriodSnapshot,
+                  )
+                    ? null
+                    : order.entitlementExpiresAt,
                   accessProfileId: order.accessProfileIdSnapshot,
                 },
                 orderBy: { createdAt: 'desc' },
@@ -370,11 +378,10 @@ export class CommerceService {
     if (
       !product.accessProfile ||
       !product.accessProfile.active ||
-      product.accessProfile.nodeBindings.length === 0 ||
-      !product.validityDays
+      product.accessProfile.nodeBindings.length === 0
     ) {
       throw new BadRequestException(
-        'Traffic pack requires an active access profile and validity period',
+        'Traffic pack requires an active access profile',
       );
     }
 
@@ -387,11 +394,6 @@ export class CommerceService {
       },
       orderBy: { endsAt: 'desc' },
     });
-    if (!subscription) {
-      throw new BadRequestException(
-        'An active membership is required before purchasing a traffic pack',
-      );
-    }
 
     const discount = input.discountCode
       ? await this.reserveDiscount(
@@ -423,11 +425,10 @@ export class CommerceService {
       },
     });
 
-    const productExpiresAt = this.addDays(purchasedAt, product.validityDays);
-    const expiresAt =
-      productExpiresAt < subscription.endsAt
-        ? productExpiresAt
-        : subscription.endsAt;
+    const expiresAt = product.validityDays
+      ? this.addDays(purchasedAt, product.validityDays)
+      : null;
+    const entitlementExpiresAt = expiresAt ?? permanentEntitlementEnd();
     const account = await tx.accessAccount.upsert({
       where: { userId },
       create: { userId },
@@ -448,7 +449,7 @@ export class CommerceService {
         productNameSnapshot: product.name,
         trafficBytes: product.trafficBytes,
         validityDays: product.validityDays,
-        entitlementExpiresAt: expiresAt,
+        entitlementExpiresAt,
         accessProfileIdSnapshot: product.accessProfileId,
         idempotencyKey,
         processedAt: purchasedAt,
@@ -468,7 +469,7 @@ export class CommerceService {
     await tx.trafficPack.create({
       data: {
         userId,
-        subscriptionId: subscription.id,
+        subscriptionId: subscription?.id ?? null,
         accessAccountId: account.id,
         trafficPackProductId: product.id,
         accessProfileId: product.accessProfileId,
@@ -486,7 +487,7 @@ export class CommerceService {
       kind: input.kind,
       productName: product.name,
       chargedCents,
-      entitlementExpiresAt: expiresAt.toISOString(),
+      entitlementExpiresAt: expiresAt?.toISOString(),
     };
   }
 
@@ -573,9 +574,10 @@ export class CommerceService {
       snapshot?.legacyTrafficPackProductId ??
       offer.product.legacyTrafficPackProductId;
     const hasValidDuration =
-      billingPeriod === BillingPeriod.LEGACY
+      isPermanentBillingPeriod(billingPeriod) ||
+      (billingPeriod === BillingPeriod.LEGACY
         ? Boolean(legacyDurationDays && legacyDurationDays > 0)
-        : Boolean(intervalMonths && intervalMonths > 0);
+        : Boolean(intervalMonths && intervalMonths > 0));
     if (
       (!options.externalPayment &&
         (!offer.active ||
@@ -647,6 +649,9 @@ export class CommerceService {
       legacyDurationDays,
     };
     const entitlementExpiresAt = this.offerExpiry(purchasedAt, expiryOffer);
+    const trafficPackExpiresAt = isPermanentBillingPeriod(billingPeriod)
+      ? null
+      : entitlementExpiresAt;
     const account = await tx.accessAccount.upsert({
       where: { userId },
       create: { userId },
@@ -751,7 +756,7 @@ export class CommerceService {
           totalBytes: trafficBytes,
           remainingBytes: trafficBytes,
           status: TrafficPackStatus.ACTIVE,
-          expiresAt: entitlementExpiresAt,
+          expiresAt: trafficPackExpiresAt,
         },
       });
       trafficPackId = pack.id;
@@ -789,10 +794,12 @@ export class CommerceService {
         productNameSnapshot: `${snapshot?.productName ?? offer.product.name} · ${snapshot?.offerName ?? offer.name}`,
         validityDays:
           productKind === CatalogProductKind.TRAFFIC_PACK
-            ? Math.round(
-                (entitlementExpiresAt.getTime() - purchasedAt.getTime()) /
-                  (24 * 60 * 60 * 1000),
-              )
+            ? isPermanentBillingPeriod(billingPeriod)
+              ? null
+              : Math.round(
+                  (entitlementExpiresAt.getTime() - purchasedAt.getTime()) /
+                    (24 * 60 * 60 * 1000),
+                )
             : null,
         trafficBytes,
         entitlementExpiresAt:
@@ -1336,6 +1343,9 @@ export class CommerceService {
       legacyDurationDays: number | null;
     },
   ) {
+    if (isPermanentBillingPeriod(offer.billingPeriod)) {
+      return permanentEntitlementEnd();
+    }
     if (offer.billingPeriod === BillingPeriod.LEGACY) {
       if (!offer.legacyDurationDays) {
         throw new BadRequestException('Legacy offer duration is invalid');

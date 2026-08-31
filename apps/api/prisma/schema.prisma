@@ -65,6 +65,7 @@ enum BillingPeriod {
   MONTHLY
   QUARTERLY
   YEARLY
+  ONE_TIME
   LEGACY
 }
 
@@ -447,20 +448,20 @@ model PlanOffer {
 }
 
 model NodeServer {
-  id                    String    @id @default(cuid())
-  slug                  String    @unique
-  name                  String
-  hostname              String    @unique
-  region                String?
-  provider              String?
-  active                Boolean   @default(true)
-  trafficLimitEnabled   Boolean   @default(false)
-  trafficLimitBytes     BigInt?
-  trafficLimitResetDay  Int       @default(1)
-  retiredAt             DateTime?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-  endpoints             Node[]
+  id                   String    @id @default(cuid())
+  slug                 String    @unique
+  name                 String
+  hostname             String    @unique
+  region               String?
+  provider             String?
+  active               Boolean   @default(true)
+  trafficLimitEnabled  Boolean   @default(false)
+  trafficLimitBytes    BigInt?
+  trafficLimitResetDay Int       @default(1)
+  retiredAt            DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  endpoints            Node[]
 
   @@index([active, createdAt])
   @@index([retiredAt, active, createdAt])

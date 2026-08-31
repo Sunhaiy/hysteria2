@@ -84,6 +84,43 @@ describe('SettingsService cache', () => {
 
     await expect(service.getPortalBranding()).resolves.toMatchObject({
       cdkButtonUrl: '',
+      purchaseNotice: {
+        enabled: false,
+        title: '买前须知',
+        content: '',
+      },
+    });
+  });
+
+  it('returns the configured purchase notice with the portal branding', async () => {
+    const prisma = {
+      setting: {
+        findMany: jest.fn().mockResolvedValue([
+          { key: 'portal.purchaseNotice.enabled', value: 'true' },
+          { key: 'portal.purchaseNotice.title', value: '下单前请确认' },
+          {
+            key: 'portal.purchaseNotice.content',
+            value: '套餐流量按月重置。\n请确认购买周期。',
+          },
+        ]),
+      },
+    };
+    const cache = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new SettingsService(
+      prisma as never,
+      {} as never,
+      cache as never,
+    );
+
+    await expect(service.getPortalBranding()).resolves.toMatchObject({
+      purchaseNotice: {
+        enabled: true,
+        title: '下单前请确认',
+        content: '套餐流量按月重置。\n请确认购买周期。',
+      },
     });
   });
 

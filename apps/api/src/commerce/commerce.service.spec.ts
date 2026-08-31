@@ -28,7 +28,8 @@ describe('CommerceService checkout', () => {
                 kind: 'TRAFFIC_PACK',
                 trafficPackProductId: 'pack_legacy',
                 trafficBytes: 100n,
-                entitlementExpiresAt: new Date('2027-08-26T08:00:00.000Z'),
+                entitlementExpiresAt: new Date('9999-12-31T23:59:59.999Z'),
+                billingPeriodSnapshot: 'ONE_TIME',
                 accessProfileIdSnapshot: 'profile_pack',
               },
             });
@@ -54,7 +55,7 @@ describe('CommerceService checkout', () => {
         userId: 'user_1',
         trafficPackProductId: 'pack_legacy',
         totalBytes: 100n,
-        expiresAt: new Date('2027-08-26T08:00:00.000Z'),
+        expiresAt: null,
         accessProfileId: 'profile_pack',
       },
       orderBy: { createdAt: 'desc' },
@@ -167,6 +168,7 @@ describe('CommerceService checkout', () => {
   it('checks out a traffic pack with an immutable order snapshot', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-08-14T00:00:00.000Z'));
     const subscriptionEndsAt = new Date('2026-08-20T00:00:00.000Z');
+    const packEndsAt = new Date('2026-09-13T00:00:00.000Z');
     const tx = {
       manualOrder: {
         findUnique: jest.fn().mockResolvedValue(null),
@@ -232,7 +234,7 @@ describe('CommerceService checkout', () => {
       kind: 'traffic_pack',
       productName: '100 GB booster',
       chargedCents: 1000,
-      entitlementExpiresAt: subscriptionEndsAt.toISOString(),
+      entitlementExpiresAt: packEndsAt.toISOString(),
     });
     jest.useRealTimers();
   });
@@ -426,7 +428,7 @@ describe('CommerceService checkout', () => {
     });
   });
 
-  it('grants a standalone traffic pack without requiring a subscription', async () => {
+  it('grants a permanent standalone traffic pack without requiring a subscription', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2027-01-31T08:00:00.000Z'));
     const tx = {
       manualOrder: {
@@ -447,11 +449,11 @@ describe('CommerceService checkout', () => {
       },
       catalogOffer: {
         findUnique: jest.fn().mockResolvedValue({
-          id: 'catalog_offer_pack_quarterly',
-          slug: 'pack-flex-quarterly',
-          name: '季度流量包',
-          billingPeriod: 'QUARTERLY',
-          intervalMonths: 3,
+          id: 'catalog_offer_pack_one_time',
+          slug: 'pack-flex-one-time',
+          name: '一次性',
+          billingPeriod: 'ONE_TIME',
+          intervalMonths: null,
           trafficBytes: 50n,
           priceCents: 900,
           currency: 'CNY',
@@ -466,6 +468,7 @@ describe('CommerceService checkout', () => {
             accessProfileId: 'profile_core',
             legacyPlanId: null,
             legacyTrafficPackProductId: 'traffic_50g',
+            requiresActivePlan: false,
             legacyPlan: null,
             accessProfile: {
               active: true,
@@ -507,7 +510,7 @@ describe('CommerceService checkout', () => {
 
     const result = await service.checkout(
       'user_1',
-      { offerId: 'catalog_offer_pack_quarterly' },
+      { offerId: 'catalog_offer_pack_one_time' },
       'offer-pack-v2',
     );
 
@@ -516,7 +519,7 @@ describe('CommerceService checkout', () => {
       replayed: false,
       kind: 'traffic_pack',
       chargedCents: 900,
-      entitlementExpiresAt: '2027-04-30T08:00:00.000Z',
+      entitlementExpiresAt: '9999-12-31T23:59:59.999Z',
     });
     expect(tx.subscription.findFirst).not.toHaveBeenCalled();
     const [packCreate] = tx.trafficPack.create.mock.calls[0] as unknown as [
@@ -525,6 +528,7 @@ describe('CommerceService checkout', () => {
           subscriptionId: string | null;
           totalBytes: bigint;
           remainingBytes: bigint;
+          expiresAt: Date | null;
         };
       },
     ];
@@ -532,6 +536,14 @@ describe('CommerceService checkout', () => {
       subscriptionId: null,
       totalBytes: 50n,
       remainingBytes: 50n,
+      expiresAt: null,
+    });
+    const [orderCreate] = tx.manualOrder.create.mock.calls[0] as unknown as [
+      { data: { validityDays: number | null; billingPeriodSnapshot: string } },
+    ];
+    expect(orderCreate.data).toMatchObject({
+      validityDays: null,
+      billingPeriodSnapshot: 'ONE_TIME',
     });
     expect(entitlements.grantFromOrder).toHaveBeenCalledWith(
       {

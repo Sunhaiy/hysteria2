@@ -80,7 +80,7 @@ describe('CatalogService publishing rules', () => {
     ).rejects.toThrow('Published plans require a monthly offer');
   });
 
-  it('requires a yearly-valid offer for a published traffic pack', async () => {
+  it('requires exactly one permanent offer for a traffic pack', async () => {
     const tx = {
       accessProfile: { findUnique: jest.fn().mockResolvedValue(profile) },
     };
@@ -115,7 +115,9 @@ describe('CatalogService publishing rules', () => {
           },
         ],
       }),
-    ).rejects.toThrow('Published traffic packs require a yearly-valid offer');
+    ).rejects.toThrow(
+      'Traffic packs require exactly one permanent one-time offer',
+    );
   });
 
   it('creates a product-owned node binding instead of mutating a shared profile', async () => {

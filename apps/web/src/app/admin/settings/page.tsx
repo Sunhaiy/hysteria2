@@ -34,6 +34,11 @@ interface SettingsResponse {
     buyButtonText: string;
     cdkButtonText: string;
     cdkButtonUrl: string;
+    purchaseNotice: {
+      enabled: boolean;
+      title: string;
+      content: string;
+    };
   };
   payment: {
     checkoutMode: "store" | "epay";
@@ -101,6 +106,10 @@ export default function AdminSettingsPage() {
   const [buyButtonText, setBuyButtonText] = useState("");
   const [cdkButtonText, setCdkButtonText] = useState("");
   const [cdkButtonUrl, setCdkButtonUrl] = useState("");
+  const [purchaseNoticeEnabled, setPurchaseNoticeEnabled] = useState(false);
+  const [purchaseNoticeTitle, setPurchaseNoticeTitle] = useState("买前须知");
+  const [purchaseNoticeContent, setPurchaseNoticeContent] = useState("");
+  const [savingPurchaseNotice, setSavingPurchaseNotice] = useState(false);
   const [checkoutMode, setCheckoutMode] = useState<"store" | "epay">("store");
   const [epayGatewayUrl, setEpayGatewayUrl] = useState("");
   const [epayMerchantId, setEpayMerchantId] = useState("");
@@ -137,6 +146,9 @@ export default function AdminSettingsPage() {
     setBuyButtonText(data.branding.buyButtonText);
     setCdkButtonText(data.branding.cdkButtonText);
     setCdkButtonUrl(data.branding.cdkButtonUrl);
+    setPurchaseNoticeEnabled(data.branding.purchaseNotice.enabled);
+    setPurchaseNoticeTitle(data.branding.purchaseNotice.title);
+    setPurchaseNoticeContent(data.branding.purchaseNotice.content);
     setCheckoutMode(data.payment.checkoutMode);
     setEpayGatewayUrl(data.payment.epay.gatewayUrl);
     setEpayMerchantId(data.payment.epay.merchantId);
@@ -349,6 +361,35 @@ export default function AdminSettingsPage() {
       setError(cause instanceof ApiError ? cause.message : "保存失败。");
     } finally {
       setSavingBranding(false);
+    }
+  }
+
+  async function savePurchaseNotice() {
+    if (!token) return;
+    setSavingPurchaseNotice(true);
+    setError(null);
+    try {
+      const data = await apiRequest<SettingsResponse>("/api/admin/settings", {
+        method: "PATCH",
+        token,
+        body: {
+          purchaseNoticeEnabled,
+          purchaseNoticeTitle,
+          purchaseNoticeContent,
+        },
+      });
+      applySettings(data);
+      showToast(
+        data.branding.purchaseNotice.enabled
+          ? "买前须知已展示"
+          : "买前须知已关闭",
+      );
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError ? cause.message : "买前须知保存失败。",
+      );
+    } finally {
+      setSavingPurchaseNotice(false);
     }
   }
 
@@ -686,6 +727,79 @@ export default function AdminSettingsPage() {
                 onClick={() => void save()}
               >
                 {saving ? "保存中..." : "保存设置"}
+              </button>
+            </div>
+          </Panel>
+
+          <Panel
+            title="商城买前须知"
+            copy="启用后固定展示在会员套餐页最顶部，适合说明流量重置、有效期、退款或购买限制。"
+          >
+            <div className="setting-toggle-row">
+              <div className="setting-toggle-copy">
+                <strong>
+                  {purchaseNoticeEnabled ? "展示买前须知" : "隐藏买前须知"}
+                </strong>
+                <span>
+                  {purchaseNoticeEnabled
+                    ? "会员进入套餐页后会首先看到这段内容。"
+                    : "套餐页当前不会显示买前提示。"}
+                </span>
+              </div>
+              <label className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={purchaseNoticeEnabled}
+                  onChange={(event) =>
+                    setPurchaseNoticeEnabled(event.target.checked)
+                  }
+                />
+                <span className="toggle-track" aria-hidden="true">
+                  <span />
+                </span>
+                <span className="toggle-label">
+                  {purchaseNoticeEnabled ? "已开启" : "已关闭"}
+                </span>
+              </label>
+            </div>
+            <div className="form-grid">
+              <label className="field">
+                <span className="fine-print">标题</span>
+                <input
+                  className="control"
+                  value={purchaseNoticeTitle}
+                  onChange={(event) =>
+                    setPurchaseNoticeTitle(event.target.value)
+                  }
+                  maxLength={80}
+                  placeholder="买前须知"
+                />
+              </label>
+              <label className="field">
+                <span className="fine-print">正文</span>
+                <textarea
+                  className="control announcement-editor"
+                  value={purchaseNoticeContent}
+                  onChange={(event) =>
+                    setPurchaseNoticeContent(event.target.value)
+                  }
+                  maxLength={4000}
+                  placeholder="每行填写一条需要用户购买前了解的内容"
+                  rows={6}
+                />
+              </label>
+            </div>
+            <div className="toolbar-actions">
+              <button
+                className="action-button"
+                type="button"
+                disabled={
+                  savingPurchaseNotice ||
+                  (purchaseNoticeEnabled && !purchaseNoticeContent.trim())
+                }
+                onClick={() => void savePurchaseNotice()}
+              >
+                {savingPurchaseNotice ? "保存中..." : "保存买前须知"}
               </button>
             </div>
           </Panel>

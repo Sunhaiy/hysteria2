@@ -122,7 +122,7 @@ export interface PlanOfferRecord {
   name: string;
   active: boolean;
   isDefault: boolean;
-  billingPeriod: "monthly" | "quarterly" | "yearly" | "legacy";
+  billingPeriod: "monthly" | "quarterly" | "yearly" | "one_time" | "legacy";
   intervalMonths?: number | null;
   legacyDurationDays?: number | null;
   priceCents: number;
@@ -257,7 +257,7 @@ export interface SubscriptionRecord {
   planName: string;
   planOfferId?: string | null;
   offerName?: string | null;
-  billingPeriod?: "monthly" | "quarterly" | "yearly" | "legacy";
+  billingPeriod?: "monthly" | "quarterly" | "yearly" | "one_time" | "legacy";
   nodeId: string;
   nodeLabel: string;
   status: "active" | "expired" | "paused" | "canceled";

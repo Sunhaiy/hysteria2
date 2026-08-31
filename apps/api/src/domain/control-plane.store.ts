@@ -26,6 +26,10 @@ import { pageResponse, parsePage, type PageQuery } from '../common/pagination';
 import { OnlinePresenceService } from './online-presence.service';
 import { resolvePlanRedemptionWindow } from '../commerce/plan-redemption-policy';
 import { assertCatalogPurchaseEligibility } from '../commerce/purchase-eligibility';
+import {
+  isPermanentBillingPeriod,
+  permanentEntitlementEnd,
+} from '../entitlement/entitlement-lifetime';
 
 const bytesInGiB = 1024 * 1024 * 1024;
 const reconnectGraceMs = 2 * 60_000;
@@ -2412,6 +2416,7 @@ export class ControlPlaneStoreService {
         trafficPackProductId: string | null;
         trafficBytes: bigint | null;
         entitlementExpiresAt: Date | null;
+        billingPeriodSnapshot: BillingPeriod | null;
         accessProfileIdSnapshot: string | null;
       } | null;
     }) => Promise<void>,
@@ -3600,26 +3605,32 @@ export class ControlPlaneStoreService {
     if (!accessProfileId) {
       throw new BadRequestException('流量包兑换码未绑定有效商品配置');
     }
-    const expiresAt = offer
-      ? offer.billingPeriod === BillingPeriod.LEGACY
-        ? legacyProduct?.validityDays
+    const permanent = offer
+      ? isPermanentBillingPeriod(offer.billingPeriod)
+      : legacyProduct?.validityDays === null;
+    const expiresAt = permanent
+      ? null
+      : offer
+        ? offer.billingPeriod === BillingPeriod.LEGACY
+          ? legacyProduct?.validityDays
+            ? this.buildSubscriptionEndDate(
+                input.redeemedAt,
+                legacyProduct.validityDays,
+              )
+            : null
+          : offer.intervalMonths
+            ? this.addUtcMonthsClamped(input.redeemedAt, offer.intervalMonths)
+            : null
+        : legacyProduct?.validityDays
           ? this.buildSubscriptionEndDate(
               input.redeemedAt,
               legacyProduct.validityDays,
             )
-          : null
-        : offer.intervalMonths
-          ? this.addUtcMonthsClamped(input.redeemedAt, offer.intervalMonths)
-          : null
-      : legacyProduct?.validityDays
-        ? this.buildSubscriptionEndDate(
-            input.redeemedAt,
-            legacyProduct.validityDays,
-          )
-        : null;
-    if (!expiresAt) {
+          : null;
+    if (!permanent && !expiresAt) {
       throw new BadRequestException('流量包兑换码的有效期配置无效');
     }
+    const entitlementExpiresAt = expiresAt ?? permanentEntitlementEnd();
     const account = await tx.accessAccount.upsert({
       where: { userId: input.userId },
       create: { userId: input.userId },
@@ -3642,11 +3653,13 @@ export class ControlPlaneStoreService {
           ? `${offer.product.name} · ${offer.name}`
           : (legacyProduct?.name ?? input.code.label),
         trafficBytes: input.code.trafficBytes,
-        validityDays: Math.round(
-          (expiresAt.getTime() - input.redeemedAt.getTime()) /
-            (24 * 60 * 60 * 1000),
-        ),
-        entitlementExpiresAt: expiresAt,
+        validityDays: expiresAt
+          ? Math.round(
+              (expiresAt.getTime() - input.redeemedAt.getTime()) /
+                (24 * 60 * 60 * 1000),
+            )
+          : null,
+        entitlementExpiresAt,
         billingPeriodSnapshot: offer?.billingPeriod,
         intervalMonthsSnapshot: offer?.intervalMonths,
         accessProfileIdSnapshot: accessProfileId,

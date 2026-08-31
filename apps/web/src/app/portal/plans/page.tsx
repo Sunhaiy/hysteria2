@@ -5,7 +5,6 @@ import { ConsoleShell } from "@/components/console-shell";
 import { CustomSelect } from "@/components/custom-select";
 import { Drawer } from "@/components/drawer";
 import { Icon } from "@/components/icon";
-import { ShaderAnimation } from "@/components/ui/shader-lines";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { portalNav } from "@/lib/copy";
@@ -14,14 +13,14 @@ import {
   formatSpeedLimit,
   formatTrafficLimit,
 } from "@/lib/format";
-import { normalizePlanAccent, planAccentColor } from "@/lib/plan-accents";
+import { normalizePlanAccent } from "@/lib/plan-accents";
 import { sortCatalogProductsByPrice } from "@/lib/catalog-sort";
 import type { PortalOverviewResponse } from "@/lib/types";
 
 type Offer = {
   id: string;
   name: string;
-  billingPeriod: "monthly" | "quarterly" | "yearly" | "legacy";
+  billingPeriod: "monthly" | "quarterly" | "yearly" | "one_time" | "legacy";
   intervalMonths: number | null;
   legacyDurationDays: number | null;
   trafficBytes: number;
@@ -79,6 +78,11 @@ type Branding = {
   buyButtonText: string;
   cdkButtonText: string;
   cdkButtonUrl: string;
+  purchaseNotice: {
+    enabled: boolean;
+    title: string;
+    content: string;
+  };
   checkoutMode: "store" | "epay";
   epayConfigured: boolean;
 };
@@ -100,6 +104,7 @@ const periodName = {
   monthly: "月付",
   quarterly: "季付",
   yearly: "年付",
+  one_time: "一次性",
   legacy: "固定期",
 } as const;
 const defaultBranding: Branding = {
@@ -107,11 +112,17 @@ const defaultBranding: Branding = {
   buyButtonText: "购买",
   cdkButtonText: "CDK 充值",
   cdkButtonUrl: "",
+  purchaseNotice: {
+    enabled: false,
+    title: "买前须知",
+    content: "",
+  },
   checkoutMode: "store",
   epayConfigured: false,
 };
 
 function durationName(offer: Offer) {
+  if (offer.billingPeriod === "one_time") return "永久有效";
   return offer.billingPeriod === "legacy"
     ? `${offer.legacyDurationDays ?? "-"} 天`
     : `${offer.intervalMonths ?? "-"} 个月`;
@@ -297,10 +308,6 @@ export default function PortalPlansPage() {
             data-plan-accent={accent}
             key={product.id}
           >
-            <ShaderAnimation
-              color={planAccentColor(accent)}
-              className="plan-card-shader"
-            />
             <div className="plan-card-head">
               <div className="plan-card-copy">
                 <div className="plan-card-labels">
@@ -327,7 +334,7 @@ export default function PortalPlansPage() {
                 <span className="fine-print">
                   {offer
                     ? product.kind === "traffic_pack"
-                      ? "365 天有效"
+                      ? "永久有效"
                       : offerPeriodName(offer)
                     : "-"}
                 </span>
@@ -342,7 +349,7 @@ export default function PortalPlansPage() {
                     <strong>
                       {product.kind === "plan"
                         ? formatSpeedLimit(product.access.speedUpMbps)
-                        : "继承套餐"}
+                        : "独立可用"}
                     </strong>
                   </span>
                 </div>
@@ -353,7 +360,7 @@ export default function PortalPlansPage() {
                     <strong>
                       {product.kind === "plan"
                         ? formatSpeedLimit(product.access.speedDownMbps)
-                        : "365 天"}
+                        : "永久有效"}
                     </strong>
                   </span>
                 </div>
@@ -453,7 +460,7 @@ export default function PortalPlansPage() {
                   ) : isCurrent ? (
                     <span className="badge success">当前套餐</span>
                   ) : product.kind === "traffic_pack" ? (
-                    <span className="badge info">订阅附加包</span>
+                    <span className="badge info">永久流量包</span>
                   ) : null}
                 </div>
               </div>
@@ -508,6 +515,18 @@ export default function PortalPlansPage() {
       ) : null}
       {feedback ? <div className="feedback success">{feedback}</div> : null}
       <div className="page-stack">
+        {branding.purchaseNotice.enabled &&
+        branding.purchaseNotice.content.trim() ? (
+          <section className="purchase-notice" aria-label="买前须知">
+            <span className="purchase-notice-icon" aria-hidden="true">
+              <Icon name="warning" />
+            </span>
+            <div>
+              <strong>{branding.purchaseNotice.title}</strong>
+              <p>{branding.purchaseNotice.content}</p>
+            </div>
+          </section>
+        ) : null}
         <div className="shop-section-heading">
           <div>
             <h2 className="section-title">会员套餐</h2>
@@ -533,10 +552,10 @@ export default function PortalPlansPage() {
           <div>
             <h2 className="section-title">订阅流量包</h2>
             <span className="panel-copy">
-              需要有效套餐，套餐月度额度用完后自动使用，可在 365 天内叠加。
+              一次购买永久有效，无需先购买套餐，可独立接入所选节点。
             </span>
           </div>
-          <span className="badge success">继承当前套餐</span>
+          <span className="badge success">永久有效</span>
         </div>
         {!loading ? renderProducts(groups.packs) : null}
         {!loading && !catalog.products.length ? (
@@ -605,7 +624,7 @@ export default function PortalPlansPage() {
             </div>
             {checkout.product.kind === "traffic_pack" ? (
               <div className="feedback info">
-                该流量包需要有效套餐，接入节点和速率跟随当前套餐。
+                该流量包无需有效套餐，购买后即可使用商品绑定的节点，剩余流量永久有效。
               </div>
             ) : null}
             {quote ? (

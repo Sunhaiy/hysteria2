@@ -371,6 +371,11 @@ export class SettingsService {
       cdkButtonText: map.get('portal.cdkButtonText') || 'cdk充值',
       cdkButtonUrl:
         configuredShopUrl === '/portal/redeem' ? '' : configuredShopUrl,
+      purchaseNotice: {
+        enabled: map.get('portal.purchaseNotice.enabled') === 'true',
+        title: map.get('portal.purchaseNotice.title')?.trim() || '买前须知',
+        content: map.get('portal.purchaseNotice.content')?.trim() || '',
+      },
       checkoutMode: epay.checkoutMode,
       epayConfigured: epay.configured,
     };

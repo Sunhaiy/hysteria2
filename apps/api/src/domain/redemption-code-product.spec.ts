@@ -257,7 +257,7 @@ describe('Traffic pack product redemption', () => {
     jest.useRealTimers();
   });
 
-  it('redeems a yearly traffic pack offer with its exact quota and term', async () => {
+  it('redeems a permanent traffic pack offer without an active plan', async () => {
     const now = new Date('2026-08-26T08:00:00.000Z');
     jest.useFakeTimers().setSystemTime(now);
     const user = {
@@ -267,11 +267,11 @@ describe('Traffic pack product redemption', () => {
       balanceCents: 0,
     };
     const offer = {
-      id: 'offer_pack_yearly',
-      slug: 'pack-100g-yearly',
-      name: '年付',
-      billingPeriod: 'YEARLY',
-      intervalMonths: 12,
+      id: 'offer_pack_one_time',
+      slug: 'pack-100g-one-time',
+      name: '一次性',
+      billingPeriod: 'ONE_TIME',
+      intervalMonths: null,
       priceCents: 7200,
       currency: 'CNY',
       trafficBytes: 100n,
@@ -282,12 +282,13 @@ describe('Traffic pack product redemption', () => {
         accessProfileId: 'profile_pack',
         legacyPlan: null,
         legacyTrafficPackProductId: 'pack_legacy',
+        requiresActivePlan: false,
       },
     };
     const code = {
       id: 'code_pack',
-      code: 'PACK-YEARLY',
-      label: '年度流量包',
+      code: 'PACK-PERMANENT',
+      label: '永久流量包',
       kind: 'TRAFFIC_PACK',
       status: 'ACTIVE',
       planId: null,
@@ -395,9 +396,10 @@ describe('Traffic pack product redemption', () => {
       catalogOfferId: offer.id,
       amountCents: 7200,
       basePriceCents: 7200,
-      billingPeriodSnapshot: 'YEARLY',
-      intervalMonthsSnapshot: 12,
-      entitlementExpiresAt: new Date('2027-08-26T08:00:00.000Z'),
+      validityDays: null,
+      billingPeriodSnapshot: 'ONE_TIME',
+      intervalMonthsSnapshot: null,
+      entitlementExpiresAt: new Date('9999-12-31T23:59:59.999Z'),
     });
     const [packCreate] = tx.trafficPack.create.mock.calls[0] as unknown as [
       { data: Record<string, unknown> },
@@ -406,7 +408,8 @@ describe('Traffic pack product redemption', () => {
       trafficPackProductId: 'pack_legacy',
       totalBytes: 100n,
       remainingBytes: 100n,
-      expiresAt: new Date('2027-08-26T08:00:00.000Z'),
+      subscriptionId: null,
+      expiresAt: null,
     });
     jest.useRealTimers();
   });

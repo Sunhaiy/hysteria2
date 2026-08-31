@@ -146,7 +146,12 @@ export default function AdminRedemptionCodesPage() {
             offers: Array<{
               id: string;
               name: string;
-              billingPeriod: "monthly" | "quarterly" | "yearly" | "legacy";
+              billingPeriod:
+                | "monthly"
+                | "quarterly"
+                | "yearly"
+                | "one_time"
+                | "legacy";
               trafficBytes: number;
               priceCents: number;
               active: boolean;
@@ -188,8 +193,7 @@ export default function AdminRedemptionCodesPage() {
         ...current,
         catalogOfferId: current.catalogOfferId || nextPlanOffers[0]?.id || "",
         trafficPackOfferId:
-          current.trafficPackOfferId || nextTrafficPackOffers[0]?.id ||
-          "",
+          current.trafficPackOfferId || nextTrafficPackOffers[0]?.id || "",
       }));
     } catch {
       // keep stale
@@ -251,9 +255,7 @@ export default function AdminRedemptionCodesPage() {
 
   function discardDraft() {
     clearDraft("code");
-    setForm(
-      emptyForm(planOffers[0]?.id ?? "", trafficPackOffers[0]?.id ?? ""),
-    );
+    setForm(emptyForm(planOffers[0]?.id ?? "", trafficPackOffers[0]?.id ?? ""));
     setHasDraftBanner(false);
   }
 

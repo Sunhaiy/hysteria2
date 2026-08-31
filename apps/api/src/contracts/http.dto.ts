@@ -154,6 +154,20 @@ export class UpdateSettingsDto {
   cdkButtonUrl?: string;
 
   @IsOptional()
+  @IsBoolean()
+  purchaseNoticeEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  purchaseNoticeTitle?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  purchaseNoticeContent?: string;
+
+  @IsOptional()
   @IsString()
   @MaxLength(40)
   tutorialWindowsClient?: string;
