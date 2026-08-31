@@ -66,6 +66,82 @@ describe('EntitlementService V2', () => {
     });
   });
 
+  it('starts a new quota bucket when a plan CDK switches an existing subscription', async () => {
+    const previousStartsAt = new Date('2026-08-30T04:33:35.000Z');
+    const startsAt = new Date('2026-08-31T04:19:48.000Z');
+    const endsAt = new Date('2026-09-30T04:19:48.000Z');
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'order_pro_cdk',
+          userId: 'user_1',
+          kind: 'RENEWAL',
+          createdAt: startsAt,
+          processedAt: startsAt,
+          entitlementExpiresAt: endsAt,
+          trafficBytes: 120n,
+          catalogOffer: {
+            id: 'offer_pro_monthly',
+            trafficBytes: 120n,
+            product: {
+              id: 'product_pro',
+              kind: 'PLAN',
+              accessProfileId: 'profile_pro',
+              speedUpMbps: 35,
+              speedDownMbps: 180,
+              defaultTrafficMultiplierBasisPoints: 10_000,
+            },
+          },
+        }),
+      },
+      user: { findUnique: jest.fn().mockResolvedValue({ id: 'user_1' }) },
+      accessAccount: {
+        upsert: jest.fn().mockResolvedValue({ id: 'account_1' }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      accessProfile: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ deviceLimit: 4 }),
+      },
+      entitlementGrant: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'grant_existing',
+          productId: 'product_go',
+          startsAt: previousStartsAt,
+        }),
+        update: jest.fn().mockResolvedValue({
+          id: 'grant_existing',
+          productId: 'product_pro',
+          startsAt,
+        }),
+      },
+      quotaBucket: { upsert: jest.fn().mockResolvedValue({}) },
+    };
+    const service = new EntitlementService(tx as never);
+
+    await service.grantFromOrder(
+      { orderId: 'order_pro_cdk', subscriptionId: 'subscription_1' },
+      tx as never,
+    );
+
+    const [grantUpdate] = tx.entitlementGrant.update.mock
+      .calls[0] as unknown as [{ data: { startsAt?: Date } }];
+    expect(grantUpdate.data.startsAt).toEqual(startsAt);
+    expect(tx.quotaBucket.upsert).toHaveBeenCalledWith({
+      where: {
+        grantId_startsAt: { grantId: 'grant_existing', startsAt },
+      },
+      create: {
+        grantId: 'grant_existing',
+        kind: 'PLAN_CYCLE',
+        startsAt,
+        endsAt,
+        grantedBytes: 120n,
+      },
+      update: { endsAt },
+    });
+  });
+
   it('inherits limits from an active legacy plan when granting an add-on', async () => {
     const startsAt = new Date('2026-08-24T12:00:00.000Z');
     const endsAt = new Date('2027-08-24T12:00:00.000Z');

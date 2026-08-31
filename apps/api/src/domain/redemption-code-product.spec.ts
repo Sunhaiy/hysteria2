@@ -83,6 +83,106 @@ describe('Traffic pack product redemption', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('resolves a legacy plan CDK to the current active offer and quota', async () => {
+    const now = new Date('2026-08-31T04:19:48.000Z');
+    const plan = {
+      id: 'plan_pro',
+      durationDays: 30,
+    };
+    const currentOffer = {
+      id: 'offer_pro_monthly_current',
+      slug: 'pro-monthly',
+      name: '月付',
+      billingPeriod: 'MONTHLY',
+      intervalMonths: 1,
+      priceCents: 1290,
+      currency: 'CNY',
+      trafficBytes: 120n,
+      legacyPlanOfferId: 'legacy_offer_pro_monthly',
+      product: {
+        id: 'catalog_pro',
+        name: 'Pro',
+        kind: 'PLAN',
+        accessProfileId: 'profile_pro',
+        purchaseLimitPerUser: null,
+        purchaseLimitKey: null,
+        requiresActivePlan: false,
+        legacyPlan: plan,
+      },
+    };
+    const tx = {
+      catalogOffer: {
+        findFirst: jest.fn().mockResolvedValue(currentOffer),
+      },
+      manualOrder: {
+        create: jest
+          .fn()
+          .mockImplementation(({ data }) =>
+            Promise.resolve({ id: 'order_pro_current', ...data }),
+          ),
+      },
+    };
+    const service = new ControlPlaneStoreService(
+      {} as never,
+      { countForUser: jest.fn().mockResolvedValue(0) } as never,
+    );
+    const internals = service as unknown as {
+      grantPlanEntitlement: jest.Mock;
+      applyPlanRedemptionCode: (
+        client: typeof tx,
+        input: Record<string, unknown>,
+      ) => Promise<{ trafficBytes: bigint; catalogOfferId: string }>;
+    };
+    internals.grantPlanEntitlement = jest.fn().mockResolvedValue(undefined);
+
+    const order = await internals.applyPlanRedemptionCode(tx, {
+      userId: 'user_1',
+      code: {
+        code: 'OLD-PRO-CDK',
+        note: null,
+        planId: plan.id,
+        plan,
+        catalogOfferId: null,
+        catalogOffer: null,
+        planMode: 'RENEW',
+      },
+      openSubscription: {
+        id: 'subscription_go',
+        planId: 'plan_go',
+        endsAt: new Date('2026-09-30T04:00:00.000Z'),
+      },
+      redeemedAt: now,
+    });
+
+    expect(tx.catalogOffer.findFirst).toHaveBeenCalledWith({
+      where: {
+        product: { legacyPlanId: plan.id },
+        active: true,
+        archivedAt: null,
+      },
+      include: { product: { include: { legacyPlan: true } } },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+    });
+    expect(order).toMatchObject({
+      catalogOfferId: currentOffer.id,
+      trafficBytes: 120n,
+    });
+    expect(internals.grantPlanEntitlement).toHaveBeenCalledWith(tx, {
+      userId: 'user_1',
+      planId: plan.id,
+      grantedAt: now,
+      openSubscription: {
+        id: 'subscription_go',
+        planId: 'plan_go',
+        endsAt: new Date('2026-09-30T04:00:00.000Z'),
+      },
+      durationMonths: 1,
+      planOfferId: 'legacy_offer_pro_monthly',
+      trafficBytes: 120n,
+      forceReplace: false,
+    });
+  });
+
   it('redeems a plan CDK through its access profile when legacy bindings are retired', async () => {
     const now = new Date('2026-08-24T08:00:00.000Z');
     jest.useFakeTimers().setSystemTime(now);

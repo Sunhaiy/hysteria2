@@ -148,6 +148,10 @@ export class EntitlementService {
             where: { legacyTrafficPackId: input.trafficPackId },
           })
         : null;
+    const replacesPlanProduct =
+      kind === EntitlementGrantKind.PLAN &&
+      existing !== null &&
+      existing.productId !== product.id;
     const grant = existing
       ? await client.entitlementGrant.update({
           where: { id: existing.id },
@@ -155,6 +159,7 @@ export class EntitlementService {
             productId: product.id,
             offerId: order.catalogOffer.id,
             status: EntitlementGrantStatus.ACTIVE,
+            startsAt: replacesPlanProduct ? startsAt : undefined,
             endsAt: order.entitlementExpiresAt,
             accessProfileId,
             speedUpMbpsSnapshot: speedUpMbps,
@@ -182,7 +187,7 @@ export class EntitlementService {
     const bounds =
       kind === EntitlementGrantKind.PLAN
         ? this.monthlyCycleBounds(
-            existing?.startsAt ?? startsAt,
+            replacesPlanProduct ? startsAt : (existing?.startsAt ?? startsAt),
             order.entitlementExpiresAt,
             startsAt,
           )
