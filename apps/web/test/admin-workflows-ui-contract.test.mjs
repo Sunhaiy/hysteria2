@@ -200,7 +200,9 @@ test("support tickets are available to members and administrators", async () => 
   assert.match(copy, /\/admin\/tickets/);
   assert.match(memberTickets, /\/api\/portal\/tickets/);
   assert.match(memberTickets, /\/api\/portal\/announcement\/current/);
-  assert.match(memberTickets, /ticket-announcement/);
+  assert.match(memberTickets, /className="purchase-notice"/);
+  assert.match(memberTickets, /className="purchase-notice-icon"/);
+  assert.doesNotMatch(memberTickets, /ticket-announcement/);
   assert.match(
     memberTickets,
     /disabled=\{busy \|\| !subject\.trim\(\) \|\| !message\.trim\(\)\}/,

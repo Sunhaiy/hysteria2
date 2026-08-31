@@ -5938,44 +5938,6 @@ select.control {
   margin: 0;
 }
 
-.ticket-announcement {
-  display: grid;
-  grid-template-columns: 32px minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
-  padding: 14px 16px;
-  border: 1px solid
-    color-mix(in srgb, var(--status-info) 28%, var(--border-default));
-  border-left: 3px solid var(--status-info);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--status-info) 8%, var(--bg-panel));
-}
-
-.ticket-announcement-icon {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  color: var(--status-info);
-}
-
-.ticket-announcement h2,
-.ticket-announcement p {
-  margin: 0;
-}
-
-.ticket-announcement h2 {
-  margin-top: 2px;
-  font-size: 15px;
-}
-
-.ticket-announcement p {
-  margin-top: 6px;
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
 .admin-access-identities {
   display: grid;
 }

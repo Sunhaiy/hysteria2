@@ -187,19 +187,15 @@ export default function PortalTicketsPage() {
       }
     >
       {announcement ? (
-        <aside
-          className="ticket-announcement"
-          aria-labelledby="ticket-announcement-title"
-        >
-          <span className="ticket-announcement-icon">
+        <section className="purchase-notice" aria-label="服务公告">
+          <span className="purchase-notice-icon" aria-hidden="true">
             <Icon name="warning" />
           </span>
           <div>
-            <span className="fine-print">服务公告</span>
-            <h2 id="ticket-announcement-title">{announcement.title}</h2>
+            <strong>{announcement.title}</strong>
             <p>{announcement.content}</p>
           </div>
-        </aside>
+        </section>
       ) : null}
       {error ? <div className="feedback error">{error}</div> : null}
       {feedback ? <div className="feedback success">{feedback}</div> : null}
