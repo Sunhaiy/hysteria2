@@ -440,6 +440,10 @@ export class OrderQueryService {
     settlementFailureCount: number;
     lastSettlementError: string | null;
     lastSettlementFailedAt: Date | null;
+    lastQueryAt: Date | null;
+    queryFailureCount: number;
+    lastQueryError: string | null;
+    closedAt: Date | null;
     expiresAt: Date;
     settledAt: Date | null;
     failedAt: Date | null;
@@ -462,6 +466,10 @@ export class OrderQueryService {
       lastSettlementError: attempt.lastSettlementError,
       lastSettlementFailedAt:
         attempt.lastSettlementFailedAt?.toISOString() ?? null,
+      lastQueryAt: attempt.lastQueryAt?.toISOString() ?? null,
+      queryFailureCount: attempt.queryFailureCount,
+      lastQueryError: attempt.lastQueryError,
+      closedAt: attempt.closedAt?.toISOString() ?? null,
       expiresAt: attempt.expiresAt.toISOString(),
       settledAt: attempt.settledAt?.toISOString() ?? null,
       failedAt: attempt.failedAt?.toISOString() ?? null,

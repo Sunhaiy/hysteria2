@@ -37,6 +37,15 @@ openssl rand -base64 32
   `/api/admin/orders/payment-attempts`, and `/api/admin/orders/summary` provide
   the paginated order center, payment exceptions, and Asia/Shanghai daily and
   month-to-date net revenue.
+- The single sync worker can reconcile missing callbacks through the merchant
+  query endpoint derived from each attempt's immutable gateway snapshot. Set
+  `EPAY_RECONCILIATION_ENABLED=true` only after a real signed query succeeds.
+  The worker verifies the response signature and exact order number, amount,
+  channel, and status before using the same atomic settlement entry point as a
+  callback. `PENDING` remains open, signed `CLOSED` releases the active purchase
+  key, and `code=-1`, transport failures, or invalid responses never credit an
+  order. Query timestamps and sanitized failures are visible in the order
+  center.
 - `DELETE /api/admin/traffic-pack-products/:id` archives a product and preserves all order/CDK references.
 
 Legacy purchase routes remain compatibility adapters for one version. New clients must use the commerce routes.
@@ -70,10 +79,10 @@ verification, exact integer-cent matching, a serializable fulfillment
 transaction, and a unique gateway trade number. A verified callback that cannot
 apply its entitlement returns `fail` so the gateway can retry; the attempt keeps
 the failure count, timestamp, sanitized reason, and an audit event. Operators
-must monitor `EPAY_SETTLEMENT_FAILED` events until a dedicated reconciliation
-console and refund workflow are available. Full-site 易支付 activation is also
-blocked unless `EPAY_RECONCILIATION_ENABLED=true`; set it only after the
-merchant-specific active-query adapter and production query test are complete.
+must monitor `EPAY_SETTLEMENT_FAILED` events and the order center's query
+failure projection. Full-site 易支付 activation remains blocked unless
+`EPAY_RECONCILIATION_ENABLED=true`; setting the flag starts the worker adapter
+but does not switch the site away from store checkout.
 
 ## Backup and restore rehearsal
 

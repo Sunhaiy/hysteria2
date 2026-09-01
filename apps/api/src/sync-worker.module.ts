@@ -5,6 +5,7 @@ import { AuthModule } from './auth/auth.module';
 import { BackupModule } from './backups/backup.module';
 import { CacheModule } from './cache/cache.module';
 import { DomainModule } from './domain/domain.module';
+import { EpayModule } from './epay/epay.module';
 import { MailModule } from './mail/mail.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { SecurityModule } from './security/security.module';
@@ -30,6 +31,7 @@ import { NodeOpsModule } from './node-ops/node-ops.module';
     SettingsModule,
     MailModule,
     DomainModule,
+    EpayModule,
     AuthModule,
     UsageSyncModule,
     OperationsModule,

@@ -1294,6 +1294,10 @@ model EpayPaymentAttempt {
   settlementFailureCount Int               @default(0)
   lastSettlementError    String?
   lastSettlementFailedAt DateTime?
+  lastQueryAt            DateTime?
+  queryFailureCount      Int               @default(0)
+  lastQueryError         String?
+  closedAt               DateTime?
   expiresAt              DateTime
   settledAt              DateTime?
   failedAt               DateTime?
@@ -1308,6 +1312,7 @@ model EpayPaymentAttempt {
   @@index([status, expiresAt])
   @@index([offerId, status])
   @@index([paymentType, status, createdAt, id])
+  @@index([status, lastQueryAt, createdAt, id])
 }
 
 model EpayGatewayTestAttempt {
@@ -1323,6 +1328,10 @@ model EpayGatewayTestAttempt {
   merchantKeyCiphertext String
   configFingerprint     String
   amountCents           Int               @default(1)
+  lastQueryAt           DateTime?
+  queryFailureCount     Int               @default(0)
+  lastQueryError        String?
+  closedAt              DateTime?
   expiresAt             DateTime
   settledAt             DateTime?
   createdAt             DateTime          @default(now())
@@ -1332,6 +1341,7 @@ model EpayGatewayTestAttempt {
   @@index([requestedById, createdAt])
   @@index([configFingerprint, status, settledAt])
   @@index([status, expiresAt])
+  @@index([status, lastQueryAt, createdAt, id])
 }
 
 model WalletLedgerEntry {

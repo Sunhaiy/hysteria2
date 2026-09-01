@@ -313,7 +313,7 @@ describe('EpayService callbacks', () => {
     expect(commerce.fulfillEpayPayment).not.toHaveBeenCalled();
   });
 
-  it('settles repeated callbacks exactly once after switching back to store mode', async () => {
+  it('settles a callback and active-query race exactly once after switching back to store mode', async () => {
     const attempt = {
       id: 'attempt_1',
       userId: 'user_1',
@@ -342,15 +342,21 @@ describe('EpayService callbacks', () => {
         }),
       },
     };
+    let transactionTail = Promise.resolve();
     const prisma = {
       epayPaymentAttempt: {
         findUnique: jest
           .fn()
           .mockImplementation(() => Promise.resolve(attempt)),
       },
-      $transaction: jest.fn((work: (client: typeof tx) => Promise<unknown>) =>
-        work(tx),
-      ),
+      $transaction: jest.fn((work: (client: typeof tx) => Promise<unknown>) => {
+        const transaction = transactionTail.then(() => work(tx));
+        transactionTail = transaction.then(
+          () => undefined,
+          () => undefined,
+        );
+        return transaction;
+      }),
     };
     const commerce = {
       fulfillEpayPayment: jest.fn().mockResolvedValue({ orderId: 'order_1' }),
@@ -363,16 +369,22 @@ describe('EpayService callbacks', () => {
       cipher as never,
     );
 
-    await expect(service.processCallback(callback())).resolves.toMatchObject({
-      accepted: true,
-      attemptId: 'attempt_1',
-      status: 'success',
-    });
-    await expect(service.processCallback(callback())).resolves.toMatchObject({
-      accepted: true,
-      attemptId: 'attempt_1',
-      status: 'success',
-    });
+    await expect(
+      Promise.all([
+        service.processCallback(callback()),
+        service.settleVerifiedPayment({
+          attemptId: attempt.id,
+          merchantOrderNo: attempt.merchantOrderNo,
+          gatewayTradeNo: 'gateway-1',
+          amountCents: attempt.amountCents,
+          paymentType: attempt.paymentType,
+          paidAt: new Date('2026-08-29T00:30:00.000Z'),
+        }),
+      ]),
+    ).resolves.toEqual([
+      expect.objectContaining({ accepted: true, status: 'success' }),
+      expect.objectContaining({ accepted: true, status: 'success' }),
+    ]);
 
     expect(commerce.fulfillEpayPayment).toHaveBeenCalledTimes(1);
     expect(attempt.orderId).toBe('order_1');

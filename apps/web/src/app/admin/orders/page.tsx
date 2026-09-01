@@ -49,6 +49,10 @@ type PaymentAttempt = {
   settlementFailureCount: number;
   lastSettlementError: string | null;
   lastSettlementFailedAt: string | null;
+  lastQueryAt: string | null;
+  queryFailureCount: number;
+  lastQueryError: string | null;
+  closedAt: string | null;
   expiresAt: string;
   settledAt: string | null;
   failedAt: string | null;
@@ -756,9 +760,11 @@ export default function AdminOrdersPage() {
               </span>,
               attempt.fulfillmentPending
                 ? `权益发放失败 ${attempt.settlementFailureCount} 次`
-                : attempt.status === "pending"
-                  ? "等待付款"
-                  : "-",
+                : attempt.lastQueryError
+                  ? `查单失败 ${attempt.queryFailureCount} 次`
+                  : attempt.status === "pending"
+                    ? "等待付款"
+                    : "-",
               <button
                 className="ghost-button compact"
                 type="button"
@@ -874,6 +880,19 @@ export default function AdminOrdersPage() {
               ["状态", paymentStatusLabel[attemptDetail.status]],
               ["创建时间", formatDateTime(attemptDetail.createdAt)],
               ["过期时间", formatDateTime(attemptDetail.expiresAt)],
+              [
+                "最近查单",
+                attemptDetail.lastQueryAt
+                  ? formatDateTime(attemptDetail.lastQueryAt)
+                  : "尚未查单",
+              ],
+              ["查单失败次数", String(attemptDetail.queryFailureCount)],
+              [
+                "网关关闭时间",
+                attemptDetail.closedAt
+                  ? formatDateTime(attemptDetail.closedAt)
+                  : "-",
+              ],
             ].map(([label, value]) => (
               <div className="list-row" key={label}>
                 <span className="muted">{label}</span>
@@ -884,6 +903,11 @@ export default function AdminOrdersPage() {
               <div className="feedback error">
                 权益发放失败 {attemptDetail.settlementFailureCount} 次：
                 {attemptDetail.lastSettlementError}
+              </div>
+            ) : null}
+            {attemptDetail.lastQueryError ? (
+              <div className="feedback error">
+                最近查单失败：{attemptDetail.lastQueryError}
               </div>
             ) : null}
           </div>

@@ -1,11 +1,13 @@
 import { Module } from '@nestjs/common';
 import { CommerceModule } from '../commerce/commerce.module';
 import { EpayController } from './epay.controller';
+import { EpayReconciliationService } from './epay-reconciliation.service';
 import { EpayService } from './epay.service';
 
 @Module({
   imports: [CommerceModule],
   controllers: [EpayController],
-  providers: [EpayService],
+  providers: [EpayService, EpayReconciliationService],
+  exports: [EpayService, EpayReconciliationService],
 })
 export class EpayModule {}

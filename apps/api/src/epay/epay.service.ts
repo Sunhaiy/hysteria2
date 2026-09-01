@@ -317,6 +317,10 @@ export class EpayService {
                 createdAt: attempt.createdAt.toISOString(),
                 settledAt: attempt.settledAt?.toISOString() ?? null,
                 expiresAt: attempt.expiresAt.toISOString(),
+                lastQueryAt: attempt.lastQueryAt?.toISOString() ?? null,
+                queryFailureCount: attempt.queryFailureCount,
+                lastQueryError: attempt.lastQueryError,
+                closedAt: attempt.closedAt?.toISOString() ?? null,
               }
             : { tested: false, status: 'not_tested', paymentType },
         ];
@@ -387,31 +391,13 @@ export class EpayService {
     if (amountCents !== attempt.amountCents) {
       return { accepted: false, status: 'failed' };
     }
-    try {
-      const settled = await this.prisma.$transaction(async (tx) => {
-        const current = await tx.epayGatewayTestAttempt.findUnique({
-          where: { merchantOrderNo },
-        });
-        if (!current) return null;
-        if (current.status === EpayPaymentStatus.SETTLED) {
-          return current.gatewayTradeNo === gatewayTradeNo ? current : null;
-        }
-        return tx.epayGatewayTestAttempt.update({
-          where: { id: current.id },
-          data: {
-            status: EpayPaymentStatus.SETTLED,
-            gatewayTradeNo,
-            activeKey: null,
-            settledAt: new Date(),
-          },
-        });
-      });
-      return settled
-        ? { accepted: true, attemptId: settled.id, status: 'success' }
-        : { accepted: false, status: 'failed' };
-    } catch {
-      return { accepted: false, attemptId: attempt.id, status: 'failed' };
-    }
+    return this.settleVerifiedGatewayTest({
+      attemptId: attempt.id,
+      merchantOrderNo,
+      gatewayTradeNo,
+      amountCents,
+      paymentType: parameters.type,
+    });
   }
 
   async processCallback(
@@ -466,46 +452,116 @@ export class EpayService {
       return { accepted: false, status: 'failed' };
     }
 
+    return this.settleVerifiedPayment({
+      attemptId: attempt.id,
+      merchantOrderNo,
+      gatewayTradeNo,
+      amountCents,
+      paymentType: parameters.type ?? '',
+      paidAt: new Date(),
+    });
+  }
+
+  async settleVerifiedGatewayTest(input: {
+    attemptId?: string;
+    merchantOrderNo: string;
+    gatewayTradeNo: string;
+    amountCents: number;
+    paymentType: string;
+  }): Promise<EpayCallbackResult> {
+    try {
+      const settled = await this.prisma.$transaction(async (tx) => {
+        const current = await tx.epayGatewayTestAttempt.findUnique({
+          where: { merchantOrderNo: input.merchantOrderNo },
+        });
+        if (
+          !current ||
+          current.amountCents !== input.amountCents ||
+          current.paymentType !== input.paymentType
+        ) {
+          return null;
+        }
+        if (current.status === EpayPaymentStatus.SETTLED) {
+          return current.gatewayTradeNo === input.gatewayTradeNo
+            ? current
+            : null;
+        }
+        return tx.epayGatewayTestAttempt.update({
+          where: { id: current.id },
+          data: {
+            status: EpayPaymentStatus.SETTLED,
+            gatewayTradeNo: input.gatewayTradeNo,
+            activeKey: null,
+            settledAt: new Date(),
+            closedAt: null,
+            lastQueryError: null,
+          },
+        });
+      });
+      return settled
+        ? { accepted: true, attemptId: settled.id, status: 'success' }
+        : { accepted: false, status: 'failed' };
+    } catch {
+      return {
+        accepted: false,
+        attemptId: input.attemptId,
+        status: 'failed',
+      };
+    }
+  }
+
+  async settleVerifiedPayment(input: {
+    attemptId?: string;
+    merchantOrderNo: string;
+    gatewayTradeNo: string;
+    amountCents: number;
+    paymentType: string;
+    paidAt: Date;
+  }): Promise<EpayCallbackResult> {
     for (let retry = 0; retry < 3; retry += 1) {
       try {
         const settled = await this.prisma.$transaction(
           async (tx) => {
             const attempt = await tx.epayPaymentAttempt.findUnique({
-              where: { merchantOrderNo },
+              where: { merchantOrderNo: input.merchantOrderNo },
             });
             if (
               !attempt ||
-              attempt.amountCents !== amountCents ||
-              attempt.paymentType !== parameters.type
+              attempt.amountCents !== input.amountCents ||
+              attempt.paymentType !== input.paymentType
             ) {
               return null;
             }
             if (attempt.status === EpayPaymentStatus.SETTLED) {
-              return attempt.gatewayTradeNo === gatewayTradeNo ? attempt : null;
+              return attempt.gatewayTradeNo === input.gatewayTradeNo
+                ? attempt
+                : null;
             }
 
             const order = await this.commerce.fulfillEpayPayment(tx, {
               attemptId: attempt.id,
               userId: attempt.userId,
               offerId: attempt.offerId,
-              merchantOrderNo,
-              gatewayTradeNo,
-              amountCents,
+              merchantOrderNo: input.merchantOrderNo,
+              gatewayTradeNo: input.gatewayTradeNo,
+              amountCents: input.amountCents,
               basePriceCents: attempt.basePriceCents,
               entitlementSnapshot: attempt.entitlementSnapshot,
-              paidAt: new Date(),
+              paidAt: input.paidAt,
             });
             return tx.epayPaymentAttempt.update({
               where: { id: attempt.id },
               data: {
                 orderId: order.orderId,
-                gatewayTradeNo,
+                gatewayTradeNo: input.gatewayTradeNo,
                 status: EpayPaymentStatus.SETTLED,
                 activeKey: null,
-                settledAt: new Date(),
+                settledAt: input.paidAt,
                 failedAt: null,
+                closedAt: null,
                 lastSettlementError: null,
                 lastSettlementFailedAt: null,
+                lastQueryError: null,
               },
             });
           },
@@ -516,8 +572,12 @@ export class EpayService {
           : { accepted: false, status: 'failed' };
       } catch (error) {
         if (this.isRetryableTransactionError(error) && retry < 2) continue;
-        await this.recordSettlementFailure(merchantOrderNo, error);
-        return { accepted: false, attemptId: attempt.id, status: 'failed' };
+        await this.recordSettlementFailure(input.merchantOrderNo, error);
+        return {
+          accepted: false,
+          attemptId: input.attemptId,
+          status: 'failed',
+        };
       }
     }
     return { accepted: false, status: 'failed' };

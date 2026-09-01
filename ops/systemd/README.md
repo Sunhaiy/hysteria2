@@ -23,6 +23,13 @@ NODE_CHECK_REQUEST_POLL_MS=2000
 NODE_RUNTIME_CONTROL_ENABLED=true
 NODE_RUNTIME_COMMAND_POLL_MS=2000
 NODE_RUNTIME_STATUS_INTERVAL_MS=30000
+EPAY_RECONCILIATION_ENABLED=false
+EPAY_RECONCILIATION_INTERVAL_MS=15000
+EPAY_RECONCILIATION_BATCH_SIZE=10
+EPAY_RECONCILIATION_MIN_AGE_MS=15000
+EPAY_RECONCILIATION_RETRY_MS=30000
+EPAY_RECONCILIATION_LOOKBACK_HOURS=24
+EPAY_RECONCILIATION_REQUEST_TIMEOUT_MS=8000
 DESTINATION_RETENTION_DAYS=7
 ONLINE_RETENTION_DAYS=7
 AUTH_EVENT_RETENTION_DAYS=30
@@ -34,6 +41,12 @@ BACKUP_TIME_ZONE=Asia/Shanghai
 BACKUP_RESTORE_ENABLED=true
 BACKUP_MAINTENANCE_DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/postgres
 ```
+
+Keep `EPAY_RECONCILIATION_ENABLED=false` during a dark deployment. Enable it
+only after both ¥0.01 channel tests have been created and the merchant query
+endpoint has returned a correctly signed result for them. This flag starts the
+single worker-owned query loop and also unlocks the final 易支付 activation
+gate; it does not change `payment.checkoutMode` by itself.
 
 Create `BACKUP_DIR` before startup and grant it to the service account:
 

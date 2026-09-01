@@ -6,6 +6,7 @@ import { UsageSyncService } from './usage-sync/usage-sync.service';
 import { NodeRuntimeCommandService } from './node-ops/node-runtime-command.service';
 import { NodeTrafficGuardService } from './node-ops/node-traffic-guard.service';
 import { BackupService } from './backups/backup.service';
+import { EpayReconciliationService } from './epay/epay-reconciliation.service';
 
 const logger = new Logger('UsageSyncWorker');
 const minimumIntervalMs = 10_000;
@@ -104,6 +105,7 @@ async function bootstrap() {
   const runtime = app.get(NodeRuntimeCommandService);
   const trafficGuard = app.get(NodeTrafficGuardService);
   const backups = app.get(BackupService);
+  const epayReconciliation = app.get(EpayReconciliationService);
   restoreInProgress = () => backups.isMaintenanceMode();
   const syncIntervalMs = intervalFromEnv(
     'NODE_SYNC_INTERVAL_MS',
@@ -150,6 +152,11 @@ async function bootstrap() {
     30 * 60_000,
     60_000,
   );
+  const epayReconciliationIntervalMs = intervalFromEnv(
+    'EPAY_RECONCILIATION_INTERVAL_MS',
+    15_000,
+    5_000,
+  );
   let stopping = false;
   const tasks: RecurringTask[] = [];
   const syncEnabled =
@@ -158,6 +165,8 @@ async function bootstrap() {
   const operationsEnabled = process.env.NODE_OPERATIONS_ENABLED !== 'false';
   const runtimeControlEnabled =
     process.env.NODE_RUNTIME_CONTROL_ENABLED !== 'false';
+  const epayReconciliationEnabled =
+    process.env.EPAY_RECONCILIATION_ENABLED === 'true';
 
   const interruptedRestore = await backups.recoverInterruptedRestore();
   if (interruptedRestore) {
@@ -190,6 +199,26 @@ async function bootstrap() {
       },
     ),
   );
+
+  if (epayReconciliationEnabled) {
+    tasks.push(
+      new RecurringTask(
+        '易支付 active-query reconciliation',
+        epayReconciliationIntervalMs,
+        2 * 60_000,
+        async () => {
+          const result = await epayReconciliation.reconcileDueAttempts();
+          if (result.checked > 0) {
+            logger.log(
+              `Reconciled ${result.checked} 易支付 attempts: ${result.settled} settled, ${result.pending} pending, ${result.closed} closed, ${result.notFound} not found, ${result.failed} failed`,
+            );
+          }
+        },
+      ),
+    );
+  } else {
+    logger.warn('易支付 active-query reconciliation is disabled');
+  }
 
   if (syncEnabled) {
     tasks.push(

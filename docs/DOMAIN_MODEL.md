@@ -82,7 +82,11 @@ online collection, health probing, and manual-check consumption.
   gateway credentials and entitlement terms used when the intent was created,
   so later settings or catalog edits cannot invalidate or alter settlement.
   Verified callbacks are idempotent. Fulfillment failures remain retryable and
-  record their reason and attempt count for reconciliation.
+  record their reason and attempt count for reconciliation. Callback and active
+  query results share one serializable settlement entry point. Active query
+  responses are trusted only after signature, order number, integer-cent
+  amount, channel, and status validation; query failures never create revenue
+  or entitlements.
 - **EpayGatewayTestAttempt** is an administrator-initiated ¥0.01 gateway probe.
   It snapshots the credentials and callback contract but never creates an
   order, payment record, revenue, subscription, entitlement, or traffic pack.

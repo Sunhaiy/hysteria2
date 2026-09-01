@@ -80,6 +80,10 @@ interface EpayChannelTestStatus {
   createdAt?: string;
   settledAt?: string | null;
   expiresAt?: string;
+  lastQueryAt?: string | null;
+  queryFailureCount?: number;
+  lastQueryError?: string | null;
+  closedAt?: string | null;
   gateway?: {
     url: string;
     method: "POST";
@@ -1092,11 +1096,15 @@ export default function AdminSettingsPage() {
                         >
                           {channel?.tested
                             ? "已通过"
-                            : channel?.status === "pending"
-                              ? "等待付款"
-                              : channel?.status === "expired"
-                                ? "已过期"
-                                : "尚未测试"}
+                            : channel?.lastQueryError
+                              ? `查单异常 ${channel.queryFailureCount ?? 1} 次`
+                              : channel?.status === "pending"
+                                ? "等待付款"
+                                : channel?.status === "failed"
+                                  ? "已关闭或失败"
+                                  : channel?.status === "expired"
+                                    ? "已过期"
+                                    : "尚未测试"}
                         </span>
                       </div>
                     );
@@ -1106,7 +1114,7 @@ export default function AdminSettingsPage() {
                     <span
                       className={`badge ${epayReconciliationReady ? "success" : "warn"}`}
                     >
-                      {epayReconciliationReady ? "已就绪" : "等待接入文档"}
+                      {epayReconciliationReady ? "已启用" : "未启用"}
                     </span>
                   </div>
                   <label className="field">
