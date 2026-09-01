@@ -468,7 +468,11 @@ export default function AdminSettingsPage() {
     }
   }
 
-  function submitEpayGateway(test: EpayGatewayTestStatus) {
+  function submitEpayGateway(
+    test: EpayGatewayTestStatus,
+    targetName: string,
+    paymentWindow: Window,
+  ) {
     if (!test.gateway) throw new Error("测试支付网关信息不可用");
     const target = new URL(test.gateway.url);
     if (!["http:", "https:"].includes(target.protocol)) {
@@ -478,12 +482,13 @@ export default function AdminSettingsPage() {
       for (const [name, value] of Object.entries(test.gateway.fields)) {
         target.searchParams.set(name, value);
       }
-      window.location.assign(target.toString());
+      paymentWindow.location.replace(target.toString());
       return;
     }
     const form = document.createElement("form");
     form.method = test.gateway.method;
     form.action = target.toString();
+    form.target = targetName;
     form.style.display = "none";
     for (const [name, value] of Object.entries(test.gateway.fields)) {
       const input = document.createElement("input");
@@ -494,10 +499,20 @@ export default function AdminSettingsPage() {
     }
     document.body.appendChild(form);
     form.submit();
+    window.setTimeout(() => form.remove(), 0);
   }
 
   async function startEpayTest() {
     if (!token) return;
+    const targetName = `epay-test-${crypto.randomUUID()}`;
+    const paymentWindow = window.open("about:blank", targetName);
+    if (!paymentWindow) {
+      setError("浏览器阻止了支付窗口，请允许本站打开新窗口后重试。");
+      return;
+    }
+    paymentWindow.opener = null;
+    paymentWindow.document.title = "正在前往测试支付";
+    paymentWindow.document.body.textContent = "正在创建测试支付...";
     setTestingEpay(true);
     setError(null);
     try {
@@ -511,11 +526,13 @@ export default function AdminSettingsPage() {
         },
       );
       setEpayTest(test);
-      submitEpayGateway(test);
+      submitEpayGateway(test, targetName, paymentWindow);
     } catch (cause) {
+      paymentWindow.close();
       setError(
         cause instanceof ApiError ? cause.message : "测试支付发起失败。",
       );
+    } finally {
       setTestingEpay(false);
     }
   }

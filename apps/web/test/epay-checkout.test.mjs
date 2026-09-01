@@ -23,7 +23,17 @@ test("admin payment settings enforce one checkout channel at a time", async () =
   assert.match(settings, /启用易支付/);
   assert.match(settings, /不创建订单、不计收入、不发放套餐或流量/);
   assert.match(settings, /test\.gateway\.method === "GET"/);
-  assert.match(settings, /window\.location\.assign\(target\.toString\(\)\)/);
+  assert.match(settings, /window\.open\("about:blank", targetName\)/);
+  assert.match(settings, /form\.target = targetName/);
+  assert.match(
+    settings,
+    /paymentWindow\.location\.replace\(target\.toString\(\)\)/,
+  );
+  assert.match(
+    settings,
+    /async function startEpayTest[\s\S]*?finally \{[\s\S]*?setTestingEpay\(false\)/,
+  );
+  assert.doesNotMatch(settings, /window\.location\.assign\(target\.toString\(\)\)/);
 });
 
 test("toast actions remain stable when used by data-loading effects", async () => {
