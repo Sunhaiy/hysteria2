@@ -112,6 +112,12 @@ export class UpdateSettingsDto {
   siteIconUrl?: string;
 
   @IsOptional()
+  @IsInt()
+  @Min(350)
+  @Max(600)
+  siteFontWeight?: number;
+
+  @IsOptional()
   @IsIn(['balance', 'cdk'])
   purchaseMode?: 'balance' | 'cdk';
 

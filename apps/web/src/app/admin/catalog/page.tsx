@@ -8,6 +8,7 @@ import { Drawer } from "@/components/drawer";
 import { Icon } from "@/components/icon";
 import { MetricCard } from "@/components/metric-card";
 import { Panel } from "@/components/panel";
+import { PageSkeleton } from "@/components/skeleton";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
@@ -176,9 +177,11 @@ export default function CatalogPage() {
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     if (!token) return;
+    setLoading(true);
     try {
       setCatalog(await apiRequest<Catalog>("/api/admin/catalog", { token }));
       setError(null);
@@ -186,6 +189,8 @@ export default function CatalogPage() {
       setError(
         cause instanceof ApiError ? cause.message : "商品目录加载失败。",
       );
+    } finally {
+      setLoading(false);
     }
   }, [token]);
   useEffect(() => {
@@ -351,6 +356,20 @@ export default function CatalogPage() {
   const activeOffers = activeProducts
     .flatMap((product) => product.offers)
     .filter((offer) => offer.active && !offer.archivedAt).length;
+
+  if (loading && catalog.products.length === 0 && !error) {
+    return (
+      <ConsoleShell
+        title="商品中心"
+        subtitle="套餐、流量包与可用节点"
+        scope="Catalog"
+        navItems={adminNav}
+        requireRole="admin"
+      >
+        <PageSkeleton variant="table" />
+      </ConsoleShell>
+    );
+  }
 
   return (
     <ConsoleShell

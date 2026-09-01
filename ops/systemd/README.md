@@ -27,7 +27,22 @@ DESTINATION_RETENTION_DAYS=7
 ONLINE_RETENTION_DAYS=7
 AUTH_EVENT_RETENTION_DAYS=30
 DATA_CLEANUP_INTERVAL_MS=86400000
+BACKUP_DIR=/opt/hysteria2-control-plane/shared/backups
+BACKUP_RETENTION_COUNT=3
+BACKUP_DAILY_HOUR=3
+BACKUP_TIME_ZONE=Asia/Shanghai
+BACKUP_RESTORE_ENABLED=true
+BACKUP_MAINTENANCE_DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/postgres
 ```
+
+Create `BACKUP_DIR` before startup and grant it to the service account:
+
+```bash
+install -d -m 0750 -o hysteria2 -g hysteria2 /opt/hysteria2-control-plane/shared/backups
+```
+
+Install the PostgreSQL client utilities (`pg_dump`, `pg_restore`, and `psql`)
+on the control-plane host. See `ops/backup/README.md` for restore requirements.
 
 Run exactly one `hysteria2-sync-worker.service` instance. During a release,
 stop the old worker only after the new API and web health checks pass, then

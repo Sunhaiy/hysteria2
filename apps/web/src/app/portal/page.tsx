@@ -8,6 +8,7 @@ import { EChart } from "@/components/echart";
 import { Icon } from "@/components/icon";
 import { MetricCard } from "@/components/metric-card";
 import { Panel } from "@/components/panel";
+import { PageSkeleton } from "@/components/skeleton";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { portalNav } from "@/lib/copy";
@@ -191,11 +192,7 @@ export default function PortalPage() {
         navItems={portalNav}
         requireRole="member"
       >
-        <div className="portal-dashboard-skeleton">
-          {Array.from({ length: 8 }, (_, index) => (
-            <div className="skeleton" key={index} />
-          ))}
-        </div>
+        <PageSkeleton variant="dashboard" />
       </ConsoleShell>
     );
   }

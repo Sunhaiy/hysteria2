@@ -11,5 +11,10 @@
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck"
+  },
+  "pnpm": {
+    "overrides": {
+      "multer": "^2.3.0"
+    }
   }
 }

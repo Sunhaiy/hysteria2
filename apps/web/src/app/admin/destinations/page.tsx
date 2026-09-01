@@ -6,6 +6,7 @@ import { CustomSelect } from "@/components/custom-select";
 import { DataTable } from "@/components/data-table";
 import { Icon } from "@/components/icon";
 import { Panel } from "@/components/panel";
+import { PageSkeleton } from "@/components/skeleton";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
@@ -119,6 +120,20 @@ export default function AdminDestinationsPage() {
     const filters = { q, userId, nodeId, transport, from, to };
     appliedFilters.current = filters;
     await loadVisits(null, filters);
+  }
+
+  if (loading && !status && visits.length === 0 && !error) {
+    return (
+      <ConsoleShell
+        title="访问审计"
+        subtitle="查询会员连接的目标域名或 IP，并检查各节点遥测上报状态。"
+        scope="Security"
+        navItems={adminNav}
+        requireRole="admin"
+      >
+        <PageSkeleton variant="table" />
+      </ConsoleShell>
+    );
   }
 
   return (

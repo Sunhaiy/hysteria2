@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
+import { BackupModule } from './backups/backup.module';
 import { CacheModule } from './cache/cache.module';
 import { DomainModule } from './domain/domain.module';
 import { MailModule } from './mail/mail.module';
@@ -22,6 +23,7 @@ import { NodeOpsModule } from './node-ops/node-ops.module';
         join(process.cwd(), '../../.env'),
       ],
     }),
+    BackupModule,
     CacheModule,
     PrismaModule,
     SecurityModule,

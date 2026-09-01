@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { Drawer } from "@/components/drawer";
 import { Icon } from "@/components/icon";
+import { CardGridSkeleton } from "@/components/skeleton";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { portalNav } from "@/lib/copy";
@@ -505,15 +506,7 @@ export default function PortalPlansPage() {
           </div>
         </div>
         {loading ? (
-          <section className="plan-grid catalog-product-grid">
-            {Array.from({ length: 3 }, (_, index) => (
-              <div
-                className="skeleton"
-                style={{ height: 310, borderRadius: "var(--radius-md)" }}
-                key={index}
-              />
-            ))}
-          </section>
+          <CardGridSkeleton />
         ) : (
           renderProducts(groups.plans)
         )}
@@ -525,7 +518,11 @@ export default function PortalPlansPage() {
             </span>
           </div>
         </div>
-        {!loading ? renderProducts(groups.packs) : null}
+        {loading ? (
+          <CardGridSkeleton compact />
+        ) : (
+          renderProducts(groups.packs)
+        )}
         {!loading && !catalog.products.length ? (
           <div className="empty-state">
             <div className="empty-state-title">当前没有可售商品</div>

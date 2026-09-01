@@ -4,6 +4,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useState,
   type ReactNode,
 } from "react";
@@ -15,6 +16,7 @@ interface SiteInfo {
   description: string;
   browserTitle: string;
   iconUrl: string;
+  fontWeight: number;
 }
 
 const defaultSite: SiteInfo = {
@@ -22,7 +24,16 @@ const defaultSite: SiteInfo = {
   description: "",
   browserTitle: "Hysteria 2",
   iconUrl: "/favicon.ico",
+  fontWeight: 400,
 };
+
+const fontWeightStorageKey = "site-font-weight";
+
+function normalizeFontWeight(value: number | undefined) {
+  if (!Number.isFinite(value)) return defaultSite.fontWeight;
+  const stepped = Math.round(Number(value) / 50) * 50;
+  return Math.min(600, Math.max(350, stepped));
+}
 
 const SiteContext = createContext<SiteInfo>(defaultSite);
 
@@ -30,10 +41,36 @@ export function SiteProvider({ children }: { children: ReactNode }) {
   const [site, setSite] = useState<SiteInfo>(defaultSite);
   const pathname = usePathname();
 
+  useLayoutEffect(() => {
+    try {
+      const stored = Number(window.localStorage.getItem(fontWeightStorageKey));
+      if (!Number.isFinite(stored) || stored < 350 || stored > 600) return;
+      document.documentElement.style.setProperty(
+        "--font-weight-body",
+        String(normalizeFontWeight(stored)),
+      );
+    } catch {
+      // Storage can be unavailable in restricted browser contexts.
+    }
+  }, []);
+
   useEffect(() => {
     const applySite = (info: SiteInfo) => {
       if (!info?.name) return;
-      setSite(info);
+      const next = {
+        ...info,
+        fontWeight: normalizeFontWeight(info.fontWeight),
+      };
+      document.documentElement.style.setProperty(
+        "--font-weight-body",
+        String(next.fontWeight),
+      );
+      try {
+        window.localStorage.setItem(fontWeightStorageKey, String(next.fontWeight));
+      } catch {
+        // Applying the live setting does not depend on persistent storage.
+      }
+      setSite(next);
     };
 
     void apiRequest<SiteInfo>("/api/site")

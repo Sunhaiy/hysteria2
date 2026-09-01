@@ -6,6 +6,7 @@ import { ConsoleShell } from "@/components/console-shell";
 import { DataTable } from "@/components/data-table";
 import { MetricCard } from "@/components/metric-card";
 import { Panel } from "@/components/panel";
+import { PageSkeleton } from "@/components/skeleton";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { portalNav } from "@/lib/copy";
@@ -61,14 +62,7 @@ export default function PortalUsagePage() {
       {error ? <div className="feedback error">{error}</div> : null}
 
       {!usage && !emptyState && !error ? (
-        <>
-          <div className="skeleton-metrics">
-            {Array.from({ length: 4 }, (_, i) => <div key={i} className="skeleton skeleton-metric" />)}
-          </div>
-          <div className="skeleton-rows" style={{ marginTop: 16 }}>
-            {Array.from({ length: 5 }, (_, i) => <div key={i} className="skeleton skeleton-row" />)}
-          </div>
-        </>
+        <PageSkeleton variant="dashboard" />
       ) : null}
 
       {usage ? (

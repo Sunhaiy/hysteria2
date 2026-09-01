@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { CustomSelect } from "@/components/custom-select";
 import { Panel } from "@/components/panel";
+import { PageSkeleton } from "@/components/skeleton";
 import { useAuth } from "@/components/auth-provider";
 import { Toast, useToast } from "@/components/toast";
 import { apiRequest, ApiError } from "@/lib/api";
@@ -58,6 +59,7 @@ interface SettingsResponse {
     description: string;
     browserTitle: string;
     iconUrl: string;
+    fontWeight: number;
   };
   registrationEnabled: boolean;
   announcement: {
@@ -102,6 +104,7 @@ export default function AdminSettingsPage() {
   const [siteDescription, setSiteDescription] = useState("");
   const [siteBrowserTitle, setSiteBrowserTitle] = useState("");
   const [siteIconUrl, setSiteIconUrl] = useState("");
+  const [siteFontWeight, setSiteFontWeight] = useState(400);
   const [savingSite, setSavingSite] = useState(false);
   const [buyButtonText, setBuyButtonText] = useState("");
   const [cdkButtonText, setCdkButtonText] = useState("");
@@ -143,6 +146,7 @@ export default function AdminSettingsPage() {
     setSiteDescription(data.site.description);
     setSiteBrowserTitle(data.site.browserTitle);
     setSiteIconUrl(data.site.iconUrl);
+    setSiteFontWeight(data.site.fontWeight);
     setBuyButtonText(data.branding.buyButtonText);
     setCdkButtonText(data.branding.cdkButtonText);
     setCdkButtonUrl(data.branding.cdkButtonUrl);
@@ -293,7 +297,13 @@ export default function AdminSettingsPage() {
       const data = await apiRequest<SettingsResponse>("/api/admin/settings", {
         method: "PATCH",
         token,
-        body: { siteName, siteDescription, siteBrowserTitle, siteIconUrl },
+        body: {
+          siteName,
+          siteDescription,
+          siteBrowserTitle,
+          siteIconUrl,
+          siteFontWeight,
+        },
       });
       applySettings(data);
       window.dispatchEvent(
@@ -445,11 +455,7 @@ export default function AdminSettingsPage() {
       {error ? <div className="feedback error">{error}</div> : null}
 
       {!loaded ? (
-        <div className="skeleton-rows">
-          {Array.from({ length: 5 }, (_, i) => (
-            <div key={i} className="skeleton skeleton-row" />
-          ))}
-        </div>
+        <PageSkeleton variant="settings" />
       ) : (
         <>
           <Panel
@@ -484,6 +490,29 @@ export default function AdminSettingsPage() {
                   placeholder="素心Network VPN"
                   maxLength={80}
                 />
+              </label>
+              <label className="field typography-weight-field">
+                <span className="setting-range-heading">
+                  <span className="fine-print">界面基础字重</span>
+                  <output>{siteFontWeight}</output>
+                </span>
+                <input
+                  className="range-control"
+                  type="range"
+                  min={350}
+                  max={600}
+                  step={50}
+                  value={siteFontWeight}
+                  onChange={(event) =>
+                    setSiteFontWeight(Number(event.target.value))
+                  }
+                />
+                <span
+                  className="typography-weight-preview"
+                  style={{ fontWeight: siteFontWeight }}
+                >
+                  中文界面预览 · Interface 123
+                </span>
               </label>
               <div className="field site-icon-field">
                 <span className="fine-print">浏览器标签图标</span>

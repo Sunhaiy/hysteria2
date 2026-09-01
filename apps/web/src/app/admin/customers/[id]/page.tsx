@@ -10,6 +10,7 @@ import { EChart } from "@/components/echart";
 import { Icon } from "@/components/icon";
 import { MetricCard } from "@/components/metric-card";
 import { Panel } from "@/components/panel";
+import { PageSkeleton } from "@/components/skeleton";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
@@ -478,7 +479,7 @@ export default function CustomerDetailPage() {
         {error ? (
           <div className="feedback error">{error}</div>
         ) : (
-          <div className="skeleton" style={{ height: 320 }} />
+          <PageSkeleton variant="detail" />
         )}
       </ConsoleShell>
     );

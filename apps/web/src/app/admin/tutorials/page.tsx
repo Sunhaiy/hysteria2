@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { Icon } from "@/components/icon";
 import { Panel } from "@/components/panel";
+import { PageSkeleton } from "@/components/skeleton";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { apiBaseUrl } from "@/lib/config";
@@ -68,6 +69,7 @@ export default function AdminTutorialsPage() {
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
 
@@ -90,6 +92,8 @@ export default function AdminTutorialsPage() {
         if (cause instanceof DOMException && cause.name === "AbortError")
           return;
         setError(cause instanceof ApiError ? cause.message : "教程加载失败。");
+      } finally {
+        if (!signal?.aborted) setInitialLoading(false);
       }
     },
     [token],
@@ -258,6 +262,20 @@ export default function AdminTutorialsPage() {
   }
 
   const activeGuide = guides.find((guide) => guide.platform === platform);
+
+  if (initialLoading && guides.length === 0 && !error) {
+    return (
+      <ConsoleShell
+        title="教程管理"
+        subtitle="四平台图文步骤、草稿预览与原子发布"
+        scope="Content"
+        navItems={adminNav}
+        requireRole="admin"
+      >
+        <PageSkeleton variant="detail" />
+      </ConsoleShell>
+    );
+  }
 
   return (
     <ConsoleShell

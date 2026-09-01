@@ -349,11 +349,20 @@ export class SettingsService {
   async getSiteInfo() {
     const map = await this.all();
     const name = map.get('site.name') || 'Hysteria 2';
+    const configuredFontWeight = Number(map.get('site.fontWeight'));
+    const fontWeight =
+      Number.isInteger(configuredFontWeight) &&
+      configuredFontWeight >= 350 &&
+      configuredFontWeight <= 600 &&
+      configuredFontWeight % 50 === 0
+        ? configuredFontWeight
+        : 400;
     return {
       name,
       description: map.get('site.description') || '',
       browserTitle: map.get('site.browserTitle') || name,
       iconUrl: map.get('site.iconUrl') || '/favicon.ico',
+      fontWeight,
     };
   }
 

@@ -129,6 +129,9 @@ export class AdminSettingsController {
     if (body.siteIconUrl !== undefined) {
       updates['site.iconUrl'] = body.siteIconUrl.trim();
     }
+    if (body.siteFontWeight !== undefined) {
+      updates['site.fontWeight'] = String(body.siteFontWeight);
+    }
     if (body.purchaseMode !== undefined) {
       updates['portal.purchaseMode'] = body.purchaseMode;
     }

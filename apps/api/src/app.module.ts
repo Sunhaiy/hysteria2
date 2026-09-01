@@ -4,6 +4,7 @@ import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './auth/auth.module';
 import { AuditModule } from './audit/audit.module';
+import { BackupModule } from './backups/backup.module';
 import { CacheModule } from './cache/cache.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { CommerceModule } from './commerce/commerce.module';
@@ -52,6 +53,7 @@ import { TicketsModule } from './tickets/tickets.module';
       ],
     }),
     ScheduleModule.forRoot(),
+    BackupModule,
     CacheModule,
     CatalogModule,
     PrismaModule,

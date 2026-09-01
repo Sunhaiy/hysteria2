@@ -41,7 +41,10 @@ type IconName =
   | "arrow_back"
   | "arrow_forward"
   | "search"
-  | "content_copy";
+  | "content_copy"
+  | "database"
+  | "upload"
+  | "trash";
 
 function BaseIcon(props: SVGProps<SVGSVGElement>) {
   return (
@@ -59,6 +62,28 @@ function BaseIcon(props: SVGProps<SVGSVGElement>) {
 }
 
 const icons: Record<IconName, ReactElement> = {
+  database: (
+    <BaseIcon>
+      <ellipse cx="12" cy="5" rx="8" ry="3" />
+      <path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5" />
+      <path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
+    </BaseIcon>
+  ),
+  upload: (
+    <BaseIcon>
+      <path d="M12 16V4" />
+      <path d="m7 9 5-5 5 5" />
+      <path d="M5 20h14" />
+    </BaseIcon>
+  ),
+  trash: (
+    <BaseIcon>
+      <path d="M4 7h16" />
+      <path d="M9 7V4h6v3" />
+      <path d="m7 7 1 13h8l1-13" />
+      <path d="M10 11v5M14 11v5" />
+    </BaseIcon>
+  ),
   space_dashboard: (
     <BaseIcon>
       <rect x="3" y="4" width="8" height="7" rx="1.8" />

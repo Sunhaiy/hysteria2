@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { DataTable } from "@/components/data-table";
 import { Panel } from "@/components/panel";
+import { PageSkeleton } from "@/components/skeleton";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { portalNav } from "@/lib/copy";
@@ -105,13 +106,7 @@ export default function PortalOrdersPage() {
       ) : null}
 
       {!loaded && !error ? (
-        <Panel title="历史订单" copy="正在加载订单记录...">
-          <div className="skeleton-rows">
-            {Array.from({ length: 5 }, (_, i) => (
-              <div key={i} className="skeleton skeleton-row" />
-            ))}
-          </div>
-        </Panel>
+        <PageSkeleton variant="table" />
       ) : null}
 
       {loaded && pendingOrders.length ? (

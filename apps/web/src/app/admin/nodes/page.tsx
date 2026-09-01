@@ -7,6 +7,7 @@ import { Drawer } from "@/components/drawer";
 import { Icon } from "@/components/icon";
 import { MetricCard } from "@/components/metric-card";
 import { Panel } from "@/components/panel";
+import { PageSkeleton } from "@/components/skeleton";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
@@ -756,7 +757,7 @@ export default function NodesPage() {
           />
         </div>
         {loading && data.servers.length === 0 ? (
-          <div className="skeleton" style={{ height: 320 }} />
+          <PageSkeleton variant="detail" />
         ) : null}
         {data.servers.map((server) => (
           <Panel

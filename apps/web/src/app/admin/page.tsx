@@ -9,6 +9,7 @@ import { EChart } from "@/components/echart";
 import { Icon } from "@/components/icon";
 import { MetricCard } from "@/components/metric-card";
 import { Panel } from "@/components/panel";
+import { PageSkeleton } from "@/components/skeleton";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
@@ -219,6 +220,20 @@ export default function AdminDashboardPage() {
   const activeNodes = summary?.nodes.filter((node) => node.active).length ?? 0;
   const healthyNodes =
     summary?.nodes.filter((node) => node.active && node.healthy).length ?? 0;
+
+  if (loading && !summary && !error) {
+    return (
+      <ConsoleShell
+        title="管理台总览"
+        subtitle="订阅、在线与节点运行状态"
+        scope="Operations"
+        navItems={adminNav}
+        requireRole="admin"
+      >
+        <PageSkeleton variant="dashboard" />
+      </ConsoleShell>
+    );
+  }
 
   return (
     <ConsoleShell

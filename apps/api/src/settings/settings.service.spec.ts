@@ -92,6 +92,54 @@ describe('SettingsService cache', () => {
     });
   });
 
+  it('returns a validated interface font weight with the public site info', async () => {
+    const prisma = {
+      setting: {
+        findMany: jest.fn().mockResolvedValue([
+          { key: 'site.name', value: 'Control Plane' },
+          { key: 'site.fontWeight', value: '550' },
+        ]),
+      },
+    };
+    const cache = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new SettingsService(
+      prisma as never,
+      {} as never,
+      cache as never,
+    );
+
+    await expect(service.getSiteInfo()).resolves.toMatchObject({
+      name: 'Control Plane',
+      fontWeight: 550,
+    });
+  });
+
+  it('falls back to the standard font weight for unsupported stored values', async () => {
+    const prisma = {
+      setting: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ key: 'site.fontWeight', value: '725' }]),
+      },
+    };
+    const cache = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new SettingsService(
+      prisma as never,
+      {} as never,
+      cache as never,
+    );
+
+    await expect(service.getSiteInfo()).resolves.toMatchObject({
+      fontWeight: 400,
+    });
+  });
+
   it('returns the configured purchase notice with the portal branding', async () => {
     const prisma = {
       setting: {

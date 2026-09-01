@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { Icon } from "@/components/icon";
 import { Panel } from "@/components/panel";
+import { PageSkeleton } from "@/components/skeleton";
 import { apiRequest } from "@/lib/api";
 import { apiBaseUrl } from "@/lib/config";
 import { portalNav } from "@/lib/copy";
@@ -154,6 +155,20 @@ export default function TutorialPage() {
     ? absoluteApiUrl(platform.asset.downloadUrl)
     : platform.externalUrl;
 
+  if (loading) {
+    return (
+      <ConsoleShell
+        title="Clash 使用教程"
+        subtitle="选择设备并导入 Mihomo YAML 订阅"
+        scope="Member"
+        navItems={portalNav}
+        requireRole="member"
+      >
+        <PageSkeleton variant="detail" />
+      </ConsoleShell>
+    );
+  }
+
   return (
     <ConsoleShell
       title="Clash 使用教程"
@@ -194,13 +209,9 @@ export default function TutorialPage() {
         <Panel
           title={`${platform.name} · ${platform.clientName}`}
           action={
-            loading ? (
-              <span className="badge neutral">同步中</span>
-            ) : (
-              <span className="badge success">
-                已发布 v{platform.revision?.version ?? 1}
-              </span>
-            )
+            <span className="badge success">
+              已发布 v{platform.revision?.version ?? 1}
+            </span>
           }
         >
           <div className="tutorial-download-card">

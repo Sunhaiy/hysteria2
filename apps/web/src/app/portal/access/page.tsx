@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { Icon } from "@/components/icon";
 import { Panel } from "@/components/panel";
+import { PageSkeleton } from "@/components/skeleton";
 import { Toast, useToast } from "@/components/toast";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
@@ -100,7 +101,7 @@ export default function PortalAccessPage() {
       <Toast toast={toast} />
       {error ? <div className="feedback error">{error}</div> : null}
       {loading && !access ? (
-        <div className="skeleton" style={{ height: 360 }} />
+        <PageSkeleton variant="detail" />
       ) : null}
       {access ? (
         <section className="portal-access-layout">

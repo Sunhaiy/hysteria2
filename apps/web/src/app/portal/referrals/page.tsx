@@ -5,6 +5,7 @@ import { ConsoleShell } from "@/components/console-shell";
 import { DataTable } from "@/components/data-table";
 import { Icon } from "@/components/icon";
 import { Panel } from "@/components/panel";
+import { PageSkeleton } from "@/components/skeleton";
 import { Toast, useToast } from "@/components/toast";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
@@ -155,6 +156,20 @@ export default function PortalReferralsPage() {
     } catch {
       showToast("复制失败", "error");
     }
+  }
+
+  if (loading && !summary && !error) {
+    return (
+      <ConsoleShell
+        title="邀请奖励"
+        subtitle="邀请新会员完成首次套餐 CDK 兑换"
+        scope="Referral"
+        navItems={portalNav}
+        requireRole="member"
+      >
+        <PageSkeleton variant="dashboard" />
+      </ConsoleShell>
+    );
   }
 
   return (

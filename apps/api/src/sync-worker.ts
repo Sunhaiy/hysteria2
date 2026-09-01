@@ -5,10 +5,12 @@ import { SyncWorkerModule } from './sync-worker.module';
 import { UsageSyncService } from './usage-sync/usage-sync.service';
 import { NodeRuntimeCommandService } from './node-ops/node-runtime-command.service';
 import { NodeTrafficGuardService } from './node-ops/node-traffic-guard.service';
+import { BackupService } from './backups/backup.service';
 
 const logger = new Logger('UsageSyncWorker');
 const minimumIntervalMs = 10_000;
 const minimumPollIntervalMs = 1_000;
+let restoreInProgress = () => false;
 
 function intervalFromEnv(name: string, fallback: number, minimum: number) {
   const configured = Number(process.env[name] ?? fallback);
@@ -51,6 +53,13 @@ class RecurringTask {
 
   private async tick() {
     if (this.stopped) return;
+    if (
+      this.name !== 'Full-site restore request polling' &&
+      restoreInProgress()
+    ) {
+      this.schedule();
+      return;
+    }
     if (this.inFlight) {
       logger.warn(`${this.name} is still running; skipped this interval`);
       this.schedule();
@@ -94,6 +103,8 @@ async function bootstrap() {
   const operations = app.get(OperationsService);
   const runtime = app.get(NodeRuntimeCommandService);
   const trafficGuard = app.get(NodeTrafficGuardService);
+  const backups = app.get(BackupService);
+  restoreInProgress = () => backups.isMaintenanceMode();
   const syncIntervalMs = intervalFromEnv(
     'NODE_SYNC_INTERVAL_MS',
     60_000,
@@ -134,6 +145,11 @@ async function bootstrap() {
     60_000,
     minimumIntervalMs,
   );
+  const backupPollIntervalMs = intervalFromEnv(
+    'BACKUP_POLL_INTERVAL_MS',
+    30 * 60_000,
+    60_000,
+  );
   let stopping = false;
   const tasks: RecurringTask[] = [];
   const syncEnabled =
@@ -142,6 +158,38 @@ async function bootstrap() {
   const operationsEnabled = process.env.NODE_OPERATIONS_ENABLED !== 'false';
   const runtimeControlEnabled =
     process.env.NODE_RUNTIME_CONTROL_ENABLED !== 'false';
+
+  const interruptedRestore = await backups.recoverInterruptedRestore();
+  if (interruptedRestore) {
+    logger.warn(
+      `Marked interrupted restore ${interruptedRestore.backupId} as failed`,
+    );
+  }
+
+  tasks.push(
+    new RecurringTask(
+      'Daily full-site backup',
+      backupPollIntervalMs,
+      45 * 60_000,
+      async () => {
+        const backup = await backups.runDailyBackupIfDue();
+        if (backup) logger.log(`Created scheduled backup ${backup.filename}`);
+      },
+    ),
+    new RecurringTask(
+      'Full-site restore request polling',
+      10_000,
+      60 * 60_000,
+      async () => {
+        const result = await backups.processPendingRestore();
+        if (result) {
+          logger.log(
+            `Restore request for ${result.backupId} completed with ${result.status}`,
+          );
+        }
+      },
+    ),
+  );
 
   if (syncEnabled) {
     tasks.push(

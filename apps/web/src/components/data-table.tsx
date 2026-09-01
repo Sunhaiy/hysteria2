@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Icon } from "./icon";
+import { TableSkeleton } from "./skeleton";
 
 export interface TablePagination {
   page: number;
@@ -41,10 +42,8 @@ export function DataTable({
           ) : null}
         </div>
       ) : loading && rows.length === 0 ? (
-        <div className="skeleton-rows table-loading" aria-label="正在加载">
-          {Array.from({ length: 5 }, (_, index) => (
-            <div className="skeleton skeleton-row" key={index} />
-          ))}
+        <div className="table-loading" aria-label="正在加载">
+          <TableSkeleton columns={headers.length} />
         </div>
       ) : rows.length === 0 ? (
         <div className="table-state">{emptyText}</div>

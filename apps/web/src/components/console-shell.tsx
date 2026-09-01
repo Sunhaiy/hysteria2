@@ -9,6 +9,7 @@ import { useAuth } from "./auth-provider";
 import { Icon } from "./icon";
 import { MemberAnnouncementDialog } from "./member-announcement-dialog";
 import { SidebarNav } from "./sidebar-nav";
+import { ConsoleSkeleton } from "./skeleton";
 import { useSite } from "./site-provider";
 import { ThemeToggle } from "./theme-toggle";
 
@@ -51,17 +52,7 @@ export function ConsoleShell({
   }, [loading, pathname, requireRole, router, session]);
 
   if (loading || !session || session.role !== requireRole) {
-    return (
-      <div className="loading-screen">
-        <div className="panel loading-card">
-          <div className="panel-body">
-            <span className="scope-chip">Boot</span>
-            <h1 className="brand-title">正在加载控制台</h1>
-            <span className="brand-subtitle">校验登录状态并同步面板数据。</span>
-          </div>
-        </div>
-      </div>
-    );
+    return <ConsoleSkeleton />;
   }
 
   return (

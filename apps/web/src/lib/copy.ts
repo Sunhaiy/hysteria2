@@ -85,6 +85,13 @@ export const adminNav: NavItem[] = [
     group: "系统",
   },
   {
+    href: "/admin/backups",
+    label: "数据备份",
+    icon: "database",
+    meta: "BACKUP",
+    group: "系统",
+  },
+  {
     href: "/admin/settings",
     label: "设置",
     icon: "settings",
