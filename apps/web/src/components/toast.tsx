@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 type ToastState = { msg: string; kind: "success" | "error" } | null;
 
@@ -13,9 +13,12 @@ export function useToast() {
     return () => window.clearTimeout(id);
   }, [toast]);
 
-  function showToast(msg: string, kind: "success" | "error" = "success") {
-    setToast({ msg, kind });
-  }
+  const showToast = useCallback(
+    (msg: string, kind: "success" | "error" = "success") => {
+      setToast({ msg, kind });
+    },
+    [],
+  );
 
   return { toast, showToast };
 }

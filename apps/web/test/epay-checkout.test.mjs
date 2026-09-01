@@ -22,6 +22,16 @@ test("admin payment settings enforce one checkout channel at a time", async () =
   assert.match(settings, /不创建订单、不计收入、不发放套餐或流量/);
 });
 
+test("toast actions remain stable when used by data-loading effects", async () => {
+  const toastHook = await source("components/toast.tsx");
+
+  assert.match(toastHook, /useCallback/);
+  assert.match(
+    toastHook,
+    /const showToast = useCallback\([\s\S]*?setToast\(\{ msg, kind \}\);[\s\S]*?\[\],[\s\S]*?\);/,
+  );
+});
+
 test("member catalog uses store links or 易支付 without wallet checkout", async () => {
   const plans = await source("app/portal/plans/page.tsx");
 
