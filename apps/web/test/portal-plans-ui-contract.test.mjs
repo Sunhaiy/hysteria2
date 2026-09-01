@@ -63,3 +63,22 @@ test("member catalog uses the standard panel surface and aligned card headings",
     /\.plan-card-copy > \.panel-copy\s*\{[\s\S]*?min-height:\s*36px;/,
   );
 });
+
+test("shared motion keeps closed drawers hidden and status badges readable", async () => {
+  const styles = await readFile(stylesUrl, "utf8");
+  const reveal = styles.match(/@keyframes content-reveal\s*\{[\s\S]*?\n\}/)?.[0] ?? "";
+
+  assert.match(reveal, /translate:/);
+  assert.doesNotMatch(reveal, /transform:/);
+  assert.match(
+    styles,
+    /\.drawer\s*\{[\s\S]*?visibility:\s*hidden;[\s\S]*?pointer-events:\s*none;/,
+  );
+  assert.match(
+    styles,
+    /\.drawer\.open\s*\{[\s\S]*?visibility:\s*visible;[\s\S]*?pointer-events:\s*auto;/,
+  );
+  assert.match(styles, /\.badge\s*\{[\s\S]*?color:\s*#fff;/);
+  assert.match(styles, /\.portal-device-status > div > span/);
+  assert.doesNotMatch(styles, /\.portal-device-status span,\s*\n\.portal-device-status strong/);
+});
