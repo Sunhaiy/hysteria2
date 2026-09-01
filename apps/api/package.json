@@ -38,6 +38,7 @@
     "helmet": "^8.2.0",
     "ioredis": "^5.8.2",
     "multer": "2.3.0",
+    "node-html-parser": "^7.0.1",
     "nodemailer": "^9.0.1",
     "qrcode": "^1.5.4",
     "reflect-metadata": "^0.2.2",

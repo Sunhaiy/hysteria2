@@ -86,7 +86,7 @@ interface EpayChannelTestStatus {
   closedAt?: string | null;
   gateway?: {
     url: string;
-    method: "POST";
+    method: "GET" | "POST";
     fields: Record<string, string>;
   };
 }

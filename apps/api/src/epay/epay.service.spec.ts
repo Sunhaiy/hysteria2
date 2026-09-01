@@ -115,6 +115,21 @@ describe('EpayService callbacks', () => {
         work(tx),
       ),
     };
+    const checkout = {
+      prepare: jest.fn(
+        (gateway: {
+          url: string;
+          method: 'POST';
+          fields: Record<string, string>;
+        }) =>
+          Promise.resolve({
+            ...gateway,
+            url: 'https://direct-pay.test/session',
+            method: 'GET' as const,
+            fields: {},
+          }),
+      ),
+    };
     const service = new EpayService(
       prisma as never,
       {
@@ -131,16 +146,19 @@ describe('EpayService callbacks', () => {
         }),
       } as never,
       cipher as never,
+      checkout as never,
     );
 
     await expect(
       service.createPayment('user_1', 'offer_1', 'key_1', undefined, 'wxpay'),
     ).resolves.toMatchObject({
       gateway: {
-        url: 'https://pay.test/submit.php',
-        fields: { type: 'wxpay' },
+        url: 'https://direct-pay.test/session',
+        method: 'GET',
       },
     });
+    expect(checkout.prepare).toHaveBeenCalledTimes(1);
+    expect(checkout.prepare.mock.calls[0]?.[0].fields.type).toBe('wxpay');
     expect(createdData?.paymentType).toBe('wxpay');
   });
 

@@ -4,6 +4,7 @@ import {
   HttpException,
   Injectable,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
@@ -29,6 +30,7 @@ import {
   verifyEpaySignature,
   type EpayParameters,
 } from './epay-signature';
+import { EpayCheckoutService } from './epay-checkout.service';
 
 const PAYMENT_TTL_MS = 30 * 60 * 1000;
 const GATEWAY_TEST_AMOUNT_CENTS = 1;
@@ -46,6 +48,7 @@ export class EpayService {
     private readonly settings: SettingsService,
     private readonly commerce: CommerceService,
     private readonly cipher: SecretCipherService,
+    @Optional() private readonly checkout?: EpayCheckoutService,
   ) {}
 
   async createPayment(
@@ -594,7 +597,7 @@ export class EpayService {
     return config;
   }
 
-  private presentAttempt(
+  private async presentAttempt(
     attempt: {
       id: string;
       merchantOrderNo: string;
@@ -632,17 +635,18 @@ export class EpayService {
       sign_type: 'MD5',
     };
     fields.sign = createEpaySignature(fields, merchantKey);
+    const gateway = {
+      url: this.submitUrl(gatewayUrl),
+      method: 'POST' as const,
+      fields,
+    };
     return {
       ...status,
-      gateway: {
-        url: this.submitUrl(gatewayUrl),
-        method: 'POST' as const,
-        fields,
-      },
+      gateway: this.checkout ? await this.checkout.prepare(gateway) : gateway,
     };
   }
 
-  private presentGatewayTest(
+  private async presentGatewayTest(
     attempt: {
       id: string;
       merchantOrderNo: string;
@@ -676,13 +680,14 @@ export class EpayService {
       sign_type: 'MD5',
     };
     fields.sign = createEpaySignature(fields, merchantKey);
+    const gateway = {
+      url: this.submitUrl(attempt.gatewayUrlSnapshot),
+      method: 'POST' as const,
+      fields,
+    };
     return {
       ...status,
-      gateway: {
-        url: this.submitUrl(attempt.gatewayUrlSnapshot),
-        method: 'POST' as const,
-        fields,
-      },
+      gateway: this.checkout ? await this.checkout.prepare(gateway) : gateway,
     };
   }
 
