@@ -10,11 +10,12 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { AdminGuard } from '../common/admin.guard';
 import { CurrentPrincipal } from '../common/current-principal.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import type { SessionPrincipal } from '../common/auth.types';
 import { webPublicUrl } from '../common/public-url';
-import { CreateEpayPaymentDto } from './epay.dto';
+import { CreateEpayGatewayTestDto, CreateEpayPaymentDto } from './epay.dto';
 import { EpayService } from './epay.service';
 
 @Controller('api')
@@ -44,6 +45,21 @@ export class EpayController {
     @Param('id') attemptId: string,
   ) {
     return this.epay.getPayment(principal.sub, attemptId);
+  }
+
+  @Post('admin/payments/epay/tests')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  createGatewayTest(
+    @CurrentPrincipal() principal: SessionPrincipal,
+    @Body() body: CreateEpayGatewayTestDto,
+  ) {
+    return this.epay.createGatewayTest(principal.sub, body.paymentType);
+  }
+
+  @Get('admin/payments/epay/tests/latest')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  latestGatewayTest() {
+    return this.epay.latestGatewayTest();
   }
 
   @Get('payments/epay/notify')
@@ -80,6 +96,40 @@ export class EpayController {
     return this.redirectReturn({ ...query, ...body }, response);
   }
 
+  @Get('payments/epay/test-notify')
+  testNotifyGet(
+    @Query() query: Record<string, unknown>,
+    @Res() response: Response,
+  ) {
+    return this.writeTestNotification(query, response);
+  }
+
+  @Post('payments/epay/test-notify')
+  testNotifyPost(
+    @Query() query: Record<string, unknown>,
+    @Body() body: Record<string, unknown>,
+    @Res() response: Response,
+  ) {
+    return this.writeTestNotification({ ...query, ...body }, response);
+  }
+
+  @Get('payments/epay/test-return')
+  testReturnGet(
+    @Query() query: Record<string, unknown>,
+    @Res() response: Response,
+  ) {
+    return this.redirectTestReturn(query, response);
+  }
+
+  @Post('payments/epay/test-return')
+  testReturnPost(
+    @Query() query: Record<string, unknown>,
+    @Body() body: Record<string, unknown>,
+    @Res() response: Response,
+  ) {
+    return this.redirectTestReturn({ ...query, ...body }, response);
+  }
+
   private async writeNotification(
     parameters: Record<string, unknown>,
     response: Response,
@@ -103,6 +153,32 @@ export class EpayController {
     response.redirect(
       302,
       `${webPublicUrl()}/portal/orders?${query.toString()}`,
+    );
+  }
+
+  private async writeTestNotification(
+    parameters: Record<string, unknown>,
+    response: Response,
+  ) {
+    const result = await this.epay.processGatewayTestCallback(parameters);
+    response
+      .type('text/plain')
+      .status(200)
+      .send(result.accepted ? 'success' : 'fail');
+  }
+
+  private async redirectTestReturn(
+    parameters: Record<string, unknown>,
+    response: Response,
+  ) {
+    const result = await this.epay.processGatewayTestCallback(parameters);
+    const query = new URLSearchParams({
+      epayTest: result.accepted ? 'success' : 'failed',
+    });
+    if (result.attemptId) query.set('attempt', result.attemptId);
+    response.redirect(
+      302,
+      `${webPublicUrl()}/admin/settings?${query.toString()}`,
     );
   }
 }

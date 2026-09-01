@@ -173,7 +173,12 @@ describe('SettingsService cache', () => {
   });
 
   it('keeps store checkout as the safe default and requires complete 易支付 credentials', async () => {
-    const prisma = { setting: { findMany: jest.fn().mockResolvedValue([]) } };
+    const prisma = {
+      setting: { findMany: jest.fn().mockResolvedValue([]) },
+      epayGatewayTestAttempt: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'test_1' }),
+      },
+    };
     const cache = {
       get: jest.fn().mockResolvedValue(null),
       set: jest.fn().mockResolvedValue(undefined),
@@ -210,6 +215,43 @@ describe('SettingsService cache', () => {
       'epay.merchantKey': 'secret',
       'epay.paymentType': 'wxpay',
     });
+  });
+
+  it('blocks enabling 易支付 until the current credentials pass a gateway test', async () => {
+    const findFirst = jest.fn().mockResolvedValue(null);
+    const prisma = {
+      setting: {
+        findMany: jest.fn().mockResolvedValue([
+          { key: 'epay.gatewayUrl', value: 'https://pay.example.com' },
+          { key: 'epay.merchantId', value: '1001' },
+          { key: 'epay.merchantKey', value: 'secret' },
+          { key: 'epay.paymentType', value: 'alipay' },
+        ]),
+      },
+      epayGatewayTestAttempt: { findFirst },
+    };
+    const cache = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+    };
+    const cipher = {
+      encrypt: jest.fn((value: string) => value),
+      decrypt: jest.fn((value: string) => value),
+    };
+    const service = new SettingsService(
+      prisma as never,
+      cipher as never,
+      cache as never,
+    );
+
+    await expect(
+      service.prepareEpaySettingsUpdate({ checkoutMode: 'epay' }),
+    ).rejects.toThrow('请先完成 0.01 元易支付测试');
+
+    findFirst.mockResolvedValue({ id: 'test_1' });
+    await expect(
+      service.prepareEpaySettingsUpdate({ checkoutMode: 'epay' }),
+    ).resolves.toMatchObject({ 'payment.checkoutMode': 'epay' });
   });
 
   it('returns an enabled announcement once per login session', async () => {

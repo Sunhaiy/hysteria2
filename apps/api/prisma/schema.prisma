@@ -293,6 +293,7 @@ model User {
   entitlementGrants            EntitlementGrant[]
   paymentRecords               PaymentRecord[]
   epayPaymentAttempts          EpayPaymentAttempt[]
+  epayGatewayTestAttempts      EpayGatewayTestAttempt[]
   walletLedger                 WalletLedgerEntry[]           @relation("WalletLedgerTargetUser")
   walletActions                WalletLedgerEntry[]           @relation("WalletLedgerActor")
   processedRefunds             Refund[]                      @relation("RefundProcessedBy")
@@ -1305,6 +1306,30 @@ model EpayPaymentAttempt {
   @@index([userId, createdAt])
   @@index([status, expiresAt])
   @@index([offerId, status])
+}
+
+model EpayGatewayTestAttempt {
+  id                    String            @id @default(cuid())
+  requestedById         String
+  merchantOrderNo       String            @unique
+  gatewayTradeNo        String?           @unique
+  activeKey             String?           @unique
+  status                EpayPaymentStatus @default(PENDING)
+  paymentType           String
+  gatewayUrlSnapshot    String
+  merchantIdSnapshot    String
+  merchantKeyCiphertext String
+  configFingerprint     String
+  amountCents           Int               @default(1)
+  expiresAt             DateTime
+  settledAt             DateTime?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  requestedBy           User              @relation(fields: [requestedById], references: [id], onDelete: Cascade)
+
+  @@index([requestedById, createdAt])
+  @@index([configFingerprint, status, settledAt])
+  @@index([status, expiresAt])
 }
 
 model WalletLedgerEntry {

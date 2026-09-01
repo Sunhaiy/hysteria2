@@ -83,6 +83,12 @@ online collection, health probing, and manual-check consumption.
   so later settings or catalog edits cannot invalidate or alter settlement.
   Verified callbacks are idempotent. Fulfillment failures remain retryable and
   record their reason and attempt count for reconciliation.
+- **EpayGatewayTestAttempt** is an administrator-initiated ¥0.01 gateway probe.
+  It snapshots the credentials and callback contract but never creates an
+  order, payment record, revenue, subscription, entitlement, or traffic pack.
+  Enabling 易支付 requires a settled test for the current credential
+  fingerprint; changing the gateway, merchant, key, or default payment type
+  requires another test.
 - A complimentary admin grant records the offer list price and an equal
   discount, with zero charged revenue.
 - A plan CDK references a concrete `CatalogOffer`. Its revenue snapshot is the

@@ -20,3 +20,8 @@ export class CreateEpayPaymentDto {
   @IsIn(['alipay', 'wxpay'])
   paymentType?: 'alipay' | 'wxpay';
 }
+
+export class CreateEpayGatewayTestDto {
+  @IsIn(['alipay', 'wxpay'])
+  paymentType!: 'alipay' | 'wxpay';
+}

@@ -7,7 +7,11 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
-import { EpayPaymentStatus, Prisma } from '@prisma/client';
+import {
+  type EpayGatewayTestAttempt,
+  EpayPaymentStatus,
+  Prisma,
+} from '@prisma/client';
 import { CommerceService } from '../commerce/commerce.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SecretCipherService } from '../security/secret-cipher.service';
@@ -27,6 +31,7 @@ import {
 } from './epay-signature';
 
 const PAYMENT_TTL_MS = 30 * 60 * 1000;
+const GATEWAY_TEST_AMOUNT_CENTS = 1;
 
 export interface EpayCallbackResult {
   accepted: boolean;
@@ -193,6 +198,177 @@ export class EpayService {
     });
     if (!attempt) throw new NotFoundException('支付订单不存在');
     return this.presentStatus(attempt);
+  }
+
+  async createGatewayTest(
+    requestedById: string,
+    paymentType: 'alipay' | 'wxpay',
+  ) {
+    const config = await this.requireConfiguredEpay(false);
+    const fingerprint = this.settings.epayConfigFingerprint({
+      gatewayUrl: config.gatewayUrl!,
+      merchantId: config.merchantId!,
+      merchantKey: config.merchantKey!,
+      paymentType,
+    });
+    const now = new Date();
+    const activeKey = `${requestedById}:${fingerprint}:${paymentType}`;
+    let attempt: EpayGatewayTestAttempt;
+    try {
+      attempt = await this.prisma.$transaction(
+        async (tx) => {
+          await tx.epayGatewayTestAttempt.updateMany({
+            where: {
+              status: EpayPaymentStatus.PENDING,
+              expiresAt: { lte: now },
+            },
+            data: { status: EpayPaymentStatus.EXPIRED, activeKey: null },
+          });
+          const active = await tx.epayGatewayTestAttempt.findUnique({
+            where: { activeKey },
+          });
+          if (active) return active;
+          return tx.epayGatewayTestAttempt.create({
+            data: {
+              requestedById,
+              merchantOrderNo: this.createMerchantOrderNo(now, 'EPT'),
+              activeKey,
+              paymentType,
+              gatewayUrlSnapshot: config.gatewayUrl!,
+              merchantIdSnapshot: config.merchantId!,
+              merchantKeyCiphertext: this.cipher.encrypt(config.merchantKey!),
+              configFingerprint: fingerprint,
+              amountCents: GATEWAY_TEST_AMOUNT_CENTS,
+              expiresAt: new Date(now.getTime() + PAYMENT_TTL_MS),
+            },
+          });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    } catch (error) {
+      if (!this.isUniqueConflict(error)) throw error;
+      const replay = await this.prisma.epayGatewayTestAttempt.findUnique({
+        where: { activeKey },
+      });
+      if (!replay) throw error;
+      attempt = replay;
+    }
+    return this.presentGatewayTest(attempt, config.merchantKey!);
+  }
+
+  async latestGatewayTest() {
+    const config = await this.settings.getEpayConfig();
+    if (
+      !config.configured ||
+      !config.gatewayUrl ||
+      !config.merchantId ||
+      !config.merchantKey
+    ) {
+      return { configured: false, tested: false, status: 'not_tested' };
+    }
+    const fingerprint = this.settings.epayConfigFingerprint({
+      gatewayUrl: config.gatewayUrl,
+      merchantId: config.merchantId,
+      merchantKey: config.merchantKey,
+      paymentType: config.paymentType,
+    });
+    await this.prisma.epayGatewayTestAttempt.updateMany({
+      where: {
+        configFingerprint: fingerprint,
+        status: EpayPaymentStatus.PENDING,
+        expiresAt: { lte: new Date() },
+      },
+      data: { status: EpayPaymentStatus.EXPIRED, activeKey: null },
+    });
+    const attempt = await this.prisma.epayGatewayTestAttempt.findFirst({
+      where: { configFingerprint: fingerprint },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!attempt) {
+      return { configured: true, tested: false, status: 'not_tested' };
+    }
+    return {
+      configured: true,
+      tested: attempt.status === EpayPaymentStatus.SETTLED,
+      id: attempt.id,
+      status: attempt.status.toLowerCase(),
+      paymentType: attempt.paymentType,
+      amountCents: attempt.amountCents,
+      createdAt: attempt.createdAt.toISOString(),
+      settledAt: attempt.settledAt?.toISOString() ?? null,
+      expiresAt: attempt.expiresAt.toISOString(),
+    };
+  }
+
+  async processGatewayTestCallback(
+    input: Record<string, unknown>,
+  ): Promise<EpayCallbackResult> {
+    let parameters: EpayParameters;
+    try {
+      parameters = normalizeEpayParameters(input);
+    } catch {
+      return { accepted: false, status: 'failed' };
+    }
+    const merchantOrderNo = parameters.out_trade_no;
+    const gatewayTradeNo = parameters.trade_no;
+    if (!merchantOrderNo || !gatewayTradeNo || !parameters.money) {
+      return { accepted: false, status: 'failed' };
+    }
+    const attempt = await this.prisma.epayGatewayTestAttempt.findUnique({
+      where: { merchantOrderNo },
+    });
+    if (!attempt) return { accepted: false, status: 'failed' };
+    let merchantKey: string;
+    try {
+      const decrypted = this.cipher.decrypt(attempt.merchantKeyCiphertext);
+      if (!decrypted) return { accepted: false, status: 'failed' };
+      merchantKey = decrypted;
+    } catch {
+      return { accepted: false, status: 'failed' };
+    }
+    if (
+      parameters.sign_type?.toUpperCase() !== 'MD5' ||
+      parameters.pid !== attempt.merchantIdSnapshot ||
+      parameters.trade_status !== 'TRADE_SUCCESS' ||
+      parameters.type !== attempt.paymentType ||
+      !verifyEpaySignature(parameters, merchantKey)
+    ) {
+      return { accepted: false, status: 'failed' };
+    }
+    let amountCents: number;
+    try {
+      amountCents = parseEpayAmount(parameters.money);
+    } catch {
+      return { accepted: false, status: 'failed' };
+    }
+    if (amountCents !== attempt.amountCents) {
+      return { accepted: false, status: 'failed' };
+    }
+    try {
+      const settled = await this.prisma.$transaction(async (tx) => {
+        const current = await tx.epayGatewayTestAttempt.findUnique({
+          where: { merchantOrderNo },
+        });
+        if (!current) return null;
+        if (current.status === EpayPaymentStatus.SETTLED) {
+          return current.gatewayTradeNo === gatewayTradeNo ? current : null;
+        }
+        return tx.epayGatewayTestAttempt.update({
+          where: { id: current.id },
+          data: {
+            status: EpayPaymentStatus.SETTLED,
+            gatewayTradeNo,
+            activeKey: null,
+            settledAt: new Date(),
+          },
+        });
+      });
+      return settled
+        ? { accepted: true, attemptId: settled.id, status: 'success' }
+        : { accepted: false, status: 'failed' };
+    } catch {
+      return { accepted: false, attemptId: attempt.id, status: 'failed' };
+    }
   }
 
   async processCallback(
@@ -363,6 +539,50 @@ export class EpayService {
     };
   }
 
+  private presentGatewayTest(
+    attempt: {
+      id: string;
+      merchantOrderNo: string;
+      status: EpayPaymentStatus;
+      paymentType: string;
+      gatewayUrlSnapshot: string;
+      merchantIdSnapshot: string;
+      amountCents: number;
+      expiresAt: Date;
+      settledAt: Date | null;
+    },
+    merchantKey: string,
+  ) {
+    const status = {
+      id: attempt.id,
+      status: attempt.status.toLowerCase(),
+      amountCents: attempt.amountCents,
+      paymentType: attempt.paymentType,
+      expiresAt: attempt.expiresAt.toISOString(),
+      settledAt: attempt.settledAt?.toISOString() ?? null,
+    };
+    if (attempt.status !== EpayPaymentStatus.PENDING) return status;
+    const fields: EpayParameters = {
+      pid: attempt.merchantIdSnapshot,
+      type: attempt.paymentType,
+      out_trade_no: attempt.merchantOrderNo,
+      notify_url: `${apiPublicUrl()}/api/payments/epay/test-notify`,
+      return_url: `${apiPublicUrl()}/api/payments/epay/test-return`,
+      name: '易支付通道测试（不发放商品）',
+      money: formatEpayAmount(attempt.amountCents),
+      sign_type: 'MD5',
+    };
+    fields.sign = createEpaySignature(fields, merchantKey);
+    return {
+      ...status,
+      gateway: {
+        url: this.submitUrl(attempt.gatewayUrlSnapshot),
+        method: 'POST' as const,
+        fields,
+      },
+    };
+  }
+
   private presentStatus(attempt: {
     id: string;
     status: EpayPaymentStatus;
@@ -439,12 +659,12 @@ export class EpayService {
     return parsed.toString();
   }
 
-  private createMerchantOrderNo(now: Date) {
+  private createMerchantOrderNo(now: Date, prefix = 'EP') {
     const stamp = now
       .toISOString()
       .replace(/[-:TZ.]/g, '')
       .slice(0, 14);
-    return `EP${stamp}${randomBytes(8).toString('hex').toUpperCase()}`;
+    return `${prefix}${stamp}${randomBytes(8).toString('hex').toUpperCase()}`;
   }
 
   private isUniqueConflict(error: unknown) {

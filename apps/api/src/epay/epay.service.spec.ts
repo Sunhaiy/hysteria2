@@ -38,6 +38,24 @@ describe('EpayService callbacks', () => {
     };
   }
 
+  function testCallback(overrides: Record<string, string> = {}) {
+    const parameters = {
+      pid: '1001',
+      type: 'alipay',
+      out_trade_no: 'EPT202609010001',
+      trade_no: 'gateway-test-1',
+      money: '0.01',
+      name: '易支付通道测试（不发放商品）',
+      trade_status: 'TRADE_SUCCESS',
+      sign_type: 'MD5',
+      ...overrides,
+    };
+    return {
+      ...parameters,
+      sign: createEpaySignature(parameters, config.merchantKey),
+    };
+  }
+
   it('creates and signs a payment with the payment method selected by the member', async () => {
     const offer = {
       id: 'offer_1',
@@ -121,6 +139,115 @@ describe('EpayService callbacks', () => {
       gateway: { fields: { type: 'wxpay' } },
     });
     expect(createdData?.paymentType).toBe('wxpay');
+  });
+
+  it('creates a one-cent gateway test without creating a commerce order', async () => {
+    let createdData: Record<string, unknown> | undefined;
+    const tx = {
+      epayGatewayTestAttempt: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
+          createdData = data;
+          return Promise.resolve({
+            ...data,
+            id: 'test_1',
+            status: EpayPaymentStatus.PENDING,
+            settledAt: null,
+          });
+        }),
+      },
+    };
+    const prisma = {
+      $transaction: jest.fn((work: (client: typeof tx) => Promise<unknown>) =>
+        work(tx),
+      ),
+    };
+    const commerce = { fulfillEpayPayment: jest.fn() };
+    const settings = {
+      getEpayConfig: jest.fn().mockResolvedValue(config),
+      epayConfigFingerprint: jest.fn().mockReturnValue('fingerprint_1'),
+    };
+    const service = new EpayService(
+      prisma as never,
+      settings as never,
+      commerce as never,
+      cipher as never,
+    );
+
+    const result = await service.createGatewayTest('admin_1', 'alipay');
+    expect(result).toMatchObject({
+      amountCents: 1,
+      gateway: {
+        fields: {
+          money: '0.01',
+        },
+      },
+    });
+    if (!('gateway' in result)) throw new Error('Gateway form missing');
+    expect(result.gateway.fields.notify_url).toContain(
+      '/api/payments/epay/test-notify',
+    );
+    expect(result.gateway.fields.return_url).toContain(
+      '/api/payments/epay/test-return',
+    );
+    expect(createdData).toMatchObject({
+      requestedById: 'admin_1',
+      configFingerprint: 'fingerprint_1',
+      amountCents: 1,
+    });
+    expect(commerce.fulfillEpayPayment).not.toHaveBeenCalled();
+  });
+
+  it('settles a gateway test callback without creating an order or entitlement', async () => {
+    const attempt = {
+      id: 'test_1',
+      requestedById: 'admin_1',
+      merchantOrderNo: 'EPT202609010001',
+      gatewayTradeNo: null as string | null,
+      activeKey: 'admin_1:fingerprint_1:alipay',
+      status: EpayPaymentStatus.PENDING,
+      paymentType: 'alipay',
+      merchantIdSnapshot: '1001',
+      merchantKeyCiphertext: 'enc:merchant-secret',
+      amountCents: 1,
+    };
+    const tx = {
+      epayGatewayTestAttempt: {
+        findUnique: jest
+          .fn()
+          .mockImplementation(() => Promise.resolve(attempt)),
+        update: jest.fn().mockImplementation(({ data }) => {
+          Object.assign(attempt, data);
+          return Promise.resolve(attempt);
+        }),
+      },
+    };
+    const prisma = {
+      epayGatewayTestAttempt: {
+        findUnique: jest.fn().mockResolvedValue(attempt),
+      },
+      $transaction: jest.fn((work: (client: typeof tx) => Promise<unknown>) =>
+        work(tx),
+      ),
+    };
+    const commerce = { fulfillEpayPayment: jest.fn() };
+    const service = new EpayService(
+      prisma as never,
+      {} as never,
+      commerce as never,
+      cipher as never,
+    );
+
+    await expect(
+      service.processGatewayTestCallback(testCallback()),
+    ).resolves.toMatchObject({
+      accepted: true,
+      attemptId: 'test_1',
+      status: 'success',
+    });
+    expect(attempt.status).toBe(EpayPaymentStatus.SETTLED);
+    expect(commerce.fulfillEpayPayment).not.toHaveBeenCalled();
   });
 
   it('settles repeated callbacks exactly once after switching back to store mode', async () => {

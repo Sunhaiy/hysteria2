@@ -70,6 +70,23 @@ interface SettingsResponse {
   };
 }
 
+interface EpayGatewayTestStatus {
+  configured: boolean;
+  tested: boolean;
+  id?: string;
+  status: "not_tested" | "pending" | "settled" | "expired" | "failed";
+  paymentType?: "alipay" | "wxpay";
+  amountCents?: number;
+  createdAt?: string;
+  settledAt?: string | null;
+  expiresAt?: string;
+  gateway?: {
+    url: string;
+    method: "POST";
+    fields: Record<string, string>;
+  };
+}
+
 export default function AdminSettingsPage() {
   const { token } = useAuth();
   const { toast, showToast } = useToast();
@@ -114,14 +131,17 @@ export default function AdminSettingsPage() {
   const [purchaseNoticeContent, setPurchaseNoticeContent] = useState("");
   const [savingPurchaseNotice, setSavingPurchaseNotice] = useState(false);
   const [checkoutMode, setCheckoutMode] = useState<"store" | "epay">("store");
+  const [paymentView, setPaymentView] = useState<"store" | "epay">("store");
   const [epayGatewayUrl, setEpayGatewayUrl] = useState("");
   const [epayMerchantId, setEpayMerchantId] = useState("");
   const [epayMerchantKey, setEpayMerchantKey] = useState("");
   const [epayMerchantKeySet, setEpayMerchantKeySet] = useState(false);
   const [epayPaymentType, setEpayPaymentType] = useState<
-    "alipay" | "wxpay" | "qqpay"
+    "alipay" | "wxpay"
   >("alipay");
   const [epayConfigured, setEpayConfigured] = useState(false);
+  const [epayTest, setEpayTest] = useState<EpayGatewayTestStatus | null>(null);
+  const [testingEpay, setTestingEpay] = useState(false);
   const [epayNotifyUrl, setEpayNotifyUrl] = useState("");
   const [epayReturnUrl, setEpayReturnUrl] = useState("");
   const [savingBranding, setSavingBranding] = useState(false);
@@ -154,11 +174,14 @@ export default function AdminSettingsPage() {
     setPurchaseNoticeTitle(data.branding.purchaseNotice.title);
     setPurchaseNoticeContent(data.branding.purchaseNotice.content);
     setCheckoutMode(data.payment.checkoutMode);
+    setPaymentView(data.payment.checkoutMode);
     setEpayGatewayUrl(data.payment.epay.gatewayUrl);
     setEpayMerchantId(data.payment.epay.merchantId);
     setEpayMerchantKey("");
     setEpayMerchantKeySet(data.payment.epay.merchantKeySet);
-    setEpayPaymentType(data.payment.epay.paymentType);
+    setEpayPaymentType(
+      data.payment.epay.paymentType === "wxpay" ? "wxpay" : "alipay",
+    );
     setEpayConfigured(data.payment.epay.configured);
     setEpayNotifyUrl(data.payment.epay.notifyUrl);
     setEpayReturnUrl(data.payment.epay.returnUrl);
@@ -170,16 +193,39 @@ export default function AdminSettingsPage() {
     }
     setError(null);
     try {
-      const data = await apiRequest<SettingsResponse>("/api/admin/settings", {
-        token,
-      });
+      const [data, test] = await Promise.all([
+        apiRequest<SettingsResponse>("/api/admin/settings", { token }),
+        apiRequest<EpayGatewayTestStatus>(
+          "/api/admin/payments/epay/tests/latest",
+          { token },
+        ).catch(
+          (): EpayGatewayTestStatus => ({
+            configured: false,
+            tested: false,
+            status: "not_tested",
+          }),
+        ),
+      ]);
       applySettings(data);
+      setEpayTest(test);
+      const result = new URLSearchParams(window.location.search).get(
+        "epayTest",
+      );
+      if (result) {
+        setPaymentView("epay");
+        showToast(
+          result === "success"
+            ? "易支付测试成功，可以手动启用全站支付"
+            : "易支付测试未通过，请检查网关参数",
+        );
+        window.history.replaceState(null, "", window.location.pathname);
+      }
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "设置加载失败。");
     } finally {
       setLoaded(true);
     }
-  }, [token, applySettings]);
+  }, [token, applySettings, showToast]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => void load(), 0);
@@ -336,7 +382,7 @@ export default function AdminSettingsPage() {
     reader.readAsDataURL(file);
   }
 
-  async function saveBranding() {
+  async function saveStoreCheckout() {
     if (!token) {
       return;
     }
@@ -344,31 +390,128 @@ export default function AdminSettingsPage() {
     setError(null);
     try {
       const body: Record<string, unknown> = {
-        checkoutMode,
-        epayGatewayUrl,
-        epayMerchantId,
-        epayPaymentType,
-        purchaseMode: checkoutMode === "store" ? "cdk" : "balance",
+        checkoutMode: "store",
+        purchaseMode: "cdk",
         buyButtonText,
         cdkButtonText,
         cdkButtonUrl,
       };
-      if (epayMerchantKey.trim()) {
-        body.epayMerchantKey = epayMerchantKey;
-      }
       const data = await apiRequest<SettingsResponse>("/api/admin/settings", {
         method: "PATCH",
         token,
         body,
       });
       applySettings(data);
-      showToast(
-        data.payment.checkoutMode === "store"
-          ? "已启用店铺链接购买"
-          : "已启用易支付",
-      );
+      showToast("已启用店铺链接购买");
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "保存失败。");
+    } finally {
+      setSavingBranding(false);
+    }
+  }
+
+  function epaySettingsBody(includeActivation = false) {
+    const body: Record<string, unknown> = {
+      epayGatewayUrl,
+      epayMerchantId,
+      epayPaymentType,
+    };
+    if (epayMerchantKey.trim()) body.epayMerchantKey = epayMerchantKey;
+    if (includeActivation) {
+      body.checkoutMode = "epay";
+      body.purchaseMode = "balance";
+    }
+    return body;
+  }
+
+  async function persistEpayConfiguration() {
+    if (!token) throw new Error("登录状态已失效");
+    const data = await apiRequest<SettingsResponse>("/api/admin/settings", {
+      method: "PATCH",
+      token,
+      body: epaySettingsBody(),
+    });
+    applySettings(data);
+    setPaymentView("epay");
+    return data;
+  }
+
+  async function saveEpayConfiguration() {
+    setSavingBranding(true);
+    setError(null);
+    try {
+      await persistEpayConfiguration();
+      const status = await apiRequest<EpayGatewayTestStatus>(
+        "/api/admin/payments/epay/tests/latest",
+        { token },
+      );
+      setEpayTest(status);
+      showToast("易支付配置已保存，全站仍使用原购买渠道");
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "保存失败。");
+    } finally {
+      setSavingBranding(false);
+    }
+  }
+
+  function submitEpayGateway(test: EpayGatewayTestStatus) {
+    if (!test.gateway) throw new Error("测试支付网关信息不可用");
+    const target = new URL(test.gateway.url);
+    if (!["http:", "https:"].includes(target.protocol)) {
+      throw new Error("测试支付网关地址无效");
+    }
+    const form = document.createElement("form");
+    form.method = test.gateway.method;
+    form.action = target.toString();
+    form.style.display = "none";
+    for (const [name, value] of Object.entries(test.gateway.fields)) {
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = name;
+      input.value = value;
+      form.appendChild(input);
+    }
+    document.body.appendChild(form);
+    form.submit();
+  }
+
+  async function startEpayTest() {
+    if (!token) return;
+    setTestingEpay(true);
+    setError(null);
+    try {
+      await persistEpayConfiguration();
+      const test = await apiRequest<EpayGatewayTestStatus>(
+        "/api/admin/payments/epay/tests",
+        {
+          method: "POST",
+          token,
+          body: { paymentType: epayPaymentType },
+        },
+      );
+      setEpayTest(test);
+      submitEpayGateway(test);
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "测试支付发起失败。");
+      setTestingEpay(false);
+    }
+  }
+
+  async function activateEpay() {
+    if (!token) return;
+    setSavingBranding(true);
+    setError(null);
+    try {
+      const data = await apiRequest<SettingsResponse>("/api/admin/settings", {
+        method: "PATCH",
+        token,
+        body: epaySettingsBody(true),
+      });
+      applySettings(data);
+      setPaymentView("epay");
+      showToast("已启用易支付");
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "切换失败。");
     } finally {
       setSavingBranding(false);
     }
@@ -835,31 +978,37 @@ export default function AdminSettingsPage() {
 
           <Panel
             title="购买与支付"
-            copy="会员购买时只会使用当前选择的一个渠道。店铺模式直接跳转商品或周期链接；易支付模式在站内创建订单并跳转支付网关。"
+            copy="先保存易支付参数并完成 0.01 元真实测试，确认回调成功后再手动切换全站渠道。测试单不会创建客户订单或发放权益。"
           >
             <div className="form-grid">
+              <div className="list-row">
+                <span className="muted">全站当前渠道</span>
+                <span className="badge success">
+                  {checkoutMode === "epay" ? "易支付" : "店铺链接"}
+                </span>
+              </div>
               <div className="field">
-                <span className="fine-print">当前购买渠道</span>
+                <span className="fine-print">配置渠道</span>
                 <div className="segmented-control" aria-label="购买渠道">
                   <button
-                    className={checkoutMode === "store" ? "active" : ""}
+                    className={paymentView === "store" ? "active" : ""}
                     type="button"
-                    aria-pressed={checkoutMode === "store"}
-                    onClick={() => setCheckoutMode("store")}
+                    aria-pressed={paymentView === "store"}
+                    onClick={() => setPaymentView("store")}
                   >
                     店铺链接
                   </button>
                   <button
-                    className={checkoutMode === "epay" ? "active" : ""}
+                    className={paymentView === "epay" ? "active" : ""}
                     type="button"
-                    aria-pressed={checkoutMode === "epay"}
-                    onClick={() => setCheckoutMode("epay")}
+                    aria-pressed={paymentView === "epay"}
+                    onClick={() => setPaymentView("epay")}
                   >
                     易支付
                   </button>
                 </div>
               </div>
-              {checkoutMode === "store" ? (
+              {paymentView === "store" ? (
                 <>
                   <div className="two-col">
                     <label className="field">
@@ -908,6 +1057,20 @@ export default function AdminSettingsPage() {
                       {epayConfigured ? "配置完整" : "等待配置"}
                     </span>
                   </div>
+                  <div className="list-row">
+                    <span className="muted">支付测试</span>
+                    <span
+                      className={`badge ${epayTest?.tested ? "success" : "warn"}`}
+                    >
+                      {epayTest?.tested
+                        ? "已通过"
+                        : epayTest?.status === "pending"
+                          ? "等待付款"
+                          : epayTest?.status === "expired"
+                            ? "已过期"
+                            : "尚未测试"}
+                    </span>
+                  </div>
                   <label className="field">
                     <span className="fine-print">易支付网关地址</span>
                     <input
@@ -941,13 +1104,12 @@ export default function AdminSettingsPage() {
                         value={epayPaymentType}
                         onChange={(value) =>
                           setEpayPaymentType(
-                            value as "alipay" | "wxpay" | "qqpay",
+                            value as "alipay" | "wxpay",
                           )
                         }
                         options={[
                           { value: "alipay", label: "支付宝" },
                           { value: "wxpay", label: "微信支付" },
-                          { value: "qqpay", label: "QQ 钱包" },
                         ]}
                       />
                     </label>
@@ -987,18 +1149,61 @@ export default function AdminSettingsPage() {
                       />
                     </label>
                   </div>
+                  <div className="feedback info">
+                    测试支付固定收取 ¥0.01，只验证网关跳转、签名和回调，不创建订单、不计收入、不发放套餐或流量。
+                  </div>
                 </>
               )}
             </div>
             <div className="toolbar-actions">
-              <button
-                className="action-button"
-                type="button"
-                disabled={savingBranding}
-                onClick={() => void saveBranding()}
-              >
-                {savingBranding ? "保存中..." : "保存并切换渠道"}
-              </button>
+              {paymentView === "store" ? (
+                <button
+                  className="action-button"
+                  type="button"
+                  disabled={savingBranding}
+                  onClick={() => void saveStoreCheckout()}
+                >
+                  {savingBranding ? "保存中..." : "保存并启用店铺链接"}
+                </button>
+              ) : (
+                <>
+                  <button
+                    className="toolbar-button"
+                    type="button"
+                    disabled={savingBranding || testingEpay}
+                    onClick={() => void saveEpayConfiguration()}
+                  >
+                    {savingBranding ? "保存中..." : "仅保存配置"}
+                  </button>
+                  <button
+                    className="toolbar-button"
+                    type="button"
+                    disabled={
+                      savingBranding ||
+                      testingEpay ||
+                      !epayGatewayUrl.trim() ||
+                      !epayMerchantId.trim() ||
+                      (!epayMerchantKeySet && !epayMerchantKey.trim())
+                    }
+                    onClick={() => void startEpayTest()}
+                  >
+                    {testingEpay ? "正在跳转..." : "支付 ¥0.01 测试"}
+                  </button>
+                  <button
+                    className="action-button"
+                    type="button"
+                    disabled={
+                      savingBranding ||
+                      testingEpay ||
+                      checkoutMode === "epay" ||
+                      !epayTest?.tested
+                    }
+                    onClick={() => void activateEpay()}
+                  >
+                    {checkoutMode === "epay" ? "当前已启用" : "启用易支付"}
+                  </button>
+                </>
+              )}
             </div>
           </Panel>
 

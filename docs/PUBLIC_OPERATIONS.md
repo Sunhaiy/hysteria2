@@ -26,6 +26,11 @@ openssl rand -base64 32
 - `GET /api/payments/epay/notify` and `POST /api/payments/epay/notify` accept
   signed gateway callbacks. Existing attempts continue using their credential
   and entitlement snapshots after checkout-channel or merchant-key changes.
+- `POST /api/admin/payments/epay/tests` creates a real ¥0.01 administrator
+  gateway test while the site remains in store mode. Its dedicated notify and
+  return callbacks only mark the test attempt as settled; they never create a
+  customer order or entitlement. `GET /api/admin/payments/epay/tests/latest`
+  reports whether the current credential fingerprint has passed.
 - `DELETE /api/admin/traffic-pack-products/:id` archives a product and preserves all order/CDK references.
 
 Legacy purchase routes remain compatibility adapters for one version. New clients must use the commerce routes.

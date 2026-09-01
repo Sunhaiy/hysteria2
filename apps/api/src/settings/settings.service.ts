@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import type { Prisma } from '@prisma/client';
+import { EpayPaymentStatus, type Prisma } from '@prisma/client';
 import { CacheService } from '../cache/cache.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SecretCipherService } from '../security/secret-cipher.service';
@@ -436,6 +436,25 @@ export class SettingsService {
         '启用易支付前请完整填写网关、商户 ID 和商户密钥',
       );
     }
+    if (checkoutMode === 'epay' && current.checkoutMode !== 'epay') {
+      const tested = await this.prisma.epayGatewayTestAttempt.findFirst({
+        where: {
+          configFingerprint: this.epayConfigFingerprint({
+            gatewayUrl: gatewayUrl!,
+            merchantId: merchantId!,
+            merchantKey: merchantKey!,
+            paymentType,
+          }),
+          status: EpayPaymentStatus.SETTLED,
+        },
+        select: { id: true },
+      });
+      if (!tested) {
+        throw new BadRequestException(
+          '请先完成 0.01 元易支付测试，再切换全站购买渠道',
+        );
+      }
+    }
     if (input.checkoutMode !== undefined) {
       updates['payment.checkoutMode'] = checkoutMode;
     }
@@ -452,6 +471,24 @@ export class SettingsService {
       updates['epay.paymentType'] = paymentType;
     }
     return updates;
+  }
+
+  epayConfigFingerprint(
+    config: Required<
+      Pick<EpayConfig, 'gatewayUrl' | 'merchantId' | 'merchantKey'>
+    > &
+      Pick<EpayConfig, 'paymentType'>,
+  ) {
+    return createHash('sha256')
+      .update(
+        JSON.stringify([
+          config.gatewayUrl,
+          config.merchantId,
+          config.merchantKey,
+          config.paymentType,
+        ]),
+      )
+      .digest('hex');
   }
 
   private normalizeEpayGatewayUrl(value: string) {
