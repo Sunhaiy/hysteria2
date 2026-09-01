@@ -94,4 +94,13 @@ describe('BackupService archive validation', () => {
       service.validateArchive(await archive('b'.repeat(64))),
     ).rejects.toThrow('备份文件校验失败');
   });
+
+  it('does not contend with an active backup when no restore is queued', async () => {
+    const backupDirectory = process.env.BACKUP_DIR!;
+    await mkdir(backupDirectory, { recursive: true });
+    await writeFile(join(backupDirectory, '.backup.lock'), 'busy');
+
+    const service = new BackupService();
+    await expect(service.processPendingRestore()).resolves.toBeNull();
+  });
 });

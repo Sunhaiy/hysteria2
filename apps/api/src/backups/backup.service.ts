@@ -326,6 +326,9 @@ export class BackupService {
   }
 
   async processPendingRestore() {
+    const pending = await this.readRestoreRequest();
+    if (!pending || pending.status !== 'queued') return null;
+
     const running = await this.withLock(async () => {
       const request = await this.readRestoreRequest();
       if (!request || request.status !== 'queued') return null;
