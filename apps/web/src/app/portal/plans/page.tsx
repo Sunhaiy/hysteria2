@@ -216,13 +216,24 @@ export default function PortalPlansPage() {
     }),
     [catalog.products],
   );
-  function submitGateway(payment: EpayPayment, targetName: string) {
+  function submitGateway(
+    payment: EpayPayment,
+    targetName: string,
+    paymentWindow: Window,
+  ) {
     if (!payment.gateway) {
       throw new Error("支付网关信息不可用，请重新创建订单。");
     }
     const target = new URL(payment.gateway.url);
     if (!["http:", "https:"].includes(target.protocol)) {
       throw new Error("支付网关地址无效。");
+    }
+    if (payment.gateway.method === "GET") {
+      for (const [name, value] of Object.entries(payment.gateway.fields)) {
+        target.searchParams.set(name, value);
+      }
+      paymentWindow.location.replace(target.toString());
+      return;
     }
     const form = document.createElement("form");
     form.method = payment.gateway.method;
@@ -379,7 +390,7 @@ export default function PortalPlansPage() {
         return;
       }
       setPendingPaymentId(payment.id);
-      submitGateway(payment, targetName);
+      submitGateway(payment, targetName, paymentWindow);
     } catch (cause) {
       paymentWindow.close();
       setPendingPaymentId(null);

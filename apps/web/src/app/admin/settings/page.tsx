@@ -474,6 +474,13 @@ export default function AdminSettingsPage() {
     if (!["http:", "https:"].includes(target.protocol)) {
       throw new Error("测试支付网关地址无效");
     }
+    if (test.gateway.method === "GET") {
+      for (const [name, value] of Object.entries(test.gateway.fields)) {
+        target.searchParams.set(name, value);
+      }
+      window.location.assign(target.toString());
+      return;
+    }
     const form = document.createElement("form");
     form.method = test.gateway.method;
     form.action = target.toString();

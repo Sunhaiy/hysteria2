@@ -22,6 +22,8 @@ test("admin payment settings enforce one checkout channel at a time", async () =
   assert.match(settings, /仅保存配置/);
   assert.match(settings, /启用易支付/);
   assert.match(settings, /不创建订单、不计收入、不发放套餐或流量/);
+  assert.match(settings, /test\.gateway\.method === "GET"/);
+  assert.match(settings, /window\.location\.assign\(target\.toString\(\)\)/);
 });
 
 test("toast actions remain stable when used by data-loading effects", async () => {
@@ -42,6 +44,11 @@ test("member catalog uses store links or 易支付 without wallet checkout", asy
   assert.match(plans, /form\.submit\(\)/);
   assert.match(plans, /form\.target = targetName/);
   assert.match(plans, /window\.open\("about:blank", targetName\)/);
+  assert.match(plans, /payment\.gateway\.method === "GET"/);
+  assert.match(
+    plans,
+    /paymentWindow\.location\.replace\(target\.toString\(\)\)/,
+  );
   assert.match(plans, /pendingPaymentId/);
   assert.match(plans, /paymentType/);
   assert.match(plans, /"alipay"/);
