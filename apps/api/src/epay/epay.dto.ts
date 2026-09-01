@@ -16,9 +16,8 @@ export class CreateEpayPaymentDto {
   @MaxLength(120)
   discountCode?: string;
 
-  @IsOptional()
   @IsIn(['alipay', 'wxpay'])
-  paymentType?: 'alipay' | 'wxpay';
+  paymentType!: 'alipay' | 'wxpay';
 }
 
 export class CreateEpayGatewayTestDto {

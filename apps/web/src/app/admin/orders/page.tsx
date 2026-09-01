@@ -1,231 +1,415 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { CustomSelect } from "@/components/custom-select";
 import { DataTable } from "@/components/data-table";
 import { Drawer } from "@/components/drawer";
 import { Icon } from "@/components/icon";
+import { MetricCard } from "@/components/metric-card";
 import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { apiDownload, apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
-import { clearDraft, getDraft } from "@/lib/draft";
 import { formatBytes, formatDateTime, formatMoney } from "@/lib/format";
-import type {
-  ManualOrderRecord,
-  PaginatedResponse,
-  PlanRecord,
-} from "@/lib/types";
-import { humanizeOrderKind, statusTone } from "@/lib/ui";
+import type { PaginatedResponse, PlanRecord } from "@/lib/types";
+import { statusTone } from "@/lib/ui";
 
-const emptyForm = {
+type View = "orders" | "attempts";
+
+type OrderRecord = {
+  id: string;
+  user: { id: string; email: string; displayName: string };
+  product: { id: string | null; name: string; kind: "plan" | "traffic_pack" };
+  offer: { id: string; name: string; billingPeriod: string } | null;
+  source: string;
+  fulfillmentStatus: "pending" | "applied" | "void";
+  paymentStatus: string;
+  paymentType: "alipay" | "wxpay" | null;
+  amountCents: number;
+  paidCents: number;
+  refundedCents: number;
+  currency: string;
+  merchantOrderNo: string | null;
+  gatewayTradeNo: string | null;
+  createdAt: string;
+  processedAt: string | null;
+};
+
+type PaymentAttempt = {
+  id: string;
+  orderId: string | null;
+  merchantOrderNo: string;
+  gatewayTradeNo: string | null;
+  status: "pending" | "settled" | "expired" | "failed";
+  paymentType: "alipay" | "wxpay";
+  amountCents: number;
+  productName: string;
+  fulfillmentPending: boolean;
+  settlementFailureCount: number;
+  lastSettlementError: string | null;
+  lastSettlementFailedAt: string | null;
+  expiresAt: string;
+  settledAt: string | null;
+  failedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  user: { id: string; email: string; displayName: string };
+  product: { id: string; name: string; kind: "plan" | "traffic_pack" };
+  offer: { id: string; name: string; billingPeriod: string };
+};
+
+type OrderDetail = OrderRecord & {
+  basePriceCents: number | null;
+  discountCents: number;
+  durationDays: number | null;
+  validityDays: number | null;
+  trafficBytes: number | null;
+  entitlementExpiresAt: string | null;
+  speedUpMbps: number | null;
+  speedDownMbps: number | null;
+  trafficMultiplier: number | null;
+  processedBy: { id: string; email: string; displayName: string } | null;
+  note: string | null;
+  payments: Array<{
+    id: string;
+    source: string;
+    status: string;
+    amountCents: number;
+    externalRef: string | null;
+    paidAt: string | null;
+    reconciledAt: string | null;
+    createdAt: string;
+  }>;
+  refunds: Array<{
+    id: string;
+    method: string;
+    status: string;
+    amountCents: number;
+    reason: string;
+    processedAt: string | null;
+    createdAt: string;
+  }>;
+  paymentAttempt: PaymentAttempt | null;
+  audits: Array<{ id: string; action: string; createdAt: string }>;
+};
+
+type RevenueWindow = {
+  from: string;
+  to: string;
+  grossRevenueCents: number;
+  refundCents: number;
+  netRevenueCents: number;
+  orderCount: number;
+  refundCount: number;
+};
+
+type OrderSummary = {
+  timezone: "Asia/Shanghai";
+  currency: "CNY";
+  generatedAt: string;
+  today: RevenueWindow;
+  month: RevenueWindow;
+};
+
+type Catalog = {
+  products: Array<{
+    id: string;
+    name: string;
+    kind: "plan" | "traffic_pack";
+    status: string;
+  }>;
+};
+
+const emptyPage = <T,>(): PaginatedResponse<T> => ({
+  items: [],
+  page: 1,
+  pageSize: 20,
+  total: 0,
+  totalPages: 1,
+});
+
+const emptyFilters = {
+  q: "",
+  from: "",
+  to: "",
+  status: "",
+  source: "",
+  paymentStatus: "",
+  productKind: "",
+  productId: "",
+  paymentType: "",
+};
+
+const emptyManualForm = {
   userId: "",
   kind: "renewal" as "renewal" | "traffic_pack" | "manual_credit",
   status: "pending" as "pending" | "applied",
   planId: "",
-  amountCents: 1800,
+  amountCents: 0,
   durationDays: 30,
   trafficBytes: 0,
   note: "",
 };
 
-function renderRights(order: ManualOrderRecord) {
-  if (order.planName) {
-    return (
-      <div className="split">
-        <strong>{order.planName}</strong>
-        <span className="muted">
-          {order.durationDays ? `${order.durationDays} 天` : "套餐权益"}
-        </span>
-      </div>
-    );
+const paymentStatusLabel: Record<string, string> = {
+  settled: "已支付",
+  pending: "待支付",
+  refunded: "已退款",
+  partially_refunded: "部分退款",
+  void: "已作废",
+  not_required: "无需支付",
+  expired: "已过期",
+  failed: "失败",
+};
+
+const sourceLabel: Record<string, string> = {
+  payment: "易支付",
+  cdk: "CDK",
+  wallet: "余额",
+  admin: "人工",
+  legacy: "历史",
+};
+
+const channelLabel: Record<string, string> = {
+  alipay: "支付宝",
+  wxpay: "微信支付",
+};
+
+function queryString(filters: typeof emptyFilters, page: number, view: View) {
+  const query = new URLSearchParams({ page: String(page), pageSize: "20" });
+  for (const [key, value] of Object.entries(filters)) {
+    if (!value) continue;
+    if (view === "attempts" && ["source", "paymentStatus"].includes(key)) {
+      continue;
+    }
+    query.set(key, value);
   }
-  if (order.trafficBytes) return formatBytes(order.trafficBytes);
-  if (order.durationDays) return `${order.durationDays} 天`;
-  return "-";
+  return query.toString();
 }
 
 export default function AdminOrdersPage() {
   const { token } = useAuth();
-  const [orders, setOrders] = useState<ManualOrderRecord[]>([]);
+  const [view, setView] = useState<View>("orders");
+  const [summary, setSummary] = useState<OrderSummary | null>(null);
+  const [orders, setOrders] = useState(emptyPage<OrderRecord>());
+  const [attempts, setAttempts] = useState(emptyPage<PaymentAttempt>());
+  const [catalog, setCatalog] = useState<Catalog>({ products: [] });
   const [users, setUsers] = useState<
     Array<{ id: string; email: string; displayName: string }>
   >([]);
   const [plans, setPlans] = useState<PlanRecord[]>([]);
-  const [form, setForm] = useState(emptyForm);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [hasDraftBanner, setHasDraftBanner] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState(emptyFilters);
+  const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
-  const [pageInfo, setPageInfo] = useState<
-    PaginatedResponse<ManualOrderRecord>
-  >({ items: [], page: 1, pageSize: 20, total: 0, totalPages: 1 });
-  const [submitting, setSubmitting] = useState(false);
-  const [actingOrderId, setActingOrderId] = useState<string | null>(null);
-  const [exporting, setExporting] = useState(false);
-  const [drawerError, setDrawerError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState<{
-    msg: string;
     kind: "success" | "error";
+    message: string;
   } | null>(null);
+  const [detail, setDetail] = useState<OrderDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [attemptDetail, setAttemptDetail] = useState<PaymentAttempt | null>(
+    null,
+  );
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualForm, setManualForm] = useState(emptyManualForm);
+  const [submitting, setSubmitting] = useState(false);
+  const [actingId, setActingId] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
-  const pendingCount = orders.filter((o) => o.status === "pending").length;
-  const selectedPlan = plans.find((p) => p.id === form.planId) ?? null;
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setFilters((current) => ({ ...current, q: search.trim() }));
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
-  const load = useCallback(async () => {
+  const loadSummary = useCallback(async () => {
+    if (!token) return;
+    setSummary(
+      await apiRequest<OrderSummary>("/api/admin/orders/summary", { token }),
+    );
+  }, [token]);
+
+  const loadPage = useCallback(async () => {
     if (!token) return;
     setLoading(true);
     try {
-      const [nextOrders, nextUsers, nextPlans] = await Promise.all([
-        apiRequest<PaginatedResponse<ManualOrderRecord>>(
-          `/api/admin/orders?page=${page}&pageSize=20`,
-          { token },
-        ),
-        apiRequest<Array<{ id: string; email: string; displayName: string }>>(
-          "/api/admin/customers/options?pageSize=20",
-          { token },
-        ),
-        apiRequest<PlanRecord[]>("/api/admin/plans", { token }),
-      ]);
-      setOrders(nextOrders.items);
-      setPageInfo(nextOrders);
-      setUsers(nextUsers);
-      setPlans(nextPlans.filter((p) => p.active));
-    } catch {
-      // keep stale
+      if (view === "orders") {
+        setOrders(
+          await apiRequest<PaginatedResponse<OrderRecord>>(
+            `/api/admin/orders?${queryString(filters, page, view)}`,
+            { token },
+          ),
+        );
+      } else {
+        setAttempts(
+          await apiRequest<PaginatedResponse<PaymentAttempt>>(
+            `/api/admin/orders/payment-attempts?${queryString(filters, page, view)}`,
+            { token },
+          ),
+        );
+      }
+    } catch (cause) {
+      setFeedback({
+        kind: "error",
+        message: cause instanceof ApiError ? cause.message : "订单加载失败。",
+      });
     } finally {
       setLoading(false);
     }
-  }, [page, token]);
+  }, [filters, page, token, view]);
 
   useEffect(() => {
-    const id = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(id);
-  }, [load]);
-
-  const isDirty = drawerOpen && form.userId !== "";
-
-  function requestClose() {
-    if (isDirty && !window.confirm("有未保存的改动，关闭后将丢失。确定关闭？"))
-      return;
-    forceClose();
-  }
-
-  function forceClose() {
-    setDrawerOpen(false);
-    setDrawerError(null);
-    setHasDraftBanner(false);
-    clearDraft("order");
-  }
-
-  function openCreate() {
-    const draft = getDraft<typeof emptyForm>("order");
-    if (draft) {
-      setForm(draft);
-      setHasDraftBanner(true);
-    } else {
-      setForm(emptyForm);
-      setHasDraftBanner(false);
-    }
-    setDrawerError(null);
-    setDrawerOpen(true);
-  }
-
-  function discardDraft() {
-    clearDraft("order");
-    setForm(emptyForm);
-    setHasDraftBanner(false);
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
     if (!token) return;
-    setSubmitting(true);
-    setDrawerError(null);
-    setFeedback(null);
+    const timer = window.setTimeout(() => {
+      void Promise.all([
+        loadSummary(),
+        apiRequest<Catalog>("/api/admin/catalog", { token }).then(setCatalog),
+        apiRequest<Array<{ id: string; email: string; displayName: string }>>(
+          "/api/admin/customers/options?pageSize=20",
+          { token },
+        ).then(setUsers),
+        apiRequest<PlanRecord[]>("/api/admin/plans", { token }).then((items) =>
+          setPlans(items.filter((item) => item.active)),
+        ),
+      ]).catch(() => undefined);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadSummary, token]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadPage(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadPage]);
+
+  const currentPage = view === "orders" ? orders : attempts;
+  const products = useMemo(
+    () =>
+      catalog.products.filter(
+        (product) =>
+          !filters.productKind || product.kind === filters.productKind,
+      ),
+    [catalog.products, filters.productKind],
+  );
+
+  function updateFilter(key: keyof typeof emptyFilters, value: string) {
+    setFilters((current) => ({
+      ...current,
+      [key]: value,
+      ...(key === "productKind" ? { productId: "" } : {}),
+    }));
+    setPage(1);
+  }
+
+  function switchView(next: View) {
+    setView(next);
+    setPage(1);
+    setFilters((current) => ({
+      ...current,
+      status: "",
+      source: "",
+      paymentStatus: "",
+    }));
+  }
+
+  async function refresh() {
+    await Promise.all([loadPage(), loadSummary()]);
+  }
+
+  async function openDetail(id: string) {
+    if (!token) return;
+    setDetail(null);
+    setDetailLoading(true);
     try {
-      await apiRequest("/api/admin/orders/manual-credit", {
-        method: "POST",
-        token,
-        body: {
-          userId: form.userId,
-          kind: form.kind,
-          status: form.status,
-          planId:
-            form.kind === "renewal" ? form.planId || undefined : undefined,
-          amountCents: form.amountCents,
-          durationDays:
-            form.kind === "renewal" || form.kind === "manual_credit"
-              ? form.durationDays || undefined
-              : undefined,
-          trafficBytes:
-            form.kind === "traffic_pack" || form.kind === "manual_credit"
-              ? form.trafficBytes || undefined
-              : undefined,
-          note: form.note || undefined,
-        },
-      });
-      clearDraft("order");
-      setFeedback({
-        msg:
-          form.status === "pending"
-            ? "待支付订单已创建，等待后台确认到账。"
-            : "订单已立即入账并同步到会员权益。",
-        kind: "success",
-      });
-      setForm(emptyForm);
-      forceClose();
-      await load();
-    } catch (cause) {
-      setDrawerError(
-        cause instanceof ApiError ? cause.message : "订单创建失败。",
+      setDetail(
+        await apiRequest<OrderDetail>(`/api/admin/orders/${id}`, { token }),
       );
+    } catch (cause) {
+      setFeedback({
+        kind: "error",
+        message:
+          cause instanceof ApiError ? cause.message : "订单详情加载失败。",
+      });
     } finally {
-      setSubmitting(false);
+      setDetailLoading(false);
     }
   }
 
-  async function handleOrderAction(
-    orderId: string,
-    status: "applied" | "void",
-  ) {
+  async function updateOrder(id: string, status: "applied" | "void") {
     if (!token) return;
-    setActingOrderId(orderId);
-    setFeedback(null);
+    setActingId(id);
     try {
-      await apiRequest(`/api/admin/orders/${orderId}`, {
+      await apiRequest(`/api/admin/orders/${id}`, {
         method: "PATCH",
         token,
         body: { status },
       });
       setFeedback({
-        msg: status === "applied" ? "订单已确认到账并生效。" : "订单已作废。",
         kind: "success",
+        message:
+          status === "applied" ? "订单已确认并发放权益。" : "订单已作废。",
       });
-      await load();
+      await refresh();
     } catch (cause) {
       setFeedback({
-        msg: cause instanceof ApiError ? cause.message : "订单处理失败。",
         kind: "error",
+        message: cause instanceof ApiError ? cause.message : "订单处理失败。",
       });
     } finally {
-      setActingOrderId(null);
+      setActingId(null);
     }
   }
 
-  async function handleExport() {
+  async function createManualOrder(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     if (!token) return;
-    setExporting(true);
-    setFeedback(null);
+    setSubmitting(true);
     try {
-      await apiDownload("/api/admin/reporting/orders.csv", "orders.csv");
-      setFeedback({ msg: "订单流水 CSV 已导出。", kind: "success" });
+      await apiRequest("/api/admin/orders/manual-credit", {
+        method: "POST",
+        token,
+        body: {
+          userId: manualForm.userId,
+          kind: manualForm.kind,
+          status: manualForm.status,
+          planId:
+            manualForm.kind === "renewal"
+              ? manualForm.planId || undefined
+              : undefined,
+          amountCents: manualForm.amountCents,
+          durationDays:
+            manualForm.kind === "traffic_pack"
+              ? undefined
+              : manualForm.durationDays || undefined,
+          trafficBytes:
+            manualForm.kind === "renewal"
+              ? undefined
+              : manualForm.trafficBytes || undefined,
+          note: manualForm.note || undefined,
+        },
+      });
+      setManualOpen(false);
+      setManualForm(emptyManualForm);
+      setFeedback({ kind: "success", message: "人工订单已创建。" });
+      await refresh();
     } catch (cause) {
       setFeedback({
-        msg: cause instanceof ApiError ? cause.message : "订单流水导出失败。",
         kind: "error",
+        message:
+          cause instanceof ApiError ? cause.message : "人工订单创建失败。",
       });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function exportOrders() {
+    setExporting(true);
+    try {
+      await apiDownload("/api/admin/reporting/orders.csv", "orders.csv");
     } finally {
       setExporting(false);
     }
@@ -233,20 +417,15 @@ export default function AdminOrdersPage() {
 
   return (
     <ConsoleShell
-      title="人工订单"
-      subtitle="创建待支付订单、确认到账和补录人工权益，统一落到会员套餐与流量账本"
-      scope="Operations"
+      title="订单中心"
+      subtitle="统一查看站内支付、CDK、余额与人工订单"
+      scope="Commerce"
       navItems={adminNav}
       requireRole="admin"
       toolbarMeta={
-        <>
-          <span className="badge info">
-            {loading ? "加载中..." : `${pageInfo.total} 笔订单`}
-          </span>
-          {pendingCount > 0 ? (
-            <span className="badge warn">{pendingCount} 笔待处理</span>
-          ) : null}
-        </>
+        <span className="badge info">
+          {loading ? "加载中" : `${currentPage.total} 条记录`}
+        </span>
       }
       toolbarActions={
         <>
@@ -254,253 +433,567 @@ export default function AdminOrdersPage() {
             className="toolbar-button"
             type="button"
             disabled={exporting}
-            onClick={() => void handleExport()}
-            title="导出订单流水 CSV"
+            onClick={() => void exportOrders()}
           >
             <Icon name="download" />
             {exporting ? "导出中" : "导出 CSV"}
           </button>
-          <button className="action-button" type="button" onClick={openCreate}>
-            创建订单
+          <button
+            className="action-button"
+            type="button"
+            onClick={() => setManualOpen(true)}
+          >
+            人工订单
           </button>
           <button
             className="toolbar-button"
             type="button"
-            onClick={() => void load()}
+            onClick={() => void refresh()}
           >
+            <Icon name="refresh" />
             刷新
           </button>
         </>
       }
     >
       {feedback ? (
-        <div className={`feedback ${feedback.kind}`}>{feedback.msg}</div>
+        <div className={`feedback ${feedback.kind}`}>{feedback.message}</div>
       ) : null}
 
-      <Panel
-        title="订单工作台"
-        copy="待支付订单会停留在 pending，确认到账后再应用到订阅；applied 表示权益已经入账。"
-      >
-        {loading && orders.length === 0 ? (
-          <div className="skeleton-rows">
-            {Array.from({ length: 4 }, (_, i) => (
-              <div key={i} className="skeleton skeleton-row" />
-            ))}
-          </div>
-        ) : null}
-        {orders.length > 0 ? (
+      <section className="metric-grid">
+        <MetricCard
+          label="今日履约净收入"
+          value={formatMoney(summary?.today.netRevenueCents ?? 0)}
+          footnote={`${summary?.today.orderCount ?? 0} 笔订单 · 退款 ${formatMoney(summary?.today.refundCents ?? 0)}`}
+        />
+        <MetricCard
+          label="本月履约净收入"
+          value={formatMoney(summary?.month.netRevenueCents ?? 0)}
+          footnote={`本月 1 日起 · ${summary?.month.orderCount ?? 0} 笔订单`}
+        />
+      </section>
+
+      <Panel title="订单与支付">
+        <div className="segmented-control" aria-label="订单视图">
+          <button
+            className={view === "orders" ? "active" : ""}
+            type="button"
+            onClick={() => switchView("orders")}
+          >
+            全部订单
+          </button>
+          <button
+            className={view === "attempts" ? "active" : ""}
+            type="button"
+            onClick={() => switchView("attempts")}
+          >
+            支付异常
+          </button>
+        </div>
+
+        <div className="filter-grid" style={{ marginTop: 16 }}>
+          <label className="field">
+            <span className="fine-print">搜索</span>
+            <input
+              className="control"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="订单号、交易号、邮箱或用户名"
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">开始日期</span>
+            <input
+              className="control"
+              type="date"
+              value={filters.from}
+              onChange={(event) => updateFilter("from", event.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">结束日期</span>
+            <input
+              className="control"
+              type="date"
+              value={filters.to}
+              onChange={(event) => updateFilter("to", event.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">商品类型</span>
+            <CustomSelect
+              value={filters.productKind}
+              onChange={(value) => updateFilter("productKind", value)}
+              options={[
+                { value: "", label: "全部商品" },
+                { value: "plan", label: "套餐" },
+                { value: "traffic_pack", label: "流量包" },
+              ]}
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">具体商品</span>
+            <CustomSelect
+              value={filters.productId}
+              onChange={(value) => updateFilter("productId", value)}
+              options={[
+                { value: "", label: "全部商品" },
+                ...products.map((product) => ({
+                  value: product.id,
+                  label: product.name,
+                })),
+              ]}
+            />
+          </label>
+          <label className="field">
+            <span className="fine-print">支付渠道</span>
+            <CustomSelect
+              value={filters.paymentType}
+              onChange={(value) => updateFilter("paymentType", value)}
+              options={[
+                { value: "", label: "全部渠道" },
+                { value: "alipay", label: "支付宝" },
+                { value: "wxpay", label: "微信支付" },
+              ]}
+            />
+          </label>
+          {view === "orders" ? (
+            <>
+              <label className="field">
+                <span className="fine-print">订单来源</span>
+                <CustomSelect
+                  value={filters.source}
+                  onChange={(value) => updateFilter("source", value)}
+                  options={[
+                    { value: "", label: "全部来源" },
+                    { value: "payment", label: "易支付" },
+                    { value: "cdk", label: "CDK" },
+                    { value: "wallet", label: "余额" },
+                    { value: "admin", label: "人工" },
+                    { value: "legacy", label: "历史" },
+                  ]}
+                />
+              </label>
+              <label className="field">
+                <span className="fine-print">支付状态</span>
+                <CustomSelect
+                  value={filters.paymentStatus}
+                  onChange={(value) => updateFilter("paymentStatus", value)}
+                  options={[
+                    { value: "", label: "全部状态" },
+                    { value: "settled", label: "已支付" },
+                    { value: "pending", label: "待支付" },
+                    { value: "refunded", label: "已退款" },
+                    { value: "void", label: "已作废" },
+                    { value: "not_required", label: "无需支付" },
+                  ]}
+                />
+              </label>
+              <label className="field">
+                <span className="fine-print">权益状态</span>
+                <CustomSelect
+                  value={filters.status}
+                  onChange={(value) => updateFilter("status", value)}
+                  options={[
+                    { value: "", label: "全部状态" },
+                    { value: "applied", label: "已生效" },
+                    { value: "pending", label: "待处理" },
+                    { value: "void", label: "已作废" },
+                  ]}
+                />
+              </label>
+            </>
+          ) : (
+            <label className="field">
+              <span className="fine-print">支付状态</span>
+              <CustomSelect
+                value={filters.status}
+                onChange={(value) => updateFilter("status", value)}
+                options={[
+                  { value: "", label: "待支付与异常" },
+                  { value: "pending", label: "待支付" },
+                  { value: "expired", label: "已过期" },
+                  { value: "failed", label: "失败" },
+                  { value: "settled", label: "已结算" },
+                ]}
+              />
+            </label>
+          )}
+        </div>
+
+        {view === "orders" ? (
           <DataTable
             loading={loading}
             pagination={{
-              page: pageInfo.page,
-              pageSize: pageInfo.pageSize,
-              total: pageInfo.total,
-              totalPages: pageInfo.totalPages,
+              page: orders.page,
+              pageSize: orders.pageSize,
+              total: orders.total,
+              totalPages: orders.totalPages,
               onPageChange: setPage,
             }}
             headers={[
+              "时间",
               "用户",
-              "套餐 / 权益",
-              "类型",
-              "状态",
+              "商品",
+              "来源 / 渠道",
               "金额",
-              "处理时间",
+              "支付状态",
+              "权益状态",
               "操作",
             ]}
-            rows={orders.map((order) => [
-              <div key={order.id} className="split">
-                <strong>{order.userDisplayName}</strong>
-                <span className="muted">{order.userEmail}</span>
+            rows={orders.items.map((order) => [
+              formatDateTime(order.processedAt ?? order.createdAt),
+              <div className="split" key={`${order.id}-user`}>
+                <strong>{order.user.displayName}</strong>
+                <span className="muted">{order.user.email}</span>
               </div>,
-              renderRights(order),
-              humanizeOrderKind(order.kind),
-              <span
-                key={`${order.id}-st`}
-                className={`badge ${statusTone(order.status)}`}
-              >
-                {order.status}
-              </span>,
-              formatMoney(order.amountCents),
-              order.processedAt
-                ? formatDateTime(order.processedAt)
-                : formatDateTime(order.createdAt),
-              order.status === "pending" ? (
-                <div className="table-actions" key={`${order.id}-act`}>
-                  <button
-                    className="action-button compact"
-                    type="button"
-                    disabled={actingOrderId === order.id}
-                    onClick={() => void handleOrderAction(order.id, "applied")}
-                  >
-                    确认到账
-                  </button>
-                  <button
-                    className="ghost-button compact"
-                    type="button"
-                    disabled={actingOrderId === order.id}
-                    onClick={() => void handleOrderAction(order.id, "void")}
-                  >
-                    作废
-                  </button>
-                </div>
-              ) : (
-                <span className="fine-print" key={`${order.id}-note`}>
-                  {order.note ?? "已处理"}
+              <div className="split" key={`${order.id}-product`}>
+                <strong>{order.product.name}</strong>
+                <span className="muted">
+                  {order.product.kind === "plan" ? "套餐" : "流量包"}
+                  {order.offer ? ` · ${order.offer.name}` : ""}
                 </span>
-              ),
+              </div>,
+              <div className="split" key={`${order.id}-source`}>
+                <strong>{sourceLabel[order.source] ?? order.source}</strong>
+                <span className="muted">
+                  {order.paymentType ? channelLabel[order.paymentType] : "-"}
+                </span>
+              </div>,
+              <div className="split" key={`${order.id}-amount`}>
+                <strong>{formatMoney(order.amountCents)}</strong>
+                <span className="muted">
+                  {order.refundedCents
+                    ? `退款 ${formatMoney(order.refundedCents)}`
+                    : `实付 ${formatMoney(order.paidCents)}`}
+                </span>
+              </div>,
+              <span
+                className={`badge ${statusTone(order.paymentStatus)}`}
+                key={`${order.id}-payment`}
+              >
+                {paymentStatusLabel[order.paymentStatus] ?? order.paymentStatus}
+              </span>,
+              <span
+                className={`badge ${statusTone(order.fulfillmentStatus)}`}
+                key={`${order.id}-fulfillment`}
+              >
+                {order.fulfillmentStatus === "applied"
+                  ? "已生效"
+                  : order.fulfillmentStatus === "pending"
+                    ? "待处理"
+                    : "已作废"}
+              </span>,
+              <div className="table-actions" key={`${order.id}-actions`}>
+                <button
+                  className="ghost-button compact"
+                  type="button"
+                  onClick={() => void openDetail(order.id)}
+                >
+                  查看
+                </button>
+                {order.fulfillmentStatus === "pending" ? (
+                  <>
+                    <button
+                      className="action-button compact"
+                      type="button"
+                      disabled={actingId === order.id}
+                      onClick={() => void updateOrder(order.id, "applied")}
+                    >
+                      确认
+                    </button>
+                    <button
+                      className="ghost-button compact"
+                      type="button"
+                      disabled={actingId === order.id}
+                      onClick={() => void updateOrder(order.id, "void")}
+                    >
+                      作废
+                    </button>
+                  </>
+                ) : null}
+              </div>,
             ])}
+            emptyText="没有符合条件的订单"
           />
-        ) : !loading ? (
-          <div className="empty-state">
-            <div className="empty-state-icon">🧾</div>
-            <div className="empty-state-title">还没有订单</div>
-            <button
-              className="action-button"
-              type="button"
-              onClick={openCreate}
-            >
-              创建第一笔订单
-            </button>
-          </div>
-        ) : null}
+        ) : (
+          <DataTable
+            loading={loading}
+            pagination={{
+              page: attempts.page,
+              pageSize: attempts.pageSize,
+              total: attempts.total,
+              totalPages: attempts.totalPages,
+              onPageChange: setPage,
+            }}
+            headers={[
+              "创建时间",
+              "用户",
+              "商品",
+              "渠道",
+              "金额",
+              "状态",
+              "异常",
+              "操作",
+            ]}
+            rows={attempts.items.map((attempt) => [
+              formatDateTime(attempt.createdAt),
+              <div className="split" key={`${attempt.id}-user`}>
+                <strong>{attempt.user.displayName}</strong>
+                <span className="muted">{attempt.user.email}</span>
+              </div>,
+              <div className="split" key={`${attempt.id}-product`}>
+                <strong>{attempt.product.name}</strong>
+                <span className="muted">{attempt.offer.name}</span>
+              </div>,
+              channelLabel[attempt.paymentType],
+              formatMoney(attempt.amountCents),
+              <span
+                className={`badge ${statusTone(attempt.status)}`}
+                key={`${attempt.id}-status`}
+              >
+                {paymentStatusLabel[attempt.status] ?? attempt.status}
+              </span>,
+              attempt.fulfillmentPending
+                ? `权益发放失败 ${attempt.settlementFailureCount} 次`
+                : attempt.status === "pending"
+                  ? "等待付款"
+                  : "-",
+              <button
+                className="ghost-button compact"
+                type="button"
+                onClick={() => setAttemptDetail(attempt)}
+                key={`${attempt.id}-detail`}
+              >
+                查看
+              </button>,
+            ])}
+            emptyText="没有待支付或异常记录"
+          />
+        )}
       </Panel>
 
       <Drawer
-        open={drawerOpen}
-        onClose={requestClose}
-        title="创建订单"
-        isDirty={isDirty}
+        open={detailLoading || Boolean(detail)}
+        onClose={() => {
+          setDetail(null);
+          setDetailLoading(false);
+        }}
+        title="订单详情"
+      >
+        {detailLoading ? (
+          <div className="skeleton-rows">
+            {Array.from({ length: 5 }, (_, index) => (
+              <div className="skeleton skeleton-row" key={index} />
+            ))}
+          </div>
+        ) : detail ? (
+          <div className="form-grid">
+            <div className="list-row">
+              <span className="muted">订单号</span>
+              <strong className="mono">{detail.id}</strong>
+            </div>
+            <div className="list-row">
+              <span className="muted">用户</span>
+              <strong>{detail.user.email}</strong>
+            </div>
+            <div className="list-row">
+              <span className="muted">商品</span>
+              <strong>{detail.product.name}</strong>
+            </div>
+            <div className="list-row">
+              <span className="muted">订单金额</span>
+              <strong>{formatMoney(detail.amountCents)}</strong>
+            </div>
+            {detail.trafficBytes ? (
+              <div className="list-row">
+                <span className="muted">流量额度</span>
+                <strong>{formatBytes(detail.trafficBytes)}</strong>
+              </div>
+            ) : null}
+            {detail.entitlementExpiresAt ? (
+              <div className="list-row">
+                <span className="muted">权益到期</span>
+                <strong>{formatDateTime(detail.entitlementExpiresAt)}</strong>
+              </div>
+            ) : null}
+            {detail.paymentAttempt ? (
+              <>
+                <div className="list-row">
+                  <span className="muted">商户订单号</span>
+                  <strong className="mono">
+                    {detail.paymentAttempt.merchantOrderNo}
+                  </strong>
+                </div>
+                <div className="list-row">
+                  <span className="muted">网关交易号</span>
+                  <strong className="mono">
+                    {detail.paymentAttempt.gatewayTradeNo ?? "-"}
+                  </strong>
+                </div>
+              </>
+            ) : null}
+            {detail.payments.map((payment) => (
+              <div className="list-row" key={payment.id}>
+                <span className="muted">
+                  {sourceLabel[payment.source] ?? payment.source}支付
+                </span>
+                <strong>{formatMoney(payment.amountCents)}</strong>
+              </div>
+            ))}
+            {detail.refunds.map((refund) => (
+              <div className="list-row" key={refund.id}>
+                <span className="muted">退款 · {refund.reason}</span>
+                <strong>-{formatMoney(refund.amountCents)}</strong>
+              </div>
+            ))}
+            {detail.audits.length ? (
+              <div className="feedback info">
+                最近操作：{detail.audits[0].action} ·{" "}
+                {formatDateTime(detail.audits[0].createdAt)}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </Drawer>
+
+      <Drawer
+        open={Boolean(attemptDetail)}
+        onClose={() => setAttemptDetail(null)}
+        title="支付尝试详情"
+      >
+        {attemptDetail ? (
+          <div className="form-grid">
+            {[
+              ["商户订单号", attemptDetail.merchantOrderNo],
+              ["网关交易号", attemptDetail.gatewayTradeNo ?? "-"],
+              ["用户", attemptDetail.user.email],
+              ["商品", attemptDetail.productName],
+              ["渠道", channelLabel[attemptDetail.paymentType]],
+              ["金额", formatMoney(attemptDetail.amountCents)],
+              ["状态", paymentStatusLabel[attemptDetail.status]],
+              ["创建时间", formatDateTime(attemptDetail.createdAt)],
+              ["过期时间", formatDateTime(attemptDetail.expiresAt)],
+            ].map(([label, value]) => (
+              <div className="list-row" key={label}>
+                <span className="muted">{label}</span>
+                <strong>{value}</strong>
+              </div>
+            ))}
+            {attemptDetail.lastSettlementError ? (
+              <div className="feedback error">
+                权益发放失败 {attemptDetail.settlementFailureCount} 次：
+                {attemptDetail.lastSettlementError}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </Drawer>
+
+      <Drawer
+        open={manualOpen}
+        onClose={() => setManualOpen(false)}
+        title="创建人工订单"
         footer={
           <div className="toolbar-actions">
             <button
               className="action-button"
               type="submit"
-              form="order-form"
-              disabled={
-                submitting ||
-                !form.userId ||
-                (form.kind === "renewal" && !form.planId && !form.durationDays)
-              }
+              form="manual-order-form"
+              disabled={submitting || !manualForm.userId}
             >
-              {submitting
-                ? "提交中..."
-                : form.status === "pending"
-                  ? "创建待支付订单"
-                  : "立即入账"}
+              {submitting ? "提交中" : "创建订单"}
             </button>
             <button
               className="ghost-button"
               type="button"
-              onClick={requestClose}
+              onClick={() => setManualOpen(false)}
             >
               取消
             </button>
           </div>
         }
       >
-        {drawerError ? (
-          <div className="feedback error">{drawerError}</div>
-        ) : null}
-
-        {hasDraftBanner ? (
-          <div
-            className="feedback info"
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <span>已恢复上次未保存的草稿。</span>
-            <button
-              className="ghost-button compact"
-              type="button"
-              onClick={discardDraft}
-            >
-              丢弃草稿
-            </button>
-          </div>
-        ) : null}
-
-        <form id="order-form" className="form-grid" onSubmit={handleSubmit}>
+        <form
+          id="manual-order-form"
+          className="form-grid"
+          onSubmit={createManualOrder}
+        >
           <label className="field">
-            <span className="fine-print">会员</span>
+            <span className="fine-print">用户</span>
             <CustomSelect
-              value={form.userId}
-              onChange={(v) => setForm((f) => ({ ...f, userId: v }))}
+              value={manualForm.userId}
+              onChange={(value) =>
+                setManualForm((current) => ({ ...current, userId: value }))
+              }
               options={[
-                { value: "", label: "请选择会员" },
-                ...users.map((u) => ({
-                  value: u.id,
-                  label: `${u.displayName} / ${u.email}`,
+                { value: "", label: "选择用户" },
+                ...users.map((user) => ({
+                  value: user.id,
+                  label: `${user.displayName} / ${user.email}`,
                 })),
               ]}
             />
           </label>
-
           <div className="two-col">
             <label className="field">
               <span className="fine-print">订单类型</span>
               <CustomSelect
-                value={form.kind}
-                onChange={(v) => {
-                  const nextKind = v as typeof form.kind;
-                  setForm((f) => ({
-                    ...f,
-                    kind: nextKind,
-                    planId: nextKind === "renewal" ? f.planId : "",
-                  }));
-                }}
+                value={manualForm.kind}
+                onChange={(value) =>
+                  setManualForm((current) => ({
+                    ...current,
+                    kind: value as typeof current.kind,
+                  }))
+                }
                 options={[
                   { value: "renewal", label: "套餐 / 续期" },
                   { value: "traffic_pack", label: "流量包" },
-                  { value: "manual_credit", label: "人工入账" },
+                  { value: "manual_credit", label: "人工额度" },
                 ]}
               />
             </label>
-
             <label className="field">
-              <span className="fine-print">创建方式</span>
+              <span className="fine-print">处理方式</span>
               <CustomSelect
-                value={form.status}
-                onChange={(v) =>
-                  setForm((f) => ({ ...f, status: v as typeof f.status }))
+                value={manualForm.status}
+                onChange={(value) =>
+                  setManualForm((current) => ({
+                    ...current,
+                    status: value as typeof current.status,
+                  }))
                 }
                 options={[
-                  { value: "pending", label: "待支付订单" },
-                  { value: "applied", label: "立即入账" },
+                  { value: "pending", label: "待确认" },
+                  { value: "applied", label: "立即生效" },
                 ]}
               />
             </label>
           </div>
-
-          {form.kind === "renewal" ? (
+          {manualForm.kind === "renewal" ? (
             <label className="field">
               <span className="fine-print">套餐</span>
               <CustomSelect
-                value={form.planId}
-                onChange={(v) => {
-                  const nextPlan = plans.find((p) => p.id === v) ?? null;
-                  setForm((f) => ({
-                    ...f,
-                    planId: v,
-                    amountCents: nextPlan ? nextPlan.priceCents : f.amountCents,
-                    durationDays: nextPlan
-                      ? nextPlan.durationDays
-                      : f.durationDays,
+                value={manualForm.planId}
+                onChange={(value) => {
+                  const plan = plans.find((item) => item.id === value);
+                  setManualForm((current) => ({
+                    ...current,
+                    planId: value,
+                    amountCents: plan?.priceCents ?? current.amountCents,
+                    durationDays: plan?.durationDays ?? current.durationDays,
                   }));
                 }}
                 options={[
-                  { value: "", label: "选择套餐或只录入续期天数" },
-                  ...plans.map((p) => ({
-                    value: p.id,
-                    label: `${p.name} / ${formatMoney(p.priceCents)}`,
+                  { value: "", label: "选择套餐" },
+                  ...plans.map((plan) => ({
+                    value: plan.id,
+                    label: `${plan.name} / ${formatMoney(plan.priceCents)}`,
                   })),
                 ]}
               />
             </label>
           ) : null}
-
           <div className="two-col">
             <label className="field">
               <span className="fine-print">金额（元）</span>
@@ -509,70 +1002,63 @@ export default function AdminOrdersPage() {
                 type="number"
                 min="0"
                 step="0.01"
-                value={form.amountCents / 100}
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    amountCents: Math.round(Number(e.target.value) * 100),
+                value={manualForm.amountCents / 100}
+                onChange={(event) =>
+                  setManualForm((current) => ({
+                    ...current,
+                    amountCents: Math.round(Number(event.target.value) * 100),
                   }))
                 }
               />
             </label>
-
-            <label className="field">
-              <span className="fine-print">续期天数</span>
-              <input
-                className="control"
-                type="number"
-                min="0"
-                value={form.durationDays}
-                disabled={Boolean(selectedPlan) && form.kind === "renewal"}
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    durationDays: Number(e.target.value),
-                  }))
-                }
-              />
-            </label>
+            {manualForm.kind !== "traffic_pack" ? (
+              <label className="field">
+                <span className="fine-print">有效天数</span>
+                <input
+                  className="control"
+                  type="number"
+                  min="0"
+                  value={manualForm.durationDays}
+                  onChange={(event) =>
+                    setManualForm((current) => ({
+                      ...current,
+                      durationDays: Number(event.target.value),
+                    }))
+                  }
+                />
+              </label>
+            ) : null}
           </div>
-
-          {form.kind !== "renewal" ? (
+          {manualForm.kind !== "renewal" ? (
             <label className="field">
               <span className="fine-print">流量（GB）</span>
               <input
                 className="control"
                 type="number"
                 min="0"
-                value={
-                  Math.round((form.trafficBytes / (1024 * 1024 * 1024)) * 100) /
-                  100
-                }
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
+                value={manualForm.trafficBytes / 1024 ** 3}
+                onChange={(event) =>
+                  setManualForm((current) => ({
+                    ...current,
                     trafficBytes: Math.round(
-                      Number(e.target.value) * 1024 * 1024 * 1024,
+                      Number(event.target.value) * 1024 ** 3,
                     ),
                   }))
                 }
               />
             </label>
           ) : null}
-
-          {selectedPlan ? (
-            <div className="feedback info">
-              到账时同步 {selectedPlan.name} 的流量、带宽和节点组绑定。
-            </div>
-          ) : null}
-
           <label className="field">
-            <span className="fine-print">备注（可选）</span>
+            <span className="fine-print">备注</span>
             <textarea
               className="control textarea"
-              value={form.note}
-              onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
-              placeholder="可填写付款渠道、客服备注或会员需求"
+              value={manualForm.note}
+              onChange={(event) =>
+                setManualForm((current) => ({
+                  ...current,
+                  note: event.target.value,
+                }))
+              }
             />
           </label>
         </form>

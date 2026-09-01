@@ -72,6 +72,7 @@ export class AdminSettingsController {
           merchantKeySet: Boolean(epay.merchantKey),
           paymentType: epay.paymentType,
           configured: epay.configured,
+          reconciliationReady: epay.reconciliationReady,
           notifyUrl: `${apiPublicUrl()}/api/payments/epay/notify`,
           returnUrl: `${apiPublicUrl()}/api/payments/epay/return`,
           successUrl: `${webPublicUrl()}/portal/orders?payment=success`,

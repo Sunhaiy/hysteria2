@@ -20,7 +20,8 @@ openssl rand -base64 32
 - `POST /api/portal/commerce/quote` accepts `{ kind: "plan" | "traffic_pack", productId, discountCode? }`.
 - `POST /api/portal/commerce/checkout` accepts the same body and requires an `Idempotency-Key` header.
 - `POST /api/portal/commerce/redeem` accepts `{ code, expectedTrafficPackProductId? }`.
-- `POST /api/portal/payments/epay` accepts `{ offerId }`, requires an
+- `POST /api/portal/payments/epay` accepts
+  `{ offerId, paymentType: "alipay" | "wxpay" }`, requires an
   `Idempotency-Key` header, and is available only while 易支付 is the active
   checkout channel.
 - `GET /api/payments/epay/notify` and `POST /api/payments/epay/notify` accept
@@ -30,7 +31,12 @@ openssl rand -base64 32
   gateway test while the site remains in store mode. Its dedicated notify and
   return callbacks only mark the test attempt as settled; they never create a
   customer order or entitlement. `GET /api/admin/payments/epay/tests/latest`
-  reports whether the current credential fingerprint has passed.
+  reports separate Alipay and WeChat Pay results. Both channels must pass for
+  the current credentials before activation.
+- `GET /api/admin/orders`, `/api/admin/orders/:id`,
+  `/api/admin/orders/payment-attempts`, and `/api/admin/orders/summary` provide
+  the paginated order center, payment exceptions, and Asia/Shanghai daily and
+  month-to-date net revenue.
 - `DELETE /api/admin/traffic-pack-products/:id` archives a product and preserves all order/CDK references.
 
 Legacy purchase routes remain compatibility adapters for one version. New clients must use the commerce routes.
@@ -65,7 +71,9 @@ transaction, and a unique gateway trade number. A verified callback that cannot
 apply its entitlement returns `fail` so the gateway can retry; the attempt keeps
 the failure count, timestamp, sanitized reason, and an audit event. Operators
 must monitor `EPAY_SETTLEMENT_FAILED` events until a dedicated reconciliation
-console and refund workflow are available.
+console and refund workflow are available. Full-site 易支付 activation is also
+blocked unless `EPAY_RECONCILIATION_ENABLED=true`; set it only after the
+merchant-specific active-query adapter and production query test are complete.
 
 ## Backup and restore rehearsal
 

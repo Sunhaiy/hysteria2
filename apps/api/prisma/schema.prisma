@@ -1269,6 +1269,7 @@ model PaymentRecord {
 
   @@index([status, paidAt])
   @@index([userId, createdAt])
+  @@index([source, status, paidAt, id])
 }
 
 model EpayPaymentAttempt {
@@ -1306,6 +1307,7 @@ model EpayPaymentAttempt {
   @@index([userId, createdAt])
   @@index([status, expiresAt])
   @@index([offerId, status])
+  @@index([paymentType, status, createdAt, id])
 }
 
 model EpayGatewayTestAttempt {

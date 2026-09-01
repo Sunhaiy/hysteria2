@@ -206,6 +206,62 @@ describe('EpayService callbacks', () => {
     expect(commerce.fulfillEpayPayment).not.toHaveBeenCalled();
   });
 
+  it('reports Alipay and WeChat tests independently', async () => {
+    const now = new Date('2026-09-01T08:00:00.000Z');
+    const attempts = {
+      fp_alipay: {
+        id: 'test_alipay',
+        status: EpayPaymentStatus.SETTLED,
+        paymentType: 'alipay',
+        amountCents: 1,
+        createdAt: now,
+        settledAt: now,
+        expiresAt: new Date(now.getTime() + 60_000),
+      },
+      fp_wxpay: {
+        id: 'test_wxpay',
+        status: EpayPaymentStatus.PENDING,
+        paymentType: 'wxpay',
+        amountCents: 1,
+        createdAt: now,
+        settledAt: null,
+        expiresAt: new Date(now.getTime() + 60_000),
+      },
+    };
+    const prisma = {
+      epayGatewayTestAttempt: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findFirst: jest.fn((input: { where: { configFingerprint: string } }) =>
+          Promise.resolve(
+            attempts[input.where.configFingerprint as keyof typeof attempts] ??
+              null,
+          ),
+        ),
+      },
+    };
+    const settings = {
+      getEpayConfig: jest.fn().mockResolvedValue(config),
+      epayConfigFingerprint: jest.fn(
+        ({ paymentType }: { paymentType: string }) => `fp_${paymentType}`,
+      ),
+    };
+    const service = new EpayService(
+      prisma as never,
+      settings as never,
+      {} as never,
+      cipher as never,
+    );
+
+    await expect(service.latestGatewayTest()).resolves.toMatchObject({
+      configured: true,
+      tested: false,
+      channels: {
+        alipay: { tested: true, status: 'settled' },
+        wxpay: { tested: false, status: 'pending' },
+      },
+    });
+  });
+
   it('settles a gateway test callback without creating an order or entitlement', async () => {
     const attempt = {
       id: 'test_1',

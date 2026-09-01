@@ -49,6 +49,7 @@ interface SettingsResponse {
       merchantKeySet: boolean;
       paymentType: "alipay" | "wxpay" | "qqpay";
       configured: boolean;
+      reconciliationReady: boolean;
       notifyUrl: string;
       returnUrl: string;
       successUrl: string;
@@ -70,8 +71,7 @@ interface SettingsResponse {
   };
 }
 
-interface EpayGatewayTestStatus {
-  configured: boolean;
+interface EpayChannelTestStatus {
   tested: boolean;
   id?: string;
   status: "not_tested" | "pending" | "settled" | "expired" | "failed";
@@ -84,6 +84,14 @@ interface EpayGatewayTestStatus {
     url: string;
     method: "POST";
     fields: Record<string, string>;
+  };
+}
+
+interface EpayGatewayTestStatus extends EpayChannelTestStatus {
+  configured: boolean;
+  channels?: {
+    alipay: EpayChannelTestStatus;
+    wxpay: EpayChannelTestStatus;
   };
 }
 
@@ -136,10 +144,11 @@ export default function AdminSettingsPage() {
   const [epayMerchantId, setEpayMerchantId] = useState("");
   const [epayMerchantKey, setEpayMerchantKey] = useState("");
   const [epayMerchantKeySet, setEpayMerchantKeySet] = useState(false);
-  const [epayPaymentType, setEpayPaymentType] = useState<
-    "alipay" | "wxpay"
-  >("alipay");
+  const [epayPaymentType, setEpayPaymentType] = useState<"alipay" | "wxpay">(
+    "alipay",
+  );
   const [epayConfigured, setEpayConfigured] = useState(false);
+  const [epayReconciliationReady, setEpayReconciliationReady] = useState(false);
   const [epayTest, setEpayTest] = useState<EpayGatewayTestStatus | null>(null);
   const [testingEpay, setTestingEpay] = useState(false);
   const [epayNotifyUrl, setEpayNotifyUrl] = useState("");
@@ -183,6 +192,7 @@ export default function AdminSettingsPage() {
       data.payment.epay.paymentType === "wxpay" ? "wxpay" : "alipay",
     );
     setEpayConfigured(data.payment.epay.configured);
+    setEpayReconciliationReady(data.payment.epay.reconciliationReady);
     setEpayNotifyUrl(data.payment.epay.notifyUrl);
     setEpayReturnUrl(data.payment.epay.returnUrl);
   }, []);
@@ -215,7 +225,7 @@ export default function AdminSettingsPage() {
         setPaymentView("epay");
         showToast(
           result === "success"
-            ? "易支付测试成功，可以手动启用全站支付"
+            ? "当前渠道测试成功；支付宝和微信均通过后才可启用全站支付"
             : "易支付测试未通过，请检查网关参数",
         );
         window.history.replaceState(null, "", window.location.pathname);
@@ -492,7 +502,9 @@ export default function AdminSettingsPage() {
       setEpayTest(test);
       submitEpayGateway(test);
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "测试支付发起失败。");
+      setError(
+        cause instanceof ApiError ? cause.message : "测试支付发起失败。",
+      );
       setTestingEpay(false);
     }
   }
@@ -1058,17 +1070,43 @@ export default function AdminSettingsPage() {
                     </span>
                   </div>
                   <div className="list-row">
-                    <span className="muted">支付测试</span>
+                    <span className="muted">双渠道测试</span>
                     <span
                       className={`badge ${epayTest?.tested ? "success" : "warn"}`}
                     >
-                      {epayTest?.tested
-                        ? "已通过"
-                        : epayTest?.status === "pending"
-                          ? "等待付款"
-                          : epayTest?.status === "expired"
-                            ? "已过期"
-                            : "尚未测试"}
+                      {epayTest?.tested ? "全部通过" : "尚未全部通过"}
+                    </span>
+                  </div>
+                  {(
+                    [
+                      ["alipay", "支付宝"],
+                      ["wxpay", "微信支付"],
+                    ] as const
+                  ).map(([type, label]) => {
+                    const channel = epayTest?.channels?.[type];
+                    return (
+                      <div className="list-row" key={type}>
+                        <span className="muted">{label}</span>
+                        <span
+                          className={`badge ${channel?.tested ? "success" : channel?.status === "pending" ? "info" : "warn"}`}
+                        >
+                          {channel?.tested
+                            ? "已通过"
+                            : channel?.status === "pending"
+                              ? "等待付款"
+                              : channel?.status === "expired"
+                                ? "已过期"
+                                : "尚未测试"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  <div className="list-row">
+                    <span className="muted">主动查单</span>
+                    <span
+                      className={`badge ${epayReconciliationReady ? "success" : "warn"}`}
+                    >
+                      {epayReconciliationReady ? "已就绪" : "等待接入文档"}
                     </span>
                   </div>
                   <label className="field">
@@ -1099,13 +1137,11 @@ export default function AdminSettingsPage() {
                       />
                     </label>
                     <label className="field">
-                      <span className="fine-print">默认支付方式</span>
+                      <span className="fine-print">本次测试渠道</span>
                       <CustomSelect
                         value={epayPaymentType}
                         onChange={(value) =>
-                          setEpayPaymentType(
-                            value as "alipay" | "wxpay",
-                          )
+                          setEpayPaymentType(value as "alipay" | "wxpay")
                         }
                         options={[
                           { value: "alipay", label: "支付宝" },
@@ -1150,7 +1186,8 @@ export default function AdminSettingsPage() {
                     </label>
                   </div>
                   <div className="feedback info">
-                    测试支付固定收取 ¥0.01，只验证网关跳转、签名和回调，不创建订单、不计收入、不发放套餐或流量。
+                    测试支付固定收取
+                    ¥0.01，只验证网关跳转、签名和回调，不创建订单、不计收入、不发放套餐或流量。
                   </div>
                 </>
               )}
@@ -1187,7 +1224,9 @@ export default function AdminSettingsPage() {
                     }
                     onClick={() => void startEpayTest()}
                   >
-                    {testingEpay ? "正在跳转..." : "支付 ¥0.01 测试"}
+                    {testingEpay
+                      ? "正在跳转..."
+                      : `测试${epayPaymentType === "wxpay" ? "微信支付" : "支付宝"} ¥0.01`}
                   </button>
                   <button
                     className="action-button"
@@ -1196,7 +1235,8 @@ export default function AdminSettingsPage() {
                       savingBranding ||
                       testingEpay ||
                       checkoutMode === "epay" ||
-                      !epayTest?.tested
+                      !epayTest?.tested ||
+                      !epayReconciliationReady
                     }
                     onClick={() => void activateEpay()}
                   >

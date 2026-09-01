@@ -145,11 +145,7 @@ function preferredOffer(product: Product) {
   );
 }
 
-function resolveStoreUrl(
-  product: Product,
-  offer: Offer,
-  branding: Branding,
-) {
+function resolveStoreUrl(product: Product, offer: Offer, branding: Branding) {
   const candidate =
     offer.storeUrl ||
     product.storeUrl ||
@@ -173,12 +169,11 @@ export default function PortalPlansPage() {
     product: Product;
     offer: Offer;
   } | null>(null);
-  const [paymentType, setPaymentType] = useState<"alipay" | "wxpay">(
-    "alipay",
-  );
+  const [paymentType, setPaymentType] = useState<"alipay" | "wxpay">("alipay");
   const [quote, setQuote] = useState<Quote | null>(null);
   const [idempotencyKey, setIdempotencyKey] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pendingPaymentId, setPendingPaymentId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
 
@@ -221,7 +216,7 @@ export default function PortalPlansPage() {
     }),
     [catalog.products],
   );
-  function submitGateway(payment: EpayPayment) {
+  function submitGateway(payment: EpayPayment, targetName: string) {
     if (!payment.gateway) {
       throw new Error("支付网关信息不可用，请重新创建订单。");
     }
@@ -232,6 +227,7 @@ export default function PortalPlansPage() {
     const form = document.createElement("form");
     form.method = payment.gateway.method;
     form.action = target.toString();
+    form.target = targetName;
     form.style.display = "none";
     for (const [name, value] of Object.entries(payment.gateway.fields)) {
       const input = document.createElement("input");
@@ -242,21 +238,55 @@ export default function PortalPlansPage() {
     }
     document.body.appendChild(form);
     form.submit();
+    window.setTimeout(() => form.remove(), 0);
   }
+
+  useEffect(() => {
+    if (!token || !pendingPaymentId) return;
+    let stopped = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const payment = await apiRequest<EpayPayment>(
+          `/api/portal/payments/epay/${pendingPaymentId}`,
+          { token },
+        );
+        if (stopped) return;
+        if (payment.status === "settled") {
+          setPendingPaymentId(null);
+          setCheckout(null);
+          setQuote(null);
+          setFeedback("支付已确认，套餐或流量权益已经到账。");
+          await load();
+          return;
+        }
+        if (payment.status === "expired" || payment.status === "failed") {
+          setPendingPaymentId(null);
+          setError("支付未完成或订单已过期，请重新发起购买。");
+          return;
+        }
+      } catch {
+        // A transient polling failure must not interrupt the gateway checkout.
+      }
+      if (!stopped) timer = window.setTimeout(() => void poll(), 2_000);
+    };
+    timer = window.setTimeout(() => void poll(), 2_000);
+    return () => {
+      stopped = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [load, pendingPaymentId, token]);
 
   async function fetchQuote(offer: Offer) {
     if (!token) return;
     setBusy(true);
     setError(null);
     try {
-      const nextQuote = await apiRequest<Quote>(
-        "/api/portal/commerce/quote",
-        {
-          method: "POST",
-          token,
-          body: { offerId: offer.id },
-        },
-      );
+      const nextQuote = await apiRequest<Quote>("/api/portal/commerce/quote", {
+        method: "POST",
+        token,
+        body: { offerId: offer.id },
+      });
       setQuote(nextQuote);
     } catch (cause) {
       setQuote(null);
@@ -317,6 +347,15 @@ export default function PortalPlansPage() {
       return;
     }
     if (!token) return;
+    const targetName = `epay-${idempotencyKey.replace(/[^A-Za-z0-9_-]/g, "")}`;
+    const paymentWindow = window.open("about:blank", targetName);
+    if (!paymentWindow) {
+      setError("浏览器阻止了支付窗口，请允许本站打开新窗口后重试。");
+      return;
+    }
+    paymentWindow.opener = null;
+    paymentWindow.document.title = "正在前往支付";
+    paymentWindow.document.body.textContent = "正在创建支付订单...";
     setBusy(true);
     setError(null);
     try {
@@ -333,13 +372,17 @@ export default function PortalPlansPage() {
         },
       );
       if (payment.status === "settled") {
+        paymentWindow.close();
         setCheckout(null);
         setFeedback("订单已经支付并到账。");
         await load();
         return;
       }
-      submitGateway(payment);
+      setPendingPaymentId(payment.id);
+      submitGateway(payment, targetName);
     } catch (cause) {
+      paymentWindow.close();
+      setPendingPaymentId(null);
       setError(cause instanceof ApiError ? cause.message : "结算失败。");
     } finally {
       setBusy(false);
@@ -370,7 +413,9 @@ export default function PortalPlansPage() {
                     <span aria-hidden="true" />
                     {product.name}
                   </h2>
-                  {isCurrent || product.featured || product.purchaseLimitPerUser ? (
+                  {isCurrent ||
+                  product.featured ||
+                  product.purchaseLimitPerUser ? (
                     <div className="plan-card-labels">
                       {isCurrent ? (
                         <span className="badge success">当前套餐</span>
@@ -429,7 +474,9 @@ export default function PortalPlansPage() {
                   <div>
                     <Icon name="globe" />
                     <span
-                      title={nodes.map((node) => node.label).join(" · ") || "未绑定"}
+                      title={
+                        nodes.map((node) => node.label).join(" · ") || "未绑定"
+                      }
                     >
                       {nodes.length > 0
                         ? `${nodes.length} 个可用节点 · ${nodes.map((node) => node.label).join(" · ")}`
@@ -505,11 +552,7 @@ export default function PortalPlansPage() {
             </span>
           </div>
         </div>
-        {loading ? (
-          <CardGridSkeleton />
-        ) : (
-          renderProducts(groups.plans)
-        )}
+        {loading ? <CardGridSkeleton /> : renderProducts(groups.plans)}
         <div className="shop-section-heading">
           <div>
             <h2 className="section-title">订阅流量包</h2>
@@ -518,11 +561,7 @@ export default function PortalPlansPage() {
             </span>
           </div>
         </div>
-        {loading ? (
-          <CardGridSkeleton compact />
-        ) : (
-          renderProducts(groups.packs)
-        )}
+        {loading ? <CardGridSkeleton compact /> : renderProducts(groups.packs)}
         {!loading && !catalog.products.length ? (
           <div className="empty-state">
             <div className="empty-state-title">当前没有可售商品</div>
@@ -569,7 +608,9 @@ export default function PortalPlansPage() {
           <div className="checkout-dialog-content">
             {error ? <div className="feedback error">{error}</div> : null}
             <section className="checkout-product-summary">
-              <span>{checkout.product.kind === "plan" ? "会员套餐" : "流量包"}</span>
+              <span>
+                {checkout.product.kind === "plan" ? "会员套餐" : "流量包"}
+              </span>
               <strong>{checkout.product.name}</strong>
               <p>
                 {checkout.product.description ||
@@ -592,9 +633,7 @@ export default function PortalPlansPage() {
                   const selected = checkout.offer.id === offer.id;
                   const available =
                     branding.checkoutMode === "epay" ||
-                    Boolean(
-                      resolveStoreUrl(checkout.product, offer, branding),
-                    );
+                    Boolean(resolveStoreUrl(checkout.product, offer, branding));
                   return (
                     <button
                       className={`checkout-offer-option${selected ? " selected" : ""}`}

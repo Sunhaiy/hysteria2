@@ -13,19 +13,39 @@ import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { CurrentPrincipal } from '../common/current-principal.decorator';
 import type { SessionPrincipal } from '../common/auth.types';
 import { ManualCreditDto, UpdateManualOrderDto } from '../contracts/http.dto';
+import { ControlPlaneStoreService } from '../domain/control-plane.store';
 import {
-  ControlPlaneStoreService,
-  type ManualOrderQuery,
-} from '../domain/control-plane.store';
+  OrderQueryService,
+  type AdminOrderQuery,
+  type PaymentAttemptQuery,
+} from './order-query.service';
 
 @Controller('api/admin/orders')
 @UseGuards(JwtAuthGuard, AdminGuard)
 export class OrdersController {
-  constructor(private readonly store: ControlPlaneStoreService) {}
+  constructor(
+    private readonly store: ControlPlaneStoreService,
+    private readonly orderQuery: OrderQueryService,
+  ) {}
 
   @Get()
-  listOrders(@Query() query: ManualOrderQuery) {
-    return this.store.getManualOrders(query);
+  listOrders(@Query() query: AdminOrderQuery) {
+    return this.orderQuery.list(query);
+  }
+
+  @Get('summary')
+  summary() {
+    return this.orderQuery.summary();
+  }
+
+  @Get('payment-attempts')
+  paymentAttempts(@Query() query: PaymentAttemptQuery) {
+    return this.orderQuery.paymentAttempts(query);
+  }
+
+  @Get(':id')
+  detail(@Param('id') id: string) {
+    return this.orderQuery.detail(id);
   }
 
   @Post('manual-credit')

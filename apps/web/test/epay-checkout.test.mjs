@@ -16,7 +16,9 @@ test("admin payment settings enforce one checkout channel at a time", async () =
   assert.match(settings, /epayMerchantKeySet/);
   assert.match(settings, /异步通知地址/);
   assert.match(settings, /\/api\/admin\/payments\/epay\/tests/);
-  assert.match(settings, /支付 ¥0\.01 测试/);
+  assert.match(settings, /双渠道测试/);
+  assert.match(settings, /支付宝和微信均通过/);
+  assert.match(settings, /测试.*¥0\.01/);
   assert.match(settings, /仅保存配置/);
   assert.match(settings, /启用易支付/);
   assert.match(settings, /不创建订单、不计收入、不发放套餐或流量/);
@@ -38,6 +40,9 @@ test("member catalog uses store links or 易支付 without wallet checkout", asy
   assert.match(plans, /branding\.checkoutMode === "store"/);
   assert.match(plans, /\/api\/portal\/payments\/epay/);
   assert.match(plans, /form\.submit\(\)/);
+  assert.match(plans, /form\.target = targetName/);
+  assert.match(plans, /window\.open\("about:blank", targetName\)/);
+  assert.match(plans, /pendingPaymentId/);
   assert.match(plans, /paymentType/);
   assert.match(plans, /"alipay"/);
   assert.match(plans, /"wxpay"/);
@@ -49,4 +54,20 @@ test("member catalog uses store links or 易支付 without wallet checkout", asy
   assert.doesNotMatch(plans, /href=\{purchaseStoreUrl\}/);
   assert.doesNotMatch(plans, /\/api\/portal\/commerce\/checkout/);
   assert.doesNotMatch(plans, /钱包余额/);
+});
+
+test("admin order center unifies revenue, order filters, and payment exceptions", async () => {
+  const orders = await source("app/admin/orders/page.tsx");
+  const navigation = await source("lib/copy.ts");
+
+  assert.match(navigation, /href: "\/admin\/orders"/);
+  assert.match(navigation, /label: "订单中心"/);
+  assert.match(orders, /今日履约净收入/);
+  assert.match(orders, /本月履约净收入/);
+  assert.match(orders, /\/api\/admin\/orders\/summary/);
+  assert.match(orders, /\/api\/admin\/orders\/payment-attempts/);
+  assert.match(orders, /订单号、交易号、邮箱或用户名/);
+  assert.match(orders, /支付异常/);
+  assert.match(orders, /paymentType/);
+  assert.match(orders, /productKind/);
 });

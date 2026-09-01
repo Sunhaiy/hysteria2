@@ -160,8 +160,11 @@ export default function FinancePage() {
             : String(result.annualCostCents / 100),
         );
       } catch (cause) {
-        if (cause instanceof DOMException && cause.name === "AbortError") return;
-        setError(cause instanceof ApiError ? cause.message : "年度回本数据加载失败。");
+        if (cause instanceof DOMException && cause.name === "AbortError")
+          return;
+        setError(
+          cause instanceof ApiError ? cause.message : "年度回本数据加载失败。",
+        );
       }
     },
     [annualYear, token],
@@ -220,6 +223,10 @@ export default function FinancePage() {
   }, [from, page, reloadKey, to, token, view]);
 
   const changeView = useCallback((next: View) => {
+    if (next === "orders") {
+      window.location.assign("/admin/orders");
+      return;
+    }
     setView(next);
     setPage(1);
   }, []);
@@ -288,7 +295,9 @@ export default function FinancePage() {
       });
       await loadAnnual();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "年度成本保存失败。");
+      setError(
+        cause instanceof ApiError ? cause.message : "年度成本保存失败。",
+      );
     } finally {
       setAnnualSaving(false);
     }
@@ -430,7 +439,9 @@ export default function FinancePage() {
                       step={0.01}
                       placeholder="例如 12000"
                       value={annualCostYuan}
-                      onChange={(event) => setAnnualCostYuan(event.target.value)}
+                      onChange={(event) =>
+                        setAnnualCostYuan(event.target.value)
+                      }
                     />
                   </label>
                   <button

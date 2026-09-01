@@ -52,8 +52,8 @@ export class EpayService {
     userId: string,
     offerId: string,
     idempotencyKey: string,
-    discountCode?: string,
-    paymentType?: 'alipay' | 'wxpay',
+    discountCode: string | undefined,
+    paymentType: 'alipay' | 'wxpay',
   ) {
     const normalizedKey = idempotencyKey.trim();
     if (!normalizedKey || normalizedKey.length > 120) {
@@ -64,7 +64,7 @@ export class EpayService {
     }
 
     const config = await this.requireConfiguredEpay(true);
-    const selectedPaymentType = paymentType ?? config.paymentType;
+    const selectedPaymentType = paymentType;
     const [quote, offer] = await Promise.all([
       this.commerce.quoteCheckout(userId, { offerId }),
       this.prisma.catalogOffer.findUnique({
@@ -264,39 +264,82 @@ export class EpayService {
       !config.merchantId ||
       !config.merchantKey
     ) {
-      return { configured: false, tested: false, status: 'not_tested' };
+      return {
+        configured: false,
+        tested: false,
+        status: 'not_tested',
+        channels: {
+          alipay: { tested: false, status: 'not_tested' },
+          wxpay: { tested: false, status: 'not_tested' },
+        },
+      };
     }
-    const fingerprint = this.settings.epayConfigFingerprint({
-      gatewayUrl: config.gatewayUrl,
-      merchantId: config.merchantId,
-      merchantKey: config.merchantKey,
-      paymentType: config.paymentType,
-    });
+    const paymentTypes = ['alipay', 'wxpay'] as const;
+    const fingerprints = Object.fromEntries(
+      paymentTypes.map((paymentType) => [
+        paymentType,
+        this.settings.epayConfigFingerprint({
+          gatewayUrl: config.gatewayUrl!,
+          merchantId: config.merchantId!,
+          merchantKey: config.merchantKey!,
+          paymentType,
+        }),
+      ]),
+    ) as Record<(typeof paymentTypes)[number], string>;
     await this.prisma.epayGatewayTestAttempt.updateMany({
       where: {
-        configFingerprint: fingerprint,
+        configFingerprint: { in: Object.values(fingerprints) },
         status: EpayPaymentStatus.PENDING,
         expiresAt: { lte: new Date() },
       },
       data: { status: EpayPaymentStatus.EXPIRED, activeKey: null },
     });
-    const attempt = await this.prisma.epayGatewayTestAttempt.findFirst({
-      where: { configFingerprint: fingerprint },
-      orderBy: { createdAt: 'desc' },
-    });
-    if (!attempt) {
-      return { configured: true, tested: false, status: 'not_tested' };
-    }
+    const attempts = await Promise.all(
+      paymentTypes.map((paymentType) =>
+        this.prisma.epayGatewayTestAttempt.findFirst({
+          where: { configFingerprint: fingerprints[paymentType] },
+          orderBy: { createdAt: 'desc' },
+        }),
+      ),
+    );
+    const channels = Object.fromEntries(
+      paymentTypes.map((paymentType, index) => {
+        const attempt = attempts[index];
+        return [
+          paymentType,
+          attempt
+            ? {
+                tested: attempt.status === EpayPaymentStatus.SETTLED,
+                id: attempt.id,
+                status: attempt.status.toLowerCase(),
+                paymentType,
+                amountCents: attempt.amountCents,
+                createdAt: attempt.createdAt.toISOString(),
+                settledAt: attempt.settledAt?.toISOString() ?? null,
+                expiresAt: attempt.expiresAt.toISOString(),
+              }
+            : { tested: false, status: 'not_tested', paymentType },
+        ];
+      }),
+    ) as Record<
+      (typeof paymentTypes)[number],
+      {
+        tested: boolean;
+        status: string;
+        paymentType: 'alipay' | 'wxpay';
+      }
+    >;
+    const current =
+      channels[config.paymentType === 'wxpay' ? 'wxpay' : 'alipay'];
+    const allTested = paymentTypes.every(
+      (paymentType) => channels[paymentType].tested,
+    );
     return {
       configured: true,
-      tested: attempt.status === EpayPaymentStatus.SETTLED,
-      id: attempt.id,
-      status: attempt.status.toLowerCase(),
-      paymentType: attempt.paymentType,
-      amountCents: attempt.amountCents,
-      createdAt: attempt.createdAt.toISOString(),
-      settledAt: attempt.settledAt?.toISOString() ?? null,
-      expiresAt: attempt.expiresAt.toISOString(),
+      ...current,
+      tested: allTested,
+      status: allTested ? 'settled' : 'not_tested',
+      channels,
     };
   }
 

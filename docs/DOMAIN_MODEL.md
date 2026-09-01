@@ -86,15 +86,21 @@ online collection, health probing, and manual-check consumption.
 - **EpayGatewayTestAttempt** is an administrator-initiated ¥0.01 gateway probe.
   It snapshots the credentials and callback contract but never creates an
   order, payment record, revenue, subscription, entitlement, or traffic pack.
-  Enabling 易支付 requires a settled test for the current credential
-  fingerprint; changing the gateway, merchant, key, or default payment type
-  requires another test.
+  Enabling 易支付 requires settled Alipay and WeChat Pay tests for the current
+  gateway, merchant, and key, plus an enabled active-query reconciler. Changing
+  payment credentials invalidates the corresponding test fingerprints.
+- **Order center** is a read projection over `ManualOrder`, `PaymentRecord`,
+  `Refund`, and `EpayPaymentAttempt`. It does not create another financial
+  ledger. Pending or failed payment attempts remain separate from fulfilled
+  orders and are visible in the payment-exception view.
 - A complimentary admin grant records the offer list price and an equal
   discount, with zero charged revenue.
 - A plan CDK references a concrete `CatalogOffer`. Its revenue snapshot is the
   offer price at redemption; `amountCents` is only meaningful for wallet codes.
 - A plan CDK uses `RENEW` to extend the same current plan or `REPLACE` to start
   its bound offer immediately and reset the base plan entitlement.
+- Existing product CDKs remain redeemable after the site switches to 易支付.
+  New plan and traffic-pack CDKs are blocked while 易支付 is active.
 - **Refund** reduces recognized revenue. It does not rewrite the entitlement or
   historical usage ledger.
 

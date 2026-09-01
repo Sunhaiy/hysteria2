@@ -1,6 +1,15 @@
 import { SettingsService } from './settings.service';
 
 describe('SettingsService cache', () => {
+  const originalReconciliationEnabled = process.env.EPAY_RECONCILIATION_ENABLED;
+
+  afterEach(() => {
+    if (originalReconciliationEnabled === undefined) {
+      delete process.env.EPAY_RECONCILIATION_ENABLED;
+    } else {
+      process.env.EPAY_RECONCILIATION_ENABLED = originalReconciliationEnabled;
+    }
+  });
   it('caches the full settings map in the shared cache', async () => {
     let cached: string | null = null;
     const prisma = {
@@ -173,6 +182,7 @@ describe('SettingsService cache', () => {
   });
 
   it('keeps store checkout as the safe default and requires complete 易支付 credentials', async () => {
+    process.env.EPAY_RECONCILIATION_ENABLED = 'true';
     const prisma = {
       setting: { findMany: jest.fn().mockResolvedValue([]) },
       epayGatewayTestAttempt: {
@@ -218,6 +228,7 @@ describe('SettingsService cache', () => {
   });
 
   it('blocks enabling 易支付 until the current credentials pass a gateway test', async () => {
+    process.env.EPAY_RECONCILIATION_ENABLED = 'true';
     const findFirst = jest.fn().mockResolvedValue(null);
     const prisma = {
       setting: {
@@ -246,12 +257,50 @@ describe('SettingsService cache', () => {
 
     await expect(
       service.prepareEpaySettingsUpdate({ checkoutMode: 'epay' }),
-    ).rejects.toThrow('请先完成 0.01 元易支付测试');
+    ).rejects.toThrow('请先分别完成支付宝和微信');
+
+    findFirst
+      .mockResolvedValueOnce({ id: 'alipay_test' })
+      .mockResolvedValueOnce(null);
+    await expect(
+      service.prepareEpaySettingsUpdate({ checkoutMode: 'epay' }),
+    ).rejects.toThrow('请先分别完成支付宝和微信');
 
     findFirst.mockResolvedValue({ id: 'test_1' });
     await expect(
       service.prepareEpaySettingsUpdate({ checkoutMode: 'epay' }),
     ).resolves.toMatchObject({ 'payment.checkoutMode': 'epay' });
+  });
+
+  it('blocks activation until merchant active-query reconciliation is ready', async () => {
+    delete process.env.EPAY_RECONCILIATION_ENABLED;
+    const prisma = {
+      setting: {
+        findMany: jest.fn().mockResolvedValue([
+          { key: 'epay.gatewayUrl', value: 'https://pay.example.com' },
+          { key: 'epay.merchantId', value: '1001' },
+          { key: 'epay.merchantKey', value: 'secret' },
+        ]),
+      },
+      epayGatewayTestAttempt: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'tested' }),
+      },
+    };
+    const service = new SettingsService(
+      prisma as never,
+      {
+        encrypt: jest.fn((value: string) => value),
+        decrypt: jest.fn((value: string) => value),
+      } as never,
+      {
+        get: jest.fn().mockResolvedValue(null),
+        set: jest.fn().mockResolvedValue(undefined),
+      } as never,
+    );
+
+    await expect(
+      service.prepareEpaySettingsUpdate({ checkoutMode: 'epay' }),
+    ).rejects.toThrow('主动查单尚未配置');
   });
 
   it('returns an enabled announcement once per login session', async () => {

@@ -25,6 +25,7 @@ export interface EpayConfig {
   merchantKey?: string;
   paymentType: EpayPaymentType;
   configured: boolean;
+  reconciliationReady: boolean;
 }
 
 export interface EpaySettingsUpdate {
@@ -410,6 +411,7 @@ export class SettingsService {
       merchantKey,
       paymentType: normalizedPaymentType,
       configured: Boolean(gatewayUrl && merchantId && merchantKey),
+      reconciliationReady: process.env.EPAY_RECONCILIATION_ENABLED === 'true',
     };
   }
 
@@ -437,21 +439,30 @@ export class SettingsService {
       );
     }
     if (checkoutMode === 'epay' && current.checkoutMode !== 'epay') {
-      const tested = await this.prisma.epayGatewayTestAttempt.findFirst({
-        where: {
-          configFingerprint: this.epayConfigFingerprint({
-            gatewayUrl: gatewayUrl!,
-            merchantId: merchantId!,
-            merchantKey: merchantKey!,
-            paymentType,
+      const testedChannels = await Promise.all(
+        (['alipay', 'wxpay'] as const).map((requiredPaymentType) =>
+          this.prisma.epayGatewayTestAttempt.findFirst({
+            where: {
+              configFingerprint: this.epayConfigFingerprint({
+                gatewayUrl: gatewayUrl!,
+                merchantId: merchantId!,
+                merchantKey: merchantKey!,
+                paymentType: requiredPaymentType,
+              }),
+              status: EpayPaymentStatus.SETTLED,
+            },
+            select: { id: true },
           }),
-          status: EpayPaymentStatus.SETTLED,
-        },
-        select: { id: true },
-      });
-      if (!tested) {
+        ),
+      );
+      if (testedChannels.some((tested) => !tested)) {
         throw new BadRequestException(
-          '请先完成 0.01 元易支付测试，再切换全站购买渠道',
+          '请先分别完成支付宝和微信的 0.01 元易支付测试，再切换全站购买渠道',
+        );
+      }
+      if (!current.reconciliationReady) {
+        throw new BadRequestException(
+          '易支付主动查单尚未配置，当前不能切换全站购买渠道',
         );
       }
     }

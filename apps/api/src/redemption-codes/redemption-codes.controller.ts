@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -21,11 +22,15 @@ import {
   type RedemptionCodeQuery,
 } from '../domain/control-plane.store';
 import type { PageQuery } from '../common/pagination';
+import { SettingsService } from '../settings/settings.service';
 
 @Controller('api/admin/redemption-codes')
 @UseGuards(JwtAuthGuard, AdminGuard)
 export class RedemptionCodesController {
-  constructor(private readonly store: ControlPlaneStoreService) {}
+  constructor(
+    private readonly store: ControlPlaneStoreService,
+    private readonly settings: SettingsService,
+  ) {}
 
   @Get()
   listCodes(@Query() query: RedemptionCodeQuery) {
@@ -33,10 +38,19 @@ export class RedemptionCodesController {
   }
 
   @Post()
-  createCode(
+  async createCode(
     @Body() body: CreateRedemptionCodeDto,
     @CurrentPrincipal() principal: SessionPrincipal,
   ) {
+    const payment = await this.settings.getEpayConfig();
+    if (
+      payment.checkoutMode === 'epay' &&
+      (body.kind === 'plan' || body.kind === 'traffic_pack')
+    ) {
+      throw new BadRequestException(
+        '站内支付启用后不再生成新的套餐或流量包 CDK，已有兑换码仍可正常使用',
+      );
+    }
     return this.store.createRedemptionCode({
       label: body.label,
       code: body.code,

@@ -50,6 +50,13 @@ export const adminNav: NavItem[] = [
     group: "商品与财务",
   },
   {
+    href: "/admin/orders",
+    label: "订单中心",
+    icon: "receipt_long",
+    meta: "ORDER",
+    group: "商品与财务",
+  },
+  {
     href: "/admin/redemption-codes",
     label: "CDK",
     icon: "redeem",
