@@ -1082,8 +1082,8 @@ export default function AdminSettingsPage() {
                       placeholder="https://pay.example.com"
                     />
                     <span className="fine-print">
-                      可填写网关根地址或完整 submit.php 地址，线上必须使用
-                      HTTPS。
+                      可填写网关根地址、完整 submit.php 或 /submit
+                      提交地址，线上必须使用 HTTPS。
                     </span>
                   </label>
                   <div className="two-col">

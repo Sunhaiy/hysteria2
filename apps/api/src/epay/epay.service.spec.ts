@@ -136,7 +136,10 @@ describe('EpayService callbacks', () => {
     await expect(
       service.createPayment('user_1', 'offer_1', 'key_1', undefined, 'wxpay'),
     ).resolves.toMatchObject({
-      gateway: { fields: { type: 'wxpay' } },
+      gateway: {
+        url: 'https://pay.test/submit.php',
+        fields: { type: 'wxpay' },
+      },
     });
     expect(createdData?.paymentType).toBe('wxpay');
   });
@@ -165,7 +168,10 @@ describe('EpayService callbacks', () => {
     };
     const commerce = { fulfillEpayPayment: jest.fn() };
     const settings = {
-      getEpayConfig: jest.fn().mockResolvedValue(config),
+      getEpayConfig: jest.fn().mockResolvedValue({
+        ...config,
+        gatewayUrl: 'https://ai.haiy.space/api/v1/payment-proxy/submit',
+      }),
       epayConfigFingerprint: jest.fn().mockReturnValue('fingerprint_1'),
     };
     const service = new EpayService(
@@ -179,6 +185,7 @@ describe('EpayService callbacks', () => {
     expect(result).toMatchObject({
       amountCents: 1,
       gateway: {
+        url: 'https://ai.haiy.space/api/v1/payment-proxy/submit',
         fields: {
           money: '0.01',
         },

@@ -653,8 +653,11 @@ export class EpayService {
 
   private submitUrl(gatewayUrl: string) {
     const parsed = new URL(gatewayUrl);
-    if (!/\.php$/i.test(parsed.pathname)) {
-      parsed.pathname = `${parsed.pathname.replace(/\/$/, '')}/submit.php`;
+    const pathname = parsed.pathname.replace(/\/+$/, '');
+    if (!/(?:\.php|\/submit)$/i.test(pathname)) {
+      parsed.pathname = `${pathname}/submit.php`;
+    } else {
+      parsed.pathname = pathname;
     }
     return parsed.toString();
   }
