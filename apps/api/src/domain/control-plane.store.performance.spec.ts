@@ -110,4 +110,57 @@ describe('ControlPlaneStoreService performance-sensitive reads', () => {
     });
     jest.useRealTimers();
   });
+
+  it('aggregates seven-day portal usage instead of returning only the latest raw samples', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-02T09:30:00.000Z'));
+    const prisma = {
+      subscription: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      trafficPack: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      usageRollup: {
+        findMany: jest
+          .fn()
+          .mockRejectedValue(
+            new Error('raw heartbeat rows must not hide usage'),
+          ),
+      },
+      $queryRaw: jest.fn().mockResolvedValue([
+        {
+          day: '2026-09-02',
+          nodeId: 'node_a',
+          nodeLabel: 'US A',
+          txBytes: 2_000n,
+          rxBytes: 8_000n,
+        },
+      ]),
+    };
+    const service = new ControlPlaneStoreService(
+      prisma as never,
+      { countForUser: jest.fn().mockResolvedValue(0) } as never,
+    );
+
+    const result = await service.getUsageForUser('user_1');
+
+    expect(prisma.usageRollup.findMany).not.toHaveBeenCalled();
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(result.recent).toEqual([
+      expect.objectContaining({
+        nodeId: 'node_a',
+        nodeLabel: 'US A',
+        bucketStart: '2026-09-02T00:00:00+08:00',
+        txBytes: 2_000,
+        rxBytes: 8_000,
+        source: 'daily-aggregate',
+      }),
+    ]);
+
+    const quotaOnly = await service.getUsageForUser('user_1', false);
+    expect(quotaOnly.recent).toEqual([]);
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+  });
 });

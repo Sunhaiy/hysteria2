@@ -79,6 +79,4 @@ test("shared motion keeps closed drawers hidden and status badges readable", asy
     /\.drawer\.open\s*\{[\s\S]*?visibility:\s*visible;[\s\S]*?pointer-events:\s*auto;/,
   );
   assert.match(styles, /\.badge\s*\{[\s\S]*?color:\s*#fff;/);
-  assert.match(styles, /\.portal-device-status > div > span/);
-  assert.doesNotMatch(styles, /\.portal-device-status span,\s*\n\.portal-device-status strong/);
 });

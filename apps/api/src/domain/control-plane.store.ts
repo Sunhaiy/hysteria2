@@ -1061,7 +1061,7 @@ export class ControlPlaneStoreService {
     return [...users.values()];
   }
 
-  async getUsageForUser(userId: string) {
+  async getUsageForUser(userId: string, includeRecent = true) {
     await this.expireOverdueSubscriptions();
     await this.expireTrafficPacks();
     const now = new Date();
@@ -1109,12 +1109,43 @@ export class ControlPlaneStoreService {
       (sum, pack) => sum + Number(pack.remainingBytes),
       0,
     );
-    const recent = await this.prisma.usageRollup.findMany({
-      where: { userId },
-      orderBy: { bucketStart: 'desc' },
-      take: 12,
-      include: { node: true },
-    });
+    const todayKey = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(now);
+    const todayStart = new Date(`${todayKey}T00:00:00+08:00`);
+    const rangeStart = new Date(todayStart.getTime() - 6 * 24 * 60 * 60 * 1000);
+    const rangeEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+    const recent = includeRecent
+      ? await this.prisma.$queryRaw<
+          Array<{
+            day: string;
+            nodeId: string;
+            nodeLabel: string;
+            txBytes: bigint;
+            rxBytes: bigint;
+          }>
+        >(Prisma.sql`
+          SELECT
+            to_char(
+              rollup."bucketStart" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Shanghai',
+              'YYYY-MM-DD'
+            ) AS day,
+            rollup."nodeId" AS "nodeId",
+            node.label AS "nodeLabel",
+            COALESCE(SUM(rollup."txBytes"), 0)::bigint AS "txBytes",
+            COALESCE(SUM(rollup."rxBytes"), 0)::bigint AS "rxBytes"
+          FROM "UsageRollup" rollup
+          INNER JOIN "Node" node ON node.id = rollup."nodeId"
+          WHERE rollup."userId" = ${userId}
+            AND rollup."bucketStart" >= ${rangeStart}
+            AND rollup."bucketStart" < ${rangeEnd}
+          GROUP BY day, rollup."nodeId", node.label
+          ORDER BY day ASC, node.label ASC
+        `)
+      : [];
 
     return {
       subscriptionId: subscription?.id ?? null,
@@ -1125,16 +1156,16 @@ export class ControlPlaneStoreService {
       packRemainingBytes: packRemaining,
       totalRemainingBytes: baseRemaining + packRemaining,
       recent: recent.map((rollup) => ({
-        id: rollup.id,
-        userId: rollup.userId,
-        subscriptionId: rollup.subscriptionId,
+        id: `${rollup.day}:${rollup.nodeId}`,
+        userId,
+        subscriptionId: subscription?.id ?? null,
         nodeId: rollup.nodeId,
-        nodeLabel: rollup.node.label,
-        bucketStart: rollup.bucketStart.toISOString(),
+        nodeLabel: rollup.nodeLabel,
+        bucketStart: `${rollup.day}T00:00:00+08:00`,
         txBytes: Number(rollup.txBytes),
         rxBytes: Number(rollup.rxBytes),
-        source: rollup.source,
-        createdAt: rollup.createdAt.toISOString(),
+        source: 'daily-aggregate',
+        createdAt: `${rollup.day}T00:00:00+08:00`,
       })),
     };
   }
@@ -1151,7 +1182,7 @@ export class ControlPlaneStoreService {
       include: { user: true, plan: true, node: true, trafficPacks: true },
       orderBy: { endsAt: 'desc' },
     });
-    const usage = await this.getUsageForUser(userId);
+    const usage = await this.getUsageForUser(userId, false);
     const online = await this.presence.countForUser(userId);
     const packs = await this.prisma.trafficPack.findMany({
       where: { userId },
@@ -1312,7 +1343,7 @@ export class ControlPlaneStoreService {
       throw new NotFoundException('No active nodes are available');
     }
     const node = nodeList[0];
-    const usage = await this.getUsageForUser(userId);
+    const usage = await this.getUsageForUser(userId, false);
     const limits = [
       ...(subscription
         ? [
@@ -1711,7 +1742,7 @@ export class ControlPlaneStoreService {
       );
     }
 
-    const usage = await this.getUsageForUser(user.id);
+    const usage = await this.getUsageForUser(user.id, false);
     if (usage.totalRemainingBytes <= 0) {
       return this.rejectAuth(
         'traffic_exhausted',
@@ -1993,7 +2024,7 @@ export class ControlPlaneStoreService {
       return true;
     }
 
-    return (await this.getUsageForUser(userId)).totalRemainingBytes <= 0;
+    return (await this.getUsageForUser(userId, false)).totalRemainingBytes <= 0;
   }
 
   async getNodeIdsForUser(userId: string) {

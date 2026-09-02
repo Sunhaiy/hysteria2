@@ -30,10 +30,13 @@ stability window, but they do not receive new business rules.
 ## Entitlements and usage
 
 - **EntitlementGrant** is the immutable record that a product was successfully
-  granted to a customer for a bounded period.
+  granted to a customer for a bounded period. It snapshots the purchased
+  traffic multiplier; usage consumes each quota bucket with the higher of its
+  grant multiplier and the member override.
 - **QuotaBucket** is spendable traffic owned by one grant. Recurring plan
   buckets reset monthly from the subscription anchor; traffic-pack buckets are
-  one-time.
+  one-time. Each bucket freezes the multiplier used for its own consumption so
+  a later renewal cannot alter an existing bucket's billing.
 - **QuotaAdjustment** is an immutable operator ledger entry. It records actor,
   reason, target bucket, and before/after values without rewriting usage.
 - **UsageImportBatch** is the idempotency seam between a node worker and quota

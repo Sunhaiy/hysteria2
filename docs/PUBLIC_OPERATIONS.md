@@ -101,3 +101,26 @@ powershell -NoProfile -File .\ops\backup\postgres-restore-check.ps1 `
 ```
 
 Backups are not complete until an off-host copy is encrypted, retained, and a restore rehearsal has succeeded.
+
+## Traffic multiplier reconciliation
+
+After deploying the entitlement multiplier migration, first inspect historical
+traffic-pack undercharges without writing data. The cutoff must be the UTC time
+at which the fixed API and worker became active:
+
+```bash
+pnpm --filter @hysteria/api prisma:reconcile-traffic-multipliers -- --cutoff=2026-09-02T10:30:00Z
+```
+
+Apply only after comparing the candidate users and byte deltas with the
+read-only production audit:
+
+```bash
+TRAFFIC_MULTIPLIER_RECONCILE_CONFIRM=apply-reviewed-undercharges \
+pnpm --filter @hysteria/api prisma:reconcile-traffic-multipliers -- \
+  --cutoff=2026-09-02T10:30:00Z --apply
+```
+
+The command only reconciles pre-cutoff allocations recorded at exactly `1x`.
+It writes an idempotent `QuotaAdjustment` and audit event, never changes a
+historical `UsageRollup`, and cannot reduce remaining quota below zero.

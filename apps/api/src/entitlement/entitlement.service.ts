@@ -23,6 +23,18 @@ const multiplierScale = BigInt(10_000);
 
 type DbClient = PrismaService | Prisma.TransactionClient;
 
+type MeteredQuotaBucket = {
+  id: string;
+  grantedBytes: bigint;
+  consumedBytes: bigint;
+  trafficMultiplierBasisPointsSnapshot?: number | null;
+  grant: {
+    kind: EntitlementGrantKind;
+    legacySubscriptionId: string | null;
+    legacyTrafficPackId: string | null;
+  };
+};
+
 @Injectable()
 export class EntitlementService {
   constructor(private readonly prisma: PrismaService) {}
@@ -113,13 +125,14 @@ export class EntitlementService {
     const profile = await client.accessProfile.findUniqueOrThrow({
       where: { id: accessProfileId },
     });
+    const trafficMultiplierBasisPointsSnapshot =
+      order.trafficMultiplierBasisPointsSnapshot ??
+      product.defaultTrafficMultiplierBasisPoints;
     if (kind === EntitlementGrantKind.PLAN) {
       await client.accessAccount.update({
         where: { id: account.id },
         data: {
-          trafficMultiplierBasisPoints:
-            order.trafficMultiplierBasisPointsSnapshot ??
-            product.defaultTrafficMultiplierBasisPoints,
+          trafficMultiplierBasisPoints: trafficMultiplierBasisPointsSnapshot,
         },
       });
     }
@@ -165,6 +178,7 @@ export class EntitlementService {
             speedUpMbpsSnapshot: speedUpMbps,
             speedDownMbpsSnapshot: speedDownMbps,
             deviceLimitSnapshot: deviceLimit ?? profile.deviceLimit,
+            trafficMultiplierBasisPointsSnapshot,
           },
         })
       : await client.entitlementGrant.create({
@@ -182,6 +196,7 @@ export class EntitlementService {
             speedUpMbpsSnapshot: speedUpMbps,
             speedDownMbpsSnapshot: speedDownMbps,
             deviceLimitSnapshot: deviceLimit ?? profile.deviceLimit,
+            trafficMultiplierBasisPointsSnapshot,
           },
         });
     const bounds =
@@ -205,6 +220,7 @@ export class EntitlementService {
         startsAt: bounds.startsAt,
         endsAt: bounds.endsAt,
         grantedBytes: order.trafficBytes ?? order.catalogOffer.trafficBytes,
+        trafficMultiplierBasisPointsSnapshot,
       },
       update: { endsAt: bounds.endsAt },
     });
@@ -795,21 +811,10 @@ export class EntitlementService {
     if (!user) return false;
     const account = await this.ensureAccessAccount(userId, tx);
     const physical = BigInt(counters.tx) + BigInt(counters.rx);
-    const multiplierBasisPoints = Math.max(
+    const accountMultiplierBasisPoints = Math.max(
       account.trafficMultiplierBasisPoints,
       account.trafficMultiplierOverrideBasisPoints ?? 10_000,
     );
-    const scaled =
-      physical * BigInt(multiplierBasisPoints) +
-      BigInt(account.trafficMultiplierRemainder);
-    const accounted = scaled / multiplierScale;
-    const remainder = Number(scaled % multiplierScale);
-    await tx.accessAccount.update({
-      where: { id: account.id },
-      data: { trafficMultiplierRemainder: remainder },
-    });
-
-    let remaining = accounted;
     const v2Buckets = await tx.quotaBucket.findMany({
       where: {
         startsAt: { lte: bucketStart },
@@ -880,16 +885,25 @@ export class EntitlementService {
         );
       });
     if (usableV2Buckets.length > 0) {
+      const metered = this.meterV2Usage(
+        physical,
+        usableV2Buckets,
+        account.trafficMultiplierOverrideBasisPoints ?? 10_000,
+        accountMultiplierBasisPoints,
+        account.trafficMultiplierRemainder,
+      );
+      await tx.accessAccount.update({
+        where: { id: account.id },
+        data: { trafficMultiplierRemainder: metered.remainder },
+      });
       const allocations: Array<{
         quotaBucketId: string;
         accountedBytes: bigint;
       }> = [];
       let subscriptionId: string | undefined;
       let subscriptionCycleId: string | undefined;
-      for (const bucket of usableV2Buckets) {
-        if (remaining === BigInt(0)) break;
-        const available = bucket.grantedBytes - bucket.consumedBytes;
-        const consumed = available < remaining ? available : remaining;
+      for (const allocation of metered.allocations) {
+        const { bucket, accountedBytes: consumed } = allocation;
         await tx.quotaBucket.update({
           where: { id: bucket.id },
           data: { consumedBytes: { increment: consumed } },
@@ -898,7 +912,6 @@ export class EntitlementService {
           quotaBucketId: bucket.id,
           accountedBytes: consumed,
         });
-        remaining -= consumed;
 
         if (bucket.grant.legacyTrafficPackId) {
           const pack = await tx.trafficPack.findUnique({
@@ -953,9 +966,9 @@ export class EntitlementService {
           txBytes: BigInt(counters.tx),
           rxBytes: BigInt(counters.rx),
           rawBytes: physical,
-          multiplierBasisPoints,
-          accountedBytes: accounted,
-          overageBytes: remaining,
+          multiplierBasisPoints: metered.multiplierBasisPoints,
+          accountedBytes: metered.accountedBytes,
+          overageBytes: metered.overageBytes,
           source: 'sync-v2',
           importBatchId,
           allocations: { create: allocations },
@@ -963,6 +976,17 @@ export class EntitlementService {
       });
       return true;
     }
+
+    const scaled =
+      physical * BigInt(accountMultiplierBasisPoints) +
+      BigInt(account.trafficMultiplierRemainder);
+    const accounted = scaled / multiplierScale;
+    const remainder = Number(scaled % multiplierScale);
+    await tx.accessAccount.update({
+      where: { id: account.id },
+      data: { trafficMultiplierRemainder: remainder },
+    });
+    let remaining = accounted;
 
     const now = bucketStart;
     const packs = await tx.trafficPack.findMany({
@@ -1063,7 +1087,7 @@ export class EntitlementService {
         txBytes: BigInt(counters.tx),
         rxBytes: BigInt(counters.rx),
         rawBytes: physical,
-        multiplierBasisPoints,
+        multiplierBasisPoints: accountMultiplierBasisPoints,
         accountedBytes: accounted,
         overageBytes: remaining,
         source: 'sync',
@@ -1071,6 +1095,94 @@ export class EntitlementService {
       },
     });
     return true;
+  }
+
+  private meterV2Usage<T extends MeteredQuotaBucket>(
+    physicalBytes: bigint,
+    buckets: T[],
+    userMultiplierBasisPoints: number,
+    fallbackMultiplierBasisPoints: number,
+    initialRemainder: number,
+  ) {
+    let physicalRemaining = physicalBytes;
+    let pendingAccounted = BigInt(0);
+    let accountedBytes = BigInt(0);
+    let weightedBasisPointBytes = BigInt(0);
+    let remainder = BigInt(initialRemainder);
+    const allocations: Array<{ bucket: T; accountedBytes: bigint }> = [];
+
+    for (const bucket of buckets) {
+      let available = bucket.grantedBytes - bucket.consumedBytes;
+      let allocated = BigInt(0);
+
+      if (pendingAccounted > BigInt(0)) {
+        const fromPending =
+          available < pendingAccounted ? available : pendingAccounted;
+        allocated += fromPending;
+        available -= fromPending;
+        pendingAccounted -= fromPending;
+      }
+
+      if (available > BigInt(0) && physicalRemaining > BigInt(0)) {
+        const multiplierBasisPoints = Math.max(
+          bucket.trafficMultiplierBasisPointsSnapshot ??
+            fallbackMultiplierBasisPoints,
+          userMultiplierBasisPoints,
+        );
+        const multiplier = BigInt(multiplierBasisPoints);
+        const scaledNeeded = available * multiplierScale - remainder;
+        const physicalToFill =
+          (scaledNeeded + multiplier - BigInt(1)) / multiplier;
+        const meteredPhysical =
+          physicalRemaining < physicalToFill
+            ? physicalRemaining
+            : physicalToFill;
+        const scaled = meteredPhysical * multiplier + remainder;
+        const charged = scaled / multiplierScale;
+
+        remainder = scaled % multiplierScale;
+        physicalRemaining -= meteredPhysical;
+        weightedBasisPointBytes += meteredPhysical * multiplier;
+        accountedBytes += charged;
+
+        const fromCharge = available < charged ? available : charged;
+        allocated += fromCharge;
+        pendingAccounted += charged - fromCharge;
+      }
+
+      if (allocated > BigInt(0)) {
+        allocations.push({ bucket, accountedBytes: allocated });
+      }
+      if (physicalRemaining === BigInt(0) && pendingAccounted === BigInt(0)) {
+        break;
+      }
+    }
+
+    if (physicalRemaining > BigInt(0)) {
+      const fallbackMultiplier = BigInt(fallbackMultiplierBasisPoints);
+      const scaled = physicalRemaining * fallbackMultiplier + remainder;
+      const charged = scaled / multiplierScale;
+      remainder = scaled % multiplierScale;
+      weightedBasisPointBytes += physicalRemaining * fallbackMultiplier;
+      accountedBytes += charged;
+      pendingAccounted += charged;
+    }
+
+    const multiplierBasisPoints =
+      physicalBytes === BigInt(0)
+        ? fallbackMultiplierBasisPoints
+        : Number(
+            (weightedBasisPointBytes + physicalBytes / BigInt(2)) /
+              physicalBytes,
+          );
+
+    return {
+      allocations,
+      accountedBytes,
+      overageBytes: pendingAccounted,
+      multiplierBasisPoints,
+      remainder: Number(remainder),
+    };
   }
 
   private async ensureCurrentCycles(userId: string) {
@@ -1115,6 +1227,8 @@ export class EntitlementService {
           startsAt: bounds.startsAt,
           endsAt: bounds.endsAt,
           grantedBytes: grant.offer.trafficBytes,
+          trafficMultiplierBasisPointsSnapshot:
+            grant.trafficMultiplierBasisPointsSnapshot,
         },
         update: {},
       });

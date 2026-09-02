@@ -56,7 +56,7 @@ export default function PortalUsagePage() {
       scope="Member"
       navItems={portalNav}
       requireRole="member"
-      toolbarMeta={usage ? <span className="badge info">{usage.recent.length} 条最近记录</span> : null}
+      toolbarMeta={usage ? <span className="badge info">{usage.recent.length} 条每日记录</span> : null}
       toolbarActions={<button className="toolbar-button" type="button" onClick={() => void load()}>刷新</button>}
     >
       {error ? <div className="feedback error">{error}</div> : null}
@@ -74,7 +74,7 @@ export default function PortalUsagePage() {
             <MetricCard label="总剩余" value={usage.totalRemainingBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(usage.totalRemainingBytes)} footnote="鉴权时按这个值决定是否允许接入" />
           </section>
 
-          <Panel title="最近同步记录" copy="以下为最近写入数据库的流量桶，不在前端本地计算。">
+          <Panel title="近 7 日节点流量" copy="按北京时间聚合每日上传与下载，不受零流量心跳影响。">
             <DataTable
               headers={["节点", "上传", "下载", "来源", "时间"]}
               rows={usage.recent.map((item) => [

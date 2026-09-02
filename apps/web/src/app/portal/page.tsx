@@ -13,59 +13,12 @@ import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import { portalNav } from "@/lib/copy";
 import { formatBytes, formatDateTime } from "@/lib/format";
+import { buildSevenDayUsage } from "@/lib/portal-usage";
 import type { PortalOverviewResponse, PortalUsageResponse } from "@/lib/types";
 
 const UNLIMITED_TRAFFIC = Number.MAX_SAFE_INTEGER;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const GB = 1024 * 1024 * 1024;
-
-function buildSevenDayUsage(recent: PortalUsageResponse["recent"]) {
-  const totals = new Map<string, { txBytes: number; rxBytes: number }>();
-  recent.forEach((item) => {
-    const key = new Date(item.bucketStart).toISOString().slice(0, 10);
-    const current = totals.get(key) ?? { txBytes: 0, rxBytes: 0 };
-    totals.set(key, {
-      txBytes: current.txBytes + item.txBytes,
-      rxBytes: current.rxBytes + item.rxBytes,
-    });
-  });
-
-  return Array.from({ length: 7 }, (_, index) => {
-    const date = new Date();
-    date.setHours(0, 0, 0, 0);
-    date.setDate(date.getDate() - (6 - index));
-    const key = date.toISOString().slice(0, 10);
-    return {
-      key,
-      label: `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}`,
-      txBytes: totals.get(key)?.txBytes ?? 0,
-      rxBytes: totals.get(key)?.rxBytes ?? 0,
-    };
-  });
-}
-
-function buildNodeUsage(recent: PortalUsageResponse["recent"]) {
-  const totals = new Map<
-    string,
-    { label: string; txBytes: number; rxBytes: number }
-  >();
-  recent.forEach((item) => {
-    const current = totals.get(item.nodeId) ?? {
-      label: item.nodeLabel,
-      txBytes: 0,
-      rxBytes: 0,
-    };
-    totals.set(item.nodeId, {
-      label: item.nodeLabel,
-      txBytes: current.txBytes + item.txBytes,
-      rxBytes: current.rxBytes + item.rxBytes,
-    });
-  });
-
-  return [...totals.values()].sort(
-    (a, b) => b.txBytes + b.rxBytes - (a.txBytes + a.rxBytes),
-  );
-}
 
 export default function PortalPage() {
   const { token } = useAuth();
@@ -110,7 +63,6 @@ export default function PortalPage() {
     () => buildSevenDayUsage(usage?.recent ?? []),
     [usage],
   );
-  const nodeData = useMemo(() => buildNodeUsage(usage?.recent ?? []), [usage]);
 
   const trafficOption = useMemo<EChartsOption>(
     () => ({
@@ -157,32 +109,6 @@ export default function PortalPage() {
     [chartData],
   );
 
-  const nodeTrafficOption = useMemo<EChartsOption>(
-    () => ({
-      animationDuration: 500,
-      tooltip: {
-        trigger: "axis",
-        axisPointer: { type: "shadow" },
-        valueFormatter: (value) => `${Number(value).toFixed(2)} GB`,
-      },
-      grid: { left: 8, right: 18, top: 10, bottom: 8, containLabel: true },
-      xAxis: { type: "value", name: "GB" },
-      yAxis: { type: "category", data: nodeData.map((item) => item.label) },
-      series: [
-        {
-          name: "近期开销",
-          type: "bar",
-          barMaxWidth: 22,
-          itemStyle: { borderRadius: [0, 5, 5, 0] },
-          data: nodeData.map((item) =>
-            Number(((item.txBytes + item.rxBytes) / GB).toFixed(3)),
-          ),
-        },
-      ],
-    }),
-    [nodeData],
-  );
-
   if (!overview && !emptyState && !error) {
     return (
       <ConsoleShell
@@ -216,7 +142,7 @@ export default function PortalPage() {
         ? (() => {
             const unlimited = overview.remainingBytes >= UNLIMITED_TRAFFIC;
             const currentPacks = overview.packs.filter(
-              (pack) => pack.status !== "expired",
+              (pack) => pack.status === "active",
             );
             const totalQuota =
               overview.subscription.includedTrafficBytes +
@@ -244,25 +170,6 @@ export default function PortalPage() {
                   DAY_MS,
               ),
             );
-            const recentTx = chartData.reduce((sum, item) => sum + item.txBytes, 0);
-            const recentRx = chartData.reduce((sum, item) => sum + item.rxBytes, 0);
-            const recentTotal = recentTx + recentRx;
-            const distributionOption: EChartsOption = {
-              tooltip: { trigger: "item" },
-              legend: { bottom: 0 },
-              series: [
-                {
-                  type: "pie",
-                  radius: ["54%", "76%"],
-                  center: ["50%", "44%"],
-                  label: { show: false },
-                  data: [
-                    { name: "上传", value: recentTx },
-                    { name: "下载", value: recentRx },
-                  ],
-                },
-              ],
-            };
             return (
               <div className="portal-analytics">
                 {overview.alerts?.length ? (
@@ -320,11 +227,14 @@ export default function PortalPage() {
                       )}
                     </div>
                   </article>
-                  <MetricCard
-                    label="连接状态"
-                    value={overview.online > 0 ? "在线" : "离线"}
-                    footnote={`${overview.online} 条活跃连接；活跃连接不等于设备数量`}
-                  />
+                  <article className="metric-card portal-plan-summary">
+                    <span className="metric-label">当前套餐</span>
+                    <strong className="metric-value">{overview.plan.name}</strong>
+                    <span className="metric-footnote">
+                      上行 {overview.subscription.speedUpMbpsSnapshot} Mbps · 下行{" "}
+                      {overview.subscription.speedDownMbpsSnapshot} Mbps
+                    </span>
+                  </article>
                   <MetricCard
                     label="套餐到期"
                     value={formatDateTime(overview.subscription.endsAt)}
@@ -337,7 +247,7 @@ export default function PortalPage() {
                   />
                 </section>
 
-                <section className="admin-chart-grid">
+                <section className="admin-chart-grid portal-dashboard-main">
                   <Panel
                     title="近 7 日流量趋势"
                     copy="按天汇总上传与下载流量。"
@@ -345,122 +255,55 @@ export default function PortalPage() {
                   >
                     <EChart
                       option={trafficOption}
-                      height={320}
+                      height={246}
                       ariaLabel="近七天上传下载流量趋势"
                     />
                   </Panel>
                   <Panel
-                    title="节点流量分布"
-                    copy="查看近期流量主要经过哪些节点。"
-                    action={<Link href="/portal/access">管理节点 ›</Link>}
-                  >
-                    {nodeData.length ? (
-                      <EChart
-                        option={nodeTrafficOption}
-                        height={320}
-                        ariaLabel="节点近期流量分布"
-                      />
-                    ) : (
-                      <div className="portal-chart-empty">暂无节点流量记录</div>
-                    )}
-                  </Panel>
-                </section>
-
-                <section className="admin-overview-row portal-overview-row">
-                  <Panel title="流量构成" copy="近 7 天上传与下载占比">
-                    {recentTotal > 0 ? (
-                      <EChart
-                        option={distributionOption}
-                        height={240}
-                        ariaLabel="近七天上传下载流量占比"
-                      />
-                    ) : (
-                      <div className="portal-chart-empty compact">近 7 天暂无流量</div>
-                    )}
-                  </Panel>
-                  <Panel title="接入状态" copy="最近 45 秒节点会话投影">
-                    <div className="portal-device-status">
-                      <Icon name="plug" />
-                      <div>
-                        <span>当前状态</span>
-                        <strong>{overview.online > 0 ? "在线" : "离线"}</strong>
-                      </div>
-                      <span className={`badge ${overview.online > 0 ? "success" : "neutral"}`}>
-                        {overview.online} 条连接
-                      </span>
-                    </div>
-                    <p className="fine-print portal-device-note">
-                      当前不限设备数量；节点连接数包含测速、故障转移和并发会话，不代表唯一设备数。
-                    </p>
-                  </Panel>
-                  <Panel title="快捷操作" copy="常用入口集中在这里。">
-                    <div className="admin-quick-actions">
-                      <Link href="/portal/plans">
-                        <Icon name="refresh" />
-                        <span><strong>续费套餐</strong><small>延长服务有效期</small></span>
-                        <b>›</b>
-                      </Link>
-                      <Link href="/portal/access">
-                        <Icon name="qr_code_2" />
-                        <span><strong>复制订阅</strong><small>同步套餐内全部节点</small></span>
-                        <b>›</b>
-                      </Link>
-                      <Link href="/portal/tutorial">
-                        <Icon name="book" />
-                        <span><strong>查看教程</strong><small>四平台接入指引</small></span>
-                        <b>›</b>
-                      </Link>
-                      <Link href="/portal/usage">
-                        <Icon name="monitoring" />
-                        <span><strong>流量明细</strong><small>查看完整使用记录</small></span>
-                        <b>›</b>
-                      </Link>
-                    </div>
-                  </Panel>
-                </section>
-
-                <section className="workspace-grid portal-detail-grid">
-                  <Panel title="当前套餐" copy="订阅配置与接入能力">
-                    <div className="portal-plan-facts">
-                      <div><span>套餐名称</span><strong>{overview.plan.name}</strong></div>
-                      <div><span>订阅状态</span><strong>正常使用中</strong></div>
-                      <div><span>上行速率</span><strong>{overview.subscription.speedUpMbpsSnapshot} Mbps</strong></div>
-                      <div><span>下行速率</span><strong>{overview.subscription.speedDownMbpsSnapshot} Mbps</strong></div>
-                      <div><span>设备数量</span><strong>不限设备</strong></div>
-                      <div><span>账户余额</span><strong>¥{((overview.balanceCents ?? 0) / 100).toFixed(2)}</strong></div>
-                    </div>
-                  </Panel>
-                  <Panel
                     title="流量包与权益"
-                    copy={`${overview.packs.length} 个附加流量包`}
+                    copy={`${currentPacks.length} 个可用流量包`}
                     action={<Link href="/portal/plans">查看全部 ›</Link>}
+                    className="portal-pack-summary-panel"
                   >
-                    {overview.packs.length ? (
-                      overview.packs.slice(0, 3).map((pack) => (
-                        <div className="portal-pack-row" key={pack.id}>
-                          <div className="portal-pack-copy">
-                            <div className="portal-pack-title">
-                              <strong>{pack.label}</strong>
-                              <span className="badge success">{pack.status}</span>
-                            </div>
-                            <small>
-                              {pack.expiresAt
-                                ? `生效至 ${formatDateTime(pack.expiresAt)}`
-                                : "跟随当前订阅"}
-                            </small>
-                          </div>
-                          <b>{formatBytes(pack.remainingBytes)}</b>
+                    {currentPacks.length ? (
+                      <>
+                        <div className="portal-pack-total">
+                          <span>流量包剩余</span>
+                          <strong>
+                            {formatBytes(
+                              currentPacks.reduce(
+                                (sum, pack) => sum + pack.remainingBytes,
+                                0,
+                              ),
+                            )}
+                          </strong>
                         </div>
-                      ))
+                        <div className="portal-pack-summary-list">
+                          {currentPacks.slice(0, 3).map((pack) => (
+                            <div className="portal-pack-row" key={pack.id}>
+                              <div className="portal-pack-copy">
+                                <div className="portal-pack-title">
+                                  <strong>{pack.label}</strong>
+                                  <span className="badge success">有效</span>
+                                </div>
+                                <small>
+                                  {pack.expiresAt
+                                    ? `有效至 ${formatDateTime(pack.expiresAt)}`
+                                    : "永久有效"}
+                                </small>
+                              </div>
+                              <b>{formatBytes(pack.remainingBytes)}</b>
+                            </div>
+                          ))}
+                        </div>
+                      </>
                     ) : (
-                      <div className="portal-empty-inline">当前没有额外流量包</div>
+                      <div className="portal-empty-inline">
+                        当前没有额外流量包
+                      </div>
                     )}
                   </Panel>
                 </section>
-
-                <div className="fine-print portal-analytics-footnote">
-                  数据来自节点实时快照与近期用量记录，刷新页面即可同步最新状态。
-                </div>
               </div>
             );
           })()

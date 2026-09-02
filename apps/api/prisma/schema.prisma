@@ -636,6 +636,7 @@ model QuotaAdjustment {
   trafficPackId        String?
   quotaBucketId        String?
   actorId              String?
+  idempotencyKey       String?             @unique
   mode                 QuotaAdjustmentMode
   deltaBytes           BigInt
   beforeRemainingBytes BigInt
@@ -1148,32 +1149,33 @@ model CatalogOffer {
 }
 
 model EntitlementGrant {
-  id                    String                 @id @default(cuid())
-  userId                String
-  accessAccountId       String
-  productId             String
-  offerId               String?
-  legacySubscriptionId  String?                @unique
-  legacyTrafficPackId   String?                @unique
-  kind                  EntitlementGrantKind
-  status                EntitlementGrantStatus @default(ACTIVE)
-  startsAt              DateTime
-  endsAt                DateTime
-  accessProfileId       String
-  speedUpMbpsSnapshot   Int
-  speedDownMbpsSnapshot Int
-  deviceLimitSnapshot   Int
-  createdAt             DateTime               @default(now())
-  updatedAt             DateTime               @updatedAt
-  user                  User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  accessAccount         AccessAccount          @relation(fields: [accessAccountId], references: [id], onDelete: Cascade)
-  product               CatalogProduct         @relation(fields: [productId], references: [id], onDelete: Restrict)
-  offer                 CatalogOffer?          @relation(fields: [offerId], references: [id], onDelete: SetNull)
-  accessProfile         AccessProfile          @relation(fields: [accessProfileId], references: [id], onDelete: Restrict)
-  legacySubscription    Subscription?          @relation(fields: [legacySubscriptionId], references: [id], onDelete: SetNull)
-  legacyTrafficPack     TrafficPack?           @relation(fields: [legacyTrafficPackId], references: [id], onDelete: SetNull)
-  quotaBuckets          QuotaBucket[]
-  referralBonusFor      ReferralAttribution?
+  id                                   String                 @id @default(cuid())
+  userId                               String
+  accessAccountId                      String
+  productId                            String
+  offerId                              String?
+  legacySubscriptionId                 String?                @unique
+  legacyTrafficPackId                  String?                @unique
+  kind                                 EntitlementGrantKind
+  status                               EntitlementGrantStatus @default(ACTIVE)
+  startsAt                             DateTime
+  endsAt                               DateTime
+  accessProfileId                      String
+  speedUpMbpsSnapshot                  Int
+  speedDownMbpsSnapshot                Int
+  deviceLimitSnapshot                  Int
+  trafficMultiplierBasisPointsSnapshot Int                    @default(10000)
+  createdAt                            DateTime               @default(now())
+  updatedAt                            DateTime               @updatedAt
+  user                                 User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessAccount                        AccessAccount          @relation(fields: [accessAccountId], references: [id], onDelete: Cascade)
+  product                              CatalogProduct         @relation(fields: [productId], references: [id], onDelete: Restrict)
+  offer                                CatalogOffer?          @relation(fields: [offerId], references: [id], onDelete: SetNull)
+  accessProfile                        AccessProfile          @relation(fields: [accessProfileId], references: [id], onDelete: Restrict)
+  legacySubscription                   Subscription?          @relation(fields: [legacySubscriptionId], references: [id], onDelete: SetNull)
+  legacyTrafficPack                    TrafficPack?           @relation(fields: [legacyTrafficPackId], references: [id], onDelete: SetNull)
+  quotaBuckets                         QuotaBucket[]
+  referralBonusFor                     ReferralAttribution?
 
   @@index([userId, kind, status, endsAt])
   @@index([accessAccountId, status, endsAt])
@@ -1182,18 +1184,19 @@ model EntitlementGrant {
 }
 
 model QuotaBucket {
-  id            String            @id @default(cuid())
-  grantId       String
-  kind          QuotaBucketKind
-  startsAt      DateTime
-  endsAt        DateTime
-  grantedBytes  BigInt
-  consumedBytes BigInt            @default(0)
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-  grant         EntitlementGrant  @relation(fields: [grantId], references: [id], onDelete: Cascade)
-  allocations   UsageAllocation[]
-  adjustments   QuotaAdjustment[]
+  id                                   String            @id @default(cuid())
+  grantId                              String
+  kind                                 QuotaBucketKind
+  startsAt                             DateTime
+  endsAt                               DateTime
+  grantedBytes                         BigInt
+  consumedBytes                        BigInt            @default(0)
+  trafficMultiplierBasisPointsSnapshot Int               @default(10000)
+  createdAt                            DateTime          @default(now())
+  updatedAt                            DateTime          @updatedAt
+  grant                                EntitlementGrant  @relation(fields: [grantId], references: [id], onDelete: Cascade)
+  allocations                          UsageAllocation[]
+  adjustments                          QuotaAdjustment[]
 
   @@unique([grantId, startsAt])
   @@index([endsAt, grantId])

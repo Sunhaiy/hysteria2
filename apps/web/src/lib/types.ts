@@ -520,7 +520,7 @@ export interface PortalUsageResponse {
   recent: Array<{
     id: string;
     userId: string;
-    subscriptionId: string;
+    subscriptionId: string | null;
     nodeId: string;
     nodeLabel: string;
     bucketStart: string;

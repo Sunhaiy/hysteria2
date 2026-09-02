@@ -137,6 +137,7 @@ describe('EntitlementService V2', () => {
         startsAt,
         endsAt,
         grantedBytes: 120n,
+        trafficMultiplierBasisPointsSnapshot: 10_000,
       },
       update: { endsAt },
     });
@@ -154,6 +155,7 @@ describe('EntitlementService V2', () => {
           createdAt: startsAt,
           processedAt: startsAt,
           entitlementExpiresAt: endsAt,
+          trafficMultiplierBasisPointsSnapshot: 21_000,
           catalogOffer: {
             id: 'offer_pack',
             trafficBytes: 100n,
@@ -163,6 +165,7 @@ describe('EntitlementService V2', () => {
               accessProfileId: 'profile_pack',
               speedUpMbps: 0,
               speedDownMbps: 0,
+              defaultTrafficMultiplierBasisPoints: 17_000,
               requiresActivePlan: true,
             },
           },
@@ -208,6 +211,7 @@ describe('EntitlementService V2', () => {
       speedUpMbpsSnapshot: 120,
       speedDownMbpsSnapshot: 300,
       deviceLimitSnapshot: 1000,
+      trafficMultiplierBasisPointsSnapshot: 21_000,
     });
   });
 
@@ -520,6 +524,7 @@ describe('EntitlementService V2', () => {
         id: 'bucket_1',
         grantedBytes: 1_000n,
         consumedBytes: 0n,
+        trafficMultiplierBasisPointsSnapshot: productMultiplierBasisPoints,
         grant: {
           legacySubscriptionId: null,
           legacyTrafficPackId: null,
@@ -581,4 +586,196 @@ describe('EntitlementService V2', () => {
       });
     },
   );
+
+  it('charges a traffic-pack bucket with its purchase multiplier snapshot', async () => {
+    const physicalBytes = 20_538_376n;
+    const expectedAccountedBytes = 43_130_589n;
+    const bucket = {
+      id: 'bucket_pack_21x',
+      grantedBytes: 100_000_000n,
+      consumedBytes: 0n,
+      trafficMultiplierBasisPointsSnapshot: 21_000,
+      endsAt: new Date('2027-05-01T00:00:00.000Z'),
+      createdAt: new Date('2027-03-01T00:00:00.000Z'),
+      grant: {
+        kind: 'TRAFFIC_PACK',
+        trafficMultiplierBasisPointsSnapshot: 21_000,
+        legacySubscriptionId: null,
+        legacyTrafficPackId: null,
+        product: { requiresActivePlan: false },
+      },
+    };
+    const tx = {
+      usageImportBatch: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'batch_db_pack_21x' }),
+      },
+      user: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'user_pack_21x' }),
+      },
+      accessAccount: {
+        upsert: jest.fn().mockResolvedValue({
+          id: 'account_pack_21x',
+          trafficMultiplierBasisPoints: 10_000,
+          trafficMultiplierOverrideBasisPoints: null,
+          trafficMultiplierRemainder: 0,
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      quotaBucket: {
+        findMany: jest.fn().mockResolvedValue([bucket]),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      trafficPack: { findUnique: jest.fn(), update: jest.fn() },
+      subscriptionCycle: { findFirst: jest.fn(), update: jest.fn() },
+      subscription: { count: jest.fn(), update: jest.fn() },
+      usageRollup: { create: jest.fn().mockResolvedValue({ id: 'usage_21x' }) },
+    };
+    const prisma = {
+      $transaction: jest.fn((operation: (client: typeof tx) => unknown) =>
+        operation(tx),
+      ),
+    };
+    const service = new EntitlementService(prisma as never);
+
+    await service.applyUsageBatch('node_core', {
+      id: 'batch-pack-21x',
+      claimedAt: '2027-03-30T08:00:00.000Z',
+      traffic: {
+        user_pack_21x: {
+          tx: Number(physicalBytes),
+          rx: 0,
+        },
+      },
+    });
+
+    expect(tx.quotaBucket.update).toHaveBeenCalledWith({
+      where: { id: 'bucket_pack_21x' },
+      data: { consumedBytes: { increment: expectedAccountedBytes } },
+    });
+    expect(tx.accessAccount.update).toHaveBeenCalledWith({
+      where: { id: 'account_pack_21x' },
+      data: { trafficMultiplierRemainder: 6_000 },
+    });
+    const [createRollup] = tx.usageRollup.create.mock.calls[0] as unknown as [
+      { data: Record<string, unknown> },
+    ];
+    expect(createRollup.data).toMatchObject({
+      rawBytes: physicalBytes,
+      accountedBytes: expectedAccountedBytes,
+      multiplierBasisPoints: 21_000,
+      overageBytes: 0n,
+    });
+  });
+
+  it('applies each entitlement multiplier when one batch crosses quota buckets', async () => {
+    const buckets = [
+      {
+        id: 'bucket_pack',
+        grantedBytes: 1_000n,
+        consumedBytes: 0n,
+        trafficMultiplierBasisPointsSnapshot: 21_000,
+        endsAt: new Date('2027-04-01T00:00:00.000Z'),
+        createdAt: new Date('2027-03-01T00:00:00.000Z'),
+        grant: {
+          kind: 'TRAFFIC_PACK',
+          trafficMultiplierBasisPointsSnapshot: 21_000,
+          legacySubscriptionId: null,
+          legacyTrafficPackId: null,
+          product: { requiresActivePlan: false },
+        },
+      },
+      {
+        id: 'bucket_plan',
+        grantedBytes: 50n,
+        consumedBytes: 0n,
+        trafficMultiplierBasisPointsSnapshot: 10_000,
+        endsAt: new Date('2027-05-01T00:00:00.000Z'),
+        createdAt: new Date('2027-03-02T00:00:00.000Z'),
+        grant: {
+          kind: 'PLAN',
+          trafficMultiplierBasisPointsSnapshot: 10_000,
+          legacySubscriptionId: null,
+          legacyTrafficPackId: null,
+          product: { requiresActivePlan: false },
+        },
+      },
+    ];
+    const tx = {
+      usageImportBatch: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'batch_db_mixed' }),
+      },
+      user: { findUnique: jest.fn().mockResolvedValue({ id: 'user_mixed' }) },
+      accessAccount: {
+        upsert: jest.fn().mockResolvedValue({
+          id: 'account_mixed',
+          trafficMultiplierBasisPoints: 10_000,
+          trafficMultiplierOverrideBasisPoints: null,
+          trafficMultiplierRemainder: 0,
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      quotaBucket: {
+        findMany: jest.fn().mockResolvedValue(buckets),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      trafficPack: { findUnique: jest.fn(), update: jest.fn() },
+      subscriptionCycle: { findFirst: jest.fn(), update: jest.fn() },
+      subscription: { count: jest.fn(), update: jest.fn() },
+      usageRollup: {
+        create: jest.fn().mockResolvedValue({ id: 'usage_mixed' }),
+      },
+    };
+    const prisma = {
+      $transaction: jest.fn((operation: (client: typeof tx) => unknown) =>
+        operation(tx),
+      ),
+    };
+    const service = new EntitlementService(prisma as never);
+
+    await service.applyUsageBatch('node_core', {
+      id: 'batch-mixed',
+      claimedAt: '2027-03-30T08:00:00.000Z',
+      traffic: { user_mixed: { tx: 100, rx: 0 } },
+    });
+
+    expect(tx.quotaBucket.update.mock.calls).toEqual([
+      [
+        {
+          where: { id: 'bucket_plan' },
+          data: { consumedBytes: { increment: 50n } },
+        },
+      ],
+      [
+        {
+          where: { id: 'bucket_pack' },
+          data: { consumedBytes: { increment: 105n } },
+        },
+      ],
+    ]);
+    const [createRollup] = tx.usageRollup.create.mock.calls[0] as unknown as [
+      {
+        data: {
+          accountedBytes: bigint;
+          multiplierBasisPoints: number;
+          overageBytes: bigint;
+          allocations: {
+            create: Array<{ quotaBucketId: string; accountedBytes: bigint }>;
+          };
+        };
+      },
+    ];
+    expect(createRollup.data).toMatchObject({
+      accountedBytes: 155n,
+      multiplierBasisPoints: 15_500,
+      overageBytes: 0n,
+      allocations: {
+        create: [
+          { quotaBucketId: 'bucket_plan', accountedBytes: 50n },
+          { quotaBucketId: 'bucket_pack', accountedBytes: 105n },
+        ],
+      },
+    });
+  });
 });
