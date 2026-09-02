@@ -17,6 +17,13 @@ test("admin payment settings enforce one checkout channel at a time", async () =
   assert.match(settings, /异步通知地址/);
   assert.match(settings, /\/api\/admin\/payments\/epay\/tests/);
   assert.match(settings, /双渠道测试/);
+  assert.match(settings, /aria-label="易支付测试渠道"/);
+  assert.match(settings, /选择支付宝测试/);
+  assert.match(settings, /选择微信支付测试/);
+  assert.doesNotMatch(
+    settings,
+    /<CustomSelect[\s\S]*?value=\{epayPaymentType\}/,
+  );
   assert.match(settings, /支付宝和微信均通过/);
   assert.match(settings, /测试.*¥0\.01/);
   assert.match(settings, /仅保存配置/);
@@ -33,6 +40,7 @@ test("admin payment settings enforce one checkout channel at a time", async () =
     settings,
     /async function startEpayTest[\s\S]*?finally \{[\s\S]*?setTestingEpay\(false\)/,
   );
+  assert.match(settings, /AbortSignal\.timeout\(20_000\)/);
   assert.doesNotMatch(settings, /window\.location\.assign\(target\.toString\(\)\)/);
 });
 

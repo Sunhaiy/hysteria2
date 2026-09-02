@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import { ConsoleShell } from "@/components/console-shell";
-import { CustomSelect } from "@/components/custom-select";
 import { Panel } from "@/components/panel";
 import { PageSkeleton } from "@/components/skeleton";
 import { useAuth } from "@/components/auth-provider";
@@ -438,12 +437,13 @@ export default function AdminSettingsPage() {
     return body;
   }
 
-  async function persistEpayConfiguration() {
+  async function persistEpayConfiguration(signal?: AbortSignal) {
     if (!token) throw new Error("登录状态已失效");
     const data = await apiRequest<SettingsResponse>("/api/admin/settings", {
       method: "PATCH",
       token,
       body: epaySettingsBody(),
+      signal,
     });
     applySettings(data);
     setPaymentView("epay");
@@ -516,13 +516,15 @@ export default function AdminSettingsPage() {
     setTestingEpay(true);
     setError(null);
     try {
-      await persistEpayConfiguration();
+      const signal = AbortSignal.timeout(20_000);
+      await persistEpayConfiguration(signal);
       const test = await apiRequest<EpayGatewayTestStatus>(
         "/api/admin/payments/epay/tests",
         {
           method: "POST",
           token,
           body: { paymentType: epayPaymentType },
+          signal,
         },
       );
       setEpayTest(test);
@@ -530,7 +532,11 @@ export default function AdminSettingsPage() {
     } catch (cause) {
       paymentWindow.close();
       setError(
-        cause instanceof ApiError ? cause.message : "测试支付发起失败。",
+        cause instanceof ApiError
+          ? cause.message
+          : cause instanceof DOMException && cause.name === "TimeoutError"
+            ? "测试支付创建超时，请直接重试。"
+            : "测试支付发起失败。",
       );
     } finally {
       setTestingEpay(false);
@@ -1156,31 +1162,41 @@ export default function AdminSettingsPage() {
                       提交地址，线上必须使用 HTTPS。
                     </span>
                   </label>
-                  <div className="two-col">
-                    <label className="field">
-                      <span className="fine-print">商户 ID</span>
-                      <input
-                        className="control mono"
-                        value={epayMerchantId}
-                        onChange={(event) =>
-                          setEpayMerchantId(event.target.value)
-                        }
-                        autoComplete="off"
-                      />
-                    </label>
-                    <label className="field">
-                      <span className="fine-print">本次测试渠道</span>
-                      <CustomSelect
-                        value={epayPaymentType}
-                        onChange={(value) =>
-                          setEpayPaymentType(value as "alipay" | "wxpay")
-                        }
-                        options={[
-                          { value: "alipay", label: "支付宝" },
-                          { value: "wxpay", label: "微信支付" },
-                        ]}
-                      />
-                    </label>
+                  <label className="field">
+                    <span className="fine-print">商户 ID</span>
+                    <input
+                      className="control mono"
+                      value={epayMerchantId}
+                      onChange={(event) =>
+                        setEpayMerchantId(event.target.value)
+                      }
+                      autoComplete="off"
+                    />
+                  </label>
+                  <div className="field">
+                    <span className="fine-print">本次测试渠道</span>
+                    <div
+                      className="segmented-control"
+                      aria-label="易支付测试渠道"
+                    >
+                      {(
+                        [
+                          ["alipay", "支付宝", "选择支付宝测试"],
+                          ["wxpay", "微信支付", "选择微信支付测试"],
+                        ] as const
+                      ).map(([type, label, ariaLabel]) => (
+                        <button
+                          key={type}
+                          type="button"
+                          className={epayPaymentType === type ? "active" : ""}
+                          aria-label={ariaLabel}
+                          aria-pressed={epayPaymentType === type}
+                          onClick={() => setEpayPaymentType(type)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   <label className="field">
                     <span className="fine-print">商户密钥</span>
