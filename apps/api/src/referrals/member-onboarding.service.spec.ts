@@ -44,7 +44,7 @@ describe('MemberOnboardingService', () => {
     const settings = {
       getReferralConfig: jest.fn().mockResolvedValue({
         enabled: options?.enabled ?? true,
-        inviterRewardCents: 750,
+        inviterRewardBasisPoints: 1250,
         inviteeRewardBytes: 21474836480,
       }),
     };
@@ -74,7 +74,8 @@ describe('MemberOnboardingService', () => {
         inviteeId: 'invitee_1',
         referralCodeId: 'ref_code_1',
         codeSnapshot: 'ABCDEFGH',
-        inviterRewardCents: 750,
+        inviterRewardCents: 0,
+        inviterRewardBasisPoints: 1250,
         inviteeRewardBytes: 21474836480n,
       },
     });

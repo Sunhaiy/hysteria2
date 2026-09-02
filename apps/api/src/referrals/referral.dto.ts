@@ -6,6 +6,6 @@ export class UpdateReferralSettingsDto {
 
   @IsInt()
   @Min(0)
-  @Max(100_000)
-  inviterRewardCents!: number;
+  @Max(10_000)
+  inviterRewardBasisPoints!: number;
 }

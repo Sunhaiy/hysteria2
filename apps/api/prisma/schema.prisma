@@ -1380,32 +1380,33 @@ model ReferralCode {
 }
 
 model ReferralAttribution {
-  id                      String             @id @default(cuid())
-  inviterId               String
-  inviteeId               String             @unique
-  referralCodeId          String
-  codeSnapshot            String
-  status                  ReferralStatus     @default(PENDING)
-  inviterRewardCents      Int
-  inviteeRewardBytes      BigInt
-  qualifyingOrderId       String?            @unique
-  rewardWalletLedgerId    String?            @unique
-  reversalWalletLedgerId  String?            @unique
-  bonusEntitlementGrantId String?            @unique
-  rewardedAt              DateTime?
-  reversedAt              DateTime?
-  recoveredCents          Int                @default(0)
-  unrecoveredCents        Int                @default(0)
-  revokedUnusedBytes      BigInt             @default(0)
-  createdAt               DateTime           @default(now())
-  updatedAt               DateTime           @updatedAt
-  inviter                 User               @relation("ReferralInviter", fields: [inviterId], references: [id], onDelete: Restrict)
-  invitee                 User               @relation("ReferralInvitee", fields: [inviteeId], references: [id], onDelete: Restrict)
-  referralCode            ReferralCode       @relation(fields: [referralCodeId], references: [id], onDelete: Restrict)
-  qualifyingOrder         ManualOrder?       @relation(fields: [qualifyingOrderId], references: [id], onDelete: Restrict)
-  rewardWalletLedger      WalletLedgerEntry? @relation("ReferralRewardLedger", fields: [rewardWalletLedgerId], references: [id], onDelete: SetNull)
-  reversalWalletLedger    WalletLedgerEntry? @relation("ReferralReversalLedger", fields: [reversalWalletLedgerId], references: [id], onDelete: SetNull)
-  bonusEntitlementGrant   EntitlementGrant?  @relation(fields: [bonusEntitlementGrantId], references: [id], onDelete: SetNull)
+  id                       String             @id @default(cuid())
+  inviterId                String
+  inviteeId                String             @unique
+  referralCodeId           String
+  codeSnapshot             String
+  status                   ReferralStatus     @default(PENDING)
+  inviterRewardCents       Int
+  inviterRewardBasisPoints Int?
+  inviteeRewardBytes       BigInt
+  qualifyingOrderId        String?            @unique
+  rewardWalletLedgerId     String?            @unique
+  reversalWalletLedgerId   String?            @unique
+  bonusEntitlementGrantId  String?            @unique
+  rewardedAt               DateTime?
+  reversedAt               DateTime?
+  recoveredCents           Int                @default(0)
+  unrecoveredCents         Int                @default(0)
+  revokedUnusedBytes       BigInt             @default(0)
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
+  inviter                  User               @relation("ReferralInviter", fields: [inviterId], references: [id], onDelete: Restrict)
+  invitee                  User               @relation("ReferralInvitee", fields: [inviteeId], references: [id], onDelete: Restrict)
+  referralCode             ReferralCode       @relation(fields: [referralCodeId], references: [id], onDelete: Restrict)
+  qualifyingOrder          ManualOrder?       @relation(fields: [qualifyingOrderId], references: [id], onDelete: Restrict)
+  rewardWalletLedger       WalletLedgerEntry? @relation("ReferralRewardLedger", fields: [rewardWalletLedgerId], references: [id], onDelete: SetNull)
+  reversalWalletLedger     WalletLedgerEntry? @relation("ReferralReversalLedger", fields: [reversalWalletLedgerId], references: [id], onDelete: SetNull)
+  bonusEntitlementGrant    EntitlementGrant?  @relation(fields: [bonusEntitlementGrantId], references: [id], onDelete: SetNull)
 
   @@index([inviterId, status, createdAt, id])
   @@index([status, createdAt, id])

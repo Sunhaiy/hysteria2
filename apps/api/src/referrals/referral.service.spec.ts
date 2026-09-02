@@ -1,5 +1,40 @@
 import { BadRequestException } from '@nestjs/common';
-import { ReferralService } from './referral.service';
+import {
+  calculateReferralRewardCents,
+  ReferralService,
+} from './referral.service';
+
+describe('referral reward calculation', () => {
+  it('calculates percentage cashback in integer cents and rounds down', () => {
+    expect(
+      calculateReferralRewardCents({
+        orderAmountCents: 1290,
+        inviterRewardBasisPoints: 1200,
+        legacyRewardCents: 0,
+      }),
+    ).toBe(154);
+  });
+
+  it('preserves the promised fixed reward for legacy pending referrals', () => {
+    expect(
+      calculateReferralRewardCents({
+        orderAmountCents: 1290,
+        inviterRewardBasisPoints: null,
+        legacyRewardCents: 500,
+      }),
+    ).toBe(500);
+  });
+
+  it('supports disabling inviter cashback with a zero percentage', () => {
+    expect(
+      calculateReferralRewardCents({
+        orderAmountCents: 1290,
+        inviterRewardBasisPoints: 0,
+        legacyRewardCents: 500,
+      }),
+    ).toBe(0);
+  });
+});
 
 describe('ReferralService member code', () => {
   it('returns one stable unambiguous code for repeated requests', async () => {
@@ -61,7 +96,8 @@ describe('ReferralService plan CDK settlement', () => {
           inviterId: 'inviter_1',
           inviteeId: 'invitee_1',
           status: 'PENDING',
-          inviterRewardCents: 500,
+          inviterRewardCents: 0,
+          inviterRewardBasisPoints: 1200,
           inviteeRewardBytes: 21474836480n,
         }),
         updateMany: jest
@@ -69,6 +105,13 @@ describe('ReferralService plan CDK settlement', () => {
           .mockResolvedValueOnce({ count: 1 })
           .mockResolvedValueOnce({ count: 0 }),
         update: jest.fn().mockResolvedValue({}),
+      },
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'order_1',
+          userId: 'invitee_1',
+          amountCents: 1290,
+        }),
       },
       entitlementGrant: {
         findUnique: jest.fn().mockResolvedValue({
@@ -120,8 +163,17 @@ describe('ReferralService plan CDK settlement', () => {
     expect(tx.user.update).toHaveBeenCalledTimes(1);
     expect(tx.user.update).toHaveBeenCalledWith({
       where: { id: 'inviter_1' },
-      data: { balanceCents: { increment: 500 } },
+      data: { balanceCents: { increment: 154 } },
       select: { balanceCents: true },
+    });
+    expect(tx.referralAttribution.updateMany).toHaveBeenNthCalledWith(1, {
+      where: { id: 'attribution_1', status: 'PENDING' },
+      data: {
+        status: 'REWARDED',
+        qualifyingOrderId: 'order_1',
+        inviterRewardCents: 154,
+        rewardedAt,
+      },
     });
     expect(tx.entitlementGrant.create).toHaveBeenCalledWith({
       data: {

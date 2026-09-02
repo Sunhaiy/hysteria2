@@ -136,9 +136,13 @@ draft, and switch the guide pointer in one database transaction.
 - A pending attribution qualifies only when the invitee's first plan CDK
   successfully grants a plan entitlement. Wallet checkout, traffic-pack and
   balance CDKs, discounts, and complimentary admin grants do not qualify.
-- The inviter reward and invitee traffic amount are snapshots on the
-  attribution. The traffic reward is a system-managed traffic-pack entitlement
-  with the qualifying plan's access profile and expiry.
+- New attributions snapshot the configured inviter cashback basis points. At
+  settlement, the inviter receives that percentage of the qualifying plan CDK
+  order amount, rounded down to integer cents, and the actual amount is stored
+  on the attribution. Legacy pending attributions with no percentage snapshot
+  keep their promised fixed reward. The invitee traffic amount is also a
+  snapshot and is issued as a system-managed traffic-pack entitlement with the
+  qualifying plan's access profile and expiry.
 - Any applied refund on the qualifying order reverses the reward once. Wallet
   recovery stops at zero and records the unrecovered amount; canceling the
   bonus grant preserves consumed traffic and immutable usage allocations.

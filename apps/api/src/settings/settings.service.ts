@@ -271,21 +271,25 @@ export class SettingsService {
             await client.setting.findMany({
               where: {
                 key: {
-                  in: ['referral.enabled', 'referral.inviterRewardCents'],
+                  in: ['referral.enabled', 'referral.inviterRewardBasisPoints'],
                 },
               },
             })
           ).map((row) => [row.key, row.value]),
         )
       : await this.all();
-    const rawReward = Number.parseInt(
-      values.get('referral.inviterRewardCents') ?? '500',
+    const rawBasisPoints = Number.parseInt(
+      values.get('referral.inviterRewardBasisPoints') ?? '1000',
       10,
     );
     return {
       enabled: values.get('referral.enabled') === 'true',
-      inviterRewardCents:
-        Number.isFinite(rawReward) && rawReward >= 0 ? rawReward : 500,
+      inviterRewardBasisPoints:
+        Number.isInteger(rawBasisPoints) &&
+        rawBasisPoints >= 0 &&
+        rawBasisPoints <= 10_000
+          ? rawBasisPoints
+          : 1000,
       inviteeRewardBytes: 20 * 1024 * 1024 * 1024,
     };
   }

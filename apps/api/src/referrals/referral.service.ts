@@ -13,6 +13,19 @@ import { SettingsService } from '../settings/settings.service';
 const referralAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const referralBonusProductId = 'system_referral_traffic_bonus';
 
+export function calculateReferralRewardCents(input: {
+  orderAmountCents: number;
+  inviterRewardBasisPoints: number | null;
+  legacyRewardCents: number;
+}) {
+  if (input.inviterRewardBasisPoints === null) {
+    return input.legacyRewardCents;
+  }
+  return Math.floor(
+    (input.orderAmountCents * input.inviterRewardBasisPoints) / 10_000,
+  );
+}
+
 export interface AdminReferralQuery extends PageQuery {
   inviter?: string;
   invitee?: string;
@@ -89,7 +102,7 @@ export class ReferralService {
       currentRewardCents:
         (issued._sum.inviterRewardCents ?? 0) -
         (issued._sum.recoveredCents ?? 0),
-      nextInviterRewardCents: config.inviterRewardCents,
+      nextInviterRewardBasisPoints: config.inviterRewardBasisPoints,
       inviteeRewardBytes: config.inviteeRewardBytes,
       enabled: config.enabled,
     };
@@ -115,6 +128,7 @@ export class ReferralService {
         inviteCode: item.codeSnapshot,
         status: item.status.toLowerCase(),
         inviterRewardCents: item.inviterRewardCents,
+        inviterRewardBasisPoints: item.inviterRewardBasisPoints,
         inviteeRewardBytes: Number(item.inviteeRewardBytes),
         createdAt: item.createdAt.toISOString(),
         rewardedAt: item.rewardedAt?.toISOString() ?? null,
@@ -216,6 +230,7 @@ export class ReferralService {
         inviteCode: item.codeSnapshot,
         status: item.status.toLowerCase(),
         inviterRewardCents: item.inviterRewardCents,
+        inviterRewardBasisPoints: item.inviterRewardBasisPoints,
         inviteeRewardBytes: Number(item.inviteeRewardBytes),
         qualifyingOrderId: item.qualifyingOrderId,
         recoveredCents: item.recoveredCents,
@@ -235,12 +250,14 @@ export class ReferralService {
   }
 
   async updateSettings(
-    input: { enabled: boolean; inviterRewardCents: number },
+    input: { enabled: boolean; inviterRewardBasisPoints: number },
     actorId: string,
   ) {
     await this.settings.setMany({
       'referral.enabled': String(input.enabled),
-      'referral.inviterRewardCents': String(input.inviterRewardCents),
+      'referral.inviterRewardBasisPoints': String(
+        input.inviterRewardBasisPoints,
+      ),
     });
     await this.prisma.auditLog.create({
       data: {
@@ -279,6 +296,15 @@ export class ReferralService {
     if (!planGrant.product.referralEligible) {
       return { settled: false } as const;
     }
+    const order = await tx.manualOrder.findUnique({ where: { id: orderId } });
+    if (!order || order.userId !== inviteeId) {
+      throw new ConflictException('Qualifying plan order is missing');
+    }
+    const inviterRewardCents = calculateReferralRewardCents({
+      orderAmountCents: order.amountCents,
+      inviterRewardBasisPoints: attribution.inviterRewardBasisPoints,
+      legacyRewardCents: attribution.inviterRewardCents,
+    });
 
     const rewardedAt = new Date();
     const claimed = await tx.referralAttribution.updateMany({
@@ -286,6 +312,7 @@ export class ReferralService {
       data: {
         status: 'REWARDED',
         qualifyingOrderId: orderId,
+        inviterRewardCents,
         rewardedAt,
       },
     });
@@ -317,18 +344,18 @@ export class ReferralService {
     });
 
     let rewardWalletLedgerId: string | null = null;
-    if (attribution.inviterRewardCents > 0) {
+    if (inviterRewardCents > 0) {
       const updatedInviter = await tx.user.update({
         where: { id: attribution.inviterId },
         data: {
-          balanceCents: { increment: attribution.inviterRewardCents },
+          balanceCents: { increment: inviterRewardCents },
         },
         select: { balanceCents: true },
       });
       const legacy = await tx.walletTransaction.create({
         data: {
           userId: attribution.inviterId,
-          amountCents: attribution.inviterRewardCents,
+          amountCents: inviterRewardCents,
           kind: 'ADJUST',
           note: `邀请奖励 ${attribution.codeSnapshot}`,
         },
@@ -338,9 +365,8 @@ export class ReferralService {
           legacyTransactionId: legacy.id,
           userId: attribution.inviterId,
           orderId,
-          amountCents: attribution.inviterRewardCents,
-          beforeBalanceCents:
-            updatedInviter.balanceCents - attribution.inviterRewardCents,
+          amountCents: inviterRewardCents,
+          beforeBalanceCents: updatedInviter.balanceCents - inviterRewardCents,
           afterBalanceCents: updatedInviter.balanceCents,
           kind: 'ADJUST',
           idempotencyKey: `referral:${attribution.id}:reward`,
@@ -366,7 +392,8 @@ export class ReferralService {
           inviteeId,
           inviterId: attribution.inviterId,
           orderId,
-          inviterRewardCents: attribution.inviterRewardCents,
+          inviterRewardCents,
+          inviterRewardBasisPoints: attribution.inviterRewardBasisPoints,
           inviteeRewardBytes: attribution.inviteeRewardBytes.toString(),
           bonusEntitlementGrantId: bonusGrant.id,
         },

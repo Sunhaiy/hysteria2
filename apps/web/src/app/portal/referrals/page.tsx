@@ -23,7 +23,7 @@ interface ReferralSummary {
   reversed: number;
   cumulativeRewardCents: number;
   currentRewardCents: number;
-  nextInviterRewardCents: number;
+  nextInviterRewardBasisPoints: number;
   inviteeRewardBytes: number;
   enabled: boolean;
 }
@@ -34,6 +34,7 @@ interface ReferralRecord {
   inviteCode: string;
   status: "pending" | "rewarded" | "reversed";
   inviterRewardCents: number;
+  inviterRewardBasisPoints: number | null;
   inviteeRewardBytes: number;
   createdAt: string;
   rewardedAt: string | null;
@@ -53,6 +54,16 @@ const statusLabel = {
   rewarded: "奖励已到账",
   reversed: "退款已追回",
 };
+
+function formatPercent(basisPoints: number) {
+  return `${Number((basisPoints / 100).toFixed(2))}%`;
+}
+
+function formatReferralReward(record: ReferralRecord) {
+  return record.status === "pending" && record.inviterRewardBasisPoints !== null
+    ? formatPercent(record.inviterRewardBasisPoints)
+    : formatMoney(record.inviterRewardCents);
+}
 
 const referralMetrics = [
   {
@@ -273,8 +284,10 @@ export default function PortalReferralsPage() {
               <span className="fine-print">本次邀请奖励</span>
               <div className="referral-reward-row">
                 <span>你获得</span>
-                <strong>{formatMoney(summary.nextInviterRewardCents)}</strong>
-                <small>平台余额</small>
+                <strong>
+                  {formatPercent(summary.nextInviterRewardBasisPoints)}
+                </strong>
+                <small>套餐金额返现</small>
               </div>
               <div className="referral-reward-row">
                 <span>好友获得</span>
@@ -341,7 +354,7 @@ export default function PortalReferralsPage() {
               >
                 {statusLabel[record.status]}
               </span>,
-              `${formatMoney(record.inviterRewardCents)} / ${formatBytes(record.inviteeRewardBytes)}`,
+              `${formatReferralReward(record)} / ${formatBytes(record.inviteeRewardBytes)}`,
               formatDateTime(record.createdAt),
               record.rewardedAt ? formatDateTime(record.rewardedAt) : "-",
             ])}

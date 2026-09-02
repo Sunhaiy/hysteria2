@@ -149,6 +149,32 @@ describe('SettingsService cache', () => {
     });
   });
 
+  it.each([
+    [[], 1000],
+    [[{ key: 'referral.inviterRewardBasisPoints', value: '1250' }], 1250],
+    [[{ key: 'referral.inviterRewardBasisPoints', value: '10001' }], 1000],
+  ])(
+    'returns a validated referral cashback percentage',
+    async (rows, expectedBasisPoints) => {
+      const prisma = {
+        setting: { findMany: jest.fn().mockResolvedValue(rows) },
+      };
+      const cache = {
+        get: jest.fn().mockResolvedValue(null),
+        set: jest.fn().mockResolvedValue(undefined),
+      };
+      const service = new SettingsService(
+        prisma as never,
+        {} as never,
+        cache as never,
+      );
+
+      await expect(service.getReferralConfig()).resolves.toMatchObject({
+        inviterRewardBasisPoints: expectedBasisPoints,
+      });
+    },
+  );
+
   it('returns the configured purchase notice with the portal branding', async () => {
     const prisma = {
       setting: {

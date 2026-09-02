@@ -74,7 +74,9 @@ export class MemberOnboardingService {
                 inviteeId: user.id,
                 referralCodeId: referralCode.id,
                 codeSnapshot: referralCode.code,
-                inviterRewardCents: referralConfig.inviterRewardCents,
+                inviterRewardCents: 0,
+                inviterRewardBasisPoints:
+                  referralConfig.inviterRewardBasisPoints,
                 inviteeRewardBytes: BigInt(referralConfig.inviteeRewardBytes),
               },
             });

@@ -22,6 +22,10 @@ test("referral entry keeps copy actions aligned and exposes both rewards", () =>
   assert.match(page, /<Icon name="content_copy" \/>/);
   assert.match(page, /你获得/);
   assert.match(page, /好友获得/);
+  assert.match(page, /nextInviterRewardBasisPoints/);
+  assert.match(page, /套餐金额返现/);
+  assert.doesNotMatch(adminPage, /邀请人奖励（分）/);
+  assert.match(adminPage, /邀请人返现比例/);
   assert.match(
     styles,
     /\.referral-copy-button\s*\{[^}]*white-space:\s*nowrap;/s,
