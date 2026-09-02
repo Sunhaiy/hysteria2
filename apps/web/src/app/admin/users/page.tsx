@@ -513,6 +513,7 @@ export default function AdminUsersPage() {
       scope="Operations"
       navItems={adminNav}
       requireRole="admin"
+      dataViewport
       toolbarMeta={
         <span className="badge info">{loading ? "加载中..." : `${totalUsers} 个用户`}</span>
       }
@@ -531,11 +532,12 @@ export default function AdminUsersPage() {
       {feedback ? <div className={`feedback ${feedback.kind}`}>{feedback.msg}</div> : null}
 
       <Panel
+        className="admin-data-panel"
         title="账号列表"
         copy="点击行编辑用户；创建会员时可顺手开通首个套餐并交付专属 URI。"
         action={<span className="fine-print">{loading ? "同步中..." : `${users.length} 条`}</span>}
       >
-        <div className="admin-filter-bar">
+        <div className="admin-filter-bar admin-compact-filters">
           <label className="field grow-field">
             <span className="fine-print">搜索用户</span>
             <input className="control" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="邮箱、名称或用户 ID" />

@@ -365,6 +365,7 @@ export default function CatalogPage() {
         scope="Catalog"
         navItems={adminNav}
         requireRole="admin"
+        dataViewport
       >
         <PageSkeleton variant="table" />
       </ConsoleShell>
@@ -378,6 +379,7 @@ export default function CatalogPage() {
       scope="Catalog"
       navItems={adminNav}
       requireRole="admin"
+      dataViewport
       toolbarMeta={
         <span className="badge info">
           {catalog.products.length} 个商品 · {activeOffers} 个上架规格
@@ -398,8 +400,8 @@ export default function CatalogPage() {
         <div className="feedback error">{error}</div>
       ) : null}
       {feedback ? <div className="feedback success">{feedback}</div> : null}
-      <div className="page-stack">
-        <div className="metric-grid">
+      <div className="page-stack admin-data-page">
+        <div className="metric-grid admin-data-metrics">
           <MetricCard
             label="上架商品"
             value={String(activeProducts.length)}
@@ -433,10 +435,11 @@ export default function CatalogPage() {
           />
         </div>
         <Panel
+          className="admin-data-panel"
           title="统一商品列表"
           copy="套餐和流量包使用同一状态筛选与编辑流程。"
           action={
-            <div className="inline-form compact">
+            <div className="inline-form compact admin-compact-filters">
               <CustomSelect
                 value={kindFilter}
                 onChange={setKindFilter}

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
+import { CustomerLink } from "@/components/customer-link";
 import { DataTable } from "@/components/data-table";
 import { Panel } from "@/components/panel";
 import { Icon } from "@/components/icon";
@@ -13,6 +14,7 @@ import type { PaginatedResponse } from "@/lib/types";
 
 type AuditRecord = {
   id: string;
+  actorId?: string | null;
   actorEmail?: string | null;
   actorDisplayName?: string | null;
   action: string;
@@ -86,6 +88,7 @@ export default function AdminAuditPage() {
       scope="Security"
       navItems={adminNav}
       requireRole="admin"
+      dataViewport
       toolbarActions={
         <>
           <input
@@ -107,6 +110,7 @@ export default function AdminAuditPage() {
     >
       {error ? <div className="feedback error">{error}</div> : null}
       <Panel
+        className="admin-data-panel"
         title="最近操作"
         copy="审计日志不保存请求正文，因此不会收集密码、OAuth/SMTP 密钥或节点控制密钥。"
       >
@@ -132,7 +136,16 @@ export default function AdminAuditPage() {
             headers={["时间", "操作者", "操作", "目标", "结果", "来源"]}
             rows={records.map((record) => [
               formatDateTime(record.createdAt),
-              record.actorDisplayName ?? record.actorEmail ?? "系统",
+              record.actorId && record.actorEmail ? (
+                <CustomerLink
+                  id={record.actorId}
+                  displayName={record.actorDisplayName}
+                  email={record.actorEmail}
+                  key={`${record.id}-actor`}
+                />
+              ) : (
+                "系统"
+              ),
               record.metadata?.path ?? record.action,
               `${record.targetType}${record.targetId ? ` · ${record.targetId}` : ""}`,
               <span

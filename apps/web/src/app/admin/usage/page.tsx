@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { EChartsOption } from "echarts";
 import { ConsoleShell } from "@/components/console-shell";
+import { CustomerLink } from "@/components/customer-link";
 import { CustomSelect } from "@/components/custom-select";
 import { DataTable } from "@/components/data-table";
 import { EChart } from "@/components/echart";
@@ -136,7 +137,7 @@ export default function AdminUsagePage() {
             {(summary?.users ?? []).map((item, index) => (
               <div className="rank-row" key={item.userId}>
                 <span>{index + 1}</span>
-                <div><strong>{item.userDisplayName}</strong><small>{item.userEmail}</small></div>
+                <CustomerLink id={item.userId} displayName={item.userDisplayName} email={item.userEmail} />
                 <b>{formatBytes(item.totalBytes)}</b>
               </div>
             ))}
@@ -167,7 +168,7 @@ export default function AdminUsagePage() {
           <DataTable
             headers={["用户", "节点", "上传", "下载", "总流量", "来源", "时间"]}
             rows={pageRows.map((item) => [
-              item.userEmail,
+              <CustomerLink id={item.userId} email={item.userEmail} key={`${item.id}-user`} />,
               item.nodeLabel,
               formatBytes(item.txBytes),
               formatBytes(item.rxBytes),

@@ -356,6 +356,7 @@ export default function AdminRedemptionCodesPage() {
       scope="Operations"
       navItems={adminNav}
       requireRole="admin"
+      dataViewport
       toolbarMeta={
         <span className="badge info">
           {loading ? "加载中..." : `${codes.length} 张兑换码`}
@@ -423,10 +424,11 @@ export default function AdminRedemptionCodesPage() {
       ) : null}
 
       <Panel
+        className="admin-data-panel"
         title="兑换码列表"
         copy="会员兑换后会自动生成订单记录，这里可以看到发放、兑换和作废状态。"
         action={
-          <div className="toolbar-actions" style={{ gap: 8, flexWrap: "wrap" }}>
+          <div className="toolbar-actions admin-compact-filters">
             <input
               className="control"
               style={{ width: 200 }}

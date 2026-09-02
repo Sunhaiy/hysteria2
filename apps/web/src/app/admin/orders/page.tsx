@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
+import { CustomerLink } from "@/components/customer-link";
 import { CustomSelect } from "@/components/custom-select";
 import { DataTable } from "@/components/data-table";
 import { Drawer } from "@/components/drawer";
@@ -426,6 +427,7 @@ export default function AdminOrdersPage() {
       scope="Commerce"
       navItems={adminNav}
       requireRole="admin"
+      dataViewport
       toolbarMeta={
         <span className="badge info">
           {loading ? "加载中" : `${currentPage.total} 条记录`}
@@ -464,7 +466,7 @@ export default function AdminOrdersPage() {
         <div className={`feedback ${feedback.kind}`}>{feedback.message}</div>
       ) : null}
 
-      <section className="metric-grid">
+      <section className="metric-grid admin-data-metrics">
         <MetricCard
           label="今日履约净收入"
           value={formatMoney(summary?.today.netRevenueCents ?? 0)}
@@ -477,7 +479,7 @@ export default function AdminOrdersPage() {
         />
       </section>
 
-      <Panel title="订单与支付">
+      <Panel className="admin-data-panel" title="订单与支付">
         <div className="segmented-control" aria-label="订单视图">
           <button
             className={view === "orders" ? "active" : ""}
@@ -495,7 +497,7 @@ export default function AdminOrdersPage() {
           </button>
         </div>
 
-        <div className="filter-grid" style={{ marginTop: 16 }}>
+        <div className="filter-grid admin-compact-filters">
           <label className="field">
             <span className="fine-print">搜索</span>
             <input
@@ -647,10 +649,12 @@ export default function AdminOrdersPage() {
             ]}
             rows={orders.items.map((order) => [
               formatDateTime(order.processedAt ?? order.createdAt),
-              <div className="split" key={`${order.id}-user`}>
-                <strong>{order.user.displayName}</strong>
-                <span className="muted">{order.user.email}</span>
-              </div>,
+              <CustomerLink
+                id={order.user.id}
+                displayName={order.user.displayName}
+                email={order.user.email}
+                key={`${order.id}-user`}
+              />,
               <div className="split" key={`${order.id}-product`}>
                 <strong>{order.product.name}</strong>
                 <span className="muted">
@@ -742,10 +746,12 @@ export default function AdminOrdersPage() {
             ]}
             rows={attempts.items.map((attempt) => [
               formatDateTime(attempt.createdAt),
-              <div className="split" key={`${attempt.id}-user`}>
-                <strong>{attempt.user.displayName}</strong>
-                <span className="muted">{attempt.user.email}</span>
-              </div>,
+              <CustomerLink
+                id={attempt.user.id}
+                displayName={attempt.user.displayName}
+                email={attempt.user.email}
+                key={`${attempt.id}-user`}
+              />,
               <div className="split" key={`${attempt.id}-product`}>
                 <strong>{attempt.product.name}</strong>
                 <span className="muted">{attempt.offer.name}</span>

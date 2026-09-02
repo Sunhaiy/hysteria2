@@ -253,6 +253,7 @@ export class FinanceService {
       items.map((refund) => ({
         id: refund.id,
         orderId: refund.orderId,
+        userId: refund.order.userId,
         userEmail: refund.order.user.email,
         method: refund.method.toLowerCase(),
         status: refund.status.toLowerCase(),

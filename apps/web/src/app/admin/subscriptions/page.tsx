@@ -2,9 +2,11 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
+import { CustomerLink } from "@/components/customer-link";
 import { CustomSelect } from "@/components/custom-select";
 import { DataTable } from "@/components/data-table";
 import { Drawer } from "@/components/drawer";
+import { Icon } from "@/components/icon";
 import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
@@ -282,6 +284,7 @@ export default function AdminSubscriptionsPage() {
       scope="Operations"
       navItems={adminNav}
       requireRole="admin"
+      dataViewport
       toolbarMeta={
         <span className="badge info">
           {loading ? "加载中..." : `${totalSubscriptions} 条订阅`}
@@ -301,10 +304,11 @@ export default function AdminSubscriptionsPage() {
       {feedback ? <div className={`feedback ${feedback.kind}`}>{feedback.msg}</div> : null}
 
       <Panel
+        className="admin-data-panel"
         title="订阅列表"
         copy="点击订阅行编辑状态、到期时间和节点；「新建订阅」为会员开通一条新订阅。"
       >
-        <div className="admin-filter-bar">
+        <div className="admin-filter-bar admin-compact-filters">
           <label className="field grow-field">
             <span className="fine-print">搜索订阅</span>
             <input className="control" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="用户邮箱、名称或订阅 ID" />
@@ -346,15 +350,22 @@ export default function AdminSubscriptionsPage() {
           <DataTable
             headers={["用户", "套餐 / 周期", "节点", "状态", "倍率", "剩余流量", "到期时间"]}
             rows={subscriptions.map((sub) => [
-              <button
-                key={sub.id}
-                type="button"
-                className="link-button"
-                onClick={() => openEdit(sub)}
-              >
-                <span>{sub.userDisplayName}</span>
-                <span className="muted">{sub.userEmail}</span>
-              </button>,
+              <div className="table-user-actions" key={sub.id}>
+                <CustomerLink
+                  id={sub.userId}
+                  displayName={sub.userDisplayName}
+                  email={sub.userEmail}
+                />
+                <button
+                  type="button"
+                  className="icon-button"
+                  title="编辑订阅"
+                  aria-label={`编辑 ${sub.userDisplayName} 的订阅`}
+                  onClick={() => openEdit(sub)}
+                >
+                  <Icon name="edit" />
+                </button>
+              </div>,
               <div key={`${sub.id}-offer`}><strong>{sub.planName}</strong><span className="muted">{sub.offerName ?? sub.billingPeriod ?? "legacy"}</span></div>,
               sub.nodeLabel,
               <span key={`${sub.id}-st`} className={`badge ${statusTone(sub.status)}`}>

@@ -19,6 +19,7 @@ export function ConsoleShell({
   requireRole,
   toolbarMeta,
   toolbarActions,
+  dataViewport = false,
   children,
 }: {
   title: string;
@@ -28,6 +29,7 @@ export function ConsoleShell({
   requireRole: "admin" | "member";
   toolbarMeta?: ReactNode;
   toolbarActions?: ReactNode;
+  dataViewport?: boolean;
   children: ReactNode;
 }) {
   const { session, loading, logout } = useAuth();
@@ -56,7 +58,7 @@ export function ConsoleShell({
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${dataViewport ? " data-shell" : ""}`}>
       <header className="mobile-console-header">
         <h1>{title}</h1>
         <button
@@ -122,8 +124,12 @@ export function ConsoleShell({
         </div>
       </aside>
 
-      <main className="workspace">
-        <div className="workspace-body">
+      <main
+        className={`workspace${dataViewport ? " workspace-data-viewport" : ""}`}
+      >
+        <div
+          className={`workspace-body${dataViewport ? " data-viewport" : ""}`}
+        >
           {toolbarMeta || toolbarActions ? (
             <div className="page-utility-bar">
               {toolbarMeta ? <div className="topbar-meta">{toolbarMeta}</div> : null}

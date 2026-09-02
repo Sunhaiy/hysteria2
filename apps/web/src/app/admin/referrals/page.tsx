@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
+import { CustomerLink } from "@/components/customer-link";
 import { CustomSelect } from "@/components/custom-select";
 import { DataTable } from "@/components/data-table";
 import { Icon } from "@/components/icon";
@@ -31,8 +32,10 @@ interface ReferralSettings {
 
 interface AdminReferralRecord {
   id: string;
+  inviterId: string;
   inviterEmail: string;
   inviterDisplayName: string;
+  inviteeId: string;
   inviteeEmail: string;
   inviteeDisplayName: string;
   inviteCode: string;
@@ -177,190 +180,200 @@ export default function AdminReferralsPage() {
       scope="Growth"
       navItems={adminNav}
       requireRole="admin"
+      dataViewport
     >
       {error ? <div className="feedback error">{error}</div> : null}
-      <div className="referral-metric-grid">
-        {[
-          {
-            label: "邀请总数",
-            value: String(summary?.total ?? 0),
-            footnote: `${summary?.pending ?? 0} 待成交`,
-            icon: "group",
-          },
-          {
-            label: "奖励成功",
-            value: String(summary?.rewarded ?? 0),
-            footnote: `${summary?.reversed ?? 0} 已追回`,
-            icon: "schedule",
-          },
-          {
-            label: "余额奖励",
-            value: formatMoney(summary?.issuedRewardCents ?? 0),
-            footnote: `已追回 ${formatMoney(summary?.recoveredCents ?? 0)}`,
-            icon: "payments",
-          },
-          {
-            label: "未追回余额",
-            value: formatMoney(summary?.unrecoveredCents ?? 0),
-            footnote: `流量已发 ${formatBytes(summary?.issuedTrafficBytes ?? 0)}`,
-            icon: "warning",
-          },
-        ].map((metric) => (
-          <article className="referral-metric success" key={metric.label}>
-            <div className="referral-metric-head">
-              <span>{metric.label}</span>
-              <Icon name={metric.icon} />
-            </div>
-            <strong>{metric.value}</strong>
-            <small>{metric.footnote}</small>
-          </article>
-        ))}
-      </div>
-
-      <Panel title="活动设置" copy="修改比例只影响此后注册的新邀请关系。">
-        {settings ? (
-          <div className="referral-admin-settings">
-            <div className="setting-toggle-row">
-              <div className="setting-toggle-copy">
-                <strong>邀请活动</strong>
-                <span>关闭后不接受新邀请，已有待成交关系仍可结算。</span>
+      <div className="admin-data-page">
+        <div className="referral-metric-grid admin-data-metrics">
+          {[
+            {
+              label: "邀请总数",
+              value: String(summary?.total ?? 0),
+              footnote: `${summary?.pending ?? 0} 待成交`,
+              icon: "group",
+            },
+            {
+              label: "奖励成功",
+              value: String(summary?.rewarded ?? 0),
+              footnote: `${summary?.reversed ?? 0} 已追回`,
+              icon: "schedule",
+            },
+            {
+              label: "余额奖励",
+              value: formatMoney(summary?.issuedRewardCents ?? 0),
+              footnote: `已追回 ${formatMoney(summary?.recoveredCents ?? 0)}`,
+              icon: "payments",
+            },
+            {
+              label: "未追回余额",
+              value: formatMoney(summary?.unrecoveredCents ?? 0),
+              footnote: `流量已发 ${formatBytes(summary?.issuedTrafficBytes ?? 0)}`,
+              icon: "warning",
+            },
+          ].map((metric) => (
+            <article className="referral-metric success" key={metric.label}>
+              <div className="referral-metric-head">
+                <span>{metric.label}</span>
+                <Icon name={metric.icon} />
               </div>
-              <label className="toggle-switch">
+              <strong>{metric.value}</strong>
+              <small>{metric.footnote}</small>
+            </article>
+          ))}
+        </div>
+
+        <Panel title="活动设置" copy="修改比例只影响此后注册的新邀请关系。">
+          {settings ? (
+            <div className="referral-admin-settings">
+              <div className="setting-toggle-row">
+                <div className="setting-toggle-copy">
+                  <strong>邀请活动</strong>
+                  <span>关闭后不接受新邀请，已有待成交关系仍可结算。</span>
+                </div>
+                <label className="toggle-switch">
+                  <input
+                    type="checkbox"
+                    checked={settings.enabled}
+                    onChange={(event) =>
+                      setSettings({
+                        ...settings,
+                        enabled: event.target.checked,
+                      })
+                    }
+                  />
+                  <span className="toggle-track">
+                    <span />
+                  </span>
+                  <span className="toggle-label">
+                    {settings.enabled ? "开启" : "关闭"}
+                  </span>
+                </label>
+              </div>
+              <label className="field">
+                <span className="fine-print">邀请人返现比例（%）</span>
                 <input
-                  type="checkbox"
-                  checked={settings.enabled}
+                  className="control"
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={0.1}
+                  value={settings.inviterRewardBasisPoints / 100}
                   onChange={(event) =>
-                    setSettings({ ...settings, enabled: event.target.checked })
+                    setSettings({
+                      ...settings,
+                      inviterRewardBasisPoints: Math.round(
+                        Number(event.target.value) * 100,
+                      ),
+                    })
                   }
                 />
-                <span className="toggle-track">
-                  <span />
-                </span>
-                <span className="toggle-label">
-                  {settings.enabled ? "开启" : "关闭"}
-                </span>
+                <small>按好友首次套餐 CDK 对应套餐金额返现。</small>
               </label>
+              <label className="field referral-fixed-reward">
+                <span className="fine-print">被邀请人奖励</span>
+                <input
+                  className="control"
+                  readOnly
+                  value={formatBytes(settings.inviteeRewardBytes)}
+                />
+              </label>
+              <button
+                className="action-button"
+                type="button"
+                disabled={saving}
+                onClick={() => void saveSettings()}
+              >
+                {saving ? "保存中..." : "保存设置"}
+              </button>
             </div>
-            <label className="field">
-              <span className="fine-print">邀请人返现比例（%）</span>
+          ) : null}
+        </Panel>
+
+        <Panel
+          className="referral-records-panel admin-data-panel"
+          title="邀请记录"
+          action={
+            <div className="inline-form compact referral-record-filters admin-compact-filters">
               <input
                 className="control"
-                type="number"
-                min={0}
-                max={100}
-                step={0.1}
-                value={settings.inviterRewardBasisPoints / 100}
+                placeholder="邀请人邮箱"
+                value={inviter}
+                onChange={(event) => setInviter(event.target.value)}
+              />
+              <input
+                className="control"
+                placeholder="被邀请人邮箱"
+                value={invitee}
+                onChange={(event) => setInvitee(event.target.value)}
+              />
+              <input
+                className="control mono"
+                placeholder="邀请码"
+                value={inviteCode}
                 onChange={(event) =>
-                  setSettings({
-                    ...settings,
-                    inviterRewardBasisPoints: Math.round(
-                      Number(event.target.value) * 100,
-                    ),
-                  })
+                  setInviteCode(event.target.value.toUpperCase().slice(0, 8))
                 }
               />
-              <small>按好友首次套餐 CDK 对应套餐金额返现。</small>
-            </label>
-            <label className="field referral-fixed-reward">
-              <span className="fine-print">被邀请人奖励</span>
-              <input
-                className="control"
-                readOnly
-                value={formatBytes(settings.inviteeRewardBytes)}
+              <CustomSelect
+                value={status}
+                onChange={(value) => {
+                  setStatus(value);
+                  setPage(1);
+                }}
+                options={[
+                  { value: "all", label: "全部状态" },
+                  { value: "pending", label: "待成交" },
+                  { value: "rewarded", label: "已奖励" },
+                  { value: "reversed", label: "已追回" },
+                ]}
               />
-            </label>
-            <button
-              className="action-button"
-              type="button"
-              disabled={saving}
-              onClick={() => void saveSettings()}
-            >
-              {saving ? "保存中..." : "保存设置"}
-            </button>
-          </div>
-        ) : null}
-      </Panel>
-
-      <Panel
-        className="referral-records-panel"
-        title="邀请记录"
-        action={
-          <div className="inline-form compact referral-record-filters">
-            <input
-              className="control"
-              placeholder="邀请人邮箱"
-              value={inviter}
-              onChange={(event) => setInviter(event.target.value)}
-            />
-            <input
-              className="control"
-              placeholder="被邀请人邮箱"
-              value={invitee}
-              onChange={(event) => setInvitee(event.target.value)}
-            />
-            <input
-              className="control mono"
-              placeholder="邀请码"
-              value={inviteCode}
-              onChange={(event) =>
-                setInviteCode(event.target.value.toUpperCase().slice(0, 8))
-              }
-            />
-            <CustomSelect
-              value={status}
-              onChange={(value) => {
-                setStatus(value);
-                setPage(1);
-              }}
-              options={[
-                { value: "all", label: "全部状态" },
-                { value: "pending", label: "待成交" },
-                { value: "rewarded", label: "已奖励" },
-                { value: "reversed", label: "已追回" },
-              ]}
-            />
-          </div>
-        }
-      >
-        <DataTable
-          loading={loading}
-          emptyText="没有匹配的邀请记录"
-          headers={[
-            "邀请人",
-            "被邀请人",
-            "邀请码",
-            "状态",
-            "奖励",
-            "订单 / 追回",
-            "注册时间",
-          ]}
-          rows={records.items.map((record) => [
-            <span className="list" key={`${record.id}-inviter`}>
-              <strong>{record.inviterDisplayName}</strong>
-              <small>{record.inviterEmail}</small>
-            </span>,
-            <span className="list" key={`${record.id}-invitee`}>
-              <strong>{record.inviteeDisplayName}</strong>
-              <small>{record.inviteeEmail}</small>
-            </span>,
-            <span className="mono" key={`${record.id}-code`}>
-              {record.inviteCode}
-            </span>,
-            <span
-              className={`badge ${record.status === "rewarded" ? "success" : record.status === "reversed" ? "warn" : "neutral"}`}
-              key={`${record.id}-status`}
-            >
-              {record.status}
-            </span>,
-            `${formatReferralReward(record)} / ${formatBytes(record.inviteeRewardBytes)}`,
-            record.status === "reversed"
-              ? `追回 ${formatMoney(record.recoveredCents)} · 未追回 ${formatMoney(record.unrecoveredCents)}`
-              : (record.qualifyingOrderId ?? "-"),
-            formatDateTime(record.createdAt),
-          ])}
-          pagination={{ ...records, onPageChange: setPage }}
-        />
-      </Panel>
+            </div>
+          }
+        >
+          <DataTable
+            loading={loading}
+            emptyText="没有匹配的邀请记录"
+            headers={[
+              "邀请人",
+              "被邀请人",
+              "邀请码",
+              "状态",
+              "奖励",
+              "订单 / 追回",
+              "注册时间",
+            ]}
+            rows={records.items.map((record) => [
+              <CustomerLink
+                id={record.inviterId}
+                displayName={record.inviterDisplayName}
+                email={record.inviterEmail}
+                key={`${record.id}-inviter`}
+              />,
+              <CustomerLink
+                id={record.inviteeId}
+                displayName={record.inviteeDisplayName}
+                email={record.inviteeEmail}
+                key={`${record.id}-invitee`}
+              />,
+              <span className="mono" key={`${record.id}-code`}>
+                {record.inviteCode}
+              </span>,
+              <span
+                className={`badge ${record.status === "rewarded" ? "success" : record.status === "reversed" ? "warn" : "neutral"}`}
+                key={`${record.id}-status`}
+              >
+                {record.status}
+              </span>,
+              `${formatReferralReward(record)} / ${formatBytes(record.inviteeRewardBytes)}`,
+              record.status === "reversed"
+                ? `追回 ${formatMoney(record.recoveredCents)} · 未追回 ${formatMoney(record.unrecoveredCents)}`
+                : (record.qualifyingOrderId ?? "-"),
+              formatDateTime(record.createdAt),
+            ])}
+            pagination={{ ...records, onPageChange: setPage }}
+          />
+        </Panel>
+      </div>
     </ConsoleShell>
   );
 }

@@ -50,7 +50,10 @@ test("referral page has responsive metrics and a designed empty state", () => {
 });
 
 test("admin referral filters stack below the panel title on mobile", () => {
-  assert.match(adminPage, /className="referral-records-panel"/);
+  assert.match(
+    adminPage,
+    /className="referral-records-panel admin-data-panel"/,
+  );
   assert.match(adminPage, /referral-record-filters/);
   assert.match(
     styles,

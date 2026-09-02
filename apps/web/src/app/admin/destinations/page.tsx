@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
+import { CustomerLink } from "@/components/customer-link";
 import { CustomSelect } from "@/components/custom-select";
 import { DataTable } from "@/components/data-table";
 import { Icon } from "@/components/icon";
@@ -130,6 +131,7 @@ export default function AdminDestinationsPage() {
         scope="Security"
         navItems={adminNav}
         requireRole="admin"
+        dataViewport
       >
         <PageSkeleton variant="table" />
       </ConsoleShell>
@@ -143,6 +145,7 @@ export default function AdminDestinationsPage() {
       scope="Security"
       navItems={adminNav}
       requireRole="admin"
+      dataViewport
       toolbarMeta={
         <span className={`badge ${status?.enabled ? "success" : "warn"}`}>
           {status?.enabled ? "遥测完整" : "遥测未就绪"}
@@ -161,8 +164,9 @@ export default function AdminDestinationsPage() {
     >
       {error ? <div className="feedback error">{error}</div> : null}
 
-      <div className="page-stack">
+      <div className="page-stack admin-data-page">
         <Panel
+          className="admin-data-panel admin-data-panel-secondary"
           title="节点遥测状态"
           copy="只有所有活动节点都在两分钟内成功上报时，访问记录查询才会返回数据。"
         >
@@ -197,11 +201,12 @@ export default function AdminDestinationsPage() {
         </Panel>
 
         <Panel
+          className="admin-data-panel"
           title="目的地记录"
           copy={`当前筛选共 ${total} 条分钟级聚合记录，不采集 URL 路径或通信内容。`}
         >
           <form
-            className="admin-filter-bar destination-filter-bar"
+            className="admin-filter-bar destination-filter-bar admin-compact-filters"
             onSubmit={submitFilters}
           >
             <label className="field grow-field">
@@ -282,10 +287,12 @@ export default function AdminDestinationsPage() {
                 headers={["时间", "会员", "目标", "连接", "节点", "协议"]}
                 rows={visits.map((visit) => [
                   formatDateTime(visit.bucketStart),
-                  <span className="list" key={`${visit.id}-user`}>
-                    <strong>{visit.userDisplayName}</strong>
-                    <small className="muted">{visit.userEmail}</small>
-                  </span>,
+                  <CustomerLink
+                    id={visit.userId}
+                    displayName={visit.userDisplayName}
+                    email={visit.userEmail}
+                    key={`${visit.id}-user`}
+                  />,
                   <span className="mono" key={`${visit.id}-target`}>
                     {visit.target}:{visit.port}
                   </span>,

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { CustomSelect } from "@/components/custom-select";
@@ -696,6 +697,7 @@ export default function NodesPage() {
       scope="Node Ops"
       navItems={adminNav}
       requireRole="admin"
+      dataViewport
       toolbarMeta={
         <span className="badge info">
           {data.servers.length} 台服务器 · {data.nodes.length} 个端点
@@ -733,8 +735,8 @@ export default function NodesPage() {
     >
       {error ? <div className="feedback error">{error}</div> : null}
       {feedback ? <div className="feedback success">{feedback}</div> : null}
-      <div className="page-stack">
-        <div className="metric-grid">
+      <div className="page-stack admin-data-page">
+        <div className="metric-grid admin-data-metrics">
           <MetricCard
             label="物理服务器"
             value={String(data.servers.length)}
@@ -759,6 +761,7 @@ export default function NodesPage() {
         {loading && data.servers.length === 0 ? (
           <PageSkeleton variant="detail" />
         ) : null}
+        <div className="admin-data-scroll">
         {data.servers.map((server) => (
           <Panel
             key={server.id}
@@ -770,12 +773,14 @@ export default function NodesPage() {
             }
             action={
               <div className="toolbar-actions">
-                <span
+                <Link
                   className={`badge ${server.active ? "success" : "neutral"}`}
+                  href="/admin/operations?tab=presence"
+                  title="查看实时在线用户"
                 >
                   {server.healthyEndpoints} / {server.endpoints.length} 健康 ·{" "}
                   {server.onlineUsers} 在线
-                </span>
+                </Link>
                 {server.id !== "unassigned" ? (
                   <>
                     <button
@@ -1078,6 +1083,7 @@ export default function NodesPage() {
             </div>
           </Panel>
         ))}
+        </div>
       </div>
       <Drawer
         open={drawer === "server"}

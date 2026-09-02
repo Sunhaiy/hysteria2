@@ -217,6 +217,7 @@ export default function AdminBackupsPage() {
       scope="System"
       navItems={adminNav}
       requireRole="admin"
+      dataViewport
       toolbarMeta={
         overview ? (
           <span
@@ -242,7 +243,7 @@ export default function AdminBackupsPage() {
       {!overview ? (
         <PageSkeleton variant="table" />
       ) : (
-        <div className="page-stack">
+        <div className="page-stack admin-data-page">
           <div className="backup-status-band">
             <div>
               <span className="fine-print">自动备份</span>
@@ -265,6 +266,7 @@ export default function AdminBackupsPage() {
           </div>
 
           <Panel
+            className="admin-data-panel"
             title="备份记录"
             copy="手动备份和导入文件不会被每日保留策略自动删除。"
             action={

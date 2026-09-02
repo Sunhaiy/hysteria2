@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
+import { CustomerLink } from "@/components/customer-link";
 import { CustomSelect } from "@/components/custom-select";
 import { DataTable } from "@/components/data-table";
 import { Drawer } from "@/components/drawer";
@@ -148,13 +149,15 @@ export default function AdminTicketsPage() {
       scope="Support"
       navItems={adminNav}
       requireRole="admin"
+      dataViewport
       toolbarMeta={<span className="badge info">{data.total} 个工单</span>}
     >
       {error ? <div className="feedback error">{error}</div> : null}
       <Panel
+        className="admin-data-panel"
         title="工单队列"
         action={
-          <div className="inline-form compact">
+          <div className="inline-form compact admin-compact-filters">
             <input
               className="control"
               placeholder="编号、主题或用户邮箱"
@@ -208,10 +211,12 @@ export default function AdminTicketsPage() {
             <span className="mono" key={`${ticket.id}-number`}>
               #{ticket.number}
             </span>,
-            <span className="list" key={`${ticket.id}-user`}>
-              <strong>{ticket.user.displayName}</strong>
-              <small>{ticket.user.email}</small>
-            </span>,
+            <CustomerLink
+              id={ticket.user.id}
+              displayName={ticket.user.displayName}
+              email={ticket.user.email}
+              key={`${ticket.id}-user`}
+            />,
             <span className="list" key={`${ticket.id}-subject`}>
               <strong>{ticket.subject}</strong>
               <small>{ticket.lastMessage?.body ?? "-"}</small>
@@ -295,9 +300,11 @@ export default function AdminTicketsPage() {
         {detail ? (
           <div className="page-stack">
             <div className="toolbar-actions">
-              <span className="badge info">
-                {detail.ticket.user.displayName} · {detail.ticket.user.email}
-              </span>
+              <CustomerLink
+                id={detail.ticket.user.id}
+                displayName={detail.ticket.user.displayName}
+                email={detail.ticket.user.email}
+              />
               <span className="badge neutral">
                 {ticketStatusName[detail.ticket.status]}
               </span>

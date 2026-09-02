@@ -259,6 +259,7 @@ export default function AdminPlansPage() {
       scope="Operations"
       navItems={adminNav}
       requireRole="admin"
+      dataViewport
       toolbarMeta={
         <span className="badge info">
           {loading ? "加载中..." : `${plans.length} 个套餐`}
@@ -278,6 +279,7 @@ export default function AdminPlansPage() {
       {feedback ? <div className={`feedback ${feedback.kind}`}>{feedback.msg}</div> : null}
 
       <Panel
+        className="admin-data-panel"
         title="套餐列表"
         copy="点击套餐行编辑详情和节点绑定；绑定节点后订阅用户才能连接。"
       >

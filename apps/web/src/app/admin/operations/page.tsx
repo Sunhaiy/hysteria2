@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { EChartsOption } from "echarts";
 import { ConsoleShell } from "@/components/console-shell";
+import { CustomerLink } from "@/components/customer-link";
 import { DataTable } from "@/components/data-table";
 import { EChart } from "@/components/echart";
 import { Icon } from "@/components/icon";
@@ -67,6 +68,7 @@ type Ranking = { id: string; name: string; bytes: number };
 type TrafficDetail = {
   id: string;
   bucketStart: string;
+  userId: string;
   userEmail: string;
   nodeLabel: string;
   physicalBytes: number;
@@ -334,6 +336,7 @@ export default function OperationsPage() {
       scope="Operations"
       navItems={adminNav}
       requireRole="admin"
+      dataViewport={tab === "presence" || tab === "alerts"}
       toolbarMeta={<span className="badge info">在线数据 45 秒过期</span>}
       toolbarActions={
         <button
@@ -348,7 +351,7 @@ export default function OperationsPage() {
       }
     >
       {error ? <div className="feedback error">{error}</div> : null}
-      <div className="page-stack">
+      <div className="page-stack admin-data-page">
         <div className="segmented-control" aria-label="运营视图">
           {(
             [
@@ -434,10 +437,11 @@ export default function OperationsPage() {
         ) : null}
         {tab === "presence" ? (
           <Panel
+            className="admin-data-panel"
             title="实时在线"
             action={
               <input
-                className="control"
+                className="control admin-table-search"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="搜索账号"
@@ -459,10 +463,12 @@ export default function OperationsPage() {
                 "操作",
               ]}
               rows={presence.items.map((item) => [
-                <span className="list" key={item.id}>
-                  <strong>{item.userDisplayName}</strong>
-                  <small>{item.userEmail}</small>
-                </span>,
+                <CustomerLink
+                  id={item.userId}
+                  displayName={item.userDisplayName}
+                  email={item.userEmail}
+                  key={item.id}
+                />,
                 item.serverName,
                 `${item.protocol === "vless_reality" ? "VLESS + Reality" : "Hysteria2"} · ${item.nodeLabel}`,
                 item.concurrentClients,
@@ -591,7 +597,11 @@ export default function OperationsPage() {
                 ]}
                 rows={trafficDetails.items.map((item) => [
                   formatDateTime(item.bucketStart),
-                  item.userEmail,
+                  <CustomerLink
+                    id={item.userId}
+                    email={item.userEmail}
+                    key={`${item.id}-user`}
+                  />,
                   item.nodeLabel,
                   formatBytes(item.physicalBytes),
                   formatBytes(item.accountedBytes),
@@ -609,7 +619,7 @@ export default function OperationsPage() {
           </>
         ) : null}
         {tab === "alerts" ? (
-          <Panel title="告警">
+          <Panel className="admin-data-panel" title="告警">
             <DataTable
               loading={loading}
               error={error}

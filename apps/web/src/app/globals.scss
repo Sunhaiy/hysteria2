@@ -1211,6 +1211,227 @@ details.field-section .field-section-body {
   border-bottom: 0;
 }
 
+.admin-customer-link {
+  display: grid;
+  width: fit-content;
+  max-width: 100%;
+  gap: 2px;
+  color: var(--text-primary);
+}
+
+.admin-customer-link strong,
+.admin-customer-link small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-customer-link small {
+  color: var(--text-muted);
+  font-size: var(--text-tiny);
+}
+
+.admin-customer-link:hover strong {
+  color: var(--accent-400);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.table-user-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.table-user-actions .admin-customer-link {
+  min-width: 0;
+}
+
+.admin-table-search {
+  width: min(240px, 32vw);
+}
+
+@media (min-width: 921px) {
+  .app-shell.data-shell,
+  .workspace-data-viewport {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .workspace-body.data-viewport {
+    height: 100%;
+    min-height: 0;
+    padding: 14px 20px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow: hidden;
+  }
+
+  .data-viewport > .page-utility-bar {
+    min-height: 34px;
+    flex: 0 0 auto;
+  }
+
+  .data-viewport > .feedback,
+  .data-viewport > .toast,
+  .data-viewport > .admin-data-metrics,
+  .data-viewport .admin-data-page > :not(.admin-data-panel) {
+    flex: 0 0 auto;
+  }
+
+  .data-viewport .admin-data-page {
+    display: flex;
+    flex: 1 1 0;
+    min-height: 0;
+    flex-direction: column;
+    gap: 12px;
+    overflow: hidden;
+  }
+
+  .data-viewport .admin-data-scroll {
+    display: grid;
+    flex: 1 1 0;
+    min-height: 0;
+    align-content: start;
+    gap: 12px;
+    padding-right: 3px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+
+  .data-viewport > .admin-data-panel,
+  .data-viewport .admin-data-page > .admin-data-panel {
+    display: flex;
+    flex: 1 1 0;
+    min-height: 0;
+    flex-direction: column;
+  }
+
+  .data-viewport .admin-data-panel.admin-data-panel-secondary {
+    flex: 0 1 210px;
+  }
+
+  .data-viewport .admin-data-panel > .panel-header {
+    flex: 0 0 auto;
+    padding: 11px 14px;
+  }
+
+  .data-viewport .admin-data-panel > .panel-body {
+    display: flex;
+    flex: 1 1 0;
+    min-height: 0;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 14px;
+    overflow: hidden;
+  }
+
+  .data-viewport .admin-data-panel .table-card {
+    display: flex;
+    flex: 1 1 0;
+    min-height: 0;
+    flex-direction: column;
+  }
+
+  .data-viewport .admin-data-panel .table-wrap {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: auto;
+    scrollbar-width: thin;
+  }
+
+  .data-viewport .admin-data-panel .table-state,
+  .data-viewport .admin-data-panel .table-loading {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .data-viewport .admin-data-panel .data-table th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--bg-panel);
+    box-shadow: 0 1px 0 var(--border-default);
+  }
+
+  .data-viewport .admin-data-panel .table-pagination {
+    flex: 0 0 auto;
+  }
+
+  .data-viewport .admin-data-metrics .metric-card,
+  .data-viewport .admin-data-metrics .referral-metric {
+    min-height: 0;
+    padding: 12px 14px;
+    gap: 5px;
+  }
+
+  .data-viewport .metric-grid.admin-data-metrics,
+  .data-viewport .referral-metric-grid.admin-data-metrics {
+    grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  }
+
+  .data-viewport .admin-data-metrics .metric-value {
+    font-size: 21px;
+  }
+
+  .data-viewport .admin-compact-filters {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    margin: 0 0 2px;
+    align-items: end;
+    flex-wrap: nowrap;
+    gap: 8px;
+    overflow: visible;
+  }
+
+  .data-viewport .admin-compact-filters > .field,
+  .data-viewport .admin-compact-filters > .control,
+  .data-viewport .admin-compact-filters > .custom-select {
+    flex: 1 1 112px;
+    min-width: 84px;
+  }
+
+  .data-viewport .admin-compact-filters > .field:first-child,
+  .data-viewport .admin-compact-filters > .grow-field {
+    flex: 1.6 1 200px;
+    min-width: 160px;
+  }
+
+  .data-viewport .admin-compact-filters .control,
+  .data-viewport .admin-compact-filters .custom-select-trigger {
+    min-height: 36px;
+  }
+
+  .data-viewport .admin-compact-filters .fine-print {
+    white-space: nowrap;
+  }
+
+  .data-viewport .admin-compact-filters .custom-select-trigger span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .data-viewport .referral-records-panel > .panel-header {
+    align-items: end;
+  }
+
+  .data-viewport .referral-records-panel > .panel-header > .admin-compact-filters {
+    width: min(650px, 70%);
+  }
+}
+
+@media (min-width: 921px) and (max-width: 1180px) {
+  .data-viewport .admin-compact-filters {
+    flex-wrap: wrap;
+  }
+}
+
 .mono {
   font-family: var(--font-mono);
 }

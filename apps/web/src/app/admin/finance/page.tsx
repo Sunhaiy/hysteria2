@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { EChartsOption } from "echarts";
 import { ConsoleShell } from "@/components/console-shell";
+import { CustomerLink } from "@/components/customer-link";
 import { DataTable } from "@/components/data-table";
 import { EChart } from "@/components/echart";
 import { Icon } from "@/components/icon";
@@ -26,6 +27,7 @@ type Summary = {
 };
 type Order = {
   id: string;
+  userId: string;
   userEmail: string;
   productName?: string | null;
   status: string;
@@ -36,6 +38,7 @@ type Order = {
 };
 type Ledger = {
   id: string;
+  userId: string;
   userEmail: string;
   actorEmail?: string | null;
   kind: string;
@@ -47,6 +50,7 @@ type Ledger = {
 type Refund = {
   id: string;
   orderId: string;
+  userId: string;
   userEmail: string;
   method: string;
   status: string;
@@ -310,6 +314,7 @@ export default function FinancePage() {
       scope="Finance"
       navItems={adminNav}
       requireRole="admin"
+      dataViewport={view !== "overview"}
       toolbarMeta={<span className="badge info">CNY · Asia/Shanghai</span>}
       toolbarActions={
         view === "orders" || view === "ledger" ? (
@@ -330,7 +335,7 @@ export default function FinancePage() {
       }
     >
       {error ? <div className="feedback error">{error}</div> : null}
-      <div className="page-stack">
+      <div className="page-stack admin-data-page">
         <Panel title="查询区间">
           <div className="inline-form">
             <label className="field">
@@ -517,7 +522,7 @@ export default function FinancePage() {
           </>
         ) : null}
         {view === "orders" ? (
-          <Panel title="订单">
+          <Panel className="admin-data-panel" title="订单">
             <DataTable
               loading={loading}
               error={error}
@@ -527,7 +532,11 @@ export default function FinancePage() {
               headers={["时间", "客户", "商品", "来源", "成交", "退款", "状态"]}
               rows={orders.items.map((order) => [
                 formatDateTime(order.createdAt),
-                order.userEmail,
+                <CustomerLink
+                  id={order.userId}
+                  email={order.userEmail}
+                  key={`${order.id}-user`}
+                />,
                 order.productName ?? order.id,
                 order.source,
                 formatMoney(order.amountCents),
@@ -538,7 +547,7 @@ export default function FinancePage() {
           </Panel>
         ) : null}
         {view === "ledger" ? (
-          <Panel title="钱包流水">
+          <Panel className="admin-data-panel" title="钱包流水">
             <DataTable
               loading={loading}
               error={error}
@@ -556,7 +565,11 @@ export default function FinancePage() {
               ]}
               rows={ledger.items.map((entry) => [
                 formatDateTime(entry.createdAt),
-                entry.userEmail,
+                <CustomerLink
+                  id={entry.userId}
+                  email={entry.userEmail}
+                  key={`${entry.id}-user`}
+                />,
                 entry.kind,
                 formatMoney(entry.amountCents),
                 entry.beforeBalanceCents == null
@@ -571,7 +584,7 @@ export default function FinancePage() {
           </Panel>
         ) : null}
         {view === "refunds" ? (
-          <Panel title="退款与冲正">
+          <Panel className="admin-data-panel" title="退款与冲正">
             <DataTable
               loading={loading}
               error={error}
@@ -581,7 +594,11 @@ export default function FinancePage() {
               headers={["时间", "客户", "订单", "方式", "金额", "原因", "状态"]}
               rows={refunds.items.map((refund) => [
                 formatDateTime(refund.createdAt),
-                refund.userEmail,
+                <CustomerLink
+                  id={refund.userId}
+                  email={refund.userEmail}
+                  key={`${refund.id}-user`}
+                />,
                 refund.orderId,
                 refund.method,
                 formatMoney(refund.amountCents),
@@ -592,7 +609,7 @@ export default function FinancePage() {
           </Panel>
         ) : null}
         {view === "costs" ? (
-          <Panel title="节点成本">
+          <Panel className="admin-data-panel" title="节点成本">
             <DataTable
               loading={loading}
               error={error}

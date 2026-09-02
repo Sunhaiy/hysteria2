@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
+import { CustomerLink } from "@/components/customer-link";
 import { CustomSelect } from "@/components/custom-select";
 import { DataTable } from "@/components/data-table";
 import { Icon } from "@/components/icon";
@@ -130,6 +130,7 @@ export default function CustomersPage() {
       scope="CRM"
       navItems={adminNav}
       requireRole="admin"
+      dataViewport
       toolbarMeta={<span className="badge info">{data.total} 位客户</span>}
       toolbarActions={
         <button
@@ -142,15 +143,19 @@ export default function CustomersPage() {
       }
     >
       {error ? <div className="feedback error">{error}</div> : null}
-      <div className="page-stack">
-        <div className="metric-grid">
+      <div className="page-stack admin-data-page">
+        <div className="metric-grid admin-data-metrics">
           <MetricCard label="客户总数" value={String(data.total)} footnote="仅会员账户" />
           <MetricCard label="正常客户" value={String(active)} footnote="当前页" />
           <MetricCard label="额度关注" value={String(lowQuota)} footnote="当前页低额度或已耗尽" />
           <MetricCard label="钱包负债" value={formatMoney(wallet)} footnote="当前页余额合计" />
         </div>
-        <Panel title="客户列表" copy="点击客户进入 360 详情页。">
-          <div className="filter-grid">
+        <Panel
+          className="admin-data-panel"
+          title="客户列表"
+          copy="点击客户进入 360 详情页。"
+        >
+          <div className="filter-grid admin-compact-filters">
             <label className="field">
               <span className="fine-print">搜索</span>
               <input
@@ -262,10 +267,12 @@ export default function CustomersPage() {
               "最近接入",
             ]}
             rows={data.items.map((customer) => [
-                <Link className="link-button" href={`/admin/customers/${customer.id}`} key={customer.id}>
-                  <strong>{customer.displayName}</strong>
-                  <span>{customer.email}</span>
-                </Link>,
+                <CustomerLink
+                  id={customer.id}
+                  displayName={customer.displayName}
+                  email={customer.email}
+                  key={customer.id}
+                />,
                 <span className={`badge ${customer.status === "active" ? "success" : "danger"}`} key={`${customer.id}-status`}>
                   {statusLabel[customer.status]}
                 </span>,

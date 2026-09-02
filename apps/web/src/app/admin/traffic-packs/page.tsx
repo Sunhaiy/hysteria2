@@ -203,6 +203,7 @@ export default function AdminTrafficPacksPage() {
       scope="Operations"
       navItems={adminNav}
       requireRole="admin"
+      dataViewport
       toolbarMeta={
         <span className="badge info">
           {loading ? "加载中..." : `${products.length} 个商品`}
@@ -229,6 +230,7 @@ export default function AdminTrafficPacksPage() {
       ) : null}
 
       <Panel
+        className="admin-data-panel"
         title="商品列表"
         copy="流量包不会改变会员当前套餐的节点、速率或订阅周期。"
       >
