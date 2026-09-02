@@ -1,4 +1,10 @@
-import { BillingPeriod, CatalogProductKind, Prisma } from '@prisma/client';
+import {
+  BillingPeriod,
+  CatalogProductKind,
+  CatalogProductSeries,
+  Prisma,
+  QuotaCadence,
+} from '@prisma/client';
 
 export const catalogOfferSnapshotInclude =
   Prisma.validator<Prisma.CatalogOfferInclude>()({
@@ -16,7 +22,7 @@ type SnapshotOffer = Prisma.CatalogOfferGetPayload<{
 }>;
 
 export interface CatalogOfferSnapshot {
-  version: 1;
+  version: 1 | 2;
   offerId: string;
   offerSlug: string;
   offerName: string;
@@ -24,6 +30,8 @@ export interface CatalogOfferSnapshot {
   productSlug: string;
   productName: string;
   productKind: CatalogProductKind;
+  productSeries?: CatalogProductSeries;
+  quotaCadence?: QuotaCadence;
   billingPeriod: BillingPeriod;
   intervalMonths: number | null;
   legacyDurationDays: number | null;
@@ -40,17 +48,31 @@ export interface CatalogOfferSnapshot {
   legacyPlanId: string | null;
   legacyPlanOfferId: string | null;
   legacyTrafficPackProductId: string | null;
+  purchaseMode?: 'initial' | 'upgrade';
+  upgradeFromGrantId?: string | null;
+  upgradeFromProductId?: string | null;
+  upgradeFromPriceCents?: number | null;
+  resetAnchorAt?: string | null;
+}
+
+export interface CatalogOfferPurchaseContext {
+  purchaseMode: 'initial' | 'upgrade';
+  upgradeFromGrantId: string | null;
+  upgradeFromProductId: string | null;
+  upgradeFromPriceCents: number | null;
+  resetAnchorAt: string | null;
 }
 
 export function snapshotCatalogOffer(
   offer: SnapshotOffer,
+  purchaseContext?: CatalogOfferPurchaseContext,
 ): CatalogOfferSnapshot {
   const profile = offer.product.accessProfile;
   if (!offer.product.accessProfileId || !profile) {
     throw new Error('Catalog offer access profile is missing');
   }
   return {
-    version: 1,
+    version: 2,
     offerId: offer.id,
     offerSlug: offer.slug,
     offerName: offer.name,
@@ -58,6 +80,8 @@ export function snapshotCatalogOffer(
     productSlug: offer.product.slug,
     productName: offer.product.name,
     productKind: offer.product.kind,
+    productSeries: offer.product.series,
+    quotaCadence: offer.product.quotaCadence,
     billingPeriod: offer.billingPeriod,
     intervalMonths: offer.intervalMonths,
     legacyDurationDays:
@@ -80,6 +104,11 @@ export function snapshotCatalogOffer(
     legacyPlanId: offer.product.legacyPlanId,
     legacyPlanOfferId: offer.legacyPlanOfferId,
     legacyTrafficPackProductId: offer.product.legacyTrafficPackProductId,
+    purchaseMode: purchaseContext?.purchaseMode ?? 'initial',
+    upgradeFromGrantId: purchaseContext?.upgradeFromGrantId ?? null,
+    upgradeFromProductId: purchaseContext?.upgradeFromProductId ?? null,
+    upgradeFromPriceCents: purchaseContext?.upgradeFromPriceCents ?? null,
+    resetAnchorAt: purchaseContext?.resetAnchorAt ?? null,
   };
 }
 
@@ -89,7 +118,7 @@ export function parseCatalogOfferSnapshot(
   if (!value || Array.isArray(value) || typeof value !== 'object') return null;
   const candidate = value as Record<string, unknown>;
   if (
-    candidate.version !== 1 ||
+    (candidate.version !== 1 && candidate.version !== 2) ||
     typeof candidate.offerId !== 'string' ||
     typeof candidate.productId !== 'string' ||
     typeof candidate.accessProfileId !== 'string' ||

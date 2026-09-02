@@ -1278,7 +1278,9 @@ details.field-section .field-section-body {
   .data-viewport > .feedback,
   .data-viewport > .toast,
   .data-viewport > .admin-data-metrics,
-  .data-viewport .admin-data-page > :not(.admin-data-panel) {
+  .data-viewport
+    .admin-data-page
+    > :not(.admin-data-panel):not(.admin-data-scroll) {
     flex: 0 0 auto;
   }
 
@@ -1295,6 +1297,7 @@ details.field-section .field-section-body {
     display: grid;
     flex: 1 1 0;
     min-height: 0;
+    grid-auto-rows: max-content;
     align-content: start;
     gap: 12px;
     padding-right: 3px;
@@ -7425,7 +7428,7 @@ select.control {
 /* Member analytics dashboard */
 .portal-analytics {
   display: grid;
-  gap: 16px;
+  gap: 12px;
 }
 
 .portal-alerts {
@@ -7495,26 +7498,17 @@ select.control {
   grid-template-columns: minmax(320px, 2fr) repeat(3, minmax(0, 1fr));
 }
 
-.portal-plan-summary {
-  align-content: center;
-  min-width: 0;
-}
-
-.portal-plan-summary .metric-value {
-  display: -webkit-box;
-  overflow: hidden;
-  line-height: 1.15;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+.portal-primary-metrics > .metric-card,
+.portal-primary-metrics > .portal-quota-summary {
+  min-height: 108px;
 }
 
 .portal-quota-summary {
   display: grid;
   min-width: 0;
   align-content: center;
-  gap: 12px;
-  padding: 16px;
+  gap: 8px;
+  padding: 14px;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   background: var(--surface-overlay), var(--bg-panel);
@@ -7559,13 +7553,81 @@ select.control {
   font-size: var(--text-tiny);
 }
 
+.portal-entitlement-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+  gap: 12px;
+}
+
+.portal-entitlement-row > .panel,
+.portal-dashboard-main > .panel {
+  min-width: 0;
+}
+
+.portal-entitlement-row .panel-header,
+.portal-dashboard-main .panel-header {
+  min-height: 48px;
+  padding: 9px 14px;
+}
+
+.portal-entitlement-row .panel-header > .split,
+.portal-dashboard-main .panel-header > .split {
+  gap: 3px;
+}
+
+.portal-entitlement-row .panel-copy,
+.portal-dashboard-main .panel-copy {
+  font-size: var(--text-tiny);
+}
+
+.portal-entitlement-row .panel-body {
+  min-height: 116px;
+  padding: 10px 12px;
+}
+
+.portal-plan-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.portal-plan-facts > div {
+  display: grid;
+  min-width: 0;
+  min-height: 46px;
+  align-content: center;
+  gap: 3px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 7px;
+  background: var(--bg-panel-alt);
+}
+
+.portal-plan-facts span {
+  color: var(--text-muted);
+  font-size: var(--text-tiny);
+}
+
+.portal-plan-facts strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .portal-dashboard-main {
-  grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.85fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.portal-dashboard-main .panel-body {
+  padding: 8px 12px 10px;
 }
 
 .portal-pack-summary-panel .panel-body {
   align-content: start;
-  min-height: 278px;
+  min-height: 116px;
 }
 
 .portal-pack-total {
@@ -7593,7 +7655,7 @@ select.control {
 .portal-pack-summary-list {
   display: grid;
   gap: 8px;
-  max-height: 166px;
+  max-height: 116px;
   overflow-y: auto;
   scrollbar-color: var(--border-strong) transparent;
   scrollbar-width: thin;
@@ -7610,13 +7672,21 @@ select.control {
 }
 
 .portal-pack-summary-panel .portal-empty-inline {
-  min-height: 246px;
+  min-height: 94px;
   margin-top: 0;
   display: grid;
   place-items: center;
 }
 
-@media (max-width: 1200px) {
+.portal-chart-empty.compact {
+  display: grid;
+  min-height: 210px;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: var(--text-tiny);
+}
+
+@media (max-width: 1080px) {
   .portal-primary-metrics {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -7627,6 +7697,7 @@ select.control {
 }
 
 @media (max-width: 920px) {
+  .portal-entitlement-row,
   .portal-dashboard-main {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -7649,6 +7720,10 @@ select.control {
     align-items: flex-start;
     flex-direction: column;
     gap: 7px;
+  }
+
+  .portal-plan-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -7891,14 +7966,45 @@ select.control {
   color: #06110a;
 }
 
+.ultra-shop-section {
+  display: grid;
+  gap: 14px;
+  padding-top: 4px;
+}
+
+.ultra-shop-section .catalog-product-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ultra-plan-card {
+  min-height: 390px;
+  background: var(--surface-overlay), var(--bg-panel);
+}
+
+.ultra-purchase-notice {
+  margin-top: 10px;
+}
+
+.ultra-notice-editor textarea {
+  min-height: 112px;
+}
+
 @media (max-width: 1200px) {
   .catalog-product-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ultra-shop-section .catalog-product-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 760px) {
   .catalog-product-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ultra-shop-section .catalog-product-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }

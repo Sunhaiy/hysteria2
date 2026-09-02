@@ -91,10 +91,16 @@ test("catalog uses one product quota while offers only edit prices and links", a
     styles,
     /\.offer-editor-store\s*\{[^}]*grid-column:\s*2\s*\/\s*-1/s,
   );
+  assert.match(catalog, /三档共用下方节点/);
+  assert.match(catalog, /Ultra 专属/);
+  assert.match(catalog, /速率固定为上下行 300 Mbps，倍率固定为 1x/);
 });
 
 test("node operations separate access and runtime service controls", async () => {
-  const nodes = await source("app/admin/nodes/page.tsx");
+  const [nodes, styles] = await Promise.all([
+    source("app/admin/nodes/page.tsx"),
+    source("app/globals.scss"),
+  ]);
 
   assert.match(nodes, /新增服务器/);
   assert.match(nodes, /新增节点/);
@@ -117,6 +123,15 @@ test("node operations separate access and runtime service controls", async () =>
   assert.match(nodes, /编辑节点/);
   assert.match(nodes, /节点管理地址/);
   assert.doesNotMatch(nodes, /Agent/);
+  assert.match(nodes, /className="admin-data-scroll"/);
+  assert.match(
+    styles,
+    /> :not\(\.admin-data-panel\):not\(\.admin-data-scroll\)/,
+  );
+  assert.match(
+    styles,
+    /\.data-viewport \.admin-data-scroll\s*\{[^}]*grid-auto-rows:\s*max-content/s,
+  );
 });
 
 test("Hysteria2 nodes expose bounded UDP port hopping controls", async () => {

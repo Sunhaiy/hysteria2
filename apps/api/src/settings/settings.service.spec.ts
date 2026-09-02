@@ -185,6 +185,12 @@ describe('SettingsService cache', () => {
             key: 'portal.purchaseNotice.content',
             value: '套餐流量按月重置。\n请确认购买周期。',
           },
+          { key: 'portal.ultraPurchaseNotice.enabled', value: 'true' },
+          { key: 'portal.ultraPurchaseNotice.title', value: 'Ultra 购买须知' },
+          {
+            key: 'portal.ultraPurchaseNotice.content',
+            value: '永久有效，每月按购买日重置。',
+          },
         ]),
       },
     };
@@ -203,6 +209,11 @@ describe('SettingsService cache', () => {
         enabled: true,
         title: '下单前请确认',
         content: '套餐流量按月重置。\n请确认购买周期。',
+      },
+      ultraPurchaseNotice: {
+        enabled: true,
+        title: 'Ultra 购买须知',
+        content: '永久有效，每月按购买日重置。',
       },
     });
   });

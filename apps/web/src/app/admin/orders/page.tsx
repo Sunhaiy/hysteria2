@@ -21,7 +21,12 @@ type View = "orders" | "attempts";
 type OrderRecord = {
   id: string;
   user: { id: string; email: string; displayName: string };
-  product: { id: string | null; name: string; kind: "plan" | "traffic_pack" };
+  product: {
+    id: string | null;
+    name: string;
+    kind: "plan" | "traffic_pack";
+    series?: "standard" | "ultra";
+  };
   offer: { id: string; name: string; billingPeriod: string } | null;
   source: string;
   fulfillmentStatus: "pending" | "applied" | "void";
@@ -60,7 +65,12 @@ type PaymentAttempt = {
   createdAt: string;
   updatedAt: string;
   user: { id: string; email: string; displayName: string };
-  product: { id: string; name: string; kind: "plan" | "traffic_pack" };
+  product: {
+    id: string;
+    name: string;
+    kind: "plan" | "traffic_pack";
+    series?: "standard" | "ultra";
+  };
   offer: { id: string; name: string; billingPeriod: string };
 };
 
@@ -71,6 +81,18 @@ type OrderDetail = OrderRecord & {
   validityDays: number | null;
   trafficBytes: number | null;
   entitlementExpiresAt: string | null;
+  quotaCadence: "monthly_reset" | "one_time" | null;
+  resetAnchorAt: string | null;
+  purchaseMode: "initial" | "upgrade";
+  upgradeFromProductId: string | null;
+  upgradeFromPriceCents: number | null;
+  entitlementGrant: {
+    id: string;
+    productId: string;
+    status: string;
+    activeSlot: string | null;
+    resetAnchorAt: string | null;
+  } | null;
   speedUpMbps: number | null;
   speedDownMbps: number | null;
   trafficMultiplier: number | null;
@@ -923,6 +945,14 @@ export default function AdminOrdersPage() {
               <span className="muted">商品</span>
               <strong>{detail.product.name}</strong>
             </div>
+            {detail.product.series === "ultra" ? (
+              <div className="list-row">
+                <span className="muted">购买方式</span>
+                <strong>
+                  {detail.purchaseMode === "upgrade" ? "补差价升级" : "首次购买"}
+                </strong>
+              </div>
+            ) : null}
             <div className="list-row">
               <span className="muted">订单金额</span>
               <strong>{formatMoney(detail.amountCents)}</strong>
@@ -937,6 +967,35 @@ export default function AdminOrdersPage() {
               <div className="list-row">
                 <span className="muted">权益到期</span>
                 <strong>{formatDateTime(detail.entitlementExpiresAt)}</strong>
+              </div>
+            ) : null}
+            {detail.quotaCadence === "monthly_reset" ? (
+              <div className="list-row">
+                <span className="muted">额度周期</span>
+                <strong>按购买日每月重置</strong>
+              </div>
+            ) : null}
+            {detail.resetAnchorAt ? (
+              <div className="list-row">
+                <span className="muted">重置锚点</span>
+                <strong>{formatDateTime(detail.resetAnchorAt)}</strong>
+              </div>
+            ) : null}
+            {detail.upgradeFromProductId ? (
+              <div className="list-row">
+                <span className="muted">升级来源</span>
+                <strong className="mono">
+                  {detail.upgradeFromProductId} · 原价
+                  {formatMoney(detail.upgradeFromPriceCents ?? 0)}
+                </strong>
+              </div>
+            ) : null}
+            {detail.entitlementGrant ? (
+              <div className="list-row">
+                <span className="muted">关联权益</span>
+                <strong className="mono">
+                  {detail.entitlementGrant.id} · {detail.entitlementGrant.status}
+                </strong>
               </div>
             ) : null}
             {detail.paymentAttempt ? (

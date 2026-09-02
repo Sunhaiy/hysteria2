@@ -390,6 +390,15 @@ export class SettingsService {
         title: map.get('portal.purchaseNotice.title')?.trim() || '买前须知',
         content: map.get('portal.purchaseNotice.content')?.trim() || '',
       },
+      ultraPurchaseNotice: {
+        enabled: map.get('portal.ultraPurchaseNotice.enabled') !== 'false',
+        title:
+          map.get('portal.ultraPurchaseNotice.title')?.trim() ||
+          'Ultra 购买须知',
+        content:
+          map.get('portal.ultraPurchaseNotice.content')?.trim() ||
+          '一次购买，永久有效，每个账号仅可持有一个普通线路 Ultra 档位。每个购买周期日起按所选档位重置月度流量，未使用额度不结转。仅使用普通线路 Ultra 专属节点时扣除此额度，其他节点继续扣原套餐额度。专属节点基础倍率为 1x，如账户设置了更高倍率则按较高值执行；上传与下载均计入流量。',
+      },
       checkoutMode: epay.checkoutMode,
       epayConfigured: epay.configured,
     };

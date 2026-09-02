@@ -33,6 +33,8 @@ type Offer = {
 type Product = {
   id: string;
   kind: "plan" | "traffic_pack";
+  series: "standard" | "ultra";
+  quotaCadence: "monthly_reset" | "one_time";
   status: string;
   name: string;
   description?: string | null;
@@ -45,6 +47,11 @@ type Product = {
     used: number;
     remaining: number | null;
     reason?: string | null;
+    purchaseMode?: "initial" | "upgrade";
+    payablePriceCents?: number;
+    currentProductId?: string | null;
+    currentProductName?: string | null;
+    resetAnchorAt?: string | null;
   };
   trafficReset: "monthly" | "never";
   access: {
@@ -70,6 +77,10 @@ type Quote = {
   finalPriceCents: number;
   balanceCents: number;
   sufficient: boolean;
+  purchaseMode: "initial" | "upgrade";
+  upgradeFromProductId?: string | null;
+  upgradeFromProductName?: string | null;
+  resetAnchorAt?: string | null;
 };
 type Branding = {
   purchaseMode: "balance" | "cdk";
@@ -77,6 +88,11 @@ type Branding = {
   cdkButtonText: string;
   cdkButtonUrl: string;
   purchaseNotice: {
+    enabled: boolean;
+    title: string;
+    content: string;
+  };
+  ultraPurchaseNotice: {
     enabled: boolean;
     title: string;
     content: string;
@@ -114,6 +130,12 @@ const defaultBranding: Branding = {
     enabled: false,
     title: "买前须知",
     content: "",
+  },
+  ultraPurchaseNotice: {
+    enabled: true,
+    title: "Ultra 购买须知",
+    content:
+      "一次购买，永久有效，每个账号仅可持有一个 Ultra 档位。额度按购买日每月重置，未使用部分不结转。",
   },
   checkoutMode: "store",
   epayConfigured: false,
@@ -211,7 +233,13 @@ export default function PortalPlansPage() {
         catalog.products.filter((product) => product.kind === "plan"),
       ),
       packs: sortCatalogProductsByPrice(
-        catalog.products.filter((product) => product.kind === "traffic_pack"),
+        catalog.products.filter(
+          (product) =>
+            product.kind === "traffic_pack" && product.series !== "ultra",
+        ),
+      ),
+      ultra: sortCatalogProductsByPrice(
+        catalog.products.filter((product) => product.series === "ultra"),
       ),
     }),
     [catalog.products],
@@ -409,12 +437,20 @@ export default function PortalPlansPage() {
         );
         const isCurrent =
           product.kind === "plan" && product.name === currentPlanName;
+        const isUltra = product.series === "ultra";
+        const isUltraCurrent =
+          isUltra &&
+          product.purchaseEligibility?.currentProductId === product.id;
+        const isUpgrade =
+          isUltra &&
+          product.purchaseEligibility?.purchaseMode === "upgrade";
         const eligible = product.purchaseEligibility?.eligible !== false;
         const unavailableReason = product.purchaseEligibility?.reason;
         const useStore = branding.checkoutMode === "store";
+        const checkoutEligible = eligible && !(isUpgrade && useStore);
         return (
           <article
-            className={`plan-card premium-plan-card${isCurrent ? " current" : ""}${product.featured ? " featured" : ""}${eligible ? "" : " unavailable"}`}
+            className={`plan-card premium-plan-card${isUltra ? " ultra-plan-card" : ""}${isCurrent || isUltraCurrent ? " current" : ""}${product.featured ? " featured" : ""}${eligible ? "" : " unavailable"}`}
             key={product.id}
           >
             <div className="plan-card-head">
@@ -425,11 +461,19 @@ export default function PortalPlansPage() {
                     {product.name}
                   </h2>
                   {isCurrent ||
+                  isUltraCurrent ||
+                  isUpgrade ||
                   product.featured ||
                   product.purchaseLimitPerUser ? (
                     <div className="plan-card-labels">
                       {isCurrent ? (
                         <span className="badge success">当前套餐</span>
+                      ) : null}
+                      {isUltraCurrent ? (
+                        <span className="badge success">当前档位</span>
+                      ) : null}
+                      {isUpgrade ? (
+                        <span className="badge info">可补差价升级</span>
                       ) : null}
                       {product.featured ? (
                         <span className="badge success">推荐</span>
@@ -452,13 +496,17 @@ export default function PortalPlansPage() {
                   {offer ? formatMoney(offer.priceCents) : "暂不可售"}
                   {offer ? (
                     <span>
-                      {product.kind === "traffic_pack" ? "/ 份" : "起"}
+                      {isUltra
+                        ? " / 永久"
+                        : product.kind === "traffic_pack"
+                          ? "/ 份"
+                          : "起"}
                     </span>
                   ) : null}
                 </div>
                 <span className="plan-price-caption">
                   {offer
-                    ? product.kind === "plan"
+                    ? product.kind === "plan" || isUltra
                       ? `每月 ${formatTrafficLimit(offer.trafficBytes)}`
                       : `${formatTrafficLimit(offer.trafficBytes)} 一次性流量`
                     : "当前规格暂不可售"}
@@ -469,15 +517,21 @@ export default function PortalPlansPage() {
                   <div>
                     <Icon name="network_node" />
                     <span>
-                      {product.kind === "plan" ? "每月可用" : "购买即得"}{" "}
+                      {product.kind === "plan" || isUltra
+                        ? "每月可用"
+                        : "购买即得"}{" "}
                       <strong>{formatTrafficLimit(offer.trafficBytes)}</strong>
-                      {product.kind === "traffic_pack" ? "，永久有效" : " 流量"}
+                      {isUltra
+                        ? "，购买日重置"
+                        : product.kind === "traffic_pack"
+                          ? "，永久有效"
+                          : " 流量"}
                     </span>
                   </div>
                   <div>
                     <Icon name="bolt" />
                     <span>
-                      {product.kind === "plan"
+                      {product.kind === "plan" || isUltra
                         ? `上行 ${formatSpeedLimit(product.access.speedUpMbps)} · 下行 ${formatSpeedLimit(product.access.speedDownMbps)}`
                         : "无需现有套餐，可直接使用并叠加额度"}
                     </span>
@@ -507,18 +561,24 @@ export default function PortalPlansPage() {
                   type="button"
                   disabled={
                     !offer ||
-                    !eligible ||
+                    !checkoutEligible ||
                     (!useStore && !branding.epayConfigured)
                   }
-                  onClick={() => eligible && openCheckout(product)}
+                  onClick={() => checkoutEligible && openCheckout(product)}
                 >
-                  {!eligible
-                    ? product.purchaseLimitPerUser
+                  {!checkoutEligible
+                    ? isUltraCurrent
+                      ? "当前档位"
+                      : isUpgrade && useStore
+                        ? "升级需站内支付"
+                      : product.purchaseLimitPerUser
                       ? "已体验"
                       : "暂不可购买"
                     : !useStore && !branding.epayConfigured
                       ? "支付暂不可用"
-                      : isCurrent
+                      : isUpgrade
+                        ? `补差价 ${formatMoney(product.purchaseEligibility?.payablePriceCents ?? 0)} 升级`
+                        : isCurrent
                         ? "立即续费"
                         : "立即购买"}
                 </button>
@@ -573,6 +633,37 @@ export default function PortalPlansPage() {
           </div>
         </div>
         {loading ? <CardGridSkeleton compact /> : renderProducts(groups.packs)}
+        {loading || groups.ultra.length ? (
+          <section className="ultra-shop-section" aria-labelledby="ultra-title">
+            {branding.ultraPurchaseNotice.enabled &&
+            branding.ultraPurchaseNotice.content.trim() ? (
+              <section className="purchase-notice ultra-purchase-notice">
+                <span className="purchase-notice-icon" aria-hidden="true">
+                  <Icon name="bolt" />
+                </span>
+                <div>
+                  <strong>{branding.ultraPurchaseNotice.title}</strong>
+                  <p>{branding.ultraPurchaseNotice.content}</p>
+                </div>
+              </section>
+            ) : null}
+            <div className="shop-section-heading">
+              <div>
+                <h2 className="section-title" id="ultra-title">
+                  普通线路 Ultra
+                </h2>
+                <span className="panel-copy">
+                  一次购买永久有效，三档共享同一组专属节点。
+                </span>
+              </div>
+            </div>
+            {loading ? (
+              <CardGridSkeleton compact />
+            ) : (
+              renderProducts(groups.ultra)
+            )}
+          </section>
+        ) : null}
         {!loading && !catalog.products.length ? (
           <div className="empty-state">
             <div className="empty-state-title">当前没有可售商品</div>
@@ -620,14 +711,20 @@ export default function PortalPlansPage() {
             {error ? <div className="feedback error">{error}</div> : null}
             <section className="checkout-product-summary">
               <span>
-                {checkout.product.kind === "plan" ? "会员套餐" : "流量包"}
+                {checkout.product.series === "ultra"
+                  ? "永久 Ultra 套餐"
+                  : checkout.product.kind === "plan"
+                    ? "会员套餐"
+                    : "流量包"}
               </span>
               <strong>{checkout.product.name}</strong>
               <p>
                 {checkout.product.description ||
                   (checkout.product.kind === "plan"
                     ? "按月重置流量额度，可使用商品绑定的全部可用节点。"
-                    : "一次购买永久有效，可直接使用商品绑定的节点。")}
+                    : checkout.product.series === "ultra"
+                      ? "一次购买永久有效，每月按原购买日重置专属节点额度。"
+                      : "一次购买永久有效，可直接使用商品绑定的节点。")}
               </p>
             </section>
             <section className="checkout-option-section">
@@ -707,7 +804,8 @@ export default function PortalPlansPage() {
               <div>
                 <span>流量规则</span>
                 <strong>
-                  {checkout.product.kind === "plan"
+                  {checkout.product.kind === "plan" ||
+                  checkout.product.series === "ultra"
                     ? `每月重置 ${formatTrafficLimit(checkout.offer.trafficBytes)}`
                     : `一次性总量 ${formatTrafficLimit(checkout.offer.trafficBytes)}`}
                 </strong>
@@ -732,7 +830,11 @@ export default function PortalPlansPage() {
                 </strong>
               </div>
             </div>
-            {checkout.product.kind === "traffic_pack" ? (
+            {checkout.product.series === "ultra" ? (
+              <div className="feedback info">
+                Ultra 只在专属节点扣除此额度，与现有普通套餐和流量包分开计费。
+              </div>
+            ) : checkout.product.kind === "traffic_pack" ? (
               <div className="feedback info">
                 该流量包无需有效套餐，购买后即可使用商品绑定的节点，剩余流量永久有效。
               </div>
@@ -744,8 +846,14 @@ export default function PortalPlansPage() {
                   <strong>{formatMoney(quote.basePriceCents)}</strong>
                 </div>
                 <div>
-                  <span>优惠</span>
-                  <strong>-{formatMoney(quote.discountCents)}</strong>
+                  <span>
+                    {quote.purchaseMode === "upgrade" ? "当前档位" : "优惠"}
+                  </span>
+                  <strong>
+                    {quote.purchaseMode === "upgrade"
+                      ? quote.upgradeFromProductName ?? "已有 Ultra"
+                      : `-${formatMoney(quote.discountCents)}`}
+                  </strong>
                 </div>
                 <div>
                   <span>应付</span>

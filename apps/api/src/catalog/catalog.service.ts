@@ -7,6 +7,7 @@ import {
 import {
   BillingPeriod,
   CatalogProductKind,
+  CatalogProductSeries,
   CatalogProductStatus,
   Prisma,
   QuotaCadence,
@@ -23,6 +24,7 @@ import type {
 } from './catalog.dto';
 
 const portalCatalogCacheKey = 'catalog:portal:v2';
+const ultraAccessProfileId = 'catalog-ultra-shared';
 
 @Injectable()
 export class CatalogService {
@@ -148,6 +150,8 @@ export class CatalogService {
           description: product.description,
           accent: product.accent,
           featured: product.featured,
+          series: (product.series ?? 'standard').toLowerCase(),
+          quotaCadence: (product.quotaCadence ?? 'monthly_reset').toLowerCase(),
           purchaseLimitPerUser: product.purchaseLimitPerUser,
           trafficReset: product.trafficReset,
           access: {
@@ -225,13 +229,17 @@ export class CatalogService {
     };
   }
 
-  async createProduct(input: SaveCatalogProductDto) {
+  async createProduct(input: SaveCatalogProductDto, actorId?: string) {
     const id = await this.prisma.$transaction(async (tx) => {
       const productId = randomUUID();
+      const series = this.toProductSeries(input.series);
       const profile = await this.resolveProductAccessProfile(
         tx,
         input,
         productId,
+        series,
+        undefined,
+        actorId,
       );
       const kind = this.toProductKind(input.kind);
       const defaultMultiplierBasisPoints = this.multiplierBasisPoints(
@@ -304,23 +312,36 @@ export class CatalogService {
           legacyTrafficPackProductId,
           slug: input.slug.trim(),
           kind,
+          series,
           status: this.toProductStatus(input.status),
           name: input.name.trim(),
           description: input.description?.trim(),
           storeUrl: this.normalizeStoreUrl(input.storeUrl),
           quotaCadence:
-            kind === CatalogProductKind.PLAN
+            kind === CatalogProductKind.PLAN ||
+            series === CatalogProductSeries.ULTRA
               ? QuotaCadence.MONTHLY_RESET
               : QuotaCadence.ONE_TIME,
           accessProfileId: profile.id,
-          speedUpMbps: input.speedUpMbps,
-          speedDownMbps: input.speedDownMbps,
-          defaultTrafficMultiplierBasisPoints: defaultMultiplierBasisPoints,
+          speedUpMbps:
+            series === CatalogProductSeries.ULTRA ? 300 : input.speedUpMbps,
+          speedDownMbps:
+            series === CatalogProductSeries.ULTRA ? 300 : input.speedDownMbps,
+          defaultTrafficMultiplierBasisPoints:
+            series === CatalogProductSeries.ULTRA
+              ? 10_000
+              : defaultMultiplierBasisPoints,
           featured: input.featured ?? false,
-          purchaseLimitPerUser: input.purchaseLimitPerUser,
-          purchaseLimitKey: input.purchaseLimitPerUser
-            ? input.purchaseLimitKey?.trim() || input.slug.trim()
-            : null,
+          purchaseLimitPerUser:
+            series === CatalogProductSeries.ULTRA
+              ? null
+              : input.purchaseLimitPerUser,
+          purchaseLimitKey:
+            series === CatalogProductSeries.ULTRA
+              ? 'ultra-series'
+              : input.purchaseLimitPerUser
+                ? input.purchaseLimitKey?.trim() || input.slug.trim()
+                : null,
           requiresActivePlan:
             kind === CatalogProductKind.TRAFFIC_PACK
               ? (input.requiresActivePlan ?? false)
@@ -358,7 +379,11 @@ export class CatalogService {
     return this.getUnifiedProduct(id);
   }
 
-  async updateProduct(id: string, input: SaveCatalogProductDto) {
+  async updateProduct(
+    id: string,
+    input: SaveCatalogProductDto,
+    actorId?: string,
+  ) {
     await this.prisma.$transaction(async (tx) => {
       const existing = await tx.catalogProduct.findUnique({
         where: { id },
@@ -375,6 +400,13 @@ export class CatalogService {
         );
       }
       const kind = this.toProductKind(input.kind);
+      const series = existing.series;
+      if (
+        input.series &&
+        this.toProductSeries(input.series) !== existing.series
+      ) {
+        throw new BadRequestException('Product series cannot be changed');
+      }
       if (existing.kind !== kind) {
         throw new BadRequestException('Product kind cannot be changed');
       }
@@ -382,7 +414,9 @@ export class CatalogService {
         tx,
         input,
         id,
+        series,
         existing.accessProfileId,
+        actorId,
       );
       const defaultMultiplierBasisPoints = this.multiplierBasisPoints(
         input.defaultTrafficMultiplier,
@@ -474,20 +508,29 @@ export class CatalogService {
           description: input.description?.trim(),
           storeUrl: this.normalizeStoreUrl(input.storeUrl),
           accessProfileId: profile.id,
-          speedUpMbps: input.speedUpMbps,
-          speedDownMbps: input.speedDownMbps,
-          defaultTrafficMultiplierBasisPoints: defaultMultiplierBasisPoints,
+          speedUpMbps:
+            series === CatalogProductSeries.ULTRA ? 300 : input.speedUpMbps,
+          speedDownMbps:
+            series === CatalogProductSeries.ULTRA ? 300 : input.speedDownMbps,
+          defaultTrafficMultiplierBasisPoints:
+            series === CatalogProductSeries.ULTRA
+              ? 10_000
+              : defaultMultiplierBasisPoints,
           featured: input.featured,
           purchaseLimitPerUser:
-            input.purchaseLimitPerUser === undefined
-              ? existing.purchaseLimitPerUser
-              : input.purchaseLimitPerUser,
+            series === CatalogProductSeries.ULTRA
+              ? null
+              : input.purchaseLimitPerUser === undefined
+                ? existing.purchaseLimitPerUser
+                : input.purchaseLimitPerUser,
           purchaseLimitKey:
-            input.purchaseLimitPerUser === undefined
-              ? existing.purchaseLimitKey
-              : input.purchaseLimitPerUser
-                ? input.purchaseLimitKey?.trim() || input.slug.trim()
-                : null,
+            series === CatalogProductSeries.ULTRA
+              ? 'ultra-series'
+              : input.purchaseLimitPerUser === undefined
+                ? existing.purchaseLimitKey
+                : input.purchaseLimitPerUser
+                  ? input.purchaseLimitKey?.trim() || input.slug.trim()
+                  : null,
           requiresActivePlan:
             kind === CatalogProductKind.TRAFFIC_PACK
               ? input.requiresActivePlan
@@ -539,19 +582,21 @@ export class CatalogService {
           },
         });
       }
-      await tx.entitlementGrant.updateMany({
-        where: {
-          productId: id,
-          status: 'ACTIVE',
-          endsAt: { gt: new Date() },
-        },
-        data: {
-          accessProfileId: profile.id,
-          speedUpMbpsSnapshot: input.speedUpMbps,
-          speedDownMbpsSnapshot: input.speedDownMbps,
-          deviceLimitSnapshot: profile.deviceLimit,
-        },
-      });
+      if (series !== CatalogProductSeries.ULTRA) {
+        await tx.entitlementGrant.updateMany({
+          where: {
+            productId: id,
+            status: 'ACTIVE',
+            endsAt: { gt: new Date() },
+          },
+          data: {
+            accessProfileId: profile.id,
+            speedUpMbpsSnapshot: input.speedUpMbps,
+            speedDownMbpsSnapshot: input.speedDownMbps,
+            deviceLimitSnapshot: profile.deviceLimit,
+          },
+        });
+      }
       if (kind === CatalogProductKind.PLAN) {
         await tx.subscription.updateMany({
           where: {
@@ -614,6 +659,7 @@ export class CatalogService {
   async createAccessProfile(input: CreateAccessProfileDto) {
     const result = await this.prisma.$transaction(async (tx) => {
       await this.validateNodes(tx, input.nodeIds);
+      await this.assertNodesAreNotExclusive(tx, input.nodeIds);
       const profile = await tx.accessProfile.create({
         data: {
           slug: input.slug.trim(),
@@ -647,8 +693,14 @@ export class CatalogService {
     const result = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.accessProfile.findUnique({ where: { id } });
       if (!existing) throw new NotFoundException('Access profile not found');
+      if (existing.id === ultraAccessProfileId) {
+        throw new BadRequestException(
+          'Ultra access profile must be managed through Ultra products',
+        );
+      }
       if (input.nodeIds) {
         await this.validateNodes(tx, input.nodeIds);
+        await this.assertNodesAreNotExclusive(tx, input.nodeIds);
         await tx.accessProfileNode.deleteMany({
           where: { accessProfileId: id },
         });
@@ -858,6 +910,7 @@ export class CatalogService {
         slug: product.slug,
         status: product.status.toLowerCase(),
         name: product.name,
+        series: (product.series ?? CatalogProductSeries.STANDARD).toLowerCase(),
         description: product.description,
         storeUrl: product.storeUrl,
         defaultTrafficMultiplier:
@@ -888,14 +941,21 @@ export class CatalogService {
         ? {
             ...base,
             kind: 'plan' as const,
-            quotaCadence: 'monthly_reset' as const,
+            quotaCadence: (
+              product.quotaCadence ?? QuotaCadence.MONTHLY_RESET
+            ).toLowerCase(),
             trafficReset: 'monthly' as const,
           }
         : {
             ...base,
             kind: 'traffic_pack' as const,
-            quotaCadence: 'one_time' as const,
-            trafficReset: 'never' as const,
+            quotaCadence: (
+              product.quotaCadence ?? QuotaCadence.ONE_TIME
+            ).toLowerCase(),
+            trafficReset:
+              product.quotaCadence === QuotaCadence.MONTHLY_RESET
+                ? ('monthly' as const)
+                : ('never' as const),
           };
     });
   }
@@ -904,7 +964,9 @@ export class CatalogService {
     tx: Prisma.TransactionClient,
     input: SaveCatalogProductDto,
     productId: string,
+    series: CatalogProductSeries,
     currentProfileId?: string | null,
+    actorId?: string,
   ) {
     if (input.offers.length === 0) {
       throw new BadRequestException('At least one catalog offer is required');
@@ -936,12 +998,125 @@ export class CatalogService {
       input.purchaseLimitKey = input.slug.trim();
     }
 
+    if (series === CatalogProductSeries.ULTRA) {
+      if (input.kind !== 'traffic_pack') {
+        throw new BadRequestException('Ultra products must be traffic packs');
+      }
+      const nodeIds = input.nodeIds;
+      let nodes: Array<{
+        id: string;
+        active: boolean;
+        lifecycleStatus: string;
+      }> = [];
+      if (nodeIds) {
+        if (nodeIds.length > 0) await this.validateNodes(tx, nodeIds);
+        nodes = await tx.node.findMany({
+          where: { id: { in: nodeIds }, retiredAt: null },
+          select: { id: true, active: true, lifecycleStatus: true },
+        });
+        await tx.accessProfileNode.deleteMany({
+          where: {
+            nodeId: { in: nodeIds },
+            accessProfileId: { not: ultraAccessProfileId },
+          },
+        });
+        await tx.node.updateMany({
+          where: {
+            exclusiveAccessProfileId: ultraAccessProfileId,
+            id: { notIn: nodeIds },
+          },
+          data: { exclusiveAccessProfileId: null },
+        });
+        await tx.node.updateMany({
+          where: { id: { in: nodeIds } },
+          data: { exclusiveAccessProfileId: ultraAccessProfileId },
+        });
+        await tx.accessProfileNode.deleteMany({
+          where: { accessProfileId: ultraAccessProfileId },
+        });
+        if (actorId) {
+          await tx.auditLog.create({
+            data: {
+              actorId,
+              action: 'catalog.ultra_nodes.updated',
+              targetType: 'access_profile',
+              targetId: ultraAccessProfileId,
+              metadata: { productId, nodeIds },
+            },
+          });
+        }
+      } else if (input.status === 'active') {
+        nodes = await tx.node.findMany({
+          where: {
+            retiredAt: null,
+            accessProfileBindings: {
+              some: { accessProfileId: ultraAccessProfileId },
+            },
+          },
+          select: { id: true, active: true, lifecycleStatus: true },
+        });
+      }
+      if (
+        input.status === 'active' &&
+        !nodes.some((node) => node.active && node.lifecycleStatus === 'ACTIVE')
+      ) {
+        throw new BadRequestException(
+          'Published Ultra products require a serviceable node',
+        );
+      }
+      return tx.accessProfile.upsert({
+        where: { id: ultraAccessProfileId },
+        create: {
+          id: ultraAccessProfileId,
+          slug: ultraAccessProfileId,
+          name: '普通线路 Ultra 专属节点',
+          description: '三个永久 Ultra 档位共用的专属节点组',
+          active: true,
+          speedUpMbps: 300,
+          speedDownMbps: 300,
+          deviceLimit: 1000,
+          nodeBindings: nodeIds
+            ? {
+                create: nodeIds.map((nodeId, priority) => ({
+                  nodeId,
+                  priority,
+                })),
+              }
+            : undefined,
+        },
+        update: {
+          active: true,
+          speedUpMbps: 300,
+          speedDownMbps: 300,
+          deviceLimit: 1000,
+          nodeBindings: nodeIds
+            ? {
+                create: nodeIds.map((nodeId, priority) => ({
+                  nodeId,
+                  priority,
+                })),
+              }
+            : undefined,
+        },
+      });
+    }
+
     if (input.nodeIds) {
       await this.validateNodes(tx, input.nodeIds);
       const nodes = await tx.node.findMany({
         where: { id: { in: input.nodeIds }, retiredAt: null },
-        select: { id: true, active: true, lifecycleStatus: true },
+        select: {
+          id: true,
+          active: true,
+          lifecycleStatus: true,
+          exclusiveAccessProfileId: true,
+        },
       });
+      if (nodes.some((node) => node.exclusiveAccessProfileId)) {
+        throw new BadRequestException(
+          'Ultra exclusive nodes cannot be assigned to standard products',
+        );
+      }
       if (
         input.status === 'active' &&
         !nodes.some((node) => node.active && node.lifecycleStatus === 'ACTIVE')
@@ -1033,7 +1208,7 @@ export class CatalogService {
       ),
     ];
     const now = new Date();
-    const [orders, activeGrantCount, activeSubscriptionCount] =
+    const [orders, activeGrantCount, activeSubscriptionCount, activeUltra] =
       await Promise.all([
         limitKeys.length
           ? this.prisma.manualOrder.findMany({
@@ -1088,6 +1263,16 @@ export class CatalogService {
             endsAt: { gt: now },
           },
         }),
+        this.prisma.entitlementGrant.findFirst({
+          where: {
+            userId,
+            activeSlot: 'ULTRA',
+            status: 'ACTIVE',
+            startsAt: { lte: now },
+            endsAt: { gt: now },
+          },
+          include: { product: { select: { name: true } } },
+        }),
       ]);
     const usedByKey = new Map<string, number>();
     for (const order of orders) {
@@ -1100,6 +1285,47 @@ export class CatalogService {
     return {
       ...catalog,
       products: catalog.products.map((product) => {
+        const selectedOffer =
+          product.offers.find(
+            (offer) => offer.isDefault && offer.active && !offer.archivedAt,
+          ) ??
+          product.offers.find((offer) => offer.active && !offer.archivedAt);
+        if (product.series === 'ultra' && selectedOffer) {
+          const currentPrice = activeUltra?.priceCentsSnapshot ?? 0;
+          const currentTraffic = Number(
+            activeUltra?.trafficBytesSnapshot ?? BigInt(0),
+          );
+          const isCurrent = activeUltra?.productId === product.id;
+          const canUpgrade = Boolean(
+            activeUltra &&
+            selectedOffer.priceCents > currentPrice &&
+            selectedOffer.trafficBytes > currentTraffic,
+          );
+          const eligible = !activeUltra || canUpgrade;
+          return {
+            ...product,
+            purchaseEligibility: {
+              eligible,
+              used: activeUltra ? 1 : 0,
+              remaining: activeUltra ? 0 : 1,
+              reason: isCurrent
+                ? '当前已持有该 Ultra 档位'
+                : activeUltra && !canUpgrade
+                  ? '不支持降级或叠加 Ultra 档位'
+                  : null,
+              purchaseMode: canUpgrade ? 'upgrade' : 'initial',
+              payablePriceCents: canUpgrade
+                ? selectedOffer.priceCents - currentPrice
+                : selectedOffer.priceCents,
+              currentProductId: activeUltra?.productId ?? null,
+              currentProductName: activeUltra?.product.name ?? null,
+              resetAnchorAt:
+                activeUltra?.resetAnchorAt?.toISOString() ??
+                activeUltra?.startsAt.toISOString() ??
+                null,
+            },
+          };
+        }
         const used = product.purchaseLimitKey
           ? (usedByKey.get(product.purchaseLimitKey) ?? 0)
           : 0;
@@ -1133,6 +1359,7 @@ export class CatalogService {
       hostname: string;
       active: boolean;
       lifecycleStatus: string;
+      exclusiveAccessProfileId: string | null;
       serverId: string | null;
       server: {
         id: string;
@@ -1154,6 +1381,7 @@ export class CatalogService {
           protocol: string;
           hostname: string;
           serviceable: boolean;
+          exclusiveAccessProfileId: string | null;
         }>;
       }
     >();
@@ -1174,6 +1402,7 @@ export class CatalogService {
           node.active &&
           node.lifecycleStatus === 'ACTIVE' &&
           (node.server?.active ?? true),
+        exclusiveAccessProfileId: node.exclusiveAccessProfileId,
       });
       servers.set(serverId, server);
     }
@@ -1218,6 +1447,12 @@ export class CatalogService {
     return CatalogProductStatus.DRAFT;
   }
 
+  private toProductSeries(series?: SaveCatalogProductDto['series']) {
+    return series === 'ultra'
+      ? CatalogProductSeries.ULTRA
+      : CatalogProductSeries.STANDARD;
+  }
+
   private async validateNodes(tx: Prisma.TransactionClient, nodeIds: string[]) {
     if (nodeIds.length === 0) {
       throw new BadRequestException('At least one node is required');
@@ -1226,6 +1461,25 @@ export class CatalogService {
       where: { id: { in: nodeIds }, retiredAt: null },
     });
     if (count !== nodeIds.length) throw new BadRequestException('Unknown node');
+  }
+
+  private async assertNodesAreNotExclusive(
+    tx: Prisma.TransactionClient,
+    nodeIds: string[],
+  ) {
+    if (nodeIds.length === 0) return;
+    const exclusive = await tx.node.count({
+      where: {
+        id: { in: nodeIds },
+        retiredAt: null,
+        exclusiveAccessProfileId: { not: null },
+      },
+    });
+    if (exclusive > 0) {
+      throw new BadRequestException(
+        'Ultra exclusive nodes cannot be assigned to standard access profiles',
+      );
+    }
   }
 
   private presentAccessProfile(profile: {

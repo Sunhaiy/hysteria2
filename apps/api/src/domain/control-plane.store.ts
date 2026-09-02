@@ -1126,6 +1126,7 @@ export class ControlPlaneStoreService {
             nodeLabel: string;
             txBytes: bigint;
             rxBytes: bigint;
+            accountedBytes: bigint;
           }>
         >(Prisma.sql`
           SELECT
@@ -1136,7 +1137,8 @@ export class ControlPlaneStoreService {
             rollup."nodeId" AS "nodeId",
             node.label AS "nodeLabel",
             COALESCE(SUM(rollup."txBytes"), 0)::bigint AS "txBytes",
-            COALESCE(SUM(rollup."rxBytes"), 0)::bigint AS "rxBytes"
+            COALESCE(SUM(rollup."rxBytes"), 0)::bigint AS "rxBytes",
+            COALESCE(SUM(rollup."accountedBytes"), 0)::bigint AS "accountedBytes"
           FROM "UsageRollup" rollup
           INNER JOIN "Node" node ON node.id = rollup."nodeId"
           WHERE rollup."userId" = ${userId}
@@ -1164,6 +1166,7 @@ export class ControlPlaneStoreService {
         bucketStart: `${rollup.day}T00:00:00+08:00`,
         txBytes: Number(rollup.txBytes),
         rxBytes: Number(rollup.rxBytes),
+        accountedBytes: Number(rollup.accountedBytes),
         source: 'daily-aggregate',
         createdAt: `${rollup.day}T00:00:00+08:00`,
       })),

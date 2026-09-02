@@ -81,7 +81,7 @@ export class EpayService {
     if (quote.finalPriceCents <= 0) {
       throw new BadRequestException('易支付订单金额必须大于零');
     }
-    if (quote.finalPriceCents !== offer.priceCents) {
+    if (quote.basePriceCents !== offer.priceCents) {
       throw new ConflictException('商品价格已变化，请刷新后重试');
     }
 
@@ -143,7 +143,7 @@ export class EpayService {
           if (
             !currentOffer ||
             currentOffer.archivedAt ||
-            currentOffer.priceCents !== quote.finalPriceCents
+            currentOffer.priceCents !== quote.basePriceCents
           ) {
             throw new ConflictException('商品已变化，请刷新后重试');
           }
@@ -163,9 +163,13 @@ export class EpayService {
               basePriceCents: quote.basePriceCents,
               currency: offer.currency,
               productNameSnapshot: quote.productName,
-              entitlementSnapshot: snapshotCatalogOffer(
-                currentOffer,
-              ) as unknown as Prisma.InputJsonValue,
+              entitlementSnapshot: snapshotCatalogOffer(currentOffer, {
+                purchaseMode: quote.purchaseMode,
+                upgradeFromGrantId: quote.upgradeFromGrantId,
+                upgradeFromProductId: quote.upgradeFromProductId,
+                upgradeFromPriceCents: quote.upgradeFromPriceCents,
+                resetAnchorAt: quote.resetAnchorAt,
+              }) as unknown as Prisma.InputJsonValue,
               expiresAt: new Date(now.getTime() + PAYMENT_TTL_MS),
             },
           });

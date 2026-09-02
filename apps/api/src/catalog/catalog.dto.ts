@@ -182,6 +182,10 @@ export class SaveCatalogProductDto {
   @IsIn(['plan', 'traffic_pack'])
   kind!: 'plan' | 'traffic_pack';
 
+  @IsOptional()
+  @IsIn(['standard', 'ultra'])
+  series?: 'standard' | 'ultra';
+
   @IsIn(['draft', 'active', 'archived'])
   status!: 'draft' | 'active' | 'archived';
 

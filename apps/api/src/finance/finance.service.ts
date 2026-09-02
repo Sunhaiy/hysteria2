@@ -8,6 +8,7 @@ import { Prisma, RefundMethod, RefundStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { pageResponse, parsePage } from '../common/pagination';
 import { ReferralService } from '../referrals/referral.service';
+import { EntitlementService } from '../entitlement/entitlement.service';
 import type {
   CreateNodeCostDto,
   CreateRefundDto,
@@ -36,6 +37,7 @@ export class FinanceService {
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly referrals?: ReferralService,
+    @Optional() private readonly entitlements?: EntitlementService,
   ) {}
 
   async summary(query: FinanceQuery) {
@@ -331,6 +333,17 @@ export class FinanceService {
       }
       if (this.referrals) {
         await this.referrals.reverseForRefund(tx, orderId, actorId, refund.id);
+      }
+      if (
+        this.entitlements &&
+        refunded + input.amountCents === order.amountCents
+      ) {
+        await this.entitlements.reverseUltraForFullRefund(
+          tx,
+          orderId,
+          actorId,
+          refund.id,
+        );
       }
       return {
         ...refund,

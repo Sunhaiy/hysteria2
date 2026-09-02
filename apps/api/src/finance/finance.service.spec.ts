@@ -136,7 +136,14 @@ describe('FinanceService', () => {
     const referrals = {
       reverseForRefund: jest.fn().mockResolvedValue({ reversed: true }),
     };
-    const service = new FinanceService(prisma as never, referrals as never);
+    const entitlements = {
+      reverseUltraForFullRefund: jest.fn(),
+    };
+    const service = new FinanceService(
+      prisma as never,
+      referrals as never,
+      entitlements as never,
+    );
 
     await service.createRefund(
       'order_1',
@@ -164,6 +171,61 @@ describe('FinanceService', () => {
       'order_1',
       'admin_1',
       'refund_1',
+    );
+    expect(entitlements.reverseUltraForFullRefund).not.toHaveBeenCalled();
+  });
+
+  it('revokes the linked Ultra entitlement after the order is fully refunded', async () => {
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'order_ultra',
+          userId: 'user_1',
+          status: 'APPLIED',
+          amountCents: 6_900,
+          user: { balanceCents: 0 },
+          refunds: [{ status: 'APPLIED', amountCents: 900 }],
+        }),
+      },
+      refund: {
+        create: jest.fn().mockImplementation(({ data }) =>
+          Promise.resolve({
+            id: 'refund_ultra',
+            ...data,
+            method: 'MANUAL',
+            status: 'APPLIED',
+          }),
+        ),
+      },
+    };
+    const prisma = {
+      $transaction: jest.fn((operation: (client: typeof tx) => unknown) =>
+        operation(tx),
+      ),
+    };
+    const referrals = { reverseForRefund: jest.fn() };
+    const entitlements = {
+      reverseUltraForFullRefund: jest.fn().mockResolvedValue({
+        reversed: true,
+      }),
+    };
+    const service = new FinanceService(
+      prisma as never,
+      referrals as never,
+      entitlements as never,
+    );
+
+    await service.createRefund(
+      'order_ultra',
+      { amountCents: 6_000, method: 'manual', reason: '全额退款' },
+      'admin_1',
+    );
+
+    expect(entitlements.reverseUltraForFullRefund).toHaveBeenCalledWith(
+      tx,
+      'order_ultra',
+      'admin_1',
+      'refund_ultra',
     );
   });
 

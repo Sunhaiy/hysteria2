@@ -47,6 +47,27 @@ test("member catalog keeps plan cards and uses exactly one purchase channel", as
   assert.doesNotMatch(source, /\/portal\/redeem/);
 });
 
+test("member catalog presents the permanent Ultra series as one shared tier row", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8"),
+  ]);
+
+  assert.match(source, /product\.series === "ultra"/);
+  assert.match(source, /groups\.ultra/);
+  assert.match(source, /普通线路 Ultra/);
+  assert.match(source, /一次购买永久有效，三档共享同一组专属节点/);
+  assert.match(source, /当前档位/);
+  assert.match(source, /可补差价升级/);
+  assert.match(source, /补差价 .* 升级/);
+  assert.match(source, /升级需站内支付/);
+  assert.match(source, /ultraPurchaseNotice/);
+  assert.match(
+    styles,
+    /\.ultra-shop-section \.catalog-product-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/,
+  );
+});
+
 test("member catalog uses the standard panel surface and aligned card headings", async () => {
   const styles = await readFile(stylesUrl, "utf8");
 

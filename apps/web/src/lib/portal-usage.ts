@@ -18,13 +18,23 @@ export function buildSevenDayUsage(
   recent: PortalUsageResponse["recent"],
   now = new Date(),
 ) {
-  const totals = new Map<string, { txBytes: number; rxBytes: number }>();
+  const totals = new Map<
+    string,
+    { txBytes: number; rxBytes: number; accountedBytes: number }
+  >();
   recent.forEach((item) => {
     const key = shanghaiDateKey(new Date(item.bucketStart));
-    const current = totals.get(key) ?? { txBytes: 0, rxBytes: 0 };
+    const current = totals.get(key) ?? {
+      txBytes: 0,
+      rxBytes: 0,
+      accountedBytes: 0,
+    };
     totals.set(key, {
       txBytes: current.txBytes + item.txBytes,
       rxBytes: current.rxBytes + item.rxBytes,
+      accountedBytes:
+        current.accountedBytes +
+        (item.accountedBytes ?? item.txBytes + item.rxBytes),
     });
   });
 
@@ -36,6 +46,32 @@ export function buildSevenDayUsage(
       label: key.slice(5).replace("-", "/"),
       txBytes: totals.get(key)?.txBytes ?? 0,
       rxBytes: totals.get(key)?.rxBytes ?? 0,
+      accountedBytes: totals.get(key)?.accountedBytes ?? 0,
     };
   });
+}
+
+export function buildNodeUsage(recent: PortalUsageResponse["recent"]) {
+  const totals = new Map<
+    string,
+    { label: string; physicalBytes: number; accountedBytes: number }
+  >();
+  recent.forEach((item) => {
+    const current = totals.get(item.nodeId) ?? {
+      label: item.nodeLabel,
+      physicalBytes: 0,
+      accountedBytes: 0,
+    };
+    totals.set(item.nodeId, {
+      label: item.nodeLabel,
+      physicalBytes: current.physicalBytes + item.txBytes + item.rxBytes,
+      accountedBytes:
+        current.accountedBytes +
+        (item.accountedBytes ?? item.txBytes + item.rxBytes),
+    });
+  });
+
+  return [...totals.values()]
+    .sort((a, b) => b.accountedBytes - a.accountedBytes)
+    .slice(0, 5);
 }

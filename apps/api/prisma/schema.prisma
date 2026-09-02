@@ -126,6 +126,11 @@ enum CatalogProductStatus {
   ARCHIVED
 }
 
+enum CatalogProductSeries {
+  STANDARD
+  ULTRA
+}
+
 enum QuotaCadence {
   MONTHLY_RESET
   ONE_TIME
@@ -352,6 +357,7 @@ model AccessProfile {
   poolBindings        AccessProfilePool[]
   catalogProducts     CatalogProduct[]
   entitlementGrants   EntitlementGrant[]
+  exclusiveNodes      Node[]               @relation("ExclusiveAccessProfileNodes")
 }
 
 model AccessProfileNode {
@@ -506,6 +512,7 @@ model Node {
   trafficLimitEnabled         Boolean                  @default(false)
   trafficLimitBytes           BigInt?
   trafficLimitResetDay        Int                      @default(1)
+  exclusiveAccessProfileId    String?
   lastSyncAt                  DateTime?
   lastSyncError               String?
   lastUserSyncAt              DateTime?
@@ -535,10 +542,12 @@ model Node {
   monitorAlerts               MonitorAlert[]
   runtimeCommands             NodeRuntimeCommand[]
   server                      NodeServer?              @relation(fields: [serverId], references: [id], onDelete: SetNull)
+  exclusiveAccessProfile      AccessProfile?           @relation("ExclusiveAccessProfileNodes", fields: [exclusiveAccessProfileId], references: [id], onDelete: SetNull)
 
   @@unique([hostname, port])
   @@index([serverId, active])
   @@index([retiredAt, active, createdAt])
+  @@index([exclusiveAccessProfileId, retiredAt])
 }
 
 model PlanBinding {
@@ -684,6 +693,11 @@ model ManualOrder {
   deviceLimitSnapshot                  Int?
   trafficMultiplierBasisPointsSnapshot Int?
   requiresActivePlanSnapshot           Boolean?
+  quotaCadenceSnapshot                 QuotaCadence?
+  resetAnchorAtSnapshot                DateTime?
+  upgradeFromProductIdSnapshot         String?
+  upgradeFromPriceCentsSnapshot        Int?
+  entitlementGrantId                   String?
   idempotencyKey                       String?
   note                                 String?
   createdAt                            DateTime             @default(now())
@@ -699,6 +713,7 @@ model ManualOrder {
   refunds                              Refund[]
   walletLedger                         WalletLedgerEntry[]
   qualifyingReferral                   ReferralAttribution?
+  entitlementGrant                     EntitlementGrant?    @relation(fields: [entitlementGrantId], references: [id], onDelete: SetNull)
 
   @@unique([userId, idempotencyKey])
   @@index([trafficPackProductId, createdAt])
@@ -706,6 +721,7 @@ model ManualOrder {
   @@index([status, source, createdAt, id])
   @@index([status, source, processedAt, id])
   @@index([userId, createdAt, id])
+  @@index([entitlementGrantId, createdAt])
 }
 
 model RedemptionCode {
@@ -1090,6 +1106,7 @@ model CatalogProduct {
   legacyTrafficPackProductId          String?              @unique
   slug                                String               @unique
   kind                                CatalogProductKind
+  series                              CatalogProductSeries @default(STANDARD)
   status                              CatalogProductStatus @default(DRAFT)
   name                                String
   description                         String?
@@ -1116,6 +1133,7 @@ model CatalogProduct {
   entitlementGrants                   EntitlementGrant[]
 
   @@index([kind, status, sortOrder])
+  @@index([series, status, sortOrder])
   @@index([accessProfileId, status])
   @@index([purchaseLimitKey])
 }
@@ -1165,6 +1183,11 @@ model EntitlementGrant {
   speedDownMbpsSnapshot                Int
   deviceLimitSnapshot                  Int
   trafficMultiplierBasisPointsSnapshot Int                    @default(10000)
+  quotaCadenceSnapshot                 QuotaCadence?
+  resetAnchorAt                        DateTime?
+  priceCentsSnapshot                   Int?
+  trafficBytesSnapshot                 BigInt?
+  activeSlot                           String?
   createdAt                            DateTime               @default(now())
   updatedAt                            DateTime               @updatedAt
   user                                 User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1176,7 +1199,9 @@ model EntitlementGrant {
   legacyTrafficPack                    TrafficPack?           @relation(fields: [legacyTrafficPackId], references: [id], onDelete: SetNull)
   quotaBuckets                         QuotaBucket[]
   referralBonusFor                     ReferralAttribution?
+  orders                               ManualOrder[]
 
+  @@unique([userId, activeSlot])
   @@index([userId, kind, status, endsAt])
   @@index([accessAccountId, status, endsAt])
   @@index([accessProfileId, status])

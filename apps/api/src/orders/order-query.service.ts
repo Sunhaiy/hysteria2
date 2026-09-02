@@ -44,7 +44,16 @@ const orderInclude = {
   processedBy: { select: { id: true, email: true, displayName: true } },
   catalogOffer: {
     include: {
-      product: { select: { id: true, name: true, kind: true } },
+      product: { select: { id: true, name: true, kind: true, series: true } },
+    },
+  },
+  entitlementGrant: {
+    select: {
+      id: true,
+      productId: true,
+      status: true,
+      activeSlot: true,
+      resetAnchorAt: true,
     },
   },
   paymentRecords: { orderBy: { createdAt: 'asc' as const } },
@@ -111,6 +120,23 @@ export class OrderQueryService {
       validityDays: order.validityDays,
       trafficBytes: order.trafficBytes ? Number(order.trafficBytes) : null,
       entitlementExpiresAt: order.entitlementExpiresAt?.toISOString() ?? null,
+      quotaCadence: order.quotaCadenceSnapshot?.toLowerCase() ?? null,
+      resetAnchorAt: order.resetAnchorAtSnapshot?.toISOString() ?? null,
+      purchaseMode: order.upgradeFromProductIdSnapshot
+        ? ('upgrade' as const)
+        : ('initial' as const),
+      upgradeFromProductId: order.upgradeFromProductIdSnapshot,
+      upgradeFromPriceCents: order.upgradeFromPriceCentsSnapshot,
+      entitlementGrant: order.entitlementGrant
+        ? {
+            id: order.entitlementGrant.id,
+            productId: order.entitlementGrant.productId,
+            status: order.entitlementGrant.status.toLowerCase(),
+            activeSlot: order.entitlementGrant.activeSlot,
+            resetAnchorAt:
+              order.entitlementGrant.resetAnchorAt?.toISOString() ?? null,
+          }
+        : null,
       accessProfileId: order.accessProfileIdSnapshot,
       speedUpMbps: order.speedUpMbpsSnapshot,
       speedDownMbps: order.speedDownMbpsSnapshot,
@@ -407,6 +433,7 @@ export class OrderQueryService {
           order.catalogOffer?.product.name ??
           order.kind.toLowerCase(),
         kind: productKind,
+        series: order.catalogOffer?.product.series.toLowerCase() ?? 'standard',
       },
       offer: order.catalogOffer
         ? {

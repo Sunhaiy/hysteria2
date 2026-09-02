@@ -8,6 +8,7 @@ import {
 import {
   BillingPeriod,
   CatalogProductKind,
+  CatalogProductSeries,
   CatalogProductStatus,
   OrderKind,
   OrderSource,
@@ -77,7 +78,16 @@ export class CommerceService {
     }
 
     const product = await this.resolveQuoteProduct(input);
-    if (product.purchaseRules) {
+    const ultraPurchase =
+      product.series === CatalogProductSeries.ULTRA
+        ? await this.resolveUltraPurchase(this.prisma, userId, {
+            id: product.productId,
+            name: product.productName,
+            priceCents: product.priceCents,
+            trafficBytes: product.trafficBytes,
+          })
+        : null;
+    if (product.purchaseRules && !ultraPurchase) {
       await assertCatalogPurchaseEligibility(
         this.prisma,
         userId,
@@ -85,16 +95,18 @@ export class CommerceService {
       );
     }
 
+    const payableBeforeDiscountCents =
+      ultraPurchase?.payableCents ?? product.priceCents;
     const discount = input.discountCode
       ? await this.previewDiscount(
           this.prisma,
           userId,
           input.discountCode,
-          product.priceCents,
+          payableBeforeDiscountCents,
         )
       : null;
     const finalPriceCents = Math.max(
-      product.priceCents - (discount?.discountCents ?? 0),
+      payableBeforeDiscountCents - (discount?.discountCents ?? 0),
       0,
     );
     return {
@@ -107,6 +119,12 @@ export class CommerceService {
       finalPriceCents,
       balanceCents: user.balanceCents,
       sufficient: user.balanceCents >= finalPriceCents,
+      purchaseMode: ultraPurchase?.mode ?? 'initial',
+      upgradeFromGrantId: ultraPurchase?.grantId ?? null,
+      upgradeFromProductId: ultraPurchase?.productId ?? null,
+      upgradeFromProductName: ultraPurchase?.productName ?? null,
+      upgradeFromPriceCents: ultraPurchase?.priceCents ?? null,
+      resetAnchorAt: ultraPurchase?.resetAnchorAt?.toISOString() ?? null,
     };
   }
 
@@ -541,6 +559,8 @@ export class CommerceService {
       throw new ConflictException('External payment snapshot does not match');
     }
     const productKind = snapshot?.productKind ?? offer.product.kind;
+    const productSeries = snapshot?.productSeries ?? offer.product.series;
+    const quotaCadence = snapshot?.quotaCadence ?? offer.product.quotaCadence;
     const billingPeriod = snapshot?.billingPeriod ?? offer.billingPeriod;
     const intervalMonths = snapshot?.intervalMonths ?? offer.intervalMonths;
     const legacyDurationDays = snapshot
@@ -597,7 +617,10 @@ export class CommerceService {
         'Complimentary grants require a plan offer',
       );
     }
-    if (options.externalPayment) {
+    if (
+      options.externalPayment &&
+      productSeries !== CatalogProductSeries.ULTRA
+    ) {
       await assertCatalogPurchaseLimit(tx, userId, {
         kind: productKind,
         purchaseLimitPerUser:
@@ -606,30 +629,59 @@ export class CommerceService {
           snapshot?.purchaseLimitKey ?? offer.product.purchaseLimitKey,
         requiresActivePlan,
       });
-    } else {
+    } else if (productSeries !== CatalogProductSeries.ULTRA) {
       await assertCatalogPurchaseEligibility(tx, userId, offer.product);
     }
     const nodeId = await this.resolveServiceableNodeId(tx, accessProfileId);
     if (!nodeId) {
       throw new BadRequestException('Catalog offer has no serviceable node');
     }
+    const ultraPurchase =
+      productSeries === CatalogProductSeries.ULTRA
+        ? await this.resolveUltraPurchase(tx, userId, {
+            id: offer.product.id,
+            name: snapshot?.productName ?? offer.product.name,
+            priceCents:
+              options.externalPayment?.basePriceCents ?? offer.priceCents,
+            trafficBytes,
+          })
+        : null;
+    if (
+      snapshot &&
+      ultraPurchase &&
+      (snapshot.purchaseMode !== ultraPurchase.mode ||
+        snapshot.upgradeFromGrantId !== ultraPurchase.grantId ||
+        snapshot.upgradeFromProductId !== ultraPurchase.productId ||
+        snapshot.upgradeFromPriceCents !== ultraPurchase.priceCents)
+    ) {
+      throw new ConflictException('Ultra purchase state changed');
+    }
+    const payableBeforeDiscountCents =
+      ultraPurchase?.payableCents ?? offer.priceCents;
     const discount =
       !options.complimentary && !options.externalPayment && input.discountCode
         ? await this.reserveDiscount(
             tx,
             userId,
             input.discountCode,
-            offer.priceCents,
+            payableBeforeDiscountCents,
           )
         : null;
     const chargedCents = options.complimentary
       ? 0
       : options.externalPayment
         ? options.externalPayment.amountCents
-        : Math.max(offer.priceCents - (discount?.discountCents ?? 0), 0);
+        : Math.max(
+            payableBeforeDiscountCents - (discount?.discountCents ?? 0),
+            0,
+          );
     const basePriceCents =
       options.externalPayment?.basePriceCents ?? offer.priceCents;
-    if (chargedCents < 0 || chargedCents > basePriceCents) {
+    if (
+      chargedCents < 0 ||
+      chargedCents > basePriceCents ||
+      (options.externalPayment && chargedCents !== payableBeforeDiscountCents)
+    ) {
       throw new BadRequestException('External payment amount is invalid');
     }
     if (!options.complimentary && !options.externalPayment) {
@@ -744,7 +796,7 @@ export class CommerceService {
         });
         subscriptionId = subscription.id;
       }
-    } else {
+    } else if (productSeries !== CatalogProductSeries.ULTRA) {
       const pack = await tx.trafficPack.create({
         data: {
           userId,
@@ -787,7 +839,9 @@ export class CommerceService {
         discountCents: options.complimentary
           ? basePriceCents
           : options.externalPayment
-            ? basePriceCents - chargedCents
+            ? ultraPurchase?.mode === 'upgrade'
+              ? 0
+              : basePriceCents - chargedCents
             : (discount?.discountCents ?? 0),
         currency,
         productSlugSnapshot: snapshot?.offerSlug ?? offer.slug,
@@ -821,6 +875,10 @@ export class CommerceService {
           snapshot?.trafficMultiplierBasisPoints ??
           offer.product.defaultTrafficMultiplierBasisPoints,
         requiresActivePlanSnapshot: requiresActivePlan,
+        quotaCadenceSnapshot: quotaCadence,
+        resetAnchorAtSnapshot: ultraPurchase?.resetAnchorAt ?? purchasedAt,
+        upgradeFromProductIdSnapshot: ultraPurchase?.productId,
+        upgradeFromPriceCentsSnapshot: ultraPurchase?.priceCents,
         idempotencyKey,
         processedAt: purchasedAt,
       },
@@ -1254,7 +1312,11 @@ export class CommerceService {
       return {
         id: offer.id,
         name: `${offer.product.name} · ${offer.name}`,
+        productId: offer.product.id,
+        productName: offer.product.name,
         priceCents: offer.priceCents,
+        trafficBytes: offer.trafficBytes,
+        series: offer.product.series,
         kind:
           offer.product.kind === CatalogProductKind.PLAN
             ? ('plan_offer' as const)
@@ -1287,7 +1349,11 @@ export class CommerceService {
       return {
         id: product.id,
         name: product.name,
+        productId: product.id,
+        productName: product.name,
         priceCents: product.priceCents,
+        trafficBytes: product.trafficBytes,
+        series: CatalogProductSeries.STANDARD,
         kind: 'traffic_pack' as const,
         purchaseRules: null,
       };
@@ -1296,9 +1362,63 @@ export class CommerceService {
     return {
       id: input.kind === 'plan' ? plan.id : offer.id,
       name: `${plan.name} · ${offer.name}`,
+      productId: plan.id,
+      productName: plan.name,
       priceCents: offer.priceCents,
+      trafficBytes: plan.trafficBytes,
+      series: CatalogProductSeries.STANDARD,
       kind: 'plan_offer' as const,
       purchaseRules: null,
+    };
+  }
+
+  private async resolveUltraPurchase(
+    client: PrismaService | Prisma.TransactionClient,
+    userId: string,
+    target: {
+      id: string;
+      name: string;
+      priceCents: number;
+      trafficBytes: bigint;
+    },
+  ) {
+    const current = await client.entitlementGrant.findFirst({
+      where: {
+        userId,
+        activeSlot: 'ULTRA',
+        status: 'ACTIVE',
+        endsAt: { gt: new Date() },
+      },
+      include: { product: { select: { name: true } } },
+    });
+    if (!current) {
+      return {
+        mode: 'initial' as const,
+        payableCents: target.priceCents,
+        grantId: null,
+        productId: null,
+        productName: null,
+        priceCents: null,
+        resetAnchorAt: null,
+      };
+    }
+    const currentPrice = current.priceCentsSnapshot ?? 0;
+    const currentTraffic = current.trafficBytesSnapshot ?? BigInt(0);
+    if (
+      target.id === current.productId ||
+      target.priceCents <= currentPrice ||
+      target.trafficBytes <= currentTraffic
+    ) {
+      throw new BadRequestException('当前已持有相同或更高的 Ultra 档位');
+    }
+    return {
+      mode: 'upgrade' as const,
+      payableCents: target.priceCents - currentPrice,
+      grantId: current.id,
+      productId: current.productId,
+      productName: current.product.name,
+      priceCents: currentPrice,
+      resetAnchorAt: current.resetAnchorAt ?? current.startsAt,
     };
   }
 

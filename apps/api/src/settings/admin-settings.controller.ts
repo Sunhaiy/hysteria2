@@ -157,6 +157,19 @@ export class AdminSettingsController {
       updates['portal.purchaseNotice.content'] =
         body.purchaseNoticeContent.trim();
     }
+    if (body.ultraPurchaseNoticeEnabled !== undefined) {
+      updates['portal.ultraPurchaseNotice.enabled'] = String(
+        body.ultraPurchaseNoticeEnabled,
+      );
+    }
+    if (body.ultraPurchaseNoticeTitle !== undefined) {
+      updates['portal.ultraPurchaseNotice.title'] =
+        body.ultraPurchaseNoticeTitle.trim();
+    }
+    if (body.ultraPurchaseNoticeContent !== undefined) {
+      updates['portal.ultraPurchaseNotice.content'] =
+        body.ultraPurchaseNoticeContent.trim();
+    }
     Object.assign(updates, await this.settings.prepareEpaySettingsUpdate(body));
     if (body.tutorialWindowsClient !== undefined)
       updates['tutorial.windows.client'] = body.tutorialWindowsClient.trim();

@@ -174,6 +174,20 @@ export class UpdateSettingsDto {
   purchaseNoticeContent?: string;
 
   @IsOptional()
+  @IsBoolean()
+  ultraPurchaseNoticeEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  ultraPurchaseNoticeTitle?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  ultraPurchaseNoticeContent?: string;
+
+  @IsOptional()
   @IsString()
   @MaxLength(40)
   tutorialWindowsClient?: string;

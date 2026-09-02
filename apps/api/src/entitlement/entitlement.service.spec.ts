@@ -3,6 +3,314 @@ import { EntitlementService } from './entitlement.service';
 describe('EntitlementService V2', () => {
   afterEach(() => jest.useRealTimers());
 
+  it('creates a monthly bucket for an additive permanent Ultra entitlement', async () => {
+    const startsAt = new Date('2027-01-31T08:00:00.000Z');
+    const endsAt = new Date('9999-12-31T23:59:59.999Z');
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'order_ultra_120',
+          userId: 'user_1',
+          kind: 'TRAFFIC_PACK',
+          createdAt: startsAt,
+          processedAt: startsAt,
+          entitlementExpiresAt: endsAt,
+          quotaCadenceSnapshot: 'MONTHLY_RESET',
+          trafficBytes: 120n,
+          amountCents: 6_900,
+          catalogOffer: {
+            id: 'offer_ultra_120',
+            trafficBytes: 120n,
+            product: {
+              id: 'product_ultra_120',
+              kind: 'TRAFFIC_PACK',
+              series: 'ULTRA',
+              quotaCadence: 'MONTHLY_RESET',
+              accessProfileId: 'profile_ultra',
+              speedUpMbps: 300,
+              speedDownMbps: 300,
+              defaultTrafficMultiplierBasisPoints: 10_000,
+              requiresActivePlan: false,
+            },
+          },
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      user: { findUnique: jest.fn().mockResolvedValue({ id: 'user_1' }) },
+      accessAccount: {
+        upsert: jest.fn().mockResolvedValue({ id: 'account_1' }),
+      },
+      accessProfile: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ deviceLimit: 1000 }),
+      },
+      entitlementGrant: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({
+          id: 'grant_ultra',
+          startsAt,
+          resetAnchorAt: startsAt,
+        }),
+      },
+      quotaBucket: { upsert: jest.fn().mockResolvedValue({}) },
+    };
+    const service = new EntitlementService(tx as never);
+
+    await service.grantFromOrder({ orderId: 'order_ultra_120' }, tx as never);
+
+    const [grantCreate] = tx.entitlementGrant.create.mock
+      .calls[0] as unknown as [{ data: Record<string, unknown> }];
+    expect(grantCreate.data).toMatchObject({
+      quotaCadenceSnapshot: 'MONTHLY_RESET',
+      resetAnchorAt: startsAt,
+      priceCentsSnapshot: 6_900,
+      trafficBytesSnapshot: 120n,
+      activeSlot: 'ULTRA',
+    });
+    const [bucketUpsert] = tx.quotaBucket.upsert.mock.calls[0] as unknown as [
+      { create: Record<string, unknown> },
+    ];
+    expect(bucketUpsert.create).toMatchObject({
+      kind: 'PLAN_CYCLE',
+      startsAt,
+      endsAt: new Date('2027-02-28T08:00:00.000Z'),
+      grantedBytes: 120n,
+    });
+  });
+
+  it('upgrades the active Ultra grant and adds only the tier difference', async () => {
+    const anchor = new Date('2027-01-31T08:00:00.000Z');
+    const upgradedAt = new Date('2027-02-10T08:00:00.000Z');
+    const endsAt = new Date('9999-12-31T23:59:59.999Z');
+    const existing = {
+      id: 'grant_ultra',
+      productId: 'product_ultra_120',
+      startsAt: anchor,
+      resetAnchorAt: anchor,
+      priceCentsSnapshot: 6_900,
+      trafficBytesSnapshot: 120n,
+    };
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'order_ultra_upgrade',
+          userId: 'user_1',
+          kind: 'TRAFFIC_PACK',
+          createdAt: upgradedAt,
+          processedAt: upgradedAt,
+          entitlementExpiresAt: endsAt,
+          quotaCadenceSnapshot: 'MONTHLY_RESET',
+          trafficBytes: 360n,
+          amountCents: 6_000,
+          basePriceCents: 12_900,
+          upgradeFromProductIdSnapshot: 'product_ultra_120',
+          upgradeFromPriceCentsSnapshot: 6_900,
+          catalogOffer: {
+            id: 'offer_ultra_360',
+            trafficBytes: 360n,
+            product: {
+              id: 'product_ultra_360',
+              kind: 'TRAFFIC_PACK',
+              series: 'ULTRA',
+              quotaCadence: 'MONTHLY_RESET',
+              accessProfileId: 'profile_ultra',
+              speedUpMbps: 300,
+              speedDownMbps: 300,
+              defaultTrafficMultiplierBasisPoints: 10_000,
+              requiresActivePlan: false,
+            },
+          },
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      user: { findUnique: jest.fn().mockResolvedValue({ id: 'user_1' }) },
+      accessAccount: {
+        upsert: jest.fn().mockResolvedValue({ id: 'account_1' }),
+      },
+      accessProfile: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ deviceLimit: 1000 }),
+      },
+      entitlementGrant: {
+        findFirst: jest.fn().mockResolvedValue(existing),
+        update: jest.fn().mockResolvedValue(existing),
+      },
+      quotaBucket: { upsert: jest.fn().mockResolvedValue({}) },
+    };
+    const service = new EntitlementService(tx as never);
+
+    await service.grantFromOrder(
+      { orderId: 'order_ultra_upgrade' },
+      tx as never,
+    );
+
+    const [grantUpdate] = tx.entitlementGrant.update.mock
+      .calls[0] as unknown as [
+      { where: { id: string }; data: Record<string, unknown> },
+    ];
+    expect(grantUpdate.where).toEqual({ id: 'grant_ultra' });
+    expect(grantUpdate.data).toMatchObject({
+      productId: 'product_ultra_360',
+      resetAnchorAt: anchor,
+      priceCentsSnapshot: 12_900,
+      trafficBytesSnapshot: 360n,
+      activeSlot: 'ULTRA',
+    });
+    const [bucketUpsert] = tx.quotaBucket.upsert.mock.calls[0] as unknown as [
+      {
+        where: { grantId_startsAt: { grantId: string; startsAt: Date } };
+        update: Record<string, unknown>;
+      },
+    ];
+    expect(bucketUpsert.where).toEqual({
+      grantId_startsAt: {
+        grantId: 'grant_ultra',
+        startsAt: new Date('2027-01-31T08:00:00.000Z'),
+      },
+    });
+    expect(bucketUpsert.update).toEqual({
+      endsAt: new Date('2027-02-28T08:00:00.000Z'),
+      grantedBytes: { increment: 240n },
+    });
+    expect(tx.manualOrder.update).toHaveBeenCalledWith({
+      where: { id: 'order_ultra_upgrade' },
+      data: {
+        entitlementGrantId: 'grant_ultra',
+        resetAnchorAtSnapshot: anchor,
+      },
+    });
+  });
+
+  it('cancels a fully refunded Ultra grant and releases its active slot', async () => {
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'order_ultra',
+          entitlementGrant: {
+            id: 'grant_ultra',
+            status: 'ACTIVE',
+          },
+          catalogOffer: { product: { series: 'ULTRA' } },
+        }),
+      },
+      entitlementGrant: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const service = new EntitlementService(tx as never);
+
+    await expect(
+      service.reverseUltraForFullRefund(
+        tx as never,
+        'order_ultra',
+        'admin_1',
+        'refund_1',
+      ),
+    ).resolves.toEqual({ reversed: true, grantId: 'grant_ultra' });
+
+    const [grantUpdate] = tx.entitlementGrant.updateMany.mock
+      .calls[0] as unknown as [
+      {
+        where: Record<string, unknown>;
+        data: Record<string, unknown>;
+      },
+    ];
+    expect(grantUpdate.where).toEqual({
+      id: 'grant_ultra',
+      status: 'ACTIVE',
+      activeSlot: 'ULTRA',
+    });
+    expect(grantUpdate.data).toMatchObject({
+      status: 'CANCELED',
+      activeSlot: null,
+    });
+    expect(grantUpdate.data.endsAt).toBeInstanceOf(Date);
+  });
+
+  it('denies an exhausted node even when another node has usable Ultra quota', async () => {
+    const normalGrant = {
+      id: 'grant_normal',
+      kind: 'PLAN',
+      startsAt: new Date('2027-01-01T00:00:00.000Z'),
+      endsAt: new Date('2028-01-01T00:00:00.000Z'),
+      speedUpMbpsSnapshot: 50,
+      speedDownMbpsSnapshot: 100,
+      deviceLimitSnapshot: 1000,
+      quotaCadenceSnapshot: 'MONTHLY_RESET',
+      quotaBuckets: [{ grantedBytes: 100n, consumedBytes: 100n }],
+      product: { name: '普通套餐', requiresActivePlan: false },
+      accessProfile: {
+        nodeBindings: [
+          {
+            priority: 0,
+            node: {
+              id: 'node_normal',
+              label: '普通节点',
+              active: true,
+              lifecycleStatus: 'ACTIVE',
+              region: 'US',
+            },
+          },
+        ],
+      },
+    };
+    const ultraGrant = {
+      ...normalGrant,
+      id: 'grant_ultra',
+      kind: 'TRAFFIC_PACK',
+      speedUpMbpsSnapshot: 300,
+      speedDownMbpsSnapshot: 300,
+      quotaBuckets: [{ grantedBytes: 120n, consumedBytes: 20n }],
+      product: { name: '普通线路 Ultra 120', requiresActivePlan: false },
+      accessProfile: {
+        nodeBindings: [
+          {
+            priority: 0,
+            node: {
+              id: 'node_ultra',
+              label: 'Ultra 节点',
+              active: true,
+              lifecycleStatus: 'ACTIVE',
+              region: 'US',
+            },
+          },
+        ],
+      },
+    };
+    const prisma = {
+      entitlementGrant: {
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([normalGrant, ultraGrant])
+          .mockResolvedValueOnce([normalGrant, ultraGrant])
+          .mockResolvedValueOnce([normalGrant, ultraGrant])
+          .mockResolvedValueOnce([normalGrant, ultraGrant]),
+      },
+      quotaBucket: { upsert: jest.fn() },
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'user_1',
+          status: 'ACTIVE',
+        }),
+      },
+    };
+    const service = new EntitlementService(prisma as never);
+
+    await expect(
+      service.resolveAccess('user_1', 'node_normal'),
+    ).resolves.toMatchObject({
+      allowed: false,
+      reason: 'traffic_exhausted',
+    });
+    await expect(
+      service.resolveAccess('user_1', 'node_ultra'),
+    ).resolves.toMatchObject({
+      allowed: true,
+      speedUpMbps: 300,
+      speedDownMbps: 300,
+      remainingBytes: 100,
+    });
+  });
+
   it('applies product speed and default multiplier when granting a plan', async () => {
     const startsAt = new Date('2026-08-24T12:00:00.000Z');
     const endsAt = new Date('2026-09-24T12:00:00.000Z');
@@ -776,6 +1084,76 @@ describe('EntitlementService V2', () => {
           { quotaBucketId: 'bucket_pack', accountedBytes: 105n },
         ],
       },
+    });
+  });
+
+  it('keeps the node entitlement multiplier when a batch exceeds its remaining quota', async () => {
+    const bucket = {
+      id: 'bucket_ultra',
+      grantedBytes: 50n,
+      consumedBytes: 0n,
+      trafficMultiplierBasisPointsSnapshot: 10_000,
+      endsAt: new Date('2027-05-01T00:00:00.000Z'),
+      createdAt: new Date('2027-03-01T00:00:00.000Z'),
+      grant: {
+        kind: 'TRAFFIC_PACK',
+        legacySubscriptionId: null,
+        legacyTrafficPackId: null,
+        product: { requiresActivePlan: false },
+      },
+    };
+    const tx = {
+      usageImportBatch: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'batch_db_ultra_boundary' }),
+      },
+      user: { findUnique: jest.fn().mockResolvedValue({ id: 'user_ultra' }) },
+      accessAccount: {
+        upsert: jest.fn().mockResolvedValue({
+          id: 'account_ultra',
+          trafficMultiplierBasisPoints: 21_000,
+          trafficMultiplierOverrideBasisPoints: null,
+          trafficMultiplierRemainder: 0,
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      quotaBucket: {
+        findMany: jest.fn().mockResolvedValue([bucket]),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      trafficPack: { findUnique: jest.fn(), update: jest.fn() },
+      subscriptionCycle: { findFirst: jest.fn(), update: jest.fn() },
+      subscription: { count: jest.fn(), update: jest.fn() },
+      usageRollup: {
+        create: jest.fn().mockResolvedValue({ id: 'usage_ultra_boundary' }),
+      },
+    };
+    const prisma = {
+      $transaction: jest.fn((operation: (client: typeof tx) => unknown) =>
+        operation(tx),
+      ),
+    };
+    const service = new EntitlementService(prisma as never);
+
+    await service.applyUsageBatch('node_ultra', {
+      id: 'batch-ultra-boundary',
+      claimedAt: '2027-03-30T08:00:00.000Z',
+      traffic: { user_ultra: { tx: 100, rx: 0 } },
+    });
+
+    const [createRollup] = tx.usageRollup.create.mock.calls[0] as unknown as [
+      {
+        data: {
+          accountedBytes: bigint;
+          multiplierBasisPoints: number;
+          overageBytes: bigint;
+        };
+      },
+    ];
+    expect(createRollup.data).toMatchObject({
+      accountedBytes: 100n,
+      multiplierBasisPoints: 10_000,
+      overageBytes: 50n,
     });
   });
 });

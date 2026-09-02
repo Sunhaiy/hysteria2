@@ -74,13 +74,14 @@ export default function PortalUsagePage() {
             <MetricCard label="总剩余" value={usage.totalRemainingBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(usage.totalRemainingBytes)} footnote="鉴权时按这个值决定是否允许接入" />
           </section>
 
-          <Panel title="近 7 日节点流量" copy="按北京时间聚合每日上传与下载，不受零流量心跳影响。">
+          <Panel title="近 7 日节点流量" copy="按北京时间聚合实际流量与计费流量，不受零流量心跳影响。">
             <DataTable
-              headers={["节点", "上传", "下载", "来源", "时间"]}
+              headers={["节点", "上传", "下载", "计费流量", "来源", "时间"]}
               rows={usage.recent.map((item) => [
                 item.nodeLabel,
                 formatBytes(item.txBytes),
                 formatBytes(item.rxBytes),
+                formatBytes(item.accountedBytes),
                 item.source,
                 formatDateTime(item.bucketStart),
               ])}

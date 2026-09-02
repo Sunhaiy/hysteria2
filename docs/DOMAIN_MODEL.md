@@ -8,6 +8,9 @@ than adding another interpretation to the legacy plan and pool models.
 
 - **CatalogProduct** is the customer-visible product. It is either a recurring
   plan or a one-time traffic pack.
+- **Ultra catalog series** is an additive permanent purchase with monthly-reset
+  quota. Its three tiers share one exclusive access profile and never replace a
+  member's standard plan.
 - **CatalogOffer** is one purchasable billing period and price for a product.
   Monthly, quarterly, and yearly offers use fixed intervals of 1, 3, and 12
   months. An offer owns the traffic, price, and external store link for that
@@ -35,8 +38,9 @@ stability window, but they do not receive new business rules.
   grant multiplier and the member override.
 - **QuotaBucket** is spendable traffic owned by one grant. Recurring plan
   buckets reset monthly from the subscription anchor; traffic-pack buckets are
-  one-time. Each bucket freezes the multiplier used for its own consumption so
-  a later renewal cannot alter an existing bucket's billing.
+  normally one-time. Ultra traffic-pack grants also reset monthly from their
+  first-purchase anchor. Each bucket freezes the multiplier used for its own
+  consumption so a later renewal cannot alter an existing bucket's billing.
 - **QuotaAdjustment** is an immutable operator ledger entry. It records actor,
   reason, target bucket, and before/after values without rewriting usage.
 - **UsageImportBatch** is the idempotency seam between a node worker and quota

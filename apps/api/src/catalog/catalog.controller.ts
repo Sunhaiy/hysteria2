@@ -33,13 +33,20 @@ export class CatalogController {
   }
 
   @Post('products')
-  createProduct(@Body() body: SaveCatalogProductDto) {
-    return this.catalog.createProduct(body);
+  createProduct(
+    @Body() body: SaveCatalogProductDto,
+    @CurrentPrincipal() principal: SessionPrincipal,
+  ) {
+    return this.catalog.createProduct(body, principal.sub);
   }
 
   @Put('products/:id')
-  updateProduct(@Param('id') id: string, @Body() body: SaveCatalogProductDto) {
-    return this.catalog.updateProduct(id, body);
+  updateProduct(
+    @Param('id') id: string,
+    @Body() body: SaveCatalogProductDto,
+    @CurrentPrincipal() principal: SessionPrincipal,
+  ) {
+    return this.catalog.updateProduct(id, body, principal.sub);
   }
 
   @Get('access-profiles')

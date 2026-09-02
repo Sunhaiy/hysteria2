@@ -136,6 +136,7 @@ describe('ControlPlaneStoreService performance-sensitive reads', () => {
           nodeLabel: 'US A',
           txBytes: 2_000n,
           rxBytes: 8_000n,
+          accountedBytes: 21_000n,
         },
       ]),
     };
@@ -155,6 +156,7 @@ describe('ControlPlaneStoreService performance-sensitive reads', () => {
         bucketStart: '2026-09-02T00:00:00+08:00',
         txBytes: 2_000,
         rxBytes: 8_000,
+        accountedBytes: 21_000,
         source: 'daily-aggregate',
       }),
     ]);

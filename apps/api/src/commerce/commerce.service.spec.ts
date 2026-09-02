@@ -3,6 +3,64 @@ import { CommerceService } from './commerce.service';
 describe('CommerceService checkout', () => {
   afterEach(() => jest.useRealTimers());
 
+  it('quotes only the price difference when upgrading an active Ultra entitlement', async () => {
+    const prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'user_1',
+          status: 'ACTIVE',
+          balanceCents: 20_000,
+        }),
+      },
+      catalogOffer: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'offer_ultra_600',
+          archivedAt: null,
+          active: true,
+          priceCents: 26_000,
+          trafficBytes: 600n,
+          product: {
+            id: 'product_ultra_600',
+            name: '普通线路 Ultra 600',
+            kind: 'TRAFFIC_PACK',
+            series: 'ULTRA',
+            quotaCadence: 'MONTHLY_RESET',
+            status: 'ACTIVE',
+            accessProfileId: 'profile_ultra',
+            purchaseLimitPerUser: null,
+            purchaseLimitKey: null,
+            requiresActivePlan: false,
+            accessProfile: {
+              active: true,
+              nodeBindings: [{ nodeId: 'node_ultra' }],
+            },
+          },
+        }),
+      },
+      entitlementGrant: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'grant_ultra',
+          productId: 'product_ultra_120',
+          priceCentsSnapshot: 6_900,
+          trafficBytesSnapshot: 120n,
+          resetAnchorAt: new Date('2026-08-31T08:00:00.000Z'),
+          product: { name: '普通线路 Ultra 120' },
+        }),
+      },
+    };
+    const service = new CommerceService(prisma as never, {} as never);
+
+    await expect(
+      service.quoteCheckout('user_1', { offerId: 'offer_ultra_600' }),
+    ).resolves.toMatchObject({
+      basePriceCents: 26_000,
+      finalPriceCents: 19_100,
+      purchaseMode: 'upgrade',
+      upgradeFromProductId: 'product_ultra_120',
+      upgradeFromProductName: '普通线路 Ultra 120',
+    });
+  });
+
   it('materializes a V2 entitlement for a traffic pack CDK redemption', async () => {
     const tx = {
       trafficPack: {

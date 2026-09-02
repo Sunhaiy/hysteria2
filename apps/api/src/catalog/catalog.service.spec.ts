@@ -169,6 +169,7 @@ describe('CatalogService publishing rules', () => {
         client: typeof tx,
         input: typeof productInput,
         productId: string,
+        series: 'STANDARD' | 'ULTRA',
         currentProfileId?: string,
       ): Promise<{ id: string }>;
     };
@@ -177,6 +178,7 @@ describe('CatalogService publishing rules', () => {
       tx,
       productInput,
       'product_1',
+      'STANDARD',
       'profile_shared',
     );
 
@@ -188,6 +190,192 @@ describe('CatalogService publishing rules', () => {
       deviceLimit: 4,
       nodeBindings: { create: [{ nodeId: 'node_1', priority: 0 }] },
     });
+  });
+
+  it('moves selected nodes into the shared Ultra profile and audits the change', async () => {
+    const tx = {
+      node: {
+        count: jest.fn().mockResolvedValue(1),
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 'node_ultra', active: true, lifecycleStatus: 'ACTIVE' },
+          ]),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      accessProfileNode: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      accessProfile: {
+        upsert: jest.fn().mockResolvedValue({
+          id: 'catalog-ultra-shared',
+          deviceLimit: 1000,
+        }),
+      },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const service = serviceWith(tx);
+    const input = {
+      slug: 'ultra-120',
+      kind: 'traffic_pack' as const,
+      series: 'ultra' as const,
+      status: 'draft' as const,
+      name: '普通线路 Ultra 120',
+      nodeIds: ['node_ultra'],
+      speedUpMbps: 1,
+      speedDownMbps: 1,
+      defaultTrafficMultiplier: 2.1,
+      offers: [
+        {
+          slug: 'ultra-120-once',
+          name: '永久版',
+          billingPeriod: 'one_time' as const,
+          trafficBytes: 120,
+          priceCents: 6_900,
+          active: true,
+        },
+      ],
+    };
+    const resolver = service as unknown as {
+      resolveProductAccessProfile(
+        client: typeof tx,
+        productInput: typeof input,
+        productId: string,
+        series: 'ULTRA',
+        currentProfileId: string | undefined,
+        actorId: string,
+      ): Promise<{ id: string }>;
+    };
+
+    await resolver.resolveProductAccessProfile(
+      tx,
+      input,
+      'product_ultra_120',
+      'ULTRA',
+      undefined,
+      'admin_1',
+    );
+
+    expect(tx.accessProfileNode.deleteMany).toHaveBeenNthCalledWith(1, {
+      where: {
+        nodeId: { in: ['node_ultra'] },
+        accessProfileId: { not: 'catalog-ultra-shared' },
+      },
+    });
+    expect(tx.node.updateMany).toHaveBeenLastCalledWith({
+      where: { id: { in: ['node_ultra'] } },
+      data: { exclusiveAccessProfileId: 'catalog-ultra-shared' },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        actorId: 'admin_1',
+        action: 'catalog.ultra_nodes.updated',
+        targetType: 'access_profile',
+        targetId: 'catalog-ultra-shared',
+        metadata: {
+          productId: 'product_ultra_120',
+          nodeIds: ['node_ultra'],
+        },
+      },
+    });
+  });
+
+  it('rejects publishing Ultra when the shared profile has no serviceable node', async () => {
+    const tx = {
+      node: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const service = serviceWith(tx);
+    const input = {
+      slug: 'ultra-120',
+      kind: 'traffic_pack' as const,
+      series: 'ultra' as const,
+      status: 'active' as const,
+      name: '普通线路 Ultra 120',
+      speedUpMbps: 300,
+      speedDownMbps: 300,
+      defaultTrafficMultiplier: 1,
+      offers: [
+        {
+          slug: 'ultra-120-once',
+          name: '永久版',
+          billingPeriod: 'one_time' as const,
+          trafficBytes: 120,
+          priceCents: 6_900,
+          active: true,
+        },
+      ],
+    };
+    const resolver = service as unknown as {
+      resolveProductAccessProfile(
+        client: typeof tx,
+        productInput: typeof input,
+        productId: string,
+        series: 'ULTRA',
+      ): Promise<{ id: string }>;
+    };
+
+    await expect(
+      resolver.resolveProductAccessProfile(
+        tx,
+        input,
+        'product_ultra_120',
+        'ULTRA',
+      ),
+    ).rejects.toThrow('Published Ultra products require a serviceable node');
+  });
+
+  it('rejects Ultra-exclusive nodes in a standard product profile', async () => {
+    const tx = {
+      node: {
+        count: jest.fn().mockResolvedValue(1),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'node_ultra',
+            active: true,
+            lifecycleStatus: 'ACTIVE',
+            exclusiveAccessProfileId: 'catalog-ultra-shared',
+          },
+        ]),
+      },
+    };
+    const service = serviceWith(tx);
+    const input = {
+      slug: 'standard',
+      kind: 'plan' as const,
+      status: 'draft' as const,
+      name: 'Standard',
+      nodeIds: ['node_ultra'],
+      speedUpMbps: 100,
+      speedDownMbps: 100,
+      defaultTrafficMultiplier: 1,
+      offers: [
+        {
+          slug: 'standard-monthly',
+          name: '月付',
+          billingPeriod: 'monthly' as const,
+          trafficBytes: 100,
+          priceCents: 1_000,
+          active: true,
+        },
+      ],
+    };
+    const resolver = service as unknown as {
+      resolveProductAccessProfile(
+        client: typeof tx,
+        productInput: typeof input,
+        productId: string,
+        series: 'STANDARD',
+      ): Promise<{ id: string }>;
+    };
+
+    await expect(
+      resolver.resolveProductAccessProfile(
+        tx,
+        input,
+        'product_standard',
+        'STANDARD',
+      ),
+    ).rejects.toThrow('Ultra exclusive nodes cannot be assigned');
   });
 
   it('updates active speed snapshots and the default multiplier in one transaction', async () => {

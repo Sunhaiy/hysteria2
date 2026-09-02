@@ -6,10 +6,12 @@ import {
 } from '@nestjs/common';
 import {
   BillingPeriod,
+  CatalogProductSeries,
   EntitlementGrantKind,
   EntitlementGrantStatus,
   OrderKind,
   Prisma,
+  QuotaCadence,
   QuotaBucketKind,
   QuotaAdjustmentMode,
   SubscriptionStatus,
@@ -38,6 +40,52 @@ type MeteredQuotaBucket = {
 @Injectable()
 export class EntitlementService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async reverseUltraForFullRefund(
+    client: DbClient,
+    orderId: string,
+    actorId: string,
+    refundId: string,
+  ) {
+    const order = await client.manualOrder.findUnique({
+      where: { id: orderId },
+      include: {
+        entitlementGrant: true,
+        catalogOffer: { include: { product: true } },
+      },
+    });
+    if (
+      !order?.entitlementGrant ||
+      order.catalogOffer?.product.series !== CatalogProductSeries.ULTRA ||
+      order.entitlementGrant.status !== EntitlementGrantStatus.ACTIVE
+    ) {
+      return { reversed: false };
+    }
+    const reversedAt = new Date();
+    const result = await client.entitlementGrant.updateMany({
+      where: {
+        id: order.entitlementGrant.id,
+        status: EntitlementGrantStatus.ACTIVE,
+        activeSlot: 'ULTRA',
+      },
+      data: {
+        status: EntitlementGrantStatus.CANCELED,
+        endsAt: reversedAt,
+        activeSlot: null,
+      },
+    });
+    if (result.count === 0) return { reversed: false };
+    await client.auditLog.create({
+      data: {
+        actorId,
+        action: 'ULTRA_ENTITLEMENT_REVERSED',
+        targetType: 'EntitlementGrant',
+        targetId: order.entitlementGrant.id,
+        metadata: { orderId, refundId, reversedAt: reversedAt.toISOString() },
+      },
+    });
+    return { reversed: true, grantId: order.entitlementGrant.id };
+  }
 
   async grantFromOrder(
     input: { orderId: string; subscriptionId?: string; trafficPackId?: string },
@@ -68,6 +116,13 @@ export class EntitlementService {
       order.kind === OrderKind.TRAFFIC_PACK
         ? EntitlementGrantKind.TRAFFIC_PACK
         : EntitlementGrantKind.PLAN;
+    const quotaCadence =
+      order.quotaCadenceSnapshot ??
+      product.quotaCadence ??
+      (kind === EntitlementGrantKind.PLAN
+        ? QuotaCadence.MONTHLY_RESET
+        : QuotaCadence.ONE_TIME);
+    const isUltra = product.series === CatalogProductSeries.ULTRA;
     const requiresActivePlan =
       order.requiresActivePlanSnapshot ?? product.requiresActivePlan;
     if (kind === EntitlementGrantKind.TRAFFIC_PACK && requiresActivePlan) {
@@ -152,7 +207,7 @@ export class EntitlementService {
       });
     }
 
-    const existing = input.subscriptionId
+    const linkedExisting = input.subscriptionId
       ? await client.entitlementGrant.findUnique({
           where: { legacySubscriptionId: input.subscriptionId },
         })
@@ -161,10 +216,33 @@ export class EntitlementService {
             where: { legacyTrafficPackId: input.trafficPackId },
           })
         : null;
+    const existing =
+      linkedExisting ??
+      (isUltra
+        ? await client.entitlementGrant.findFirst({
+            where: {
+              userId: order.userId,
+              activeSlot: 'ULTRA',
+              status: EntitlementGrantStatus.ACTIVE,
+            },
+          })
+        : null);
+    if (
+      isUltra &&
+      existing &&
+      (order.upgradeFromProductIdSnapshot !== existing.productId ||
+        order.upgradeFromPriceCentsSnapshot !== existing.priceCentsSnapshot)
+    ) {
+      throw new ConflictException('Ultra upgrade source changed');
+    }
     const replacesPlanProduct =
       kind === EntitlementGrantKind.PLAN &&
       existing !== null &&
       existing.productId !== product.id;
+    const previousTrafficBytes = existing?.trafficBytesSnapshot ?? null;
+    const resetAnchorAt =
+      existing?.resetAnchorAt ?? existing?.startsAt ?? startsAt;
+    const trafficBytes = order.trafficBytes ?? order.catalogOffer.trafficBytes;
     const grant = existing
       ? await client.entitlementGrant.update({
           where: { id: existing.id },
@@ -179,6 +257,14 @@ export class EntitlementService {
             speedDownMbpsSnapshot: speedDownMbps,
             deviceLimitSnapshot: deviceLimit ?? profile.deviceLimit,
             trafficMultiplierBasisPointsSnapshot,
+            quotaCadenceSnapshot: quotaCadence,
+            resetAnchorAt:
+              quotaCadence === QuotaCadence.MONTHLY_RESET
+                ? resetAnchorAt
+                : null,
+            priceCentsSnapshot: order.basePriceCents ?? order.amountCents,
+            trafficBytesSnapshot: trafficBytes,
+            activeSlot: isUltra ? 'ULTRA' : null,
           },
         })
       : await client.entitlementGrant.create({
@@ -197,16 +283,29 @@ export class EntitlementService {
             speedDownMbpsSnapshot: speedDownMbps,
             deviceLimitSnapshot: deviceLimit ?? profile.deviceLimit,
             trafficMultiplierBasisPointsSnapshot,
+            quotaCadenceSnapshot: quotaCadence,
+            resetAnchorAt:
+              quotaCadence === QuotaCadence.MONTHLY_RESET ? startsAt : null,
+            priceCentsSnapshot: order.basePriceCents ?? order.amountCents,
+            trafficBytesSnapshot: trafficBytes,
+            activeSlot: isUltra ? 'ULTRA' : null,
           },
         });
     const bounds =
-      kind === EntitlementGrantKind.PLAN
+      quotaCadence === QuotaCadence.MONTHLY_RESET
         ? this.monthlyCycleBounds(
-            replacesPlanProduct ? startsAt : (existing?.startsAt ?? startsAt),
+            replacesPlanProduct ? startsAt : resetAnchorAt,
             order.entitlementExpiresAt,
             startsAt,
           )
         : { startsAt, endsAt: order.entitlementExpiresAt };
+    const upgradeTrafficBytes =
+      isUltra && existing && previousTrafficBytes !== null
+        ? trafficBytes - previousTrafficBytes
+        : BigInt(0);
+    if (upgradeTrafficBytes < BigInt(0)) {
+      throw new BadRequestException('Ultra downgrade is not supported');
+    }
     await client.quotaBucket.upsert({
       where: {
         grantId_startsAt: { grantId: grant.id, startsAt: bounds.startsAt },
@@ -214,16 +313,30 @@ export class EntitlementService {
       create: {
         grantId: grant.id,
         kind:
-          kind === EntitlementGrantKind.PLAN
+          quotaCadence === QuotaCadence.MONTHLY_RESET
             ? QuotaBucketKind.PLAN_CYCLE
             : QuotaBucketKind.TRAFFIC_PACK,
         startsAt: bounds.startsAt,
         endsAt: bounds.endsAt,
-        grantedBytes: order.trafficBytes ?? order.catalogOffer.trafficBytes,
+        grantedBytes: trafficBytes,
         trafficMultiplierBasisPointsSnapshot,
       },
-      update: { endsAt: bounds.endsAt },
+      update: {
+        endsAt: bounds.endsAt,
+        ...(upgradeTrafficBytes > BigInt(0)
+          ? { grantedBytes: { increment: upgradeTrafficBytes } }
+          : {}),
+      },
     });
+    if (isUltra) {
+      await client.manualOrder.update({
+        where: { id: order.id },
+        data: {
+          entitlementGrantId: grant.id,
+          resetAnchorAtSnapshot: resetAnchorAt,
+        },
+      });
+    }
     return grant;
   }
 
@@ -282,15 +395,7 @@ export class EntitlementService {
           (bucket) => bucket.grantedBytes > bucket.consumedBytes,
         ),
     );
-    const accessSources = [
-      ...activePlanGrants,
-      ...usable.filter(
-        (grant) =>
-          grant.kind !== EntitlementGrantKind.PLAN &&
-          (!grant.product.requiresActivePlan ||
-            (activePlanGrants.length === 0 && hasLegacyPlan)),
-      ),
-    ];
+    const accessSources = usable;
     const nodes = new Map<
       string,
       { id: string; label: string; priority: number; region: string | null }
@@ -314,11 +419,28 @@ export class EntitlementService {
     const orderedNodes = [...nodes.values()].sort(
       (left, right) => left.priority - right.priority,
     );
-    if (usable.length === 0 || (nodeId && !nodes.has(nodeId))) {
+    const requestedSources = nodeId
+      ? accessSources.filter((grant) =>
+          grant.accessProfile.nodeBindings.some(
+            (binding) =>
+              binding.node.id === nodeId &&
+              binding.node.active &&
+              binding.node.lifecycleStatus === 'ACTIVE',
+          ),
+        )
+      : accessSources;
+    if (requestedSources.length === 0) {
+      const entitledToRequestedNode = nodeId
+        ? grants.some((grant) =>
+            grant.accessProfile.nodeBindings.some(
+              (binding) => binding.node.id === nodeId,
+            ),
+          )
+        : false;
       return {
         allowed: false,
         reason:
-          usable.length === 0
+          usable.length === 0 || entitledToRequestedNode
             ? ('traffic_exhausted' as const)
             : ('node_denied' as const),
         nodes: orderedNodes,
@@ -328,16 +450,16 @@ export class EntitlementService {
       allowed: true,
       reason: 'ok' as const,
       speedUpMbps: Math.max(
-        ...accessSources.map((grant) => grant.speedUpMbpsSnapshot),
+        ...requestedSources.map((grant) => grant.speedUpMbpsSnapshot),
       ),
       speedDownMbps: Math.max(
-        ...accessSources.map((grant) => grant.speedDownMbpsSnapshot),
+        ...requestedSources.map((grant) => grant.speedDownMbpsSnapshot),
       ),
       deviceLimit: Math.max(
-        ...accessSources.map((grant) => grant.deviceLimitSnapshot),
+        ...requestedSources.map((grant) => grant.deviceLimitSnapshot),
       ),
       remainingBytes: Number(
-        usable
+        requestedSources
           .flatMap((grant) => grant.quotaBuckets)
           .reduce(
             (total, bucket) =>
@@ -346,7 +468,7 @@ export class EntitlementService {
           ),
       ),
       nodes: orderedNodes,
-      grants: usable.map((grant) => ({
+      grants: requestedSources.map((grant) => ({
         id: grant.id,
         kind: grant.kind.toLowerCase(),
         productName: grant.product.name,
@@ -1109,6 +1231,7 @@ export class EntitlementService {
     let accountedBytes = BigInt(0);
     let weightedBasisPointBytes = BigInt(0);
     let remainder = BigInt(initialRemainder);
+    let overflowMultiplierBasisPoints = fallbackMultiplierBasisPoints;
     const allocations: Array<{ bucket: T; accountedBytes: bigint }> = [];
 
     for (const bucket of buckets) {
@@ -1129,6 +1252,7 @@ export class EntitlementService {
             fallbackMultiplierBasisPoints,
           userMultiplierBasisPoints,
         );
+        overflowMultiplierBasisPoints = multiplierBasisPoints;
         const multiplier = BigInt(multiplierBasisPoints);
         const scaledNeeded = available * multiplierScale - remainder;
         const physicalToFill =
@@ -1159,11 +1283,11 @@ export class EntitlementService {
     }
 
     if (physicalRemaining > BigInt(0)) {
-      const fallbackMultiplier = BigInt(fallbackMultiplierBasisPoints);
-      const scaled = physicalRemaining * fallbackMultiplier + remainder;
+      const overflowMultiplier = BigInt(overflowMultiplierBasisPoints);
+      const scaled = physicalRemaining * overflowMultiplier + remainder;
       const charged = scaled / multiplierScale;
       remainder = scaled % multiplierScale;
-      weightedBasisPointBytes += physicalRemaining * fallbackMultiplier;
+      weightedBasisPointBytes += physicalRemaining * overflowMultiplier;
       accountedBytes += charged;
       pendingAccounted += charged;
     }
@@ -1207,16 +1331,26 @@ export class EntitlementService {
     const grants = await this.prisma.entitlementGrant.findMany({
       where: {
         userId,
-        kind: EntitlementGrantKind.PLAN,
         status: EntitlementGrantStatus.ACTIVE,
         startsAt: { lte: now },
         endsAt: { gt: now },
+        OR: [
+          { quotaCadenceSnapshot: QuotaCadence.MONTHLY_RESET },
+          {
+            quotaCadenceSnapshot: null,
+            kind: EntitlementGrantKind.PLAN,
+          },
+        ],
       },
       include: { offer: true },
     });
     for (const grant of grants) {
       if (!grant.offer) continue;
-      const bounds = this.monthlyCycleBounds(grant.startsAt, grant.endsAt, now);
+      const bounds = this.monthlyCycleBounds(
+        grant.resetAnchorAt ?? grant.startsAt,
+        grant.endsAt,
+        now,
+      );
       await this.prisma.quotaBucket.upsert({
         where: {
           grantId_startsAt: { grantId: grant.id, startsAt: bounds.startsAt },
@@ -1226,7 +1360,7 @@ export class EntitlementService {
           kind: QuotaBucketKind.PLAN_CYCLE,
           startsAt: bounds.startsAt,
           endsAt: bounds.endsAt,
-          grantedBytes: grant.offer.trafficBytes,
+          grantedBytes: grant.trafficBytesSnapshot ?? grant.offer.trafficBytes,
           trafficMultiplierBasisPointsSnapshot:
             grant.trafficMultiplierBasisPointsSnapshot,
         },

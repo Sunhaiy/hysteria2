@@ -32,6 +32,7 @@ type Product = {
   id: string;
   slug: string;
   kind: "plan" | "traffic_pack";
+  series: "standard" | "ultra";
   status: "draft" | "active" | "archived";
   name: string;
   description?: string | null;
@@ -73,12 +74,14 @@ type CatalogServer = {
     protocol: "hysteria2" | "vless_reality";
     hostname: string;
     serviceable: boolean;
+    exclusiveAccessProfileId?: string | null;
   }>;
 };
 type Catalog = { products: Product[]; servers: CatalogServer[] };
 type ProductForm = {
   slug: string;
   kind: "plan" | "traffic_pack";
+  series: "standard" | "ultra";
   status: "draft" | "active" | "archived";
   name: string;
   description: string;
@@ -139,6 +142,7 @@ const offerTemplate = (
 const emptyForm = (kind: ProductForm["kind"] = "plan"): ProductForm => ({
   slug: "",
   kind,
+  series: "standard",
   status: "draft",
   name: "",
   description: "",
@@ -178,12 +182,30 @@ export default function CatalogPage() {
   const [feedback, setFeedback] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [ultraNotice, setUltraNotice] = useState({
+    enabled: true,
+    title: "Ultra 购买须知",
+    content: "",
+  });
 
   const load = useCallback(async () => {
     if (!token) return;
     setLoading(true);
     try {
-      setCatalog(await apiRequest<Catalog>("/api/admin/catalog", { token }));
+      const [nextCatalog, settings] = await Promise.all([
+        apiRequest<Catalog>("/api/admin/catalog", { token }),
+        apiRequest<{
+          branding: {
+            ultraPurchaseNotice: {
+              enabled: boolean;
+              title: string;
+              content: string;
+            };
+          };
+        }>("/api/admin/settings", { token }),
+      ]);
+      setCatalog(nextCatalog);
+      setUltraNotice(settings.branding.ultraPurchaseNotice);
       setError(null);
     } catch (cause) {
       setError(
@@ -218,6 +240,7 @@ export default function CatalogPage() {
       ? {
           slug: product.slug,
           kind: product.kind,
+          series: product.series,
           status: product.status,
           name: product.name,
           description: product.description ?? "",
@@ -314,6 +337,7 @@ export default function CatalogPage() {
           body: {
             slug: form.slug.trim(),
             kind: form.kind,
+            series: form.series,
             status: form.status,
             name: form.name.trim(),
             description: form.description.trim() || undefined,
@@ -340,6 +364,17 @@ export default function CatalogPage() {
           },
         },
       );
+      if (form.series === "ultra") {
+        await apiRequest("/api/admin/settings", {
+          method: "PATCH",
+          token,
+          body: {
+            ultraPurchaseNoticeEnabled: ultraNotice.enabled,
+            ultraPurchaseNoticeTitle: ultraNotice.title.trim(),
+            ultraPurchaseNoticeContent: ultraNotice.content.trim(),
+          },
+        });
+      }
       setDrawerOpen(false);
       setFeedback(editing ? "商品与全部规格已更新。" : "商品已创建。");
       await load();
@@ -477,8 +512,15 @@ export default function CatalogPage() {
               <span className="list" key={product.id}>
                 <strong>{product.name}</strong>
                 <small className="mono">{product.slug}</small>
+                {product.series === "ultra" ? (
+                  <small>普通线路 Ultra 系列</small>
+                ) : null}
               </span>,
-              product.kind === "plan" ? "套餐" : "流量包",
+              product.series === "ultra"
+                ? "永久 Ultra"
+                : product.kind === "plan"
+                  ? "套餐"
+                  : "流量包",
               <span className="list" key={`${product.id}-offers`}>
                 {product.offers
                   .filter((offer) => offer.active && !offer.archivedAt)
@@ -488,7 +530,7 @@ export default function CatalogPage() {
                     </small>
                   ))}
               </span>,
-              product.kind === "plan"
+              product.kind === "plan" || product.series === "ultra"
                 ? `每月重置 ${formatBytes(product.offers[0]?.trafficBytes ?? 0)}`
                 : product.offers
                     .map(
@@ -543,7 +585,7 @@ export default function CatalogPage() {
                 busy ||
                 !form.name.trim() ||
                 !form.slug.trim() ||
-                form.nodeIds.length === 0
+                (form.status === "active" && form.nodeIds.length === 0)
               }
             >
               保存商品
@@ -574,6 +616,11 @@ export default function CatalogPage() {
               ]}
             />
           </label>
+          {form.series === "ultra" ? (
+            <div className="feedback info form-grid-wide">
+              这是普通线路 Ultra 系列商品。三档共用下方节点，节点被选中后会自动从普通商品访问配置中移除；速率固定为上下行 300 Mbps，倍率固定为 1x。
+            </div>
+          ) : null}
           <label className="field">
             <span className="fine-print">名称</span>
             <input
@@ -642,6 +689,9 @@ export default function CatalogPage() {
                       >
                         {node.serviceable ? "可用" : "已停用"}
                       </span>
+                      {node.exclusiveAccessProfileId ? (
+                        <span className="badge info">Ultra 专属</span>
+                      ) : null}
                     </label>
                   ))}
                 </section>
@@ -684,6 +734,7 @@ export default function CatalogPage() {
               min={0}
               step={1}
               value={form.speedUpMbps}
+              disabled={form.series === "ultra"}
               onChange={(event) =>
                 setForm((current) => ({
                   ...current,
@@ -700,6 +751,7 @@ export default function CatalogPage() {
               min={0}
               step={1}
               value={form.speedDownMbps}
+              disabled={form.series === "ultra"}
               onChange={(event) =>
                 setForm((current) => ({
                   ...current,
@@ -721,6 +773,7 @@ export default function CatalogPage() {
               max={100}
               step={0.1}
               value={form.defaultTrafficMultiplier}
+              disabled={form.series === "ultra"}
               onChange={(event) =>
                 setForm((current) => ({
                   ...current,
@@ -795,12 +848,60 @@ export default function CatalogPage() {
             </>
           ) : (
             <div className="feedback info form-grid-wide">
-              流量包是永久有效的独立权益，用户无需先购买套餐即可使用所选节点。
+              {form.series === "ultra"
+                ? "Ultra 是永久有效、按原购买日每月重置的独立权益，可在没有普通套餐时使用专属节点。"
+                : "流量包是永久有效的独立权益，用户无需先购买套餐即可使用所选节点。"}
             </div>
           )}
+          {form.series === "ultra" ? (
+            <div className="offer-editor-list form-grid-wide ultra-notice-editor">
+              <strong>Ultra 系列购买须知</strong>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={ultraNotice.enabled}
+                  onChange={(event) =>
+                    setUltraNotice((current) => ({
+                      ...current,
+                      enabled: event.target.checked,
+                    }))
+                  }
+                />
+                <span>在 Ultra 卡片上方展示</span>
+              </label>
+              <label className="field">
+                <span className="fine-print">标题</span>
+                <input
+                  className="control"
+                  value={ultraNotice.title}
+                  onChange={(event) =>
+                    setUltraNotice((current) => ({
+                      ...current,
+                      title: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span className="fine-print">内容</span>
+                <textarea
+                  className="control"
+                  value={ultraNotice.content}
+                  onChange={(event) =>
+                    setUltraNotice((current) => ({
+                      ...current,
+                      content: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+            </div>
+          ) : null}
           <label className="field form-grid-wide">
             <span className="fine-print">
-              {form.kind === "plan" ? "每月流量（GB）" : "流量包额度（GB）"}
+              {form.kind === "plan" || form.series === "ultra"
+                ? "每月流量（GB）"
+                : "流量包额度（GB）"}
             </span>
             <input
               className="control"
@@ -818,6 +919,8 @@ export default function CatalogPage() {
             <small>
               {form.kind === "plan"
                 ? "月付、季付和年付共享这一份月度额度，每月按订阅起始日重置。"
+                : form.series === "ultra"
+                  ? "永久有效，每月按该账号最初购买 Ultra 的时间重置，升级不改变重置日。"
                 : "购买后一次性到账，永久有效。"}
             </small>
           </label>

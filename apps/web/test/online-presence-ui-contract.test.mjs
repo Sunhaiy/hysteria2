@@ -16,7 +16,8 @@ const customerDetail = await readFile(
 );
 
 test("connection projections are not presented as unique devices", () => {
-  assert.match(portal, /portal-plan-summary/);
+  assert.match(portal, /portal-entitlement-row/);
+  assert.match(portal, /portal-plan-facts/);
   assert.match(portal, /当前套餐/);
   assert.doesNotMatch(portal, /label="在线设备"/);
   assert.doesNotMatch(portal, /设备上限/);

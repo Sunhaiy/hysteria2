@@ -526,6 +526,7 @@ export interface PortalUsageResponse {
     bucketStart: string;
     txBytes: number;
     rxBytes: number;
+    accountedBytes: number;
     source: string;
     createdAt: string;
   }>;
