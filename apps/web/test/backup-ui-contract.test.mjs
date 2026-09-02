@@ -18,4 +18,5 @@ test("admin backup page exposes full-site export, validated import, and confirme
   assert.match(page, /输入 RESTORE 确认/);
   assert.match(page, /数据库 \+ 文件/);
   assert.match(page, /最新 \{overview\.retentionCount\} 份/);
+  assert.match(page, /badge success backup-status-badge/);
 });

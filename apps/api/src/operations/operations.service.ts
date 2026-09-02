@@ -9,6 +9,7 @@ import { MonitoringService } from '../monitoring/monitoring.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { KickService } from '../kick-service/kick-service.service';
 import {
+  type ServerTrafficQuery,
   TrafficAnalyticsService,
   type TrafficQuery,
 } from '../traffic-analytics/traffic-analytics.service';
@@ -288,6 +289,10 @@ export class OperationsService {
 
   trafficDetails(query: TrafficQuery) {
     return this.traffic.details(query);
+  }
+
+  serverTraffic(query: ServerTrafficQuery) {
+    return this.traffic.serverMonthly(query);
   }
 
   async alerts(query: AlertQuery) {

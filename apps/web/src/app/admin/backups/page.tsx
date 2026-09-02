@@ -312,7 +312,7 @@ export default function AdminBackupsPage() {
                       <th>来源</th>
                       <th>大小</th>
                       <th>版本 / 校验</th>
-                      <th>状态</th>
+                      <th className="backup-status-column">状态</th>
                       <th>操作</th>
                     </tr>
                   </thead>
@@ -333,15 +333,17 @@ export default function AdminBackupsPage() {
                             {item.sha256.slice(0, 12)}
                           </span>
                         </td>
-                        <td>
+                        <td className="backup-status-column">
                           {item.restore ? (
                             <span
-                              className={`badge ${item.restore.status === "failed" ? "danger" : item.restore.status === "succeeded" ? "success" : "warn"}`}
+                              className={`badge backup-status-badge ${item.restore.status === "failed" ? "danger" : item.restore.status === "succeeded" ? "success" : "warn"}`}
                             >
                               {restoreLabels[item.restore.status]}
                             </span>
                           ) : (
-                            <span className="badge info">可用</span>
+                            <span className="badge success backup-status-badge">
+                              可用
+                            </span>
                           )}
                           {item.restore?.error ? (
                             <span

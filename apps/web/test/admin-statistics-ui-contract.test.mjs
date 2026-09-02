@@ -24,22 +24,32 @@ test("admin dashboard uses the dedicated projection and five operational metrics
   assert.match(page, /axisLabel:\s*\{ width:\s*132, overflow:\s*"truncate" \}/);
 });
 
-test("customer traffic and finance expose daily detail and annual break-even", async () => {
-  const [customer, finance, styles] = await Promise.all([
-    read("../src/app/admin/customers/[id]/page.tsx"),
-    read("../src/app/admin/finance/page.tsx"),
-    read("../src/app/globals.scss"),
-  ]);
+test("customer traffic, orders, and operations expose durable daily statistics", async () => {
+  const [customer, orders, operations, financeRedirect, styles] =
+    await Promise.all([
+      read("../src/app/admin/customers/[id]/page.tsx"),
+      read("../src/app/admin/orders/page.tsx"),
+      read("../src/app/admin/operations/page.tsx"),
+      read("../src/app/admin/finance/page.tsx"),
+      read("../src/app/globals.scss"),
+    ]);
 
   assert.match(customer, /\/traffic\/daily\?/);
   assert.match(customer, /"上传",\s*"下载",\s*"物理流量",\s*"计费流量"/);
   assert.match(customer, /实际倍率/);
-  assert.match(finance, /\/api\/admin\/finance\/annual-break-even\?year=/);
-  assert.match(finance, /\/api\/admin\/finance\/annual-costs\//);
-  assert.match(finance, /年度总成本独立计算，不与节点成本重复相加/);
+  assert.match(orders, /\/api\/admin\/finance\/annual-break-even\?year=/);
+  assert.match(orders, /\/api\/admin\/finance\/annual-costs\//);
+  assert.match(orders, /本月实际收入/);
+  assert.match(orders, /不含 CDK 与人工调整/);
+  assert.match(
+    operations,
+    /\/api\/admin\/operations\/traffic\/servers\?month=/,
+  );
+  assert.match(operations, /每日服务器真实流量/);
+  assert.match(financeRedirect, /redirect\("\/admin\/orders"\)/);
   assert.match(
     styles,
-    /\.annual-cost-form > \.action-button\s*\{[^}]*white-space:\s*nowrap;/s,
+    /\.order-annual-cost-form\s*\{[^}]*grid-template-columns:/s,
   );
 });
 

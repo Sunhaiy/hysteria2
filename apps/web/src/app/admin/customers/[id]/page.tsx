@@ -258,8 +258,11 @@ export default function CustomerDetailPage() {
         setOfferId((current) => current || firstPlanOffer?.id || "");
       })
       .catch((cause) => {
-        if (cause instanceof DOMException && cause.name === "AbortError") return;
-        setError(cause instanceof ApiError ? cause.message : "商品目录加载失败。");
+        if (cause instanceof DOMException && cause.name === "AbortError")
+          return;
+        setError(
+          cause instanceof ApiError ? cause.message : "商品目录加载失败。",
+        );
       });
     return () => controller.abort();
   }, [catalog, token, view]);
@@ -401,7 +404,9 @@ export default function CustomerDetailPage() {
           symbol: "none",
           lineStyle: { width: 2 },
           areaStyle: { opacity: 0.1 },
-          data: customer?.summary.recentTraffic.map((item) => item.physicalBytes) ?? [],
+          data:
+            customer?.summary.recentTraffic.map((item) => item.physicalBytes) ??
+            [],
         },
       ],
     }),
@@ -457,8 +462,8 @@ export default function CustomerDetailPage() {
       : view === "access"
         ? access.presence
         : view === "finance"
-            ? orders
-            : timeline;
+          ? orders
+          : timeline;
   const pagination = {
     page: currentPage.page,
     pageSize: currentPage.pageSize,
@@ -492,11 +497,16 @@ export default function CustomerDetailPage() {
       navItems={adminNav}
       requireRole="admin"
       toolbarMeta={
-        <span
-          className={`badge ${customer.status === "active" ? "success" : "danger"}`}
-        >
-          {customer.status === "active" ? "正常" : "已停用"}
-        </span>
+        <>
+          <span
+            className={`badge ${customer.status === "active" ? "success" : "danger"}`}
+          >
+            {customer.status === "active" ? "正常" : "已停用"}
+          </span>
+          <span className="badge neutral">
+            注册于 {formatDateTime(customer.createdAt)}
+          </span>
+        </>
       }
       toolbarActions={
         <>
@@ -580,7 +590,8 @@ export default function CustomerDetailPage() {
               />
             </div>
             <span className="metric-footnote">
-              已用 {formatBytes(customer.summary.consumedBytes)} · {customer.effectiveTrafficMultiplier}x
+              已用 {formatBytes(customer.summary.consumedBytes)} ·{" "}
+              {customer.effectiveTrafficMultiplier}x
             </span>
           </article>
           <MetricCard
@@ -896,7 +907,10 @@ export default function CustomerDetailPage() {
               title="流量趋势"
               copy="对比节点上报的实际流量与倍率计费后的流量。"
               action={
-                <div className="segmented-control compact" aria-label="流量日期范围">
+                <div
+                  className="segmented-control compact"
+                  aria-label="流量日期范围"
+                >
                   {([7, 30] as const).map((days) => (
                     <button
                       key={days}
@@ -936,18 +950,20 @@ export default function CustomerDetailPage() {
                   "计费流量",
                   "实际倍率",
                 ]}
-                rows={[...dailyTraffic.items].reverse().map((item) => [
-                  item.date,
-                  formatBytes(item.txBytes),
-                  formatBytes(item.rxBytes),
-                  formatBytes(item.physicalBytes),
-                  formatBytes(item.accountedBytes),
-                  item.actualMultiplier == null
-                    ? "-"
-                    : item.minMultiplier === item.maxMultiplier
-                      ? `${item.actualMultiplier}x`
-                      : `${item.actualMultiplier}x (${item.minMultiplier}x-${item.maxMultiplier}x)`,
-                ])}
+                rows={[...dailyTraffic.items]
+                  .reverse()
+                  .map((item) => [
+                    item.date,
+                    formatBytes(item.txBytes),
+                    formatBytes(item.rxBytes),
+                    formatBytes(item.physicalBytes),
+                    formatBytes(item.accountedBytes),
+                    item.actualMultiplier == null
+                      ? "-"
+                      : item.minMultiplier === item.maxMultiplier
+                        ? `${item.actualMultiplier}x`
+                        : `${item.actualMultiplier}x (${item.minMultiplier}x-${item.maxMultiplier}x)`,
+                  ])}
               />
             </Panel>
           </>

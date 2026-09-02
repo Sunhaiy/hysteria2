@@ -1,16 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { EChartsOption } from "echarts";
+import { useCallback, useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { CustomerLink } from "@/components/customer-link";
 import { DataTable } from "@/components/data-table";
-import { EChart } from "@/components/echart";
 import { Icon } from "@/components/icon";
 import { MetricCard } from "@/components/metric-card";
 import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
-import { apiDownload, apiRequest, ApiError } from "@/lib/api";
+import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import type { PaginatedResponse } from "@/lib/types";
@@ -48,34 +46,31 @@ type Presence = {
   concurrentClients: number;
   observedAt: string;
 };
-type TrafficOverview = {
-  totals: {
-    physicalBytes: number;
-    accountedBytes: number;
-    allocatedBytes: number;
-    overageBytes: number;
-    records: number;
-  };
-  trend: Array<{
-    date: string;
-    physicalBytes: number;
-    accountedBytes: number;
-    allocatedBytes: number;
-  }>;
-  rankings: { users: Ranking[]; products: Ranking[]; nodes: Ranking[] };
-};
-type Ranking = { id: string; name: string; bytes: number };
-type TrafficDetail = {
-  id: string;
-  bucketStart: string;
-  userId: string;
-  userEmail: string;
-  nodeLabel: string;
+type ServerTrafficDay = {
+  date: string;
+  txBytes: number;
+  rxBytes: number;
   physicalBytes: number;
-  accountedBytes: number;
-  allocatedBytes: number;
-  overageBytes: number;
-  allocations: Array<{ productName: string; accountedBytes: number }>;
+};
+type ServerTraffic = {
+  month: string;
+  today: string;
+  range: { from: string; to: string };
+  totals: {
+    txBytes: number;
+    rxBytes: number;
+    physicalBytes: number;
+    todayPhysicalBytes: number;
+  };
+  dates: string[];
+  servers: Array<{
+    id: string;
+    name: string;
+    txBytes: number;
+    rxBytes: number;
+    physicalBytes: number;
+    days: ServerTrafficDay[];
+  }>;
 };
 type Alert = {
   id: string;
@@ -97,26 +92,30 @@ const emptyPage = <T,>(): PaginatedResponse<T> => ({
   total: 0,
   totalPages: 1,
 });
-const isoDate = (date: Date) => date.toISOString().slice(0, 10);
+function currentShanghaiMonth() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(new Date());
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  return `${year}-${month}`;
+}
 
 export default function OperationsPage() {
   const { token } = useAuth();
   const [tab, setTab] = useState<Tab>("overview");
   const [summary, setSummary] = useState<Summary | null>(null);
   const [presence, setPresence] = useState(emptyPage<Presence>);
-  const [trafficOverview, setTrafficOverview] =
-    useState<TrafficOverview | null>(null);
-  const [trafficDetails, setTrafficDetails] = useState(
-    emptyPage<TrafficDetail>,
+  const [serverTraffic, setServerTraffic] = useState<ServerTraffic | null>(
+    null,
   );
   const [alerts, setAlerts] = useState(emptyPage<Alert>);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [from, setFrom] = useState(() =>
-    isoDate(new Date(Date.now() - 30 * 86400000)),
-  );
-  const [to, setTo] = useState(() => isoDate(new Date(Date.now() + 86400000)));
+  const [trafficMonth, setTrafficMonth] = useState(currentShanghaiMonth);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -169,24 +168,12 @@ export default function OperationsPage() {
             ),
           );
         } else if (tab === "traffic") {
-          const query = new URLSearchParams({
-            from,
-            to,
-            page: String(page),
-            pageSize: "20",
-          });
-          const [nextOverview, nextDetails] = await Promise.all([
-            apiRequest<TrafficOverview>(
-              `/api/admin/operations/traffic/overview?${query}`,
+          setServerTraffic(
+            await apiRequest<ServerTraffic>(
+              `/api/admin/operations/traffic/servers?month=${trafficMonth}`,
               { token, signal },
             ),
-            apiRequest<PaginatedResponse<TrafficDetail>>(
-              `/api/admin/operations/traffic/details?${query}`,
-              { token, signal },
-            ),
-          ]);
-          setTrafficOverview(nextOverview);
-          setTrafficDetails(nextDetails);
+          );
         } else {
           setAlerts(
             await apiRequest<PaginatedResponse<Alert>>(
@@ -205,7 +192,7 @@ export default function OperationsPage() {
         if (!signal?.aborted) setLoading(false);
       }
     },
-    [debouncedSearch, from, page, tab, to, token],
+    [debouncedSearch, page, tab, token, trafficMonth],
   );
 
   useEffect(() => {
@@ -277,50 +264,7 @@ export default function OperationsPage() {
     }
   }
 
-  const trafficChart = useMemo<EChartsOption>(
-    () => ({
-      tooltip: { trigger: "axis" },
-      legend: { data: ["物理流量", "计费流量", "额度扣除"] },
-      xAxis: {
-        type: "category",
-        data: trafficOverview?.trend.map((item) => item.date) ?? [],
-      },
-      yAxis: {
-        type: "value",
-        axisLabel: {
-          formatter: (value: number) => `${(value / 1024 ** 3).toFixed(0)} GB`,
-        },
-      },
-      series: [
-        {
-          name: "物理流量",
-          type: "line",
-          smooth: true,
-          data: trafficOverview?.trend.map((item) => item.physicalBytes) ?? [],
-        },
-        {
-          name: "计费流量",
-          type: "line",
-          smooth: true,
-          data: trafficOverview?.trend.map((item) => item.accountedBytes) ?? [],
-        },
-        {
-          name: "额度扣除",
-          type: "bar",
-          data: trafficOverview?.trend.map((item) => item.allocatedBytes) ?? [],
-        },
-      ],
-    }),
-    [trafficOverview],
-  );
-  const rankingRows = (items: Ranking[]) =>
-    items.map((item, index) => [
-      String(index + 1),
-      item.name,
-      formatBytes(item.bytes),
-    ]);
-  const activePage =
-    tab === "presence" ? presence : tab === "traffic" ? trafficDetails : alerts;
+  const activePage = tab === "presence" ? presence : alerts;
   const pagination = {
     page: activePage.page,
     pageSize: activePage.pageSize,
@@ -336,8 +280,12 @@ export default function OperationsPage() {
       scope="Operations"
       navItems={adminNav}
       requireRole="admin"
-      dataViewport={tab === "presence" || tab === "alerts"}
-      toolbarMeta={<span className="badge info">在线数据 45 秒过期</span>}
+      dataViewport={tab === "presence" || tab === "traffic" || tab === "alerts"}
+      toolbarMeta={
+        <span className="badge info">
+          {tab === "traffic" ? "双向物理流量" : "在线数据 45 秒过期"}
+        </span>
+      }
       toolbarActions={
         <button
           className="action-button"
@@ -488,134 +436,93 @@ export default function OperationsPage() {
         ) : null}
         {tab === "traffic" ? (
           <>
-            <Panel
-              title="查询区间"
-              action={
-                <button
-                  className="toolbar-button"
-                  type="button"
-                  onClick={() =>
-                    void apiDownload(
-                      `/api/admin/traffic/export?from=${from}&to=${to}`,
-                      "traffic-analysis.csv",
-                    )
-                  }
-                >
-                  <Icon name="download" />
-                  导出
-                </button>
-              }
-            >
-              <div className="inline-form">
+            <div className="operations-traffic-toolbar">
+              <label className="field">
+                <span className="fine-print">统计月份</span>
                 <input
                   className="control"
-                  aria-label="开始日期"
-                  type="date"
-                  value={from}
-                  onChange={(event) => {
-                    setFrom(event.target.value);
-                    setPage(1);
-                  }}
+                  type="month"
+                  value={trafficMonth}
+                  onChange={(event) => setTrafficMonth(event.target.value)}
                 />
-                <input
-                  className="control"
-                  aria-label="结束日期"
-                  type="date"
-                  value={to}
-                  onChange={(event) => {
-                    setTo(event.target.value);
-                    setPage(1);
-                  }}
-                />
-              </div>
-            </Panel>
-            <div className="metric-grid">
+              </label>
+              <span className="fine-print">
+                按北京时间自然月统计，历史月份可随时回看
+              </span>
+            </div>
+            <div className="metric-grid admin-data-metrics operations-traffic-metrics">
               <MetricCard
-                label="物理流量"
-                value={formatBytes(trafficOverview?.totals.physicalBytes ?? 0)}
-                footnote="节点实际上下行"
+                label="本月真实流量"
+                value={formatBytes(serverTraffic?.totals.physicalBytes ?? 0)}
+                footnote={`${trafficMonth} · 全部服务器双向合计`}
               />
               <MetricCard
-                label="计费流量"
-                value={formatBytes(trafficOverview?.totals.accountedBytes ?? 0)}
-                footnote="应用用户倍率后"
+                label="今日真实流量"
+                value={formatBytes(
+                  serverTraffic?.totals.todayPhysicalBytes ?? 0,
+                )}
+                footnote={serverTraffic?.today ?? "北京时间今日"}
               />
               <MetricCard
-                label="额度扣除"
-                value={formatBytes(trafficOverview?.totals.allocatedBytes ?? 0)}
-                footnote="按权益桶分摊"
+                label="本月上行"
+                value={formatBytes(serverTraffic?.totals.txBytes ?? 0)}
+                footnote="所有 HY2 与 VLESS 端点"
               />
               <MetricCard
-                label="超额流量"
-                value={formatBytes(trafficOverview?.totals.overageBytes ?? 0)}
-                footnote="无额度承接"
+                label="本月下行"
+                value={formatBytes(serverTraffic?.totals.rxBytes ?? 0)}
+                footnote={`${serverTraffic?.servers.length ?? 0} 台物理服务器`}
               />
             </div>
-            <Panel title="时间趋势">
-              <EChart
-                option={trafficChart}
-                height={300}
-                ariaLabel="流量时间趋势"
-              />
-            </Panel>
-            <div className="two-col">
-              <Panel title="用户排行">
+            <div className="operations-traffic-layout">
+              <Panel className="admin-data-panel" title="本月服务器汇总">
                 <DataTable
-                  headers={["#", "客户", "计费流量"]}
-                  rows={rankingRows(trafficOverview?.rankings.users ?? [])}
+                  loading={loading}
+                  emptyText="本月暂无服务器流量"
+                  minimumColumnWidth={84}
+                  headers={["服务器", "上行", "下行", "双向合计", "今日"]}
+                  rows={(serverTraffic?.servers ?? []).map((server) => [
+                    <strong key={server.id}>{server.name}</strong>,
+                    formatBytes(server.txBytes),
+                    formatBytes(server.rxBytes),
+                    formatBytes(server.physicalBytes),
+                    formatBytes(
+                      server.days.find(
+                        (day) => day.date === serverTraffic?.today,
+                      )?.physicalBytes ?? 0,
+                    ),
+                  ])}
                 />
               </Panel>
-              <Panel title="商品排行">
+              <Panel className="admin-data-panel" title="每日服务器真实流量">
                 <DataTable
-                  headers={["#", "商品", "额度扣除"]}
-                  rows={rankingRows(trafficOverview?.rankings.products ?? [])}
-                />
-              </Panel>
-              <Panel title="节点排行">
-                <DataTable
-                  headers={["#", "节点", "物理流量"]}
-                  rows={rankingRows(trafficOverview?.rankings.nodes ?? [])}
+                  loading={loading}
+                  headers={[
+                    "日期",
+                    ...(serverTraffic?.servers.map((server) => server.name) ??
+                      []),
+                    "当日合计",
+                  ]}
+                  rows={(serverTraffic?.dates ?? [])
+                    .slice()
+                    .reverse()
+                    .map((date) => {
+                      const values = (serverTraffic?.servers ?? []).map(
+                        (server) =>
+                          server.days.find((day) => day.date === date)
+                            ?.physicalBytes ?? 0,
+                      );
+                      return [
+                        <strong key={date}>{date.replaceAll("-", ".")}</strong>,
+                        ...values.map((bytes) => formatBytes(bytes)),
+                        formatBytes(
+                          values.reduce((sum, bytes) => sum + bytes, 0),
+                        ),
+                      ];
+                    })}
                 />
               </Panel>
             </div>
-            <Panel title="计费明细">
-              <DataTable
-                loading={loading}
-                error={error}
-                onRetry={() => setReloadKey((value) => value + 1)}
-                pagination={pagination}
-                emptyText="该区间暂无流量"
-                headers={[
-                  "时间",
-                  "客户",
-                  "节点",
-                  "物理",
-                  "计费",
-                  "扣除",
-                  "超额",
-                  "商品分摊",
-                ]}
-                rows={trafficDetails.items.map((item) => [
-                  formatDateTime(item.bucketStart),
-                  <CustomerLink
-                    id={item.userId}
-                    email={item.userEmail}
-                    key={`${item.id}-user`}
-                  />,
-                  item.nodeLabel,
-                  formatBytes(item.physicalBytes),
-                  formatBytes(item.accountedBytes),
-                  formatBytes(item.allocatedBytes),
-                  formatBytes(item.overageBytes),
-                  item.allocations
-                    .map(
-                      (allocation) =>
-                        `${allocation.productName} ${formatBytes(allocation.accountedBytes)}`,
-                    )
-                    .join(" · ") || "-",
-                ])}
-              />
-            </Panel>
           </>
         ) : null}
         {tab === "alerts" ? (

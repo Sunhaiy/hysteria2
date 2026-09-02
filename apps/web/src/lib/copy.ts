@@ -64,13 +64,6 @@ export const adminNav: NavItem[] = [
     group: "商品与财务",
   },
   {
-    href: "/admin/finance",
-    label: "财务中心",
-    icon: "payments",
-    meta: "FIN",
-    group: "商品与财务",
-  },
-  {
     href: "/admin/operations",
     label: "运营中心",
     icon: "monitoring",

@@ -13,6 +13,10 @@ export interface TrafficQuery {
   pageSize?: string;
 }
 
+export interface ServerTrafficQuery {
+  month?: string;
+}
+
 interface TrafficTotalsRow {
   physicalBytes: bigint;
   accountedBytes: bigint;
@@ -32,6 +36,15 @@ interface TrafficRankingRow {
   id: string;
   name: string;
   bytes: bigint;
+}
+
+interface ServerTrafficDailyRow {
+  serverId: string;
+  serverName: string;
+  date: string | null;
+  txBytes: bigint;
+  rxBytes: bigint;
+  physicalBytes: bigint;
 }
 
 @Injectable()
@@ -153,6 +166,157 @@ export class TrafficAnalyticsService {
         products: this.presentRanking(products),
         nodes: this.presentRanking(nodes),
       },
+    };
+  }
+
+  async serverMonthly(query: ServerTrafficQuery = {}, now = new Date()) {
+    const range = this.serverMonthRange(query.month, now);
+    const rows = await this.prisma.$queryRaw<
+      ServerTrafficDailyRow[]
+    >(Prisma.sql`
+      WITH server_inventory AS (
+        SELECT
+          server."id" AS "serverId",
+          server."name" AS "serverName"
+        FROM "NodeServer" server
+        WHERE server."createdAt" < ${range.to}
+          AND (server."retiredAt" IS NULL OR server."retiredAt" >= ${range.from})
+
+        UNION ALL
+
+        SELECT
+          node."id" AS "serverId",
+          node."hostname" AS "serverName"
+        FROM "Node" node
+        WHERE node."serverId" IS NULL
+          AND node."createdAt" < ${range.to}
+          AND (node."retiredAt" IS NULL OR node."retiredAt" >= ${range.from})
+      ),
+      daily_traffic AS (
+        SELECT
+          COALESCE(server."id", node."id") AS "serverId",
+          to_char(
+            date_trunc('day', r."bucketStart" AT TIME ZONE 'Asia/Shanghai'),
+            'YYYY-MM-DD'
+          ) AS "date",
+          COALESCE(SUM(r."txBytes"), 0)::bigint AS "txBytes",
+          COALESCE(SUM(r."rxBytes"), 0)::bigint AS "rxBytes",
+          COALESCE(SUM(r."txBytes" + r."rxBytes"), 0)::bigint AS "physicalBytes"
+        FROM "UsageRollup" r
+        JOIN "Node" node ON node."id" = r."nodeId"
+        LEFT JOIN "NodeServer" server ON server."id" = node."serverId"
+        WHERE r."bucketStart" >= ${range.from}
+          AND r."bucketStart" < ${range.to}
+        GROUP BY
+          COALESCE(server."id", node."id"),
+          date_trunc('day', r."bucketStart" AT TIME ZONE 'Asia/Shanghai')
+      )
+      SELECT
+        inventory."serverId",
+        inventory."serverName",
+        traffic."date",
+        COALESCE(traffic."txBytes", 0)::bigint AS "txBytes",
+        COALESCE(traffic."rxBytes", 0)::bigint AS "rxBytes",
+        COALESCE(traffic."physicalBytes", 0)::bigint AS "physicalBytes"
+      FROM server_inventory inventory
+      LEFT JOIN daily_traffic traffic
+        ON traffic."serverId" = inventory."serverId"
+      ORDER BY traffic."date" ASC NULLS FIRST, inventory."serverName" ASC
+    `);
+    const dates = Array.from(
+      { length: range.days },
+      (_, index) => `${range.month}-${String(index + 1).padStart(2, '0')}`,
+    );
+    const servers = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        txBytes: number;
+        rxBytes: number;
+        physicalBytes: number;
+        days: Map<
+          string,
+          {
+            date: string;
+            txBytes: number;
+            rxBytes: number;
+            physicalBytes: number;
+          }
+        >;
+      }
+    >();
+
+    for (const row of rows) {
+      const server = servers.get(row.serverId) ?? {
+        id: row.serverId,
+        name: row.serverName,
+        txBytes: 0,
+        rxBytes: 0,
+        physicalBytes: 0,
+        days: new Map(
+          dates.map((date) => [
+            date,
+            { date, txBytes: 0, rxBytes: 0, physicalBytes: 0 },
+          ]),
+        ),
+      };
+      const txBytes = Number(row.txBytes);
+      const rxBytes = Number(row.rxBytes);
+      const physicalBytes = Number(row.physicalBytes);
+      server.txBytes += txBytes;
+      server.rxBytes += rxBytes;
+      server.physicalBytes += physicalBytes;
+      if (row.date) {
+        server.days.set(row.date, {
+          date: row.date,
+          txBytes,
+          rxBytes,
+          physicalBytes,
+        });
+      }
+      servers.set(row.serverId, server);
+    }
+
+    const presentedServers = [...servers.values()]
+      .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))
+      .map((server) => ({
+        id: server.id,
+        name: server.name,
+        txBytes: server.txBytes,
+        rxBytes: server.rxBytes,
+        physicalBytes: server.physicalBytes,
+        days: dates.map((date) => server.days.get(date)!),
+      }));
+    const today = this.shanghaiDate(now);
+
+    return {
+      timezone: 'Asia/Shanghai',
+      month: range.month,
+      range: { from: range.from.toISOString(), to: range.to.toISOString() },
+      today,
+      totals: {
+        txBytes: presentedServers.reduce(
+          (sum, server) => sum + server.txBytes,
+          0,
+        ),
+        rxBytes: presentedServers.reduce(
+          (sum, server) => sum + server.rxBytes,
+          0,
+        ),
+        physicalBytes: presentedServers.reduce(
+          (sum, server) => sum + server.physicalBytes,
+          0,
+        ),
+        todayPhysicalBytes: presentedServers.reduce(
+          (sum, server) =>
+            sum +
+            (server.days.find((day) => day.date === today)?.physicalBytes ?? 0),
+          0,
+        ),
+      },
+      dates,
+      servers: presentedServers,
     };
   }
 
@@ -319,6 +483,39 @@ export class TrafficAnalyticsService {
       throw new BadRequestException('Invalid traffic date range');
     }
     return { from, to };
+  }
+
+  private serverMonthRange(monthValue: string | undefined, now: Date) {
+    const currentMonth = this.shanghaiDate(now).slice(0, 7);
+    const month = monthValue?.trim() || currentMonth;
+    const matched = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(month);
+    if (!matched) {
+      throw new BadRequestException('Invalid traffic month');
+    }
+    const year = Number(matched[1]);
+    const monthNumber = Number(matched[2]);
+    if (year < 2000 || year > 2100) {
+      throw new BadRequestException('Invalid traffic month');
+    }
+    const nextYear = monthNumber === 12 ? year + 1 : year;
+    const nextMonth = monthNumber === 12 ? 1 : monthNumber + 1;
+    return {
+      month,
+      days: new Date(Date.UTC(year, monthNumber, 0)).getUTCDate(),
+      from: new Date(`${month}-01T00:00:00+08:00`),
+      to: new Date(
+        `${nextYear}-${String(nextMonth).padStart(2, '0')}-01T00:00:00+08:00`,
+      ),
+    };
+  }
+
+  private shanghaiDate(now: Date) {
+    const shanghai = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+    return [
+      shanghai.getUTCFullYear(),
+      String(shanghai.getUTCMonth() + 1).padStart(2, '0'),
+      String(shanghai.getUTCDate()).padStart(2, '0'),
+    ].join('-');
   }
 
   private presentRanking(rows: TrafficRankingRow[]) {

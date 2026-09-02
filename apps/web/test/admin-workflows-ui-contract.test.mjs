@@ -164,6 +164,7 @@ test("admin navigation keeps CDK management visible", async () => {
   const copy = await source("lib/copy.ts");
 
   assert.match(copy, /\/admin\/redemption-codes/);
+  assert.doesNotMatch(copy, /\/admin\/finance/);
 });
 
 test("customer list can filter everyone with subscription history", async () => {
@@ -171,6 +172,8 @@ test("customer list can filter everyone with subscription history", async () => 
 
   assert.match(customers, /曾订阅/);
   assert.match(customers, /subscriptionHistory/);
+  assert.match(customers, /"注册时间"/);
+  assert.match(customers, /formatDateTime\(customer\.createdAt\)/);
 });
 
 test("member access prioritizes Clash and keeps subscription details aligned", async () => {

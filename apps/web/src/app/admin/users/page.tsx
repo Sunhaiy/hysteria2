@@ -63,7 +63,10 @@ const emptyForm: UserFormState = {
   notes: "",
 };
 
-function createProvisionState(plans: PlanRecord[], role: UserFormState["role"]): ProvisionState {
+function createProvisionState(
+  plans: PlanRecord[],
+  role: UserFormState["role"],
+): ProvisionState {
   const fallbackPlan =
     plans.find((plan) => plan.active && plan.bindings.length > 0) ??
     plans.find((plan) => plan.bindings.length > 0) ??
@@ -91,7 +94,9 @@ function normalizeProvisionState(
   }
 
   const selectedPlan =
-    plans.find((plan) => plan.id === current.planId && plan.bindings.length > 0) ??
+    plans.find(
+      (plan) => plan.id === current.planId && plan.bindings.length > 0,
+    ) ??
     plans.find((plan) => plan.id === defaults.planId) ??
     null;
 
@@ -106,7 +111,7 @@ function normalizeProvisionState(
     planId: selectedPlan.id,
     nodeId: allowedNodeIds.includes(current.nodeId)
       ? current.nodeId
-      : allowedNodeIds[0] ?? "",
+      : (allowedNodeIds[0] ?? ""),
   };
 }
 
@@ -131,7 +136,8 @@ export default function AdminUsersPage() {
   const { toast, showToast } = useToast();
   const [statsDrawerOpen, setStatsDrawerOpen] = useState(false);
   const [statsUser, setStatsUser] = useState<AdminUser | null>(null);
-  const [statsSubscription, setStatsSubscription] = useState<SubscriptionRecord | null>(null);
+  const [statsSubscription, setStatsSubscription] =
+    useState<SubscriptionRecord | null>(null);
   const [statsUsage, setStatsUsage] = useState<UsageRollupRecord[]>([]);
   const [loadingStats, setLoadingStats] = useState(false);
   const [statsWallet, setStatsWallet] = useState<WalletResponse | null>(null);
@@ -151,7 +157,9 @@ export default function AdminUsersPage() {
     (nextRole: UserFormState["role"], nextPlans: PlanRecord[]) => {
       setProvision((current) => {
         const next = normalizeProvisionState(current, nextPlans, nextRole);
-        return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+        return JSON.stringify(next) === JSON.stringify(current)
+          ? current
+          : next;
       });
     },
     [],
@@ -167,7 +175,9 @@ export default function AdminUsersPage() {
       if (roleFilter) params.set("role", roleFilter);
       if (quotaFilter) params.set("quotaState", quotaFilter);
       const [nextUsers, nextPlans] = await Promise.all([
-        apiRequest<PaginatedResponse<AdminUser>>(`/api/admin/users?${params}`, { token }),
+        apiRequest<PaginatedResponse<AdminUser>>(`/api/admin/users?${params}`, {
+          token,
+        }),
         apiRequest<PlanRecord[]>("/api/admin/plans", { token }),
       ]);
       setUsers(nextUsers.items);
@@ -182,7 +192,16 @@ export default function AdminUsersPage() {
     } finally {
       setLoading(false);
     }
-  }, [editingUser, form.role, quotaFilter, roleFilter, search, statusFilter, syncProvisionForDraft, token]);
+  }, [
+    editingUser,
+    form.role,
+    quotaFilter,
+    roleFilter,
+    search,
+    statusFilter,
+    syncProvisionForDraft,
+    token,
+  ]);
 
   useEffect(() => {
     const id = window.setTimeout(() => void load(), 250);
@@ -194,8 +213,10 @@ export default function AdminUsersPage() {
     [plans, provision.planId],
   );
   const availableBindings = selectedPlan?.bindings ?? [];
-  const provisioningEnabled = !editingUser && form.role === "member" && provision.enabled;
-  const provisioningBlocked = provisioningEnabled && availableBindings.length === 0;
+  const provisioningEnabled =
+    !editingUser && form.role === "member" && provision.enabled;
+  const provisioningBlocked =
+    provisioningEnabled && availableBindings.length === 0;
   const submitDisabled =
     submitting ||
     !form.email.trim() ||
@@ -221,7 +242,8 @@ export default function AdminUsersPage() {
   }, [drawerOpen, editingUser, form]);
 
   function requestClose() {
-    if (isDirty && !window.confirm("有未保存的改动，关闭后将丢失。确定关闭？")) return;
+    if (isDirty && !window.confirm("有未保存的改动，关闭后将丢失。确定关闭？"))
+      return;
     forceClose();
   }
 
@@ -304,9 +326,16 @@ export default function AdminUsersPage() {
     setLoadingStats(true);
     try {
       const [sub, usage, wallet] = await Promise.all([
-        apiRequest<SubscriptionRecord | null>(`/api/admin/users/${user.id}/subscription`, { token }),
-        apiRequest<UsageRollupRecord[]>(`/api/admin/users/${user.id}/usage`, { token }),
-        apiRequest<WalletResponse>(`/api/admin/users/${user.id}/wallet`, { token }),
+        apiRequest<SubscriptionRecord | null>(
+          `/api/admin/users/${user.id}/subscription`,
+          { token },
+        ),
+        apiRequest<UsageRollupRecord[]>(`/api/admin/users/${user.id}/usage`, {
+          token,
+        }),
+        apiRequest<WalletResponse>(`/api/admin/users/${user.id}/wallet`, {
+          token,
+        }),
       ]);
       setStatsSubscription(sub);
       setStatsUsage(usage);
@@ -334,21 +363,39 @@ export default function AdminUsersPage() {
         body: { trafficMultiplier: multiplier },
       });
       if (statsSubscription && quotaGbInput.trim()) {
-        const remainingBytes = Math.round(Number(quotaGbInput) * 1024 * 1024 * 1024);
-        if (!Number.isSafeInteger(remainingBytes) || remainingBytes < 0 || quotaReason.trim().length < 3) {
-          throw new Error("设置剩余流量时必须填写有效 GB 数和至少 3 个字的原因。");
+        const remainingBytes = Math.round(
+          Number(quotaGbInput) * 1024 * 1024 * 1024,
+        );
+        if (
+          !Number.isSafeInteger(remainingBytes) ||
+          remainingBytes < 0 ||
+          quotaReason.trim().length < 3
+        ) {
+          throw new Error(
+            "设置剩余流量时必须填写有效 GB 数和至少 3 个字的原因。",
+          );
         }
-        await apiRequest(`/api/admin/subscriptions/${statsSubscription.id}/quota-adjustments`, {
-          method: "POST",
-          token,
-          body: { mode: "set_remaining", remainingBytes, reason: quotaReason.trim() },
-        });
+        await apiRequest(
+          `/api/admin/subscriptions/${statsSubscription.id}/quota-adjustments`,
+          {
+            method: "POST",
+            token,
+            body: {
+              mode: "set_remaining",
+              remainingBytes,
+              reason: quotaReason.trim(),
+            },
+          },
+        );
       }
       showToast("流量策略已保存。", "success");
       await openStats({ ...statsUser, trafficMultiplier: multiplier });
       await load();
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : "流量策略保存失败。", "error");
+      showToast(
+        cause instanceof Error ? cause.message : "流量策略保存失败。",
+        "error",
+      );
     } finally {
       setSavingEntitlement(false);
     }
@@ -372,7 +419,10 @@ export default function AdminUsersPage() {
       showToast("余额已更新");
       await load();
     } catch (cause) {
-      showToast(cause instanceof ApiError ? cause.message : "更新余额失败", "error");
+      showToast(
+        cause instanceof ApiError ? cause.message : "更新余额失败",
+        "error",
+      );
     } finally {
       setSavingBalance(false);
     }
@@ -388,13 +438,27 @@ export default function AdminUsersPage() {
         `/api/admin/users/${user.id}/access`,
         { token },
       );
-      setDelivery({ userId: user.id, displayName: user.displayName, email: user.email, access });
+      setDelivery({
+        userId: user.id,
+        displayName: user.displayName,
+        email: user.email,
+        access,
+      });
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 404) {
-        setDelivery({ userId: user.id, displayName: user.displayName, email: user.email, access: null });
-        setDeliveryError("当前用户还没有生效中的订阅，开通套餐后这里会生成专属链接。");
+        setDelivery({
+          userId: user.id,
+          displayName: user.displayName,
+          email: user.email,
+          access: null,
+        });
+        setDeliveryError(
+          "当前用户还没有生效中的订阅，开通套餐后这里会生成专属链接。",
+        );
       } else {
-        setDeliveryError(cause instanceof ApiError ? cause.message : "接入信息加载失败。");
+        setDeliveryError(
+          cause instanceof ApiError ? cause.message : "接入信息加载失败。",
+        );
       }
     } finally {
       setLoadingDelivery(false);
@@ -409,30 +473,38 @@ export default function AdminUsersPage() {
     setFeedback(null);
     try {
       if (editingUser) {
-        const updated = await apiRequest<AdminUser>(`/api/admin/users/${editingUser.id}`, {
-          method: "PATCH",
-          token,
-          body: {
-            displayName: form.displayName,
-            role: form.role,
-            status: form.status,
-            notes: form.notes || undefined,
+        const updated = await apiRequest<AdminUser>(
+          `/api/admin/users/${editingUser.id}`,
+          {
+            method: "PATCH",
+            token,
+            body: {
+              displayName: form.displayName,
+              role: form.role,
+              status: form.status,
+              notes: form.notes || undefined,
+            },
           },
-        });
+        );
         setEditingUser(updated);
         setFeedback({ msg: "用户信息已更新。", kind: "success" });
         await load();
       } else {
-        const created = await apiRequest<AdminCreateUserResponse>("/api/admin/users", {
-          method: "POST",
-          token,
-          body: {
-            ...form,
-            initialPlanId: provisioningEnabled ? provision.planId : undefined,
-            initialNodeId:
-              provisioningEnabled && provision.nodeId ? provision.nodeId : undefined,
+        const created = await apiRequest<AdminCreateUserResponse>(
+          "/api/admin/users",
+          {
+            method: "POST",
+            token,
+            body: {
+              ...form,
+              initialPlanId: provisioningEnabled ? provision.planId : undefined,
+              initialNodeId:
+                provisioningEnabled && provision.nodeId
+                  ? provision.nodeId
+                  : undefined,
+            },
           },
-        });
+        );
         setDelivery({
           userId: created.id,
           displayName: created.displayName,
@@ -441,7 +513,9 @@ export default function AdminUsersPage() {
           access: created.provisionedAccess ?? null,
         });
         if (!created.provisionedAccess) {
-          setDeliveryError("当前仅完成账号签发。开通有效订阅后，这里会自动生成专属链接和二维码。");
+          setDeliveryError(
+            "当前仅完成账号签发。开通有效订阅后，这里会自动生成专属链接和二维码。",
+          );
         }
         clearDraft(DRAFT_KEY);
         setFeedback({
@@ -468,7 +542,9 @@ export default function AdminUsersPage() {
         }
       }
     } catch (cause) {
-      setDrawerError(cause instanceof ApiError ? cause.message : "保存用户失败。");
+      setDrawerError(
+        cause instanceof ApiError ? cause.message : "保存用户失败。",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -478,10 +554,16 @@ export default function AdminUsersPage() {
     if (!token) return;
     setFeedback(null);
     try {
-      await apiRequest(`/api/admin/users/${userId}/kick`, { method: "POST", token });
+      await apiRequest(`/api/admin/users/${userId}/kick`, {
+        method: "POST",
+        token,
+      });
       setFeedback({ msg: "踢线请求已发送。", kind: "success" });
     } catch (cause) {
-      setFeedback({ msg: cause instanceof ApiError ? cause.message : "踢线失败。", kind: "error" });
+      setFeedback({
+        msg: cause instanceof ApiError ? cause.message : "踢线失败。",
+        kind: "error",
+      });
     }
   }
 
@@ -500,7 +582,8 @@ export default function AdminUsersPage() {
       });
     } catch (cause) {
       setFeedback({
-        msg: cause instanceof ApiError ? cause.message : "生成密码重置链接失败。",
+        msg:
+          cause instanceof ApiError ? cause.message : "生成密码重置链接失败。",
         kind: "error",
       });
     }
@@ -515,49 +598,86 @@ export default function AdminUsersPage() {
       requireRole="admin"
       dataViewport
       toolbarMeta={
-        <span className="badge info">{loading ? "加载中..." : `${totalUsers} 个用户`}</span>
+        <span className="badge info">
+          {loading ? "加载中..." : `${totalUsers} 个用户`}
+        </span>
       }
       toolbarActions={
         <>
           <button className="action-button" type="button" onClick={openCreate}>
             新建用户
           </button>
-          <button className="toolbar-button" type="button" onClick={() => void load()}>
+          <button
+            className="toolbar-button"
+            type="button"
+            onClick={() => void load()}
+          >
             刷新
           </button>
         </>
       }
     >
       <Toast toast={toast} />
-      {feedback ? <div className={`feedback ${feedback.kind}`}>{feedback.msg}</div> : null}
+      {feedback ? (
+        <div className={`feedback ${feedback.kind}`}>{feedback.msg}</div>
+      ) : null}
 
       <Panel
         className="admin-data-panel"
         title="账号列表"
         copy="点击行编辑用户；创建会员时可顺手开通首个套餐并交付专属 URI。"
-        action={<span className="fine-print">{loading ? "同步中..." : `${users.length} 条`}</span>}
+        action={
+          <span className="fine-print">
+            {loading ? "同步中..." : `${users.length} 条`}
+          </span>
+        }
       >
         <div className="admin-filter-bar admin-compact-filters">
           <label className="field grow-field">
             <span className="fine-print">搜索用户</span>
-            <input className="control" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="邮箱、名称或用户 ID" />
+            <input
+              className="control"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="邮箱、名称或用户 ID"
+            />
           </label>
           <label className="field">
             <span className="fine-print">状态</span>
-            <select className="control" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-              <option value="">全部</option><option value="active">正常</option><option value="suspended">暂停</option><option value="banned">封禁</option>
+            <select
+              className="control"
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+            >
+              <option value="">全部</option>
+              <option value="active">正常</option>
+              <option value="suspended">暂停</option>
+              <option value="banned">封禁</option>
             </select>
           </label>
           <label className="field">
             <span className="fine-print">角色</span>
-            <select className="control" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
-              <option value="">全部</option><option value="member">会员</option><option value="admin">管理员</option>
+            <select
+              className="control"
+              value={roleFilter}
+              onChange={(event) => setRoleFilter(event.target.value)}
+            >
+              <option value="">全部</option>
+              <option value="member">会员</option>
+              <option value="admin">管理员</option>
             </select>
           </label>
           <label className="field">
             <span className="fine-print">额度</span>
-            <select className="control" value={quotaFilter} onChange={(event) => setQuotaFilter(event.target.value)}>
-              <option value="">全部</option><option value="available">充足</option><option value="low">偏低</option><option value="exhausted">耗尽</option>
+            <select
+              className="control"
+              value={quotaFilter}
+              onChange={(event) => setQuotaFilter(event.target.value)}
+            >
+              <option value="">全部</option>
+              <option value="available">充足</option>
+              <option value="low">偏低</option>
+              <option value="exhausted">耗尽</option>
             </select>
           </label>
         </div>
@@ -570,7 +690,16 @@ export default function AdminUsersPage() {
         ) : null}
         {users.length > 0 ? (
           <DataTable
-            headers={["用户", "角色", "状态", "倍率", "可用流量", "最近使用", "操作"]}
+            headers={[
+              "用户",
+              "注册时间",
+              "角色",
+              "状态",
+              "倍率",
+              "可用流量",
+              "最近使用",
+              "操作",
+            ]}
             rows={users.map((user) => [
               <button
                 key={`${user.id}-select`}
@@ -581,8 +710,12 @@ export default function AdminUsersPage() {
                 <span>{user.displayName}</span>
                 <span className="muted">{user.email}</span>
               </button>,
+              formatDateTime(user.createdAt),
               user.role,
-              <span key={`${user.id}-status`} className={`badge ${statusTone(user.status)}`}>
+              <span
+                key={`${user.id}-status`}
+                className={`badge ${statusTone(user.status)}`}
+              >
                 {user.status}
               </span>,
               `${(user.trafficMultiplier ?? 1).toFixed(2)}x`,
@@ -619,7 +752,11 @@ export default function AdminUsersPage() {
           <div className="empty-state">
             <div className="empty-state-icon">👤</div>
             <div className="empty-state-title">还没有用户</div>
-            <button className="action-button" type="button" onClick={openCreate}>
+            <button
+              className="action-button"
+              type="button"
+              onClick={openCreate}
+            >
               新建第一个用户
             </button>
           </div>
@@ -643,7 +780,9 @@ export default function AdminUsersPage() {
             ) : null
           }
         >
-          {deliveryError ? <div className="feedback warn">{deliveryError}</div> : null}
+          {deliveryError ? (
+            <div className="feedback warn">{deliveryError}</div>
+          ) : null}
           <div className="page-stack">
             <div className="split">
               <div>
@@ -666,11 +805,19 @@ export default function AdminUsersPage() {
               <div className="page-stack">
                 <label className="field">
                   <span className="fine-print">访问令牌</span>
-                  <input className="control mono" value={delivery.access.token} readOnly />
+                  <input
+                    className="control mono"
+                    value={delivery.access.token}
+                    readOnly
+                  />
                 </label>
                 <label className="field">
                   <span className="fine-print">连接 URI</span>
-                  <textarea className="control textarea mono" value={delivery.access.uri} readOnly />
+                  <textarea
+                    className="control textarea mono"
+                    value={delivery.access.uri}
+                    readOnly
+                  />
                 </label>
                 <div className="toolbar-actions">
                   <button
@@ -683,7 +830,9 @@ export default function AdminUsersPage() {
                   <button
                     className="ghost-button"
                     type="button"
-                    onClick={() => void copyText(delivery.access!.configSnippet)}
+                    onClick={() =>
+                      void copyText(delivery.access!.configSnippet)
+                    }
                   >
                     复制配置片段
                   </button>
@@ -698,7 +847,9 @@ export default function AdminUsersPage() {
                 </div>
                 <div className="list-row">
                   <span className="muted">剩余流量</span>
-                  <strong>{formatBytes(delivery.access.trafficRemaining)}</strong>
+                  <strong>
+                    {formatBytes(delivery.access.trafficRemaining)}
+                  </strong>
                 </div>
                 <div className="list-row">
                   <span className="muted">推荐节点</span>
@@ -713,7 +864,9 @@ export default function AdminUsersPage() {
         </Panel>
       ) : delivery?.primaryAccessToken ? (
         <Panel title="接入交付" copy="主访问令牌，转交给会员。">
-          {deliveryError ? <div className="feedback warn">{deliveryError}</div> : null}
+          {deliveryError ? (
+            <div className="feedback warn">{deliveryError}</div>
+          ) : null}
           <div className="page-stack">
             <div className="split">
               <div>
@@ -724,7 +877,11 @@ export default function AdminUsersPage() {
             </div>
             <label className="field">
               <span className="fine-print">主访问令牌</span>
-              <input className="control mono" value={delivery.primaryAccessToken} readOnly />
+              <input
+                className="control mono"
+                value={delivery.primaryAccessToken}
+                readOnly
+              />
             </label>
             <div className="toolbar-actions">
               <button
@@ -742,26 +899,50 @@ export default function AdminUsersPage() {
       <Drawer
         open={drawerOpen}
         onClose={requestClose}
-        title={editingUser ? `编辑用户：${editingUser.displayName}` : "新建用户"}
+        title={
+          editingUser ? `编辑用户：${editingUser.displayName}` : "新建用户"
+        }
         subtitle={editingUser?.email}
         isDirty={isDirty}
         footer={
           <div className="toolbar-actions">
-            <button className="action-button" type="submit" form="user-form" disabled={submitDisabled}>
+            <button
+              className="action-button"
+              type="submit"
+              form="user-form"
+              disabled={submitDisabled}
+            >
               {submitting ? "保存中..." : editingUser ? "保存修改" : "创建用户"}
             </button>
-            <button className="ghost-button" type="button" onClick={requestClose}>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={requestClose}
+            >
               取消
             </button>
           </div>
         }
       >
-        {drawerError ? <div className="feedback error">{drawerError}</div> : null}
+        {drawerError ? (
+          <div className="feedback error">{drawerError}</div>
+        ) : null}
 
         {hasDraftBanner ? (
-          <div className="feedback info" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div
+            className="feedback info"
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
             <span>已恢复上次未保存的草稿。</span>
-            <button className="ghost-button compact" type="button" onClick={discardDraft}>
+            <button
+              className="ghost-button compact"
+              type="button"
+              onClick={discardDraft}
+            >
               丢弃草稿
             </button>
           </div>
@@ -774,7 +955,13 @@ export default function AdminUsersPage() {
               className="control"
               value={form.email}
               disabled={Boolean(editingUser)}
-              onChange={(e) => setForm((f) => { const n = { ...f, email: e.target.value }; if (!editingUser) saveDraft(DRAFT_KEY, n); return n; })}
+              onChange={(e) =>
+                setForm((f) => {
+                  const n = { ...f, email: e.target.value };
+                  if (!editingUser) saveDraft(DRAFT_KEY, n);
+                  return n;
+                })
+              }
               required
             />
           </label>
@@ -784,7 +971,13 @@ export default function AdminUsersPage() {
             <input
               className="control"
               value={form.displayName}
-              onChange={(e) => setForm((f) => { const n = { ...f, displayName: e.target.value }; if (!editingUser) saveDraft(DRAFT_KEY, n); return n; })}
+              onChange={(e) =>
+                setForm((f) => {
+                  const n = { ...f, displayName: e.target.value };
+                  if (!editingUser) saveDraft(DRAFT_KEY, n);
+                  return n;
+                })
+              }
               required
             />
           </label>
@@ -810,7 +1003,12 @@ export default function AdminUsersPage() {
               <span className="fine-print">状态</span>
               <CustomSelect
                 value={form.status}
-                onChange={(v) => setForm((f) => ({ ...f, status: v as UserFormState["status"] }))}
+                onChange={(v) =>
+                  setForm((f) => ({
+                    ...f,
+                    status: v as UserFormState["status"],
+                  }))
+                }
                 options={[
                   { value: "active", label: "active" },
                   { value: "suspended", label: "suspended" },
@@ -827,7 +1025,9 @@ export default function AdminUsersPage() {
                 className="control"
                 type="password"
                 value={form.password}
-                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, password: e.target.value }))
+                }
                 placeholder="首次登录密码"
                 autoComplete="new-password"
               />
@@ -839,7 +1039,9 @@ export default function AdminUsersPage() {
             <textarea
               className="control textarea"
               value={form.notes}
-              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, notes: e.target.value }))
+              }
             />
           </label>
 
@@ -854,14 +1056,19 @@ export default function AdminUsersPage() {
                     !plans.some((plan) => plan.bindings.length > 0)
                   }
                   onChange={(e) =>
-                    setProvision((current) => ({ ...current, enabled: e.target.checked }))
+                    setProvision((current) => ({
+                      ...current,
+                      enabled: e.target.checked,
+                    }))
                   }
                 />
                 <span>创建后立即开通套餐并生成专属接入信息</span>
               </label>
 
               {form.role !== "member" ? (
-                <div className="feedback info">管理员账号默认不做会员接入开通。</div>
+                <div className="feedback info">
+                  管理员账号默认不做会员接入开通。
+                </div>
               ) : null}
 
               {provision.enabled && form.role === "member" ? (
@@ -881,8 +1088,13 @@ export default function AdminUsersPage() {
                     <span className="fine-print">节点</span>
                     <CustomSelect
                       value={provision.nodeId}
-                      onChange={(v) => setProvision((c) => ({ ...c, nodeId: v }))}
-                      options={availableBindings.map((b) => ({ value: b.nodeId, label: b.nodeLabel }))}
+                      onChange={(v) =>
+                        setProvision((c) => ({ ...c, nodeId: v }))
+                      }
+                      options={availableBindings.map((b) => ({
+                        value: b.nodeId,
+                        label: b.nodeLabel,
+                      }))}
                     />
                   </label>
                 </div>
@@ -902,7 +1114,9 @@ export default function AdminUsersPage() {
             >
               {loadingDelivery ? "读取中..." : "读取当前接入信息"}
             </button>
-            {deliveryError ? <div className="feedback warn">{deliveryError}</div> : null}
+            {deliveryError ? (
+              <div className="feedback warn">{deliveryError}</div>
+            ) : null}
           </div>
         ) : null}
       </Drawer>
@@ -915,7 +1129,9 @@ export default function AdminUsersPage() {
       >
         {loadingStats ? (
           <div className="skeleton-rows">
-            {Array.from({ length: 4 }, (_, i) => <div key={i} className="skeleton skeleton-row" />)}
+            {Array.from({ length: 4 }, (_, i) => (
+              <div key={i} className="skeleton skeleton-row" />
+            ))}
           </div>
         ) : (
           <div className="page-stack">
@@ -950,15 +1166,19 @@ export default function AdminUsersPage() {
 
             {statsWallet && statsWallet.transactions.length > 0 ? (
               <div>
-                <div className="fine-print" style={{ marginBottom: 8 }}>钱包流水</div>
+                <div className="fine-print" style={{ marginBottom: 8 }}>
+                  钱包流水
+                </div>
                 <DataTable
                   headers={["类型", "金额", "备注", "时间"]}
-                  rows={statsWallet.transactions.slice(0, 10).map((t) => [
-                    t.kind,
-                    `${t.amountCents >= 0 ? "+" : ""}${formatMoney(t.amountCents)}`,
-                    t.note ?? "-",
-                    formatDateTime(t.createdAt),
-                  ])}
+                  rows={statsWallet.transactions
+                    .slice(0, 10)
+                    .map((t) => [
+                      t.kind,
+                      `${t.amountCents >= 0 ? "+" : ""}${formatMoney(t.amountCents)}`,
+                      t.note ?? "-",
+                      formatDateTime(t.createdAt),
+                    ])}
                 />
               </div>
             ) : null}
@@ -971,21 +1191,34 @@ export default function AdminUsersPage() {
                 </div>
                 <div className="list-row">
                   <span className="muted">状态</span>
-                  <span className={`badge ${statsSubscription.status === "active" ? "success" : "warn"}`}>
+                  <span
+                    className={`badge ${statsSubscription.status === "active" ? "success" : "warn"}`}
+                  >
                     {statsSubscription.status}
                   </span>
                 </div>
                 <div className="list-row">
                   <span className="muted">已用流量</span>
-                  <strong>{formatBytes(statsSubscription.consumedTrafficBytes)}</strong>
+                  <strong>
+                    {formatBytes(statsSubscription.consumedTrafficBytes)}
+                  </strong>
                 </div>
                 <div className="list-row">
                   <span className="muted">剩余流量</span>
-                  <strong>{statsSubscription.trafficRemainingBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(statsSubscription.trafficRemainingBytes)}</strong>
+                  <strong>
+                    {statsSubscription.trafficRemainingBytes >=
+                    UNLIMITED_TRAFFIC
+                      ? "无限流量"
+                      : formatBytes(statsSubscription.trafficRemainingBytes)}
+                  </strong>
                 </div>
                 <div className="list-row">
                   <span className="muted">总配额</span>
-                  <strong>{statsSubscription.includedTrafficBytes >= UNLIMITED_TRAFFIC ? "无限流量" : formatBytes(statsSubscription.includedTrafficBytes)}</strong>
+                  <strong>
+                    {statsSubscription.includedTrafficBytes >= UNLIMITED_TRAFFIC
+                      ? "无限流量"
+                      : formatBytes(statsSubscription.includedTrafficBytes)}
+                  </strong>
                 </div>
                 <div className="list-row">
                   <span className="muted">到期时间</span>
@@ -1004,36 +1237,67 @@ export default function AdminUsersPage() {
               <div className="field-section-label">计费策略</div>
               <label className="field">
                 <span className="fine-print">流量倍率（0.1x - 100x）</span>
-                <input className="control" type="number" min="0.1" max="100" step="0.1" value={multiplierInput} onChange={(event) => setMultiplierInput(event.target.value)} />
+                <input
+                  className="control"
+                  type="number"
+                  min="0.1"
+                  max="100"
+                  step="0.1"
+                  value={multiplierInput}
+                  onChange={(event) => setMultiplierInput(event.target.value)}
+                />
               </label>
               {statsSubscription ? (
                 <>
                   <label className="field">
-                    <span className="fine-print">将当前周期剩余流量设为（GB，留空则不调整）</span>
-                    <input className="control" type="number" min="0" step="0.1" value={quotaGbInput} onChange={(event) => setQuotaGbInput(event.target.value)} />
+                    <span className="fine-print">
+                      将当前周期剩余流量设为（GB，留空则不调整）
+                    </span>
+                    <input
+                      className="control"
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      value={quotaGbInput}
+                      onChange={(event) => setQuotaGbInput(event.target.value)}
+                    />
                   </label>
                   <label className="field">
                     <span className="fine-print">调整原因</span>
-                    <input className="control" value={quotaReason} onChange={(event) => setQuotaReason(event.target.value)} placeholder="退款补偿、运营赠送等" />
+                    <input
+                      className="control"
+                      value={quotaReason}
+                      onChange={(event) => setQuotaReason(event.target.value)}
+                      placeholder="退款补偿、运营赠送等"
+                    />
                   </label>
                 </>
               ) : null}
-              <button className="action-button" type="button" disabled={savingEntitlement} onClick={() => void saveEntitlementPolicy()}>
+              <button
+                className="action-button"
+                type="button"
+                disabled={savingEntitlement}
+                onClick={() => void saveEntitlementPolicy()}
+              >
                 {savingEntitlement ? "保存中..." : "保存流量策略"}
               </button>
             </div>
 
             {statsUsage.length > 0 ? (
               <div>
-                <div className="fine-print" style={{ marginBottom: 8 }}>最近流量记录</div>
+                <div className="fine-print" style={{ marginBottom: 8 }}>
+                  最近流量记录
+                </div>
                 <DataTable
                   headers={["节点", "上传", "下载", "时间"]}
-                  rows={statsUsage.slice(0, 15).map((r) => [
-                    r.nodeLabel,
-                    formatBytes(r.txBytes),
-                    formatBytes(r.rxBytes),
-                    formatDateTime(r.bucketStart),
-                  ])}
+                  rows={statsUsage
+                    .slice(0, 15)
+                    .map((r) => [
+                      r.nodeLabel,
+                      formatBytes(r.txBytes),
+                      formatBytes(r.rxBytes),
+                      formatDateTime(r.bucketStart),
+                    ])}
                 />
               </div>
             ) : null}

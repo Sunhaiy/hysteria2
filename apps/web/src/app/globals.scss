@@ -1421,7 +1421,10 @@ details.field-section .field-section-body {
     align-items: end;
   }
 
-  .data-viewport .referral-records-panel > .panel-header > .admin-compact-filters {
+  .data-viewport
+    .referral-records-panel
+    > .panel-header
+    > .admin-compact-filters {
     width: min(650px, 70%);
   }
 }
@@ -3231,8 +3234,20 @@ select.control {
 }
 
 .backup-table td > strong,
-.backup-table td > span {
+.backup-table .backup-filename,
+.backup-table .backup-checksum,
+.backup-table .backup-error {
   display: block;
+}
+
+.backup-status-column {
+  width: 88px;
+  text-align: center;
+}
+
+.backup-status-badge {
+  min-width: 54px;
+  display: inline-flex !important;
 }
 
 .backup-filename,
@@ -6403,6 +6418,127 @@ select.control {
   background: var(--bg-panel-alt);
 }
 
+.order-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.order-annual-cost-card {
+  gap: 8px;
+  align-content: start;
+}
+
+.order-annual-cost-heading,
+.operations-traffic-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.order-annual-cost-heading > strong {
+  color: var(--status-success);
+  font-size: var(--text-small);
+}
+
+.order-annual-cost-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.order-annual-cost-form .control {
+  min-height: 32px;
+}
+
+.order-date-range {
+  display: grid;
+  grid-template-columns: minmax(108px, 1fr) auto minmax(108px, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.order-date-range > span {
+  color: var(--text-muted);
+  font-size: var(--text-tiny);
+}
+
+.order-date-range .control {
+  min-width: 0;
+  width: 100%;
+  padding-inline: 8px;
+}
+
+@media (min-width: 921px) {
+  .data-viewport .order-filter-grid > .field {
+    flex: 0.82 1 80px;
+    min-width: 72px;
+  }
+
+  .data-viewport .order-filter-grid > .field:first-child {
+    flex: 1.35 1 160px;
+    min-width: 140px;
+  }
+
+  .data-viewport .order-filter-grid > .order-date-field {
+    flex: 2.15 1 240px;
+    min-width: 224px;
+  }
+}
+
+.operations-traffic-toolbar {
+  justify-content: flex-start;
+}
+
+.operations-traffic-toolbar > .field {
+  width: 164px;
+}
+
+.operations-traffic-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.operations-traffic-layout {
+  display: grid;
+  grid-template-columns: minmax(480px, 1.05fr) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+@media (min-width: 921px) {
+  .data-viewport .admin-data-page > .operations-traffic-layout {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .data-viewport .operations-traffic-layout > .admin-data-panel {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+  }
+
+  .data-viewport .operations-traffic-layout > .admin-data-panel > .panel-body {
+    display: flex;
+    flex: 1 1 0;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .data-viewport .operations-traffic-layout .table-card,
+  .data-viewport .operations-traffic-layout .table-wrap {
+    flex: 1 1 0;
+    min-height: 0;
+  }
+
+  .data-viewport .operations-traffic-layout .table-wrap {
+    overflow: auto;
+  }
+}
+
 .referral-admin-settings {
   display: grid;
   grid-template-columns:
@@ -7170,6 +7306,19 @@ select.control {
     grid-template-columns: 1fr;
   }
 
+  .order-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .order-annual-cost-card {
+    grid-column: 1 / -1;
+  }
+
+  .operations-traffic-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+  }
+
   .admin-chart-grid,
   .admin-overview-row,
   .portal-access-layout {
@@ -7188,6 +7337,29 @@ select.control {
 
   .annual-cost-form {
     grid-template-columns: 1fr;
+  }
+
+  .order-summary-grid,
+  .operations-traffic-metrics,
+  .order-date-range {
+    grid-template-columns: 1fr;
+  }
+
+  .order-annual-cost-card {
+    grid-column: auto;
+  }
+
+  .order-date-range > span {
+    display: none;
+  }
+
+  .operations-traffic-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .operations-traffic-toolbar > .field {
+    width: 100%;
   }
 
   .referral-records-panel .panel-header {

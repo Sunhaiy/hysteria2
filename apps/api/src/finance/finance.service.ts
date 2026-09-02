@@ -435,6 +435,7 @@ export class FinanceService {
       this.prisma.manualOrder.aggregate({
         where: {
           status: 'APPLIED',
+          source: 'PAYMENT',
           processedAt: { gte: range.from, lt: range.to },
         },
         _sum: { amountCents: true },
@@ -443,6 +444,7 @@ export class FinanceService {
         where: {
           status: RefundStatus.APPLIED,
           processedAt: { gte: range.from, lt: range.to },
+          order: { source: 'PAYMENT' },
         },
         _sum: { amountCents: true },
       }),

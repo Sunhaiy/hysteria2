@@ -117,6 +117,17 @@ type OrderSummary = {
   month: RevenueWindow;
 };
 
+type AnnualBreakEven = {
+  year: number;
+  status: "unconfigured" | "not_recovered" | "recovered";
+  annualCostCents: number | null;
+  netRevenueCents: number;
+  progressPercent: number | null;
+  remainingCents: number | null;
+  profitCents: number | null;
+  updatedAt: string | null;
+};
+
 type Catalog = {
   products: Array<{
     id: string;
@@ -181,6 +192,15 @@ const channelLabel: Record<string, string> = {
   wxpay: "微信支付",
 };
 
+function currentShanghaiYear() {
+  return Number(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Shanghai",
+      year: "numeric",
+    }).format(new Date()),
+  );
+}
+
 function queryString(filters: typeof emptyFilters, page: number, view: View) {
   const query = new URLSearchParams({ page: String(page), pageSize: "20" });
   for (const [key, value] of Object.entries(filters)) {
@@ -195,8 +215,12 @@ function queryString(filters: typeof emptyFilters, page: number, view: View) {
 
 export default function AdminOrdersPage() {
   const { token } = useAuth();
+  const annualYear = currentShanghaiYear();
   const [view, setView] = useState<View>("orders");
   const [summary, setSummary] = useState<OrderSummary | null>(null);
+  const [annual, setAnnual] = useState<AnnualBreakEven | null>(null);
+  const [annualCostYuan, setAnnualCostYuan] = useState("");
+  const [annualSaving, setAnnualSaving] = useState(false);
   const [orders, setOrders] = useState(emptyPage<OrderRecord>());
   const [attempts, setAttempts] = useState(emptyPage<PaymentAttempt>());
   const [catalog, setCatalog] = useState<Catalog>({ products: [] });
@@ -238,6 +262,20 @@ export default function AdminOrdersPage() {
     );
   }, [token]);
 
+  const loadAnnual = useCallback(async () => {
+    if (!token) return;
+    const result = await apiRequest<AnnualBreakEven>(
+      `/api/admin/finance/annual-break-even?year=${annualYear}`,
+      { token },
+    );
+    setAnnual(result);
+    setAnnualCostYuan(
+      result.annualCostCents == null
+        ? ""
+        : String(result.annualCostCents / 100),
+    );
+  }, [annualYear, token]);
+
   const loadPage = useCallback(async () => {
     if (!token) return;
     setLoading(true);
@@ -272,6 +310,7 @@ export default function AdminOrdersPage() {
     const timer = window.setTimeout(() => {
       void Promise.all([
         loadSummary(),
+        loadAnnual(),
         apiRequest<Catalog>("/api/admin/catalog", { token }).then(setCatalog),
         apiRequest<Array<{ id: string; email: string; displayName: string }>>(
           "/api/admin/customers/options?pageSize=20",
@@ -283,7 +322,7 @@ export default function AdminOrdersPage() {
       ]).catch(() => undefined);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [loadSummary, token]);
+  }, [loadAnnual, loadSummary, token]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadPage(), 0);
@@ -321,7 +360,34 @@ export default function AdminOrdersPage() {
   }
 
   async function refresh() {
-    await Promise.all([loadPage(), loadSummary()]);
+    await Promise.all([loadPage(), loadSummary(), loadAnnual()]);
+  }
+
+  async function saveAnnualCost() {
+    if (!token) return;
+    const totalCostCents = Math.round(Number(annualCostYuan) * 100);
+    if (!Number.isSafeInteger(totalCostCents) || totalCostCents < 0) {
+      setFeedback({ kind: "error", message: "请输入有效的年度总成本。" });
+      return;
+    }
+    setAnnualSaving(true);
+    try {
+      await apiRequest(`/api/admin/finance/annual-costs/${annualYear}`, {
+        method: "PUT",
+        token,
+        body: { totalCostCents },
+      });
+      await loadAnnual();
+      setFeedback({ kind: "success", message: "年度成本已更新。" });
+    } catch (cause) {
+      setFeedback({
+        kind: "error",
+        message:
+          cause instanceof ApiError ? cause.message : "年度成本保存失败。",
+      });
+    } finally {
+      setAnnualSaving(false);
+    }
   }
 
   async function openDetail(id: string) {
@@ -466,17 +532,59 @@ export default function AdminOrdersPage() {
         <div className={`feedback ${feedback.kind}`}>{feedback.message}</div>
       ) : null}
 
-      <section className="metric-grid admin-data-metrics">
+      <section className="order-summary-grid admin-data-metrics">
         <MetricCard
-          label="今日履约净收入"
+          label="今日实际收入"
           value={formatMoney(summary?.today.netRevenueCents ?? 0)}
-          footnote={`${summary?.today.orderCount ?? 0} 笔订单 · 退款 ${formatMoney(summary?.today.refundCents ?? 0)}`}
+          footnote={`${summary?.today.orderCount ?? 0} 笔在线支付 · 退款 ${formatMoney(summary?.today.refundCents ?? 0)}`}
         />
         <MetricCard
-          label="本月履约净收入"
+          label="本月实际收入"
           value={formatMoney(summary?.month.netRevenueCents ?? 0)}
-          footnote={`本月 1 日起 · ${summary?.month.orderCount ?? 0} 笔订单`}
+          footnote={`本月 1 日起 · 不含 CDK 与人工调整`}
         />
+        <article className="metric-card order-annual-cost-card">
+          <div className="order-annual-cost-heading">
+            <span className="metric-label">{annualYear} 年运营成本</span>
+            <strong>{annual?.progressPercent ?? 0}%</strong>
+          </div>
+          <div className="order-annual-cost-form">
+            <label className="field">
+              <span className="visually-hidden">年度总成本（元）</span>
+              <input
+                className="control"
+                type="number"
+                min={0}
+                step={0.01}
+                value={annualCostYuan}
+                onChange={(event) => setAnnualCostYuan(event.target.value)}
+                placeholder="全年成本（元）"
+              />
+            </label>
+            <button
+              className="action-button compact"
+              type="button"
+              disabled={annualSaving || annualCostYuan === ""}
+              onClick={() => void saveAnnualCost()}
+            >
+              {annualSaving ? "保存中" : "保存"}
+            </button>
+          </div>
+          <div className="bar-track" aria-label="年度回本进度">
+            <span
+              className="bar-fill bar-fill-success"
+              style={{ width: `${annual?.progressPercent ?? 0}%` }}
+            />
+          </div>
+          <span className="metric-footnote">
+            {annualYear}.01.01 - {annualYear}.12.31 ·{" "}
+            {annual?.status === "recovered"
+              ? `已回本，盈利 ${formatMoney(annual.profitCents ?? 0)}`
+              : annual?.status === "not_recovered"
+                ? `待回收 ${formatMoney(annual.remainingCents ?? 0)}`
+                : "尚未设置成本"}
+          </span>
+        </article>
       </section>
 
       <Panel className="admin-data-panel" title="订单与支付">
@@ -497,7 +605,7 @@ export default function AdminOrdersPage() {
           </button>
         </div>
 
-        <div className="filter-grid admin-compact-filters">
+        <div className="filter-grid admin-compact-filters order-filter-grid">
           <label className="field">
             <span className="fine-print">搜索</span>
             <input
@@ -507,24 +615,26 @@ export default function AdminOrdersPage() {
               placeholder="订单号、交易号、邮箱或用户名"
             />
           </label>
-          <label className="field">
-            <span className="fine-print">开始日期</span>
-            <input
-              className="control"
-              type="date"
-              value={filters.from}
-              onChange={(event) => updateFilter("from", event.target.value)}
-            />
-          </label>
-          <label className="field">
-            <span className="fine-print">结束日期</span>
-            <input
-              className="control"
-              type="date"
-              value={filters.to}
-              onChange={(event) => updateFilter("to", event.target.value)}
-            />
-          </label>
+          <div className="field order-date-field">
+            <span className="fine-print">下单日期</span>
+            <div className="order-date-range">
+              <input
+                className="control"
+                aria-label="开始日期"
+                type="date"
+                value={filters.from}
+                onChange={(event) => updateFilter("from", event.target.value)}
+              />
+              <span>至</span>
+              <input
+                className="control"
+                aria-label="结束日期"
+                type="date"
+                value={filters.to}
+                onChange={(event) => updateFilter("to", event.target.value)}
+              />
+            </div>
+          </div>
           <label className="field">
             <span className="fine-print">商品类型</span>
             <CustomSelect

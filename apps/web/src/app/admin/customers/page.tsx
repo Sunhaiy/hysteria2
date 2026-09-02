@@ -30,7 +30,11 @@ type Customer = {
   createdAt: string;
 };
 
-const statusLabel = { active: "正常", suspended: "停用", banned: "封禁" } as const;
+const statusLabel = {
+  active: "正常",
+  suspended: "停用",
+  banned: "封禁",
+} as const;
 const emptyPage: PaginatedResponse<Customer> = {
   items: [],
   page: 1,
@@ -64,7 +68,8 @@ export default function CustomersPage() {
     })
       .then(setPlans)
       .catch((cause) => {
-        if (cause instanceof DOMException && cause.name === "AbortError") return;
+        if (cause instanceof DOMException && cause.name === "AbortError")
+          return;
         setPlans([]);
       });
     return () => controller.abort();
@@ -117,11 +122,28 @@ export default function CustomersPage() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [debouncedSearch, online, page, planId, quota, refreshKey, status, subscriptionHistory, token]);
+  }, [
+    debouncedSearch,
+    online,
+    page,
+    planId,
+    quota,
+    refreshKey,
+    status,
+    subscriptionHistory,
+    token,
+  ]);
 
-  const active = data.items.filter((customer) => customer.status === "active").length;
-  const lowQuota = data.items.filter((customer) => customer.quotaState !== "available").length;
-  const wallet = data.items.reduce((sum, customer) => sum + customer.balanceCents, 0);
+  const active = data.items.filter(
+    (customer) => customer.status === "active",
+  ).length;
+  const lowQuota = data.items.filter(
+    (customer) => customer.quotaState !== "available",
+  ).length;
+  const wallet = data.items.reduce(
+    (sum, customer) => sum + customer.balanceCents,
+    0,
+  );
 
   return (
     <ConsoleShell
@@ -138,17 +160,34 @@ export default function CustomersPage() {
           type="button"
           onClick={() => setRefreshKey((value) => value + 1)}
         >
-          <Icon name="refresh" />刷新
+          <Icon name="refresh" />
+          刷新
         </button>
       }
     >
       {error ? <div className="feedback error">{error}</div> : null}
       <div className="page-stack admin-data-page">
         <div className="metric-grid admin-data-metrics">
-          <MetricCard label="客户总数" value={String(data.total)} footnote="仅会员账户" />
-          <MetricCard label="正常客户" value={String(active)} footnote="当前页" />
-          <MetricCard label="额度关注" value={String(lowQuota)} footnote="当前页低额度或已耗尽" />
-          <MetricCard label="钱包负债" value={formatMoney(wallet)} footnote="当前页余额合计" />
+          <MetricCard
+            label="客户总数"
+            value={String(data.total)}
+            footnote="仅会员账户"
+          />
+          <MetricCard
+            label="正常客户"
+            value={String(active)}
+            footnote="当前页"
+          />
+          <MetricCard
+            label="额度关注"
+            value={String(lowQuota)}
+            footnote="当前页低额度或已耗尽"
+          />
+          <MetricCard
+            label="钱包负债"
+            value={formatMoney(wallet)}
+            footnote="当前页余额合计"
+          />
         </div>
         <Panel
           className="admin-data-panel"
@@ -259,6 +298,7 @@ export default function CustomersPage() {
             }}
             headers={[
               "客户",
+              "注册时间",
               "状态",
               "有效权益",
               "剩余额度",
@@ -267,32 +307,39 @@ export default function CustomersPage() {
               "最近接入",
             ]}
             rows={data.items.map((customer) => [
-                <CustomerLink
-                  id={customer.id}
-                  displayName={customer.displayName}
-                  email={customer.email}
-                  key={customer.id}
-                />,
-                <span className={`badge ${customer.status === "active" ? "success" : "danger"}`} key={`${customer.id}-status`}>
-                  {statusLabel[customer.status]}
-                </span>,
-                customer.activePlanNames.length
-                  ? `${customer.activePlanNames.join(" · ")} + ${customer.activeTrafficPackCount} 个流量包`
-                  : `${customer.activeTrafficPackCount} 个独立流量包`,
-                <span className={`badge ${customer.quotaState === "available" ? "success" : customer.quotaState === "low" ? "warn" : "danger"}`} key={`${customer.id}-quota`}>
-                  {formatBytes(customer.remainingBytes)}
-                </span>,
-                <span
-                  className={`badge ${customer.online ? "success" : "neutral"}`}
-                  key={`${customer.id}-online`}
-                >
-                  {customer.online ? "在线" : "离线"}
-                </span>,
-                formatMoney(customer.balanceCents),
-                customer.primaryAccessTokenLastUsedAt
-                  ? formatDateTime(customer.primaryAccessTokenLastUsedAt)
-                  : "从未接入",
-              ])}
+              <CustomerLink
+                id={customer.id}
+                displayName={customer.displayName}
+                email={customer.email}
+                key={customer.id}
+              />,
+              formatDateTime(customer.createdAt),
+              <span
+                className={`badge ${customer.status === "active" ? "success" : "danger"}`}
+                key={`${customer.id}-status`}
+              >
+                {statusLabel[customer.status]}
+              </span>,
+              customer.activePlanNames.length
+                ? `${customer.activePlanNames.join(" · ")} + ${customer.activeTrafficPackCount} 个流量包`
+                : `${customer.activeTrafficPackCount} 个独立流量包`,
+              <span
+                className={`badge ${customer.quotaState === "available" ? "success" : customer.quotaState === "low" ? "warn" : "danger"}`}
+                key={`${customer.id}-quota`}
+              >
+                {formatBytes(customer.remainingBytes)}
+              </span>,
+              <span
+                className={`badge ${customer.online ? "success" : "neutral"}`}
+                key={`${customer.id}-online`}
+              >
+                {customer.online ? "在线" : "离线"}
+              </span>,
+              formatMoney(customer.balanceCents),
+              customer.primaryAccessTokenLastUsedAt
+                ? formatDateTime(customer.primaryAccessTokenLastUsedAt)
+                : "从未接入",
+            ])}
           />
         </Panel>
       </div>

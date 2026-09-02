@@ -76,7 +76,8 @@ export default function AdminDashboardPage() {
           }),
         );
       } catch (cause) {
-        if (cause instanceof DOMException && cause.name === "AbortError") return;
+        if (cause instanceof DOMException && cause.name === "AbortError")
+          return;
         setError(
           cause instanceof ApiError ? cause.message : "管理台数据加载失败。",
         );
@@ -339,11 +340,11 @@ export default function AdminDashboardPage() {
               </span>
               <b>›</b>
             </Link>
-            <Link href="/admin/finance">
-              <Icon name="payments" />
+            <Link href="/admin/orders">
+              <Icon name="receipt_long" />
               <span>
-                <strong>财务中心</strong>
-                <small>收入、退款与年度回本</small>
+                <strong>订单中心</strong>
+                <small>真实收入、支付与年度成本</small>
               </span>
               <b>›</b>
             </Link>
@@ -387,7 +388,8 @@ export default function AdminDashboardPage() {
 
       {summary ? (
         <div className="fine-print admin-dashboard-footnote">
-          更新于 {formatDateTime(summary.generatedAt)} · 在线数据新鲜度 {summary.freshnessSeconds} 秒
+          更新于 {formatDateTime(summary.generatedAt)} · 在线数据新鲜度{" "}
+          {summary.freshnessSeconds} 秒
         </div>
       ) : null}
     </ConsoleShell>

@@ -234,6 +234,7 @@ describe('FinanceService', () => {
     expect(prisma.manualOrder.aggregate).toHaveBeenCalledWith({
       where: {
         status: 'APPLIED',
+        source: 'PAYMENT',
         processedAt: {
           gte: new Date('2026-12-31T16:00:00.000Z'),
           lt: new Date('2027-12-31T16:00:00.000Z'),
@@ -248,6 +249,7 @@ describe('FinanceService', () => {
           gte: new Date('2026-12-31T16:00:00.000Z'),
           lt: new Date('2027-12-31T16:00:00.000Z'),
         },
+        order: { source: 'PAYMENT' },
       },
       _sum: { amountCents: true },
     });

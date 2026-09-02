@@ -41,7 +41,10 @@ test("admin payment settings enforce one checkout channel at a time", async () =
     /async function startEpayTest[\s\S]*?finally \{[\s\S]*?setTestingEpay\(false\)/,
   );
   assert.match(settings, /AbortSignal\.timeout\(20_000\)/);
-  assert.doesNotMatch(settings, /window\.location\.assign\(target\.toString\(\)\)/);
+  assert.doesNotMatch(
+    settings,
+    /window\.location\.assign\(target\.toString\(\)\)/,
+  );
 });
 
 test("toast actions remain stable when used by data-loading effects", async () => {
@@ -87,8 +90,8 @@ test("admin order center unifies revenue, order filters, and payment exceptions"
 
   assert.match(navigation, /href: "\/admin\/orders"/);
   assert.match(navigation, /label: "订单中心"/);
-  assert.match(orders, /今日履约净收入/);
-  assert.match(orders, /本月履约净收入/);
+  assert.match(orders, /今日实际收入/);
+  assert.match(orders, /本月实际收入/);
   assert.match(orders, /\/api\/admin\/orders\/summary/);
   assert.match(orders, /\/api\/admin\/orders\/payment-attempts/);
   assert.match(orders, /订单号、交易号、邮箱或用户名/);

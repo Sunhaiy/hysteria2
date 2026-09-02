@@ -18,6 +18,7 @@ export function DataTable({
   error,
   onRetry,
   pagination,
+  minimumColumnWidth = 120,
 }: {
   headers: string[];
   rows: ReactNode[][];
@@ -26,8 +27,9 @@ export function DataTable({
   error?: string | null;
   onRetry?: () => void;
   pagination?: TablePagination;
+  minimumColumnWidth?: number;
 }) {
-  const minimumTableWidth = Math.max(360, headers.length * 120);
+  const minimumTableWidth = Math.max(360, headers.length * minimumColumnWidth);
 
   return (
     <div className="table-card">

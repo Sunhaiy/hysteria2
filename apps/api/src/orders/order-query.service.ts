@@ -225,6 +225,7 @@ export class OrderQueryService {
       this.prisma.manualOrder.aggregate({
         where: {
           status: OrderStatus.APPLIED,
+          source: OrderSource.PAYMENT,
           processedAt: { gte: from, lte: to },
         },
         _sum: { amountCents: true },
@@ -234,6 +235,7 @@ export class OrderQueryService {
         where: {
           status: RefundStatus.APPLIED,
           processedAt: { gte: from, lte: to },
+          order: { source: OrderSource.PAYMENT },
         },
         _sum: { amountCents: true },
         _count: { _all: true },

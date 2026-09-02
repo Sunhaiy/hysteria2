@@ -42,6 +42,30 @@ describe('OrderQueryService', () => {
         orderCount: 9,
       },
     });
+    expect(orderAggregate).toHaveBeenNthCalledWith(1, {
+      where: {
+        status: 'APPLIED',
+        source: 'PAYMENT',
+        processedAt: {
+          gte: new Date('2026-09-01T16:00:00.000Z'),
+          lte: new Date('2026-09-01T16:30:00.000Z'),
+        },
+      },
+      _sum: { amountCents: true },
+      _count: { _all: true },
+    });
+    expect(refundAggregate).toHaveBeenNthCalledWith(1, {
+      where: {
+        status: 'APPLIED',
+        processedAt: {
+          gte: new Date('2026-09-01T16:00:00.000Z'),
+          lte: new Date('2026-09-01T16:30:00.000Z'),
+        },
+        order: { source: 'PAYMENT' },
+      },
+      _sum: { amountCents: true },
+      _count: { _all: true },
+    });
   });
 
   it('builds paginated filters without loading orders into memory', async () => {

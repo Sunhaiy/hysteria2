@@ -12,7 +12,10 @@ import { AdminGuard } from '../common/admin.guard';
 import type { SessionPrincipal } from '../common/auth.types';
 import { CurrentPrincipal } from '../common/current-principal.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
-import type { TrafficQuery } from '../traffic-analytics/traffic-analytics.service';
+import type {
+  ServerTrafficQuery,
+  TrafficQuery,
+} from '../traffic-analytics/traffic-analytics.service';
 import {
   OperationsService,
   type AlertQuery,
@@ -42,6 +45,11 @@ export class OperationsController {
   @Get('traffic/details')
   trafficDetails(@Query() query: TrafficQuery) {
     return this.operations.trafficDetails(query);
+  }
+
+  @Get('traffic/servers')
+  serverTraffic(@Query() query: ServerTrafficQuery) {
+    return this.operations.serverTraffic(query);
   }
 
   @Get('alerts')
