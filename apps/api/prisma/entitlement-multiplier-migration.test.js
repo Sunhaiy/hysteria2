@@ -18,7 +18,16 @@ describe('entitlement multiplier snapshot migration', () => {
     assert.match(migration, /orders\."trafficMultiplierBasisPointsSnapshot"/);
     assert.match(migration, /product\."defaultTrafficMultiplierBasisPoints"/);
     assert.match(migration, /UPDATE "QuotaBucket" AS bucket/);
-    assert.match(migration, /SET NOT NULL/g);
+    assert.match(
+      migration,
+      /ADD COLUMN "trafficMultiplierBasisPointsSnapshot" INTEGER NOT NULL DEFAULT 10000/g,
+    );
+    assert.doesNotMatch(migration, /ALTER COLUMN .* SET NOT NULL/);
+  });
+
+  it('keeps constraints safe for concurrent writes during validation', () => {
+    assert.equal((migration.match(/NOT VALID/g) ?? []).length, 2);
+    assert.equal((migration.match(/VALIDATE CONSTRAINT/g) ?? []).length, 2);
   });
 
   it('adds an idempotency key for auditable compensation', () => {
