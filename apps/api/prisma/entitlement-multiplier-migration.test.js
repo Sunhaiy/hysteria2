@@ -29,4 +29,8 @@ describe('entitlement multiplier snapshot migration', () => {
     assert.doesNotMatch(migration, /UPDATE "UsageRollup"/);
     assert.doesNotMatch(migration, /DELETE FROM "UsageRollup"/);
   });
+
+  it('does not use PostgreSQL reserved words as update aliases', () => {
+    assert.doesNotMatch(migration, /AS grant\b/);
+  });
 });

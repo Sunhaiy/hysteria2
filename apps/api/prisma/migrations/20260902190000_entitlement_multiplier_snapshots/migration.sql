@@ -10,20 +10,20 @@ ADD COLUMN "idempotencyKey" TEXT;
 CREATE UNIQUE INDEX "QuotaAdjustment_idempotencyKey_key"
 ON "QuotaAdjustment"("idempotencyKey");
 
-UPDATE "EntitlementGrant" AS grant
+UPDATE "EntitlementGrant" AS entitlement
 SET "trafficMultiplierBasisPointsSnapshot" = COALESCE(
   (
     SELECT orders."trafficMultiplierBasisPointsSnapshot"
     FROM "ManualOrder" AS orders
-    WHERE orders."userId" = grant."userId"
-      AND orders."catalogOfferId" = grant."offerId"
+    WHERE orders."userId" = entitlement."userId"
+      AND orders."catalogOfferId" = entitlement."offerId"
       AND orders."status" = 'APPLIED'
       AND orders."trafficMultiplierBasisPointsSnapshot" IS NOT NULL
     ORDER BY
       ABS(
         EXTRACT(
           EPOCH FROM (
-            COALESCE(orders."processedAt", orders."createdAt") - grant."startsAt"
+            COALESCE(orders."processedAt", orders."createdAt") - entitlement."startsAt"
           )
         )
       ),
@@ -31,7 +31,7 @@ SET "trafficMultiplierBasisPointsSnapshot" = COALESCE(
     LIMIT 1
   ),
   CASE
-    WHEN grant."kind" = 'PLAN'
+    WHEN entitlement."kind" = 'PLAN'
       THEN account."trafficMultiplierBasisPoints"
     ELSE product."defaultTrafficMultiplierBasisPoints"
   END,
@@ -39,17 +39,17 @@ SET "trafficMultiplierBasisPointsSnapshot" = COALESCE(
   10000
 )
 FROM "AccessAccount" AS account, "CatalogProduct" AS product
-WHERE account."id" = grant."accessAccountId"
-  AND product."id" = grant."productId";
+WHERE account."id" = entitlement."accessAccountId"
+  AND product."id" = entitlement."productId";
 
 UPDATE "EntitlementGrant"
 SET "trafficMultiplierBasisPointsSnapshot" = 10000
 WHERE "trafficMultiplierBasisPointsSnapshot" IS NULL;
 
 UPDATE "QuotaBucket" AS bucket
-SET "trafficMultiplierBasisPointsSnapshot" = grant."trafficMultiplierBasisPointsSnapshot"
-FROM "EntitlementGrant" AS grant
-WHERE grant."id" = bucket."grantId";
+SET "trafficMultiplierBasisPointsSnapshot" = entitlement."trafficMultiplierBasisPointsSnapshot"
+FROM "EntitlementGrant" AS entitlement
+WHERE entitlement."id" = bucket."grantId";
 
 UPDATE "QuotaBucket"
 SET "trafficMultiplierBasisPointsSnapshot" = 10000
