@@ -187,7 +187,7 @@ describe('Health (e2e)', () => {
           subscription: { planId: string };
           alerts: unknown[];
         };
-        expect(payload.subscription.planId).toBe('plan_core');
+        expect(payload.subscription.planId).toBe('catalog_core');
         expect(Array.isArray(payload.alerts)).toBe(true);
       });
   });
@@ -384,7 +384,7 @@ describe('Health (e2e)', () => {
     expect(pack.body).toMatchObject({
       replayed: false,
       kind: 'traffic_pack',
-      chargedCents: 900,
+      chargedCents: 3200,
     });
     await memberAgent
       .get('/api/portal/subscription')
@@ -394,7 +394,7 @@ describe('Health (e2e)', () => {
           plan: { name: string };
           packs: Array<{ status: string }>;
         };
-        expect(payload.plan.name).toContain('灵活流量包');
+        expect(payload.plan.name).toContain('独立流量权益');
         expect(payload.packs).toHaveLength(1);
         expect(payload.packs[0]?.status).toBe('active');
       });
