@@ -1170,7 +1170,7 @@ details.field-section .field-section-body {
 
 .table-pagination {
   min-height: 52px;
-  padding: 8px 12px;
+  padding: 8px 10px 8px 14px;
   border-top: 1px solid var(--border-default);
   display: flex;
   align-items: center;
@@ -1182,7 +1182,60 @@ details.field-section .field-section-body {
 
 .pagination-actions {
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: 7px;
+}
+
+.table-pagination-summary {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.pagination-page {
+  min-width: 54px;
+  color: var(--text-primary);
+  text-align: center;
+  font-size: 12px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.pagination-button {
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--accent-500) 28%, var(--border-default));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent-500) 9%, var(--bg-panel));
+  color: var(--accent-500);
+  transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
+}
+
+.pagination-button:hover:not(:disabled) {
+  border-color: var(--accent-500);
+  background: var(--accent-500);
+  color: #fff;
+}
+
+.pagination-button:focus-visible {
+  outline: 2px solid var(--accent-400);
+  outline-offset: 2px;
+}
+
+.pagination-button:disabled {
+  border-color: var(--border-default);
+  background: var(--bg-panel-alt);
+  color: var(--text-subtle);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.pagination-button svg {
+  width: 18px;
+  height: 18px;
+  font-size: 18px;
 }
 
 .data-table {
@@ -1337,6 +1390,16 @@ details.field-section .field-section-body {
     flex: 1 1 0;
     min-height: 0;
     flex-direction: column;
+  }
+
+  .data-viewport .portal-usage-table-viewport {
+    display: flex;
+    flex: 1 1 0;
+    min-height: 0;
+  }
+
+  .data-viewport .portal-usage-table-viewport > .table-card {
+    width: 100%;
   }
 
   .data-viewport .admin-data-panel .table-wrap {
@@ -7684,6 +7747,13 @@ select.control {
   place-items: center;
   color: var(--text-muted);
   font-size: var(--text-tiny);
+}
+
+.portal-chart-loading {
+  display: block;
+  width: 100%;
+  min-height: 210px;
+  border-radius: 6px;
 }
 
 @media (max-width: 1080px) {

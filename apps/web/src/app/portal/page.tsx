@@ -25,24 +25,27 @@ export default function PortalPage() {
   const [loadedAt] = useState(() => Date.now());
   const [overview, setOverview] = useState<PortalOverviewResponse | null>(null);
   const [usage, setUsage] = useState<PortalUsageResponse | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [emptyState, setEmptyState] = useState(false);
 
   const load = useCallback(async () => {
     if (!token) return;
     setError(null);
+    setUsageLoading(true);
     try {
+      const usageRequest = apiRequest<PortalUsageResponse>(
+        "/api/portal/usage",
+        { token },
+      ).catch(() => null);
       const nextOverview = await apiRequest<PortalOverviewResponse>(
         "/api/portal/subscription",
         { token },
       );
-      const nextUsage = await apiRequest<PortalUsageResponse>(
-        "/api/portal/usage",
-        { token },
-      ).catch(() => null);
       setOverview(nextOverview);
-      setUsage(nextUsage);
       setEmptyState(false);
+      const nextUsage = await usageRequest;
+      setUsage(nextUsage);
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 404) {
         setOverview(null);
@@ -51,6 +54,8 @@ export default function PortalPage() {
         return;
       }
       setError(cause instanceof ApiError ? cause.message : "用户中心加载失败。");
+    } finally {
+      setUsageLoading(false);
     }
   }, [token]);
 
@@ -363,18 +368,32 @@ export default function PortalPage() {
                     copy="实际流量与倍率后的计费消耗。"
                     action={<Link href="/portal/usage">查看明细 ›</Link>}
                   >
-                    <EChart
-                      option={trafficOption}
-                      height={210}
-                      ariaLabel="近七天实际和计费流量趋势"
-                    />
+                    {usageLoading && !usage ? (
+                      <div
+                        className="portal-chart-loading skeleton"
+                        role="status"
+                        aria-label="流量趋势加载中"
+                      />
+                    ) : (
+                      <EChart
+                        option={trafficOption}
+                        height={210}
+                        ariaLabel="近七天计费流量趋势"
+                      />
+                    )}
                   </Panel>
                   <Panel
                     title="节点流量分布"
                     copy="最近 7 天各节点的计费流量。"
                     action={<Link href="/portal/access">管理节点 ›</Link>}
                   >
-                    {nodeData.length ? (
+                    {usageLoading && !usage ? (
+                      <div
+                        className="portal-chart-loading skeleton"
+                        role="status"
+                        aria-label="节点流量加载中"
+                      />
+                    ) : nodeData.length ? (
                       <EChart
                         option={nodeTrafficOption}
                         height={210}

@@ -8,10 +8,13 @@ const source = () =>
     "utf8",
   );
 
-test("member usage keeps billed-only records paged inside one desktop viewport", async () => {
+test("member usage fills the available desktop table height with billed-only records", async () => {
   const usage = await source();
 
-  assert.match(usage, /const PAGE_SIZE = 8/);
+  assert.doesNotMatch(usage, /const PAGE_SIZE = 8/);
+  assert.match(usage, /ResizeObserver/);
+  assert.match(usage, /tableViewportRef/);
+  assert.match(usage, /pageSize/);
   assert.match(usage, /dataViewport/);
   assert.match(usage, /admin-data-page portal-usage-page/);
   assert.match(usage, /headers=\{\["节点", "计费流量", "时间"\]\}/);

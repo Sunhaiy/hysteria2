@@ -73,13 +73,17 @@ export function DataTable({
       )}
       {pagination && pagination.totalPages > 1 ? (
         <div className="table-pagination">
-          <span>
-            第 {pagination.page} / {pagination.totalPages} 页，共{" "}
-            {pagination.total} 条
+          <span className="table-pagination-summary">
+            {Math.min(
+              (pagination.page - 1) * pagination.pageSize + 1,
+              pagination.total,
+            )}
+            -{Math.min(pagination.page * pagination.pageSize, pagination.total)} 条，
+            共 {pagination.total} 条
           </span>
           <div className="pagination-actions">
             <button
-              className="icon-button"
+              className="pagination-button"
               type="button"
               title="上一页"
               aria-label="上一页"
@@ -88,8 +92,11 @@ export function DataTable({
             >
               <Icon name="arrow_back" />
             </button>
+            <span className="pagination-page" aria-live="polite">
+              {pagination.page} / {pagination.totalPages}
+            </span>
             <button
-              className="icon-button"
+              className="pagination-button"
               type="button"
               title="下一页"
               aria-label="下一页"

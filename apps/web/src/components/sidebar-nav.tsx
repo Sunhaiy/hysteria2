@@ -35,6 +35,7 @@ export function SidebarNav({
                 <Link
                   key={item.href}
                   href={item.href}
+                  prefetch={false}
                   className={`nav-link${active ? " active" : ""}`}
                   onClick={onNavigate}
                 >

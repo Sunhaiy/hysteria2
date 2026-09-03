@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { DataTable } from "@/components/data-table";
 import { MetricCard } from "@/components/metric-card";
@@ -14,7 +14,8 @@ import { formatBytes, formatDateTime } from "@/lib/format";
 import type { PortalUsageResponse } from "@/lib/types";
 
 const UNLIMITED_TRAFFIC = Number.MAX_SAFE_INTEGER;
-const PAGE_SIZE = 8;
+const MIN_PAGE_SIZE = 8;
+const MAX_PAGE_SIZE = 20;
 
 export default function PortalUsagePage() {
   const { token } = useAuth();
@@ -22,6 +23,8 @@ export default function PortalUsagePage() {
   const [error, setError] = useState<string | null>(null);
   const [emptyState, setEmptyState] = useState(false);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(MIN_PAGE_SIZE);
+  const tableViewportRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     if (!token) {
@@ -53,9 +56,47 @@ export default function PortalUsagePage() {
   }, [load]);
 
   const totalRecords = usage?.recent.length ?? 0;
-  const totalPages = Math.max(1, Math.ceil(totalRecords / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(totalRecords / pageSize));
+  const visiblePage = Math.min(page, totalPages);
   const pageRecords =
-    usage?.recent.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) ?? [];
+    usage?.recent.slice(
+      (visiblePage - 1) * pageSize,
+      visiblePage * pageSize,
+    ) ?? [];
+
+  useEffect(() => {
+    const viewport = tableViewportRef.current;
+    if (!viewport || !usage) return;
+
+    const updatePageSize = () => {
+      const tableHeader = viewport.querySelector("thead");
+      const firstRow = viewport.querySelector("tbody tr");
+      const headerHeight = tableHeader?.getBoundingClientRect().height ?? 39;
+      const rowHeight = firstRow?.getBoundingClientRect().height ?? 41;
+      const availableHeight = viewport.getBoundingClientRect().height;
+      const rowsWithoutPagination = Math.floor(
+        (availableHeight - headerHeight) / rowHeight,
+      );
+      const paginationHeight = totalRecords > rowsWithoutPagination ? 53 : 0;
+      const nextPageSize = Math.max(
+        MIN_PAGE_SIZE,
+        Math.min(
+          MAX_PAGE_SIZE,
+          Math.floor(
+            (availableHeight - headerHeight - paginationHeight) / rowHeight,
+          ),
+        ),
+      );
+      setPageSize((current) =>
+        current === nextPageSize ? current : nextPageSize,
+      );
+    };
+
+    updatePageSize();
+    const observer = new ResizeObserver(updatePageSize);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [totalRecords, usage]);
 
   return (
     <ConsoleShell
@@ -88,22 +129,27 @@ export default function PortalUsagePage() {
             title="近 7 日节点计费流量"
             copy="按北京时间聚合，页面仅展示最终从额度中扣除的计费流量。"
           >
-            <DataTable
-              headers={["节点", "计费流量", "时间"]}
-              rows={pageRecords.map((item) => [
-                item.nodeLabel,
-                formatBytes(item.accountedBytes),
-                formatDateTime(item.bucketStart),
-              ])}
-              minimumColumnWidth={180}
-              pagination={{
-                page,
-                pageSize: PAGE_SIZE,
-                total: totalRecords,
-                totalPages,
-                onPageChange: setPage,
-              }}
-            />
+            <div
+              className="portal-usage-table-viewport"
+              ref={tableViewportRef}
+            >
+              <DataTable
+                headers={["节点", "计费流量", "时间"]}
+                rows={pageRecords.map((item) => [
+                  item.nodeLabel,
+                  formatBytes(item.accountedBytes),
+                  formatDateTime(item.bucketStart),
+                ])}
+                minimumColumnWidth={180}
+                pagination={{
+                  page: visiblePage,
+                  pageSize,
+                  total: totalRecords,
+                  totalPages,
+                  onPageChange: setPage,
+                }}
+              />
+            </div>
           </Panel>
         </div>
       ) : emptyState ? (
