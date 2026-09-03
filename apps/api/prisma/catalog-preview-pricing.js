@@ -70,7 +70,7 @@ const plans = [
     accent: 'green',
     featured: false,
     referralEligible: true,
-    offers: recurringOffers(1790),
+    offers: recurringOffers(1690),
   },
   {
     slug: 'plus',
@@ -81,7 +81,7 @@ const plans = [
     accent: 'indigo',
     featured: false,
     referralEligible: true,
-    offers: recurringOffers(2490),
+    offers: recurringOffers(2190),
   },
   {
     slug: 'prime',
@@ -92,7 +92,7 @@ const plans = [
     accent: 'green',
     featured: true,
     referralEligible: true,
-    offers: recurringOffers(3490),
+    offers: recurringOffers(3290),
   },
   {
     slug: 'max',

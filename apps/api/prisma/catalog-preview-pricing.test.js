@@ -40,7 +40,7 @@ describe('catalog preview pricing', () => {
 
     assert.deepEqual(
       monthlyPrices,
-      [200, 890, 1290, 1790, 2490, 3490, 4990, 6490, 7900],
+      [200, 890, 1290, 1690, 2190, 3290, 4990, 6490, 7900],
     );
 
     for (let index = 1; index < monthlyPrices.length; index += 1) {

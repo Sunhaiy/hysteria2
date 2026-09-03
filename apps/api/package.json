@@ -17,7 +17,7 @@
     "prisma:stage-catalog-preview": "node prisma/stage-catalog-preview.js",
     "prisma:reconcile-traffic-multipliers": "node prisma/reconcile-traffic-pack-multipliers.js",
     "lint": "eslint \"{src,test}/**/*.ts\"",
-    "test": "jest && node --test prisma/verify-runtime-agent-inventory.test.js prisma/catalog-preview-pricing.test.js prisma/catalog-price-migration.test.js prisma/catalog-traffic-refresh.test.js prisma/catalog-max-price-order-migration.test.js prisma/standard-catalog-nine-tiers-migration.test.js prisma/entitlement-multiplier-migration.test.js prisma/ultra-permanent-series-migration.test.js prisma/reconcile-traffic-pack-multipliers.test.js",
+    "test": "jest && node --test prisma/verify-runtime-agent-inventory.test.js prisma/catalog-preview-pricing.test.js prisma/catalog-price-migration.test.js prisma/catalog-traffic-refresh.test.js prisma/catalog-max-price-order-migration.test.js prisma/standard-catalog-nine-tiers-migration.test.js prisma/standard-catalog-discount-alignment-migration.test.js prisma/entitlement-multiplier-migration.test.js prisma/ultra-permanent-series-migration.test.js prisma/reconcile-traffic-pack-multipliers.test.js",
     "test:cov": "jest --coverage",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "typecheck": "tsc --noEmit"
