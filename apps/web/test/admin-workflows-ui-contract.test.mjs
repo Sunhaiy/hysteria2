@@ -173,6 +173,9 @@ test("customer traffic statistics include an accounted-usage chart", async () =>
   assert.match(detail, /<EChart/);
   assert.match(detail, /trafficChartOption/);
   assert.match(detail, /accountedBytes/);
+  assert.match(detail, /customer\.entitlementTrafficMultiplier/);
+  assert.match(detail, /当前权益最高倍率/);
+  assert.doesNotMatch(detail, /copy=\{`套餐倍率/);
 });
 
 test("admin navigation keeps CDK management visible", async () => {

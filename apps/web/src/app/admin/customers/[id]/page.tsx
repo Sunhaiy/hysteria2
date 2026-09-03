@@ -50,6 +50,7 @@ type Customer = {
   balanceCents: number;
   trafficMultiplier: number;
   planTrafficMultiplier: number;
+  entitlementTrafficMultiplier: number;
   effectiveTrafficMultiplier: number;
   createdAt: string;
   summary: {
@@ -642,8 +643,8 @@ export default function CustomerDetailPage() {
         {view === "entitlements" ? (
           <>
             <Panel
-              title="流量倍率与总额度"
-              copy={`套餐倍率 ${customer.planTrafficMultiplier}x，用户倍率 ${customer.trafficMultiplier}x，计费自动取较高值。`}
+              title="计费倍率与总额度"
+              copy={`当前权益最高倍率 ${customer.entitlementTrafficMultiplier}x，用户倍率 ${customer.trafficMultiplier}x；实际按所用节点对应权益倍率与用户倍率的较高值计费。`}
             >
               <div className="inline-form">
                 <label className="field">

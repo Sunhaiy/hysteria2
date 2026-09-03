@@ -240,6 +240,53 @@ describe('CustomerAdminService subscription links', () => {
 });
 
 describe('CustomerAdminService quota policy', () => {
+  it('reports the active traffic-pack multiplier when the customer has no plan', async () => {
+    const now = new Date('2026-09-03T03:00:00.000Z');
+    const prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'user_traffic_pack_only',
+          email: 'traffic-pack@example.com',
+          displayName: 'Traffic Pack User',
+          status: 'ACTIVE',
+          notes: null,
+          balanceCents: 0,
+          createdAt: now,
+          updatedAt: now,
+          accessAccount: {
+            trafficMultiplierBasisPoints: 10_000,
+            trafficMultiplierOverrideBasisPoints: null,
+          },
+          entitlementGrants: [
+            {
+              kind: 'TRAFFIC_PACK',
+              trafficMultiplierBasisPointsSnapshot: 21_000,
+              quotaBuckets: [
+                {
+                  grantedBytes: 30n * 1024n ** 3n,
+                  consumedBytes: 1n,
+                  trafficMultiplierBasisPointsSnapshot: 21_000,
+                },
+              ],
+            },
+          ],
+          onlinePresence: [],
+        }),
+      },
+    };
+    const traffic = {
+      daily: jest.fn().mockResolvedValue({ items: [] }),
+    };
+    const service = new CustomerAdminService(prisma as never, traffic as never);
+
+    const result = await service.getCustomer('user_traffic_pack_only');
+
+    expect(result).toMatchObject({
+      entitlementTrafficMultiplier: 2.1,
+      effectiveTrafficMultiplier: 2.1,
+    });
+  });
+
   it('sets bucket remaining quota without rewriting historical consumption', async () => {
     const bucket = {
       id: 'bucket_1',

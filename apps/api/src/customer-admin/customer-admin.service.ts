@@ -249,6 +249,19 @@ export class CustomerAdminService {
       const remainingBytes = hasV2Entitlements
         ? v2Remaining
         : planRemaining + packRemaining;
+      const entitlementMultiplierBasisPoints = Math.max(
+        user.accessAccount?.trafficMultiplierBasisPoints ?? 10_000,
+        ...user.entitlementGrants.flatMap((grant) =>
+          grant.quotaBuckets
+            .filter((bucket) => bucket.grantedBytes > bucket.consumedBytes)
+            .map(
+              (bucket) =>
+                bucket.trafficMultiplierBasisPointsSnapshot ??
+                grant.trafficMultiplierBasisPointsSnapshot ??
+                10_000,
+            ),
+        ),
+      );
       const activePlanNames = hasV2Entitlements
         ? [
             ...new Set(
@@ -280,7 +293,7 @@ export class CustomerAdminService {
           user.accessTokens[0]?.lastUsedAt?.toISOString() ?? null,
         trafficMultiplier:
           Math.max(
-            user.accessAccount?.trafficMultiplierBasisPoints ?? 10_000,
+            entitlementMultiplierBasisPoints,
             user.accessAccount?.trafficMultiplierOverrideBasisPoints ?? 10_000,
           ) / 10_000,
         remainingBytes,
@@ -415,7 +428,11 @@ export class CustomerAdminService {
             include: {
               quotaBuckets: {
                 where: { startsAt: { lte: now }, endsAt: { gt: now } },
-                select: { grantedBytes: true, consumedBytes: true },
+                select: {
+                  grantedBytes: true,
+                  consumedBytes: true,
+                  trafficMultiplierBasisPointsSnapshot: true,
+                },
               },
             },
           },
@@ -431,7 +448,15 @@ export class CustomerAdminService {
       this.customerTraffic.daily(id, {}, now),
     ]);
     if (!user) throw new NotFoundException('Customer not found');
-    const quota = user.entitlementGrants.flatMap((grant) => grant.quotaBuckets);
+    const quota = user.entitlementGrants.flatMap((grant) =>
+      grant.quotaBuckets.map((bucket) => ({
+        ...bucket,
+        trafficMultiplierBasisPointsSnapshot:
+          bucket.trafficMultiplierBasisPointsSnapshot ??
+          grant.trafficMultiplierBasisPointsSnapshot ??
+          10_000,
+      })),
+    );
     const grantedBytes = quota.reduce(
       (total, bucket) => total + Number(bucket.grantedBytes),
       0,
@@ -441,6 +466,14 @@ export class CustomerAdminService {
       0,
     );
     const remainingBytes = Math.max(grantedBytes - consumedBytes, 0);
+    const entitlementMultiplierBasisPoints = Math.max(
+      user.accessAccount?.trafficMultiplierBasisPoints ?? 10_000,
+      ...quota
+        .filter((bucket) => bucket.grantedBytes > bucket.consumedBytes)
+        .map((bucket) => bucket.trafficMultiplierBasisPointsSnapshot),
+    );
+    const userMultiplierBasisPoints =
+      user.accessAccount?.trafficMultiplierOverrideBasisPoints ?? 10_000;
     return {
       id: user.id,
       email: user.email,
@@ -450,14 +483,11 @@ export class CustomerAdminService {
       balanceCents: user.balanceCents,
       planTrafficMultiplier:
         (user.accessAccount?.trafficMultiplierBasisPoints ?? 10_000) / 10_000,
-      trafficMultiplier:
-        (user.accessAccount?.trafficMultiplierOverrideBasisPoints ?? 10_000) /
-        10_000,
+      entitlementTrafficMultiplier: entitlementMultiplierBasisPoints / 10_000,
+      trafficMultiplier: userMultiplierBasisPoints / 10_000,
       effectiveTrafficMultiplier:
-        Math.max(
-          user.accessAccount?.trafficMultiplierBasisPoints ?? 10_000,
-          user.accessAccount?.trafficMultiplierOverrideBasisPoints ?? 10_000,
-        ) / 10_000,
+        Math.max(entitlementMultiplierBasisPoints, userMultiplierBasisPoints) /
+        10_000,
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),
       summary: {
