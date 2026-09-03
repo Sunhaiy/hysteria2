@@ -59,6 +59,22 @@ jobs:
       - run: pnpm test
       - run: pnpm --filter @hysteria/api test:e2e
       - run: pnpm build
+      - name: Package Linux release artifact
+        run: |
+          tar \
+            --exclude-vcs \
+            --exclude='./node_modules' \
+            --exclude='./apps/api/node_modules' \
+            --exclude='./apps/web/node_modules' \
+            --exclude='./apps/web/.next/cache' \
+            -czf "$RUNNER_TEMP/hysteria2-release-${GITHUB_SHA}.tar.gz" .
+      - name: Upload Linux release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hysteria2-release
+          path: ${{ runner.temp }}/hysteria2-release-${{ github.sha }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
       - run: go test ./...
         working-directory: ops/xray-agent
       - run: go test ./...
