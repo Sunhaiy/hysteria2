@@ -167,6 +167,28 @@ function preferredOffer(product: Product) {
   );
 }
 
+function yearlyValue(product: Product) {
+  const offers = activeOffers(product);
+  const monthly = offers.find((offer) => offer.billingPeriod === "monthly");
+  const yearly = offers.find((offer) => offer.billingPeriod === "yearly");
+  if (!monthly || !yearly || monthly.priceCents <= 0) return null;
+  const undiscounted = monthly.priceCents * 12;
+  const savingsPercent = Math.round(
+    ((undiscounted - yearly.priceCents) / undiscounted) * 100,
+  );
+  if (savingsPercent <= 0) return null;
+  return {
+    monthlyEquivalentCents: Math.round(yearly.priceCents / 12),
+    savingsPercent,
+  };
+}
+
+function marketingLabel(product: Product) {
+  return product.series === "standard" && product.name === "Pro"
+    ? "近期热门"
+    : null;
+}
+
 function resolveStoreUrl(product: Product, offer: Offer, branding: Branding) {
   const candidate =
     offer.storeUrl ||
@@ -243,6 +265,29 @@ export default function PortalPlansPage() {
       ),
     }),
     [catalog.products],
+  );
+  const standardPlanTiers = useMemo(
+    () => [
+      {
+        key: "light",
+        title: "轻量入门",
+        description: "从体验到日常使用，按需选择更轻松。",
+        products: groups.plans.slice(0, 3),
+      },
+      {
+        key: "balanced",
+        title: "日常主力",
+        description: "覆盖高频影音、多设备与长期使用。",
+        products: groups.plans.slice(3, 6),
+      },
+      {
+        key: "high-traffic",
+        title: "大流量",
+        description: "为重度影音和大流量工作场景预留空间。",
+        products: groups.plans.slice(6),
+      },
+    ],
+    [groups.plans],
   );
   function submitGateway(
     payment: EpayPayment,
@@ -432,6 +477,8 @@ export default function PortalPlansPage() {
     <section className="plan-grid catalog-product-grid">
       {products.map((product) => {
         const offer = preferredOffer(product);
+        const annualValue = yearlyValue(product);
+        const productMarketingLabel = marketingLabel(product);
         const nodes = product.access.servers.flatMap((server) =>
           server.nodes.filter((node) => node.serviceable),
         );
@@ -464,6 +511,7 @@ export default function PortalPlansPage() {
                   isUltraCurrent ||
                   isUpgrade ||
                   product.featured ||
+                  productMarketingLabel ||
                   product.purchaseLimitPerUser ? (
                     <div className="plan-card-labels">
                       {isCurrent ? (
@@ -477,6 +525,11 @@ export default function PortalPlansPage() {
                       ) : null}
                       {product.featured ? (
                         <span className="badge success">推荐</span>
+                      ) : null}
+                      {productMarketingLabel ? (
+                        <span className="badge info">
+                          {productMarketingLabel}
+                        </span>
                       ) : null}
                       {product.purchaseLimitPerUser ? (
                         <span className="badge info">每账号仅限一次</span>
@@ -511,6 +564,12 @@ export default function PortalPlansPage() {
                       : `${formatTrafficLimit(offer.trafficBytes)} 一次性流量`
                     : "当前规格暂不可售"}
                 </span>
+                {annualValue ? (
+                  <span className="plan-price-saving">
+                    年付月均 {formatMoney(annualValue.monthlyEquivalentCents)} ·
+                    省 {annualValue.savingsPercent}%
+                  </span>
+                ) : null}
               </div>
               {offer ? (
                 <div className="plan-benefit-list">
@@ -619,11 +678,38 @@ export default function PortalPlansPage() {
           <div>
             <h2 className="section-title">会员套餐</h2>
             <span className="panel-copy">
-              月付、季付与年付均按月重置套餐额度。
+              9 档流量覆盖不同需求，月付、季付与年付均按月重置额度。
             </span>
           </div>
         </div>
-        {loading ? <CardGridSkeleton /> : renderProducts(groups.plans)}
+        <div className="catalog-assurances" aria-label="套餐购买保障">
+          <span>
+            <Icon name="check" /> 季付 95 折
+          </span>
+          <span>
+            <Icon name="check" /> 年付 9 折
+          </span>
+          <span>
+            <Icon name="check" /> 已购权益按原订单履约
+          </span>
+        </div>
+        {loading ? (
+          <CardGridSkeleton />
+        ) : (
+          <div className="catalog-standard-tiers">
+            {standardPlanTiers.map((tier) =>
+              tier.products.length ? (
+                <section className="catalog-plan-tier" key={tier.key}>
+                  <div className="catalog-tier-heading">
+                    <strong>{tier.title}</strong>
+                    <span>{tier.description}</span>
+                  </div>
+                  {renderProducts(tier.products)}
+                </section>
+              ) : null,
+            )}
+          </div>
+        )}
         <div className="shop-section-heading">
           <div>
             <h2 className="section-title">订阅流量包</h2>

@@ -7929,8 +7929,8 @@ select.control {
 
 .plan-price-block {
   display: grid;
-  min-height: 61px;
-  gap: 8px;
+  min-height: 82px;
+  gap: 6px;
   justify-items: start;
   padding-bottom: 4px;
   text-align: left;
@@ -7956,6 +7956,13 @@ select.control {
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.plan-price-saving {
+  color: var(--accent-400);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.4;
 }
 
 .premium-plan-card .panel-body {
@@ -8059,6 +8066,62 @@ select.control {
   min-height: 112px;
 }
 
+.catalog-assurances {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 22px;
+  min-height: 34px;
+  padding: 2px 0 8px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.catalog-assurances > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.catalog-assurances .icon-slot {
+  width: 15px;
+  height: 15px;
+  color: var(--accent-400);
+}
+
+.catalog-standard-tiers,
+.catalog-plan-tier {
+  display: grid;
+}
+
+.catalog-standard-tiers {
+  gap: 22px;
+}
+
+.catalog-plan-tier {
+  gap: 10px;
+}
+
+.catalog-tier-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.catalog-tier-heading strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.catalog-tier-heading span {
+  color: var(--text-subtle);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 1200px) {
   .catalog-product-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -8076,6 +8139,17 @@ select.control {
 
   .ultra-shop-section .catalog-product-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .catalog-tier-heading {
+    display: grid;
+    gap: 3px;
+  }
+
+  .catalog-assurances {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 7px;
   }
 }
 

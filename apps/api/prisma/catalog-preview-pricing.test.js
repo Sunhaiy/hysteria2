@@ -3,24 +3,23 @@ const { describe, it } = require('node:test');
 const {
   discountedPrice,
   plans,
+  recurringOffers,
   trafficPacks,
 } = require('./catalog-preview-pricing');
 
 describe('catalog preview pricing', () => {
-  it('keeps Go as a one-time low-cost acquisition offer', () => {
+  it('keeps Go as a low-cost, once-per-account acquisition offer', () => {
     const go = plans.find((plan) => plan.slug === 'go');
 
     assert.ok(go);
     assert.equal(go.purchaseLimitPerUser, 1);
     assert.equal(go.purchaseLimitKey, 'trial-go');
     assert.equal(go.referralEligible, false);
-    assert.deepEqual(go.offers, [
-      { period: 'MONTHLY', months: 1, name: '月付', priceCents: 290 },
-    ]);
+    assert.deepEqual(go.offers, recurringOffers(200));
   });
 
   it('applies a 5% quarterly and 10% yearly discount to every recurring plan', () => {
-    for (const plan of plans.filter((item) => item.slug !== 'go')) {
+    for (const plan of plans) {
       const [monthly, quarterly, yearly] = plan.offers;
 
       assert.equal(
@@ -39,11 +38,23 @@ describe('catalog preview pricing', () => {
   it('keeps plan prices increasing with each traffic tier', () => {
     const monthlyPrices = plans.map((plan) => plan.offers[0].priceCents);
 
-    assert.deepEqual(monthlyPrices, [290, 990, 1290, 2100, 4590, 7200]);
+    assert.deepEqual(
+      monthlyPrices,
+      [200, 890, 1290, 1790, 2490, 3490, 4990, 6490, 7900],
+    );
 
     for (let index = 1; index < monthlyPrices.length; index += 1) {
       assert.ok(monthlyPrices[index] > monthlyPrices[index - 1]);
     }
+  });
+
+  it('covers the approved nine monthly traffic tiers without large gaps', () => {
+    assert.deepEqual(
+      plans.map((plan) => plan.trafficGb),
+      [1, 30, 80, 150, 250, 350, 500, 750, 1000],
+    );
+    assert.equal(plans.find((plan) => plan.slug === 'pro')?.featured, false);
+    assert.equal(plans.find((plan) => plan.slug === 'prime')?.featured, true);
   });
 
   it('keeps traffic packs at or above CNY 0.60 per GiB', () => {

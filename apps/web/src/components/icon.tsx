@@ -34,6 +34,7 @@ type IconName =
   | "book"
   | "add"
   | "edit"
+  | "check"
   | "refresh"
   | "warning"
   | "schedule"
@@ -62,6 +63,11 @@ function BaseIcon(props: SVGProps<SVGSVGElement>) {
 }
 
 const icons: Record<IconName, ReactElement> = {
+  check: (
+    <BaseIcon>
+      <path d="m5 12 4 4L19 6" />
+    </BaseIcon>
+  ),
   database: (
     <BaseIcon>
       <ellipse cx="12" cy="5" rx="8" ry="3" />

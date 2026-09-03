@@ -69,7 +69,10 @@ test("member catalog presents the permanent Ultra series as one shared tier row"
 });
 
 test("member catalog uses the standard panel surface and aligned card headings", async () => {
-  const styles = await readFile(stylesUrl, "utf8");
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8"),
+  ]);
 
   assert.match(
     styles,
@@ -83,6 +86,14 @@ test("member catalog uses the standard panel surface and aligned card headings",
     styles,
     /\.plan-card-copy > \.panel-copy\s*\{[\s\S]*?min-height:\s*36px;/,
   );
+  assert.match(source, /catalog-standard-tiers/);
+  assert.match(source, /轻量入门/);
+  assert.match(source, /日常主力/);
+  assert.match(source, /大流量/);
+  assert.match(source, /近期热门/);
+  assert.match(source, /年付月均/);
+  assert.match(source, /已购权益按原订单履约/);
+  assert.match(styles, /\.catalog-standard-tiers\s*\{[\s\S]*?gap:\s*22px;/);
 });
 
 test("shared motion keeps closed drawers hidden and status badges readable", async () => {
