@@ -14,6 +14,17 @@ const migration = readFileSync(
 );
 
 describe('standard catalog discount alignment migration', () => {
+  it('allows a fresh pre-seed database while guarding partial catalogs', () => {
+    assert.match(
+      migration,
+      /IF active_products = 0 AND monthly_offers = 0 THEN\s+RETURN;/,
+    );
+    assert.match(
+      migration,
+      /IF active_products <> 9 OR monthly_offers <> 9 THEN/,
+    );
+  });
+
   it('derives quarterly and yearly prices from the live monthly offer', () => {
     assert.match(
       migration,

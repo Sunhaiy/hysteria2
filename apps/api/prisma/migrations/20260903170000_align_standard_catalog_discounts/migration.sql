@@ -36,6 +36,10 @@ BEGIN
     AND offer.active = TRUE
     AND offer."archivedAt" IS NULL;
 
+  IF active_products = 0 AND monthly_offers = 0 THEN
+    RETURN;
+  END IF;
+
   IF active_products <> 9 OR monthly_offers <> 9 THEN
     RAISE EXCEPTION
       'Expected 9 active standard products and monthly offers, found % and %',
