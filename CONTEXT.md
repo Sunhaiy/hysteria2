@@ -17,8 +17,9 @@
 - A `ReferralCode` is one member's stable invitation identity. It can be
   generated once while the activity is open and cannot be reset by the member.
 - A `ReferralAttribution` is the lifetime inviter relationship captured during
-  email registration. It is pending until the invitee's first plan CDK grants
-  a plan, then it is rewarded or conservatively reversed after a refund.
+  email registration. It is pending until the invitee's first qualifying paid
+  plan purchase through a plan CDK or Epay grants a plan, then it is rewarded
+  or conservatively reversed after a refund.
 
 ## Compatibility rules
 

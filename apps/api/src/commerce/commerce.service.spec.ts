@@ -164,7 +164,7 @@ describe('CommerceService checkout', () => {
       grantFromOrder: jest.fn().mockResolvedValue({ id: 'plan_grant_1' }),
     };
     const referrals = {
-      settlePlanCdkReward: jest.fn().mockResolvedValue({ settled: true }),
+      settlePlanPurchaseReward: jest.fn().mockResolvedValue({ settled: true }),
     };
     const service = new CommerceService(
       {} as never,
@@ -179,10 +179,124 @@ describe('CommerceService checkout', () => {
       { orderId: 'order_plan_cdk', subscriptionId: 'subscription_1' },
       tx,
     );
-    expect(referrals.settlePlanCdkReward).toHaveBeenCalledWith(
+    expect(referrals.settlePlanPurchaseReward).toHaveBeenCalledWith(
       tx,
       'invitee_1',
       'order_plan_cdk',
+      'plan_grant_1',
+    );
+  });
+
+  it('settles a pending referral inside a paid plan fulfillment transaction', async () => {
+    const paidAt = new Date('2027-02-01T00:00:00.000Z');
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest
+          .fn()
+          .mockImplementation(({ data }) =>
+            Promise.resolve({ id: 'order_plan_payment', ...data }),
+          ),
+      },
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'invitee_1',
+          status: 'ACTIVE',
+          balanceCents: 0,
+        }),
+      },
+      catalogOffer: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'offer_plan_payment',
+          slug: 'pro-monthly',
+          name: '月付',
+          billingPeriod: 'MONTHLY',
+          intervalMonths: 1,
+          trafficBytes: 120n,
+          priceCents: 1290,
+          currency: 'CNY',
+          active: true,
+          archivedAt: null,
+          legacyPlanOfferId: 'legacy_offer_pro_monthly',
+          legacyPlanOffer: null,
+          product: {
+            id: 'product_pro',
+            name: 'Pro',
+            kind: 'PLAN',
+            series: 'STANDARD',
+            quotaCadence: 'MONTHLY_RESET',
+            status: 'ACTIVE',
+            accessProfileId: 'profile_pro',
+            legacyPlanId: 'plan_pro',
+            legacyTrafficPackProductId: null,
+            purchaseLimitPerUser: null,
+            purchaseLimitKey: null,
+            requiresActivePlan: false,
+            defaultTrafficMultiplierBasisPoints: 10000,
+            legacyPlan: { id: 'plan_pro' },
+            accessProfile: {
+              active: true,
+              speedUpMbps: 100,
+              speedDownMbps: 500,
+              deviceLimit: 999,
+            },
+          },
+        }),
+      },
+      accessProfileNode: {
+        findFirst: jest.fn().mockResolvedValue({ nodeId: 'node_pro' }),
+      },
+      accessAccount: {
+        upsert: jest.fn().mockResolvedValue({ id: 'account_1' }),
+      },
+      subscription: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        updateMany: jest.fn(),
+        create: jest.fn().mockResolvedValue({ id: 'subscription_1' }),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          endsAt: new Date('2027-03-01T00:00:00.000Z'),
+        }),
+      },
+      paymentRecord: { create: jest.fn().mockResolvedValue({}) },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const entitlements = {
+      grantFromOrder: jest.fn().mockResolvedValue({ id: 'plan_grant_1' }),
+    };
+    const referrals = {
+      settlePlanPurchaseReward: jest.fn().mockResolvedValue({ settled: true }),
+    };
+    const service = new CommerceService(
+      {} as never,
+      {} as never,
+      entitlements as never,
+      referrals as never,
+    );
+
+    await service.fulfillEpayPayment(tx as never, {
+      attemptId: 'attempt_1',
+      userId: 'invitee_1',
+      offerId: 'offer_plan_payment',
+      merchantOrderNo: 'merchant_order_1',
+      gatewayTradeNo: 'gateway_trade_1',
+      amountCents: 1290,
+      basePriceCents: 1290,
+      entitlementSnapshot: null,
+      paidAt,
+    });
+
+    expect(entitlements.grantFromOrder).toHaveBeenCalledWith(
+      {
+        orderId: 'order_plan_payment',
+        subscriptionId: 'subscription_1',
+        trafficPackId: undefined,
+      },
+      tx,
+    );
+    expect(referrals.settlePlanPurchaseReward).toHaveBeenCalledWith(
+      tx,
+      'invitee_1',
+      'order_plan_payment',
       'plan_grant_1',
     );
   });

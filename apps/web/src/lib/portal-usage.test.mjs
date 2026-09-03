@@ -21,9 +21,13 @@ test("portal usage maps UTC samples to the matching Shanghai calendar day", () =
 
   assert.equal(result.at(-1)?.key, "2026-09-02");
   assert.equal(result.at(-1)?.label, "09/02");
-  assert.equal(result.at(-1)?.txBytes, 2_000);
-  assert.equal(result.at(-1)?.rxBytes, 8_000);
+  assert.equal(result.at(-1)?.billedTxBytes, 4_200);
+  assert.equal(result.at(-1)?.billedRxBytes, 16_800);
   assert.equal(result.at(-1)?.accountedBytes, 21_000);
+  assert.equal(
+    result.at(-1)?.billedTxBytes + result.at(-1)?.billedRxBytes,
+    result.at(-1)?.accountedBytes,
+  );
 });
 
 test("portal node distribution ranks nodes by billed traffic", () => {

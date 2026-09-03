@@ -20,21 +20,26 @@ export function buildSevenDayUsage(
 ) {
   const totals = new Map<
     string,
-    { txBytes: number; rxBytes: number; accountedBytes: number }
+    { billedTxBytes: number; billedRxBytes: number; accountedBytes: number }
   >();
   recent.forEach((item) => {
     const key = shanghaiDateKey(new Date(item.bucketStart));
     const current = totals.get(key) ?? {
-      txBytes: 0,
-      rxBytes: 0,
+      billedTxBytes: 0,
+      billedRxBytes: 0,
       accountedBytes: 0,
     };
+    const physicalBytes = item.txBytes + item.rxBytes;
+    const accountedBytes = item.accountedBytes ?? physicalBytes;
+    const billedTxBytes =
+      physicalBytes > 0
+        ? Math.floor((accountedBytes * item.txBytes) / physicalBytes)
+        : 0;
+    const billedRxBytes = accountedBytes - billedTxBytes;
     totals.set(key, {
-      txBytes: current.txBytes + item.txBytes,
-      rxBytes: current.rxBytes + item.rxBytes,
-      accountedBytes:
-        current.accountedBytes +
-        (item.accountedBytes ?? item.txBytes + item.rxBytes),
+      billedTxBytes: current.billedTxBytes + billedTxBytes,
+      billedRxBytes: current.billedRxBytes + billedRxBytes,
+      accountedBytes: current.accountedBytes + accountedBytes,
     });
   });
 
@@ -44,8 +49,8 @@ export function buildSevenDayUsage(
     return {
       key,
       label: key.slice(5).replace("-", "/"),
-      txBytes: totals.get(key)?.txBytes ?? 0,
-      rxBytes: totals.get(key)?.rxBytes ?? 0,
+      billedTxBytes: totals.get(key)?.billedTxBytes ?? 0,
+      billedRxBytes: totals.get(key)?.billedRxBytes ?? 0,
       accountedBytes: totals.get(key)?.accountedBytes ?? 0,
     };
   });

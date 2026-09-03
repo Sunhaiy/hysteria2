@@ -75,7 +75,11 @@ export default function PortalPage() {
         trigger: "axis",
         valueFormatter: (value) => `${Number(value).toFixed(2)} GB`,
       },
-      legend: { data: ["计费流量", "上传", "下载"], top: 0, right: 0 },
+      legend: {
+        data: ["计费总量", "计费上传", "计费下载"],
+        top: 0,
+        right: 0,
+      },
       grid: { left: 8, right: 12, top: 42, bottom: 8, containLabel: true },
       xAxis: {
         type: "category",
@@ -85,7 +89,7 @@ export default function PortalPage() {
       yAxis: { type: "value", name: "GB" },
       series: [
         {
-          name: "计费流量",
+          name: "计费总量",
           type: "line",
           smooth: true,
           symbol: "circle",
@@ -97,23 +101,23 @@ export default function PortalPage() {
           ),
         },
         {
-          name: "上传",
+          name: "计费上传",
           type: "line",
           smooth: true,
           symbol: "none",
           lineStyle: { width: 1.5, type: "dashed" },
           data: chartData.map((item) =>
-            Number((item.txBytes / GB).toFixed(3)),
+            Number((item.billedTxBytes / GB).toFixed(3)),
           ),
         },
         {
-          name: "下载",
+          name: "计费下载",
           type: "line",
           smooth: true,
           symbol: "none",
           lineStyle: { width: 1.5, type: "dashed" },
           data: chartData.map((item) =>
-            Number((item.rxBytes / GB).toFixed(3)),
+            Number((item.billedRxBytes / GB).toFixed(3)),
           ),
         },
       ],

@@ -85,8 +85,8 @@ describe('ReferralService member code', () => {
   });
 });
 
-describe('ReferralService plan CDK settlement', () => {
-  it('rewards only the first qualifying plan CDK and inherits plan access', async () => {
+describe('ReferralService plan purchase settlement', () => {
+  it('rewards only the first qualifying paid plan and inherits plan access', async () => {
     const rewardedAt = new Date('2027-02-01T00:00:00.000Z');
     jest.useFakeTimers().setSystemTime(rewardedAt);
     const tx = {
@@ -111,6 +111,9 @@ describe('ReferralService plan CDK settlement', () => {
           id: 'order_1',
           userId: 'invitee_1',
           amountCents: 1290,
+          source: 'PAYMENT',
+          status: 'APPLIED',
+          kind: 'RENEWAL',
         }),
       },
       entitlementGrant: {
@@ -145,13 +148,13 @@ describe('ReferralService plan CDK settlement', () => {
     };
     const service = new ReferralService({} as never, {} as never);
 
-    const first = await service.settlePlanCdkReward(
+    const first = await service.settlePlanPurchaseReward(
       tx as never,
       'invitee_1',
       'order_1',
       'plan_grant_1',
     );
-    const second = await service.settlePlanCdkReward(
+    const second = await service.settlePlanPurchaseReward(
       tx as never,
       'invitee_1',
       'order_2',
@@ -224,7 +227,7 @@ describe('ReferralService plan CDK settlement', () => {
     const service = new ReferralService({} as never, {} as never);
 
     await expect(
-      service.settlePlanCdkReward(
+      service.settlePlanPurchaseReward(
         tx as never,
         'invitee_1',
         'order_go',
@@ -233,6 +236,50 @@ describe('ReferralService plan CDK settlement', () => {
     ).resolves.toEqual({ settled: false });
     expect(tx.referralAttribution.updateMany).not.toHaveBeenCalled();
   });
+
+  it.each(['WALLET', 'ADMIN'])(
+    'does not reward a referral for a %s plan grant',
+    async (source) => {
+      const tx = {
+        referralAttribution: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'attribution_1',
+            inviteeId: 'invitee_1',
+            status: 'PENDING',
+          }),
+          updateMany: jest.fn(),
+        },
+        entitlementGrant: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'plan_grant_1',
+            userId: 'invitee_1',
+            kind: 'PLAN',
+            product: { referralEligible: true },
+          }),
+        },
+        manualOrder: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'order_1',
+            userId: 'invitee_1',
+            source,
+            status: 'APPLIED',
+            kind: 'RENEWAL',
+          }),
+        },
+      };
+      const service = new ReferralService({} as never, {} as never);
+
+      await expect(
+        service.settlePlanPurchaseReward(
+          tx as never,
+          'invitee_1',
+          'order_1',
+          'plan_grant_1',
+        ),
+      ).resolves.toEqual({ settled: false });
+      expect(tx.referralAttribution.updateMany).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe('ReferralService refund reversal', () => {

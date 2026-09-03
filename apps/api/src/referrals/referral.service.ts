@@ -4,7 +4,12 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
-import type { Prisma } from '@prisma/client';
+import {
+  OrderKind,
+  OrderSource,
+  OrderStatus,
+  type Prisma,
+} from '@prisma/client';
 import { webPublicUrl } from '../common/public-url';
 import { pageResponse, parsePage, type PageQuery } from '../common/pagination';
 import { PrismaService } from '../prisma/prisma.service';
@@ -270,7 +275,7 @@ export class ReferralService {
     return this.getSettings();
   }
 
-  async settlePlanCdkReward(
+  async settlePlanPurchaseReward(
     tx: Prisma.TransactionClient,
     inviteeId: string,
     orderId: string,
@@ -299,6 +304,13 @@ export class ReferralService {
     const order = await tx.manualOrder.findUnique({ where: { id: orderId } });
     if (!order || order.userId !== inviteeId) {
       throw new ConflictException('Qualifying plan order is missing');
+    }
+    if (
+      order.status !== OrderStatus.APPLIED ||
+      order.kind !== OrderKind.RENEWAL ||
+      (order.source !== OrderSource.CDK && order.source !== OrderSource.PAYMENT)
+    ) {
+      return { settled: false } as const;
     }
     const inviterRewardCents = calculateReferralRewardCents({
       orderAmountCents: order.amountCents,

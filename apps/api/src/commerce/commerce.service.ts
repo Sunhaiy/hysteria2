@@ -159,7 +159,7 @@ export class CommerceService {
                 tx,
               );
               if (this.referrals) {
-                await this.referrals.settlePlanCdkReward(
+                await this.referrals.settlePlanPurchaseReward(
                   tx,
                   userId,
                   order.id,
@@ -973,10 +973,22 @@ export class CommerceService {
     if (!this.entitlements) {
       throw new ConflictException('Entitlement module is unavailable');
     }
-    await this.entitlements.grantFromOrder(
+    const grant = await this.entitlements.grantFromOrder(
       { orderId: order.id, subscriptionId, trafficPackId },
       tx,
     );
+    if (
+      productKind === CatalogProductKind.PLAN &&
+      options.externalPayment &&
+      this.referrals
+    ) {
+      await this.referrals.settlePlanPurchaseReward(
+        tx,
+        userId,
+        order.id,
+        grant.id,
+      );
+    }
     return {
       orderId: order.id,
       replayed: false,
