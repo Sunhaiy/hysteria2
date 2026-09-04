@@ -1,3 +1,4 @@
+import { ServiceUnavailableException } from '@nestjs/common';
 import { EpayCheckoutService } from './epay-checkout.service';
 
 describe('EpayCheckoutService', () => {
@@ -77,7 +78,7 @@ describe('EpayCheckoutService', () => {
     expect(checkoutBody.get('channel')).toBe('wxpay');
   });
 
-  it('falls back to the original signed form when the proxy page changes', async () => {
+  it('fails closed when the supported proxy page changes', async () => {
     const fetchMock = jest
       .fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>()
       .mockResolvedValue(
@@ -93,9 +94,33 @@ describe('EpayCheckoutService', () => {
       fields: { type: 'alipay', sign: 'signed' },
     };
 
+    await expect(new EpayCheckoutService().prepare(submission)).rejects.toEqual(
+      new ServiceUnavailableException('支付通道暂时无法打开，请稍后重试。'),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed when the supported proxy request times out', async () => {
+    const fetchMock = jest
+      .fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>()
+      .mockRejectedValue(new DOMException('Timed out', 'TimeoutError'));
+    global.fetch = fetchMock;
+
     await expect(
-      new EpayCheckoutService().prepare(submission),
-    ).resolves.toEqual(submission);
+      new EpayCheckoutService().prepare({
+        url: 'https://ai.haiy.space/api/v1/payment-proxy/submit',
+        method: 'POST',
+        fields: {
+          pid: 'merchant',
+          type: 'wxpay',
+          out_trade_no: 'order-timeout',
+          sign: 'signed',
+          sign_type: 'MD5',
+        },
+      }),
+    ).rejects.toEqual(
+      new ServiceUnavailableException('支付通道暂时无法打开，请稍后重试。'),
+    );
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

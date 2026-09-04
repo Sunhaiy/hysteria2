@@ -496,7 +496,11 @@ export default function PortalPlansPage() {
     } catch (cause) {
       paymentWindow.close();
       setPendingPaymentId(null);
-      setError(cause instanceof ApiError ? cause.message : "结算失败。");
+      setError(
+        cause instanceof ApiError
+          ? cause.message
+          : "支付通道暂时无法打开，请稍后重试。",
+      );
     } finally {
       setBusy(false);
     }

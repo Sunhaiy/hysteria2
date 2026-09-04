@@ -1,4 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { parse } from 'node-html-parser';
 
 const PROXY_HOST = 'ai.haiy.space';
@@ -85,7 +89,9 @@ export class EpayCheckoutService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(`Direct 易支付 checkout unavailable: ${message}`);
-      return submission;
+      throw new ServiceUnavailableException(
+        '支付通道暂时无法打开，请稍后重试。',
+      );
     }
   }
 

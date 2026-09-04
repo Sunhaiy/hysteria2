@@ -76,6 +76,10 @@ test("member catalog uses store links or 易支付 without wallet checkout", asy
   assert.match(plans, /"wxpay"/);
   assert.match(
     plans,
+    /catch \(cause\) \{[\s\S]*?paymentWindow\.close\(\)[\s\S]*?支付通道暂时无法打开，请稍后重试。/,
+  );
+  assert.match(
+    plans,
     /window\.open\(storeUrl, "_blank", "noopener,noreferrer"\)/,
   );
   assert.doesNotMatch(plans, /window\.location\.assign\(storeUrl\)/);
