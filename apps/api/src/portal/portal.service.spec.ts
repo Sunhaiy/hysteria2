@@ -155,6 +155,7 @@ describe('PortalService VLESS + REALITY access', () => {
     const entitlements = {
       resolveAccess: jest.fn().mockResolvedValue({
         allowed: true,
+        eligibleGrantIds: ['grant_plan'],
         remainingBytes: 100,
         speedUpMbps: 20,
         speedDownMbps: 140,
@@ -171,8 +172,13 @@ describe('PortalService VLESS + REALITY access', () => {
           role: 'MEMBER',
           status: 'ACTIVE',
           balanceCents: 0,
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-08-26T00:00:00.000Z'),
           onlinePresence: [],
         }),
+      },
+      subscription: {
+        findMany: jest.fn().mockResolvedValue([]),
       },
       entitlementGrant: {
         count: jest.fn().mockResolvedValue(1),
@@ -186,7 +192,15 @@ describe('PortalService VLESS + REALITY access', () => {
             endsAt: new Date('2099-09-01T00:00:00.000Z'),
             createdAt: new Date('2026-08-26T00:00:00.000Z'),
             updatedAt: new Date('2026-08-26T00:00:00.000Z'),
-            quotaBuckets: [{ grantedBytes: 120n, consumedBytes: 20n }],
+            quotaBuckets: [
+              {
+                id: 'bucket_plan',
+                startsAt: new Date('2026-08-26T00:00:00.000Z'),
+                endsAt: new Date('2099-09-01T00:00:00.000Z'),
+                grantedBytes: 120n,
+                consumedBytes: 20n,
+              },
+            ],
           },
         ]),
       },
@@ -203,6 +217,8 @@ describe('PortalService VLESS + REALITY access', () => {
 
     expect(overview.remainingBytes).toBe(100);
     expect(overview.subscription.includedTrafficBytes).toBe(120);
+    expect(overview.user.createdAt).toBe('2026-01-01T00:00:00.000Z');
+    expect(overview.membership.subscribedDays).toBeGreaterThanOrEqual(8);
     expect(store.getPortalOverview).not.toHaveBeenCalled();
 
     const usage = await service.getUsage('user_1');
@@ -211,6 +227,81 @@ describe('PortalService VLESS + REALITY access', () => {
       baseRemainingBytes: 100,
       packRemainingBytes: 0,
       totalRemainingBytes: 100,
+    });
+  });
+
+  it('does not present a plan-dependent pack after the plan expires', async () => {
+    const packGrant = {
+      id: 'grant_pack',
+      kind: 'TRAFFIC_PACK',
+      productId: 'product_pack',
+      product: { name: 'Legacy add-on', requiresActivePlan: true },
+      startsAt: new Date('2026-08-01T00:00:00.000Z'),
+      endsAt: new Date('2027-08-01T00:00:00.000Z'),
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-08-01T00:00:00.000Z'),
+      quotaBuckets: [
+        {
+          id: 'bucket_pack',
+          startsAt: new Date('2026-08-01T00:00:00.000Z'),
+          endsAt: new Date('2027-08-01T00:00:00.000Z'),
+          grantedBytes: 100n,
+          consumedBytes: 0n,
+        },
+      ],
+    };
+    const entitlements = {
+      resolveAccess: jest.fn().mockResolvedValue({
+        allowed: false,
+        reason: 'traffic_exhausted',
+        nodes: [],
+        eligibleGrantIds: [],
+      }),
+    };
+    const prisma = {
+      entitlementGrant: {
+        count: jest.fn().mockResolvedValue(1),
+        findMany: jest.fn().mockResolvedValue([packGrant]),
+      },
+      user: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 'user_1',
+          email: 'user@example.com',
+          displayName: 'User',
+          role: 'MEMBER',
+          status: 'ACTIVE',
+          balanceCents: 0,
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-08-26T00:00:00.000Z'),
+          onlinePresence: [],
+        }),
+      },
+    };
+    const service = new PortalService(
+      {
+        getUsageForUser: jest.fn().mockResolvedValue({
+          subscriptionId: null,
+          consumedBytes: 0,
+          baseRemainingBytes: 0,
+          packRemainingBytes: 100,
+          totalRemainingBytes: 100,
+          recent: [],
+        }),
+      } as never,
+      {} as never,
+      {} as never,
+      entitlements as never,
+      prisma as never,
+    );
+
+    await expect(service.getSubscription('user_1')).rejects.toThrow(
+      'No active access entitlement',
+    );
+    await expect(service.getUsage('user_1')).resolves.toMatchObject({
+      consumedBytes: 0,
+      baseRemainingBytes: 0,
+      packRemainingBytes: 0,
+      totalRemainingBytes: 0,
     });
   });
 
@@ -244,7 +335,10 @@ describe('PortalService VLESS + REALITY access', () => {
       resolveAccess: jest.fn().mockResolvedValue({
         allowed: true,
         nodes: [{ id: node.id, label: node.label }],
+        eligibleGrantIds: ['grant_plan'],
         grants: [{ endsAt: '2026-09-01T00:00:00.000Z' }],
+        totalBytes: 1280,
+        consumedBytes: 256,
         remainingBytes: 1024,
         speedUpMbps: 20,
         speedDownMbps: 120,
@@ -268,6 +362,76 @@ describe('PortalService VLESS + REALITY access', () => {
 
     expect(subscription.content).toContain('type: hysteria2');
     expect(subscription.nodeCount).toBe(1);
+    expect(subscription.consumedBytes).toBe(256);
+    expect(subscription.totalBytes).toBe(1280);
+  });
+
+  it('keeps a subscription usable through a permanent pack after its plan expires', async () => {
+    const token = {
+      token: 'hy2_permanent_pack_token',
+      userId: 'usr_pack',
+      revokedAt: null,
+      vlessUuid: '67fbc500-3f3c-4ab9-a076-3e17c56bb3a1',
+    };
+    const node = {
+      id: 'node_hy2',
+      label: 'HK Core',
+      protocol: 'HYSTERIA2' as const,
+      hostname: '203.0.113.10',
+      port: 443,
+      sni: 'example.com',
+      obfsPassword: null,
+      pinSHA256: null,
+      allowInsecureTls: false,
+      realityPublicKey: null,
+      realityShortId: null,
+      realityFingerprint: null,
+      realitySpiderX: null,
+      vlessFlow: null,
+    };
+    const entitlements = {
+      resolveAccess: jest.fn().mockResolvedValue({
+        allowed: true,
+        nodes: [{ id: node.id, label: node.label }],
+        eligibleGrantIds: ['grant_plan', 'grant_pack'],
+        grants: [
+          {
+            kind: 'plan',
+            endsAt: '2026-09-05T00:00:00.000Z',
+          },
+          {
+            kind: 'traffic_pack',
+            endsAt: '9999-12-31T23:59:59.999Z',
+          },
+        ],
+        totalBytes: 1280,
+        consumedBytes: 256,
+        remainingBytes: 1024,
+        speedUpMbps: 20,
+        speedDownMbps: 120,
+        deviceLimit: 1000,
+      }),
+    };
+    const prisma = {
+      accessToken: { findUnique: jest.fn().mockResolvedValue(token) },
+      entitlementGrant: { count: jest.fn().mockResolvedValue(2) },
+      node: { findMany: jest.fn().mockResolvedValue([node]) },
+    };
+    const service = new PortalService(
+      {} as never,
+      {
+        getSiteInfo: jest.fn().mockResolvedValue({ name: 'Test service' }),
+      } as never,
+      {} as never,
+      entitlements as never,
+      prisma as never,
+    );
+
+    const subscription = await service.getMihomoSubscription(token.token);
+
+    expect(subscription.expiresAt).toBe(
+      new Date('9999-12-31T23:59:59.999Z').getTime(),
+    );
   });
 
   it('adds a v2rayN mport and native client hopping config when enabled', async () => {

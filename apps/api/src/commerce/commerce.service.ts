@@ -260,13 +260,76 @@ export class CommerceService {
     actorId: string,
     idempotencyKey: string,
   ) {
+    return this.grantComplimentaryOffer(
+      userId,
+      offerId,
+      idempotencyKey,
+      CatalogProductKind.PLAN,
+      {
+        actorId,
+        auditAction: 'COMPLIMENTARY_PLAN_GRANTED',
+      },
+    );
+  }
+
+  async grantAnniversaryTrafficPack(
+    userId: string,
+    offerId: string,
+    idempotencyKey: string,
+  ) {
+    return this.grantComplimentaryOffer(
+      userId,
+      offerId,
+      idempotencyKey,
+      CatalogProductKind.TRAFFIC_PACK,
+      { auditAction: 'ANNIVERSARY_GIFT_CLAIMED' },
+    );
+  }
+
+  private async grantComplimentaryOffer(
+    userId: string,
+    offerId: string,
+    idempotencyKey: string,
+    expectedKind: CatalogProductKind,
+    audit: { actorId?: string; auditAction: string },
+  ) {
     const normalizedKey = idempotencyKey.trim();
     if (!normalizedKey || normalizedKey.length > 120) {
       throw new BadRequestException('A valid Idempotency-Key is required');
     }
-    return this.prisma.$transaction(
-      async (tx) => {
-        const existing = await tx.manualOrder.findUnique({
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await this.prisma.$transaction(
+          async (tx) => {
+            const existing = await tx.manualOrder.findUnique({
+              where: {
+                userId_idempotencyKey: {
+                  userId,
+                  idempotencyKey: normalizedKey,
+                },
+              },
+            });
+            if (existing) {
+              return this.replayCheckout(existing, { offerId });
+            }
+            return this.createOfferCheckout(
+              tx,
+              userId,
+              { offerId },
+              normalizedKey,
+              {
+                complimentary: true,
+                complimentaryKind: expectedKind,
+                actorId: audit.actorId,
+                complimentaryAuditAction: audit.auditAction,
+              },
+            );
+          },
+          { isolationLevel: 'Serializable' },
+        );
+      } catch (error) {
+        if (!this.isRetryableTransactionError(error)) throw error;
+        const existing = await this.prisma.manualOrder.findUnique({
           where: {
             userId_idempotencyKey: {
               userId,
@@ -274,19 +337,11 @@ export class CommerceService {
             },
           },
         });
-        if (existing) {
-          return this.replayCheckout(existing, { offerId });
-        }
-        return this.createOfferCheckout(
-          tx,
-          userId,
-          { offerId },
-          normalizedKey,
-          { complimentary: true, actorId },
-        );
-      },
-      { isolationLevel: 'Serializable' },
-    );
+        if (existing) return this.replayCheckout(existing, { offerId });
+        if (attempt === 2) throw error;
+      }
+    }
+    throw new ConflictException('Complimentary grant could not be completed');
   }
 
   async fulfillEpayPayment(
@@ -516,6 +571,8 @@ export class CommerceService {
     idempotencyKey: string,
     options: {
       complimentary?: boolean;
+      complimentaryKind?: CatalogProductKind;
+      complimentaryAuditAction?: string;
       actorId?: string;
       externalPayment?: {
         attemptId: string;
@@ -612,25 +669,31 @@ export class CommerceService {
     ) {
       throw new BadRequestException('Catalog offer is not purchasable');
     }
-    if (options.complimentary && productKind !== CatalogProductKind.PLAN) {
+    if (
+      options.complimentaryKind &&
+      productKind !== options.complimentaryKind
+    ) {
       throw new BadRequestException(
-        'Complimentary grants require a plan offer',
+        'Complimentary grant does not match the configured product kind',
       );
     }
-    if (
-      options.externalPayment &&
-      productSeries !== CatalogProductSeries.ULTRA
-    ) {
-      await assertCatalogPurchaseLimit(tx, userId, {
-        kind: productKind,
-        purchaseLimitPerUser:
-          snapshot?.purchaseLimitPerUser ?? offer.product.purchaseLimitPerUser,
-        purchaseLimitKey:
-          snapshot?.purchaseLimitKey ?? offer.product.purchaseLimitKey,
-        requiresActivePlan,
-      });
-    } else if (productSeries !== CatalogProductSeries.ULTRA) {
-      await assertCatalogPurchaseEligibility(tx, userId, offer.product);
+    if (!options.complimentary) {
+      if (
+        options.externalPayment &&
+        productSeries !== CatalogProductSeries.ULTRA
+      ) {
+        await assertCatalogPurchaseLimit(tx, userId, {
+          kind: productKind,
+          purchaseLimitPerUser:
+            snapshot?.purchaseLimitPerUser ??
+            offer.product.purchaseLimitPerUser,
+          purchaseLimitKey:
+            snapshot?.purchaseLimitKey ?? offer.product.purchaseLimitKey,
+          requiresActivePlan,
+        });
+      } else if (productSeries !== CatalogProductSeries.ULTRA) {
+        await assertCatalogPurchaseEligibility(tx, userId, offer.product);
+      }
     }
     const nodeId = await this.resolveServiceableNodeId(tx, accessProfileId);
     if (!nodeId) {
@@ -958,12 +1021,15 @@ export class CommerceService {
       await tx.auditLog.create({
         data: {
           actorId: options.actorId,
-          action: 'COMPLIMENTARY_PLAN_GRANTED',
+          action:
+            options.complimentaryAuditAction ??
+            'COMPLIMENTARY_ENTITLEMENT_GRANTED',
           targetType: 'ManualOrder',
           targetId: order.id,
           metadata: {
             userId,
             offerId: offer.id,
+            productKind,
             listPriceCents: offer.priceCents,
             recognizedRevenueCents: 0,
           },

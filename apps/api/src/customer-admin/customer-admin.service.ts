@@ -4,7 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
+import { hash } from 'bcryptjs';
 import {
+  EntitlementGrantStatus,
+  EpayPaymentStatus,
   Prisma,
   QuotaAdjustmentMode,
   SubscriptionStatus,
@@ -59,6 +62,7 @@ export class CustomerAdminService {
     const pageSize = Math.min(parsePage(query).pageSize, 20);
     return this.prisma.user.findMany({
       where: {
+        deletedAt: null,
         role: UserRole.MEMBER,
         status: UserStatus.ACTIVE,
         OR: q
@@ -77,7 +81,7 @@ export class CustomerAdminService {
   async listUsers(query: CustomerQuery) {
     const now = new Date();
     const { page, pageSize, skip } = parsePage(query);
-    const where: Prisma.UserWhereInput = {};
+    const where: Prisma.UserWhereInput = { deletedAt: null };
     const q = query.q?.trim();
     if (q) {
       where.OR = [
@@ -447,7 +451,9 @@ export class CustomerAdminService {
       }),
       this.customerTraffic.daily(id, {}, now),
     ]);
-    if (!user) throw new NotFoundException('Customer not found');
+    if (!user || user.deletedAt) {
+      throw new NotFoundException('Customer not found');
+    }
     const quota = user.entitlementGrants.flatMap((grant) =>
       grant.quotaBuckets.map((bucket) => ({
         ...bucket,
@@ -575,7 +581,7 @@ export class CustomerAdminService {
       where: { id },
       include: { accessTokens: { orderBy: { createdAt: 'desc' } } },
     });
-    if (!user || user.role !== UserRole.MEMBER) {
+    if (!user || user.role !== UserRole.MEMBER || user.deletedAt) {
       throw new NotFoundException('Customer not found');
     }
     const { page, pageSize, skip } = parsePage(query);
@@ -628,9 +634,9 @@ export class CustomerAdminService {
     return this.prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({
         where: { id: userId },
-        select: { id: true, role: true },
+        select: { id: true, role: true, deletedAt: true },
       });
-      if (!user || user.role !== UserRole.MEMBER) {
+      if (!user || user.role !== UserRole.MEMBER || user.deletedAt) {
         throw new NotFoundException('Customer not found');
       }
       const revokedAt = new Date();
@@ -825,7 +831,7 @@ export class CustomerAdminService {
     }
     const updated = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({ where: { id } });
-      if (!user || user.role !== UserRole.MEMBER) {
+      if (!user || user.role !== UserRole.MEMBER || user.deletedAt) {
         throw new NotFoundException('Customer not found');
       }
       const result = await tx.user.update({
@@ -846,6 +852,127 @@ export class CustomerAdminService {
     return { id: updated.id, status: updated.status.toLowerCase() };
   }
 
+  async deleteCustomer(id: string, confirmationEmail: string, actorId: string) {
+    const replacementPasswordHash = await hash(
+      randomBytes(32).toString('base64url'),
+      10,
+    );
+    return this.prisma.$transaction(
+      async (tx) => {
+        const user = await tx.user.findUnique({
+          where: { id },
+          select: {
+            id: true,
+            email: true,
+            displayName: true,
+            role: true,
+            deletedAt: true,
+          },
+        });
+        if (!user || user.role !== UserRole.MEMBER || user.deletedAt) {
+          throw new NotFoundException('Customer not found');
+        }
+        if (
+          confirmationEmail.trim().toLowerCase() !==
+          user.email.trim().toLowerCase()
+        ) {
+          throw new BadRequestException('Confirmation email does not match');
+        }
+
+        const deletedAt = new Date();
+        const [tokens, grants, subscriptions, trafficPacks, paymentAttempts] =
+          await Promise.all([
+            tx.accessToken.updateMany({
+              where: { userId: id, revokedAt: null },
+              data: { revokedAt: deletedAt },
+            }),
+            tx.entitlementGrant.updateMany({
+              where: { userId: id, status: EntitlementGrantStatus.ACTIVE },
+              data: {
+                status: EntitlementGrantStatus.CANCELED,
+                endsAt: deletedAt,
+              },
+            }),
+            tx.subscription.updateMany({
+              where: {
+                userId: id,
+                status: {
+                  in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED],
+                },
+              },
+              data: { status: SubscriptionStatus.CANCELED, endsAt: deletedAt },
+            }),
+            tx.trafficPack.updateMany({
+              where: { userId: id, status: TrafficPackStatus.ACTIVE },
+              data: { status: TrafficPackStatus.EXPIRED, expiresAt: deletedAt },
+            }),
+            tx.epayPaymentAttempt.updateMany({
+              where: { userId: id, status: EpayPaymentStatus.PENDING },
+              data: {
+                status: EpayPaymentStatus.EXPIRED,
+                activeKey: null,
+                closedAt: deletedAt,
+              },
+            }),
+          ]);
+
+        await tx.onlinePresence.deleteMany({ where: { userId: id } });
+        await tx.passwordResetToken.updateMany({
+          where: { userId: id, usedAt: null },
+          data: { usedAt: deletedAt },
+        });
+        await tx.referralCode.updateMany({
+          where: { ownerId: id, active: true },
+          data: { active: false },
+        });
+        await tx.referralAttribution.updateMany({
+          where: {
+            status: 'PENDING',
+            OR: [{ inviterId: id }, { inviteeId: id }],
+          },
+          data: { status: 'REVERSED', reversedAt: deletedAt },
+        });
+
+        const replacementEmail = `deleted+${id}@accounts.invalid`;
+        await tx.user.update({
+          where: { id },
+          data: {
+            email: replacementEmail,
+            displayName: '已删除用户',
+            passwordHash: replacementPasswordHash,
+            status: UserStatus.BANNED,
+            notes: null,
+            deletedAt,
+            sessionVersion: { increment: 1 },
+          },
+        });
+        await tx.auditLog.create({
+          data: {
+            actorId,
+            action: 'CUSTOMER_ACCOUNT_DELETED',
+            targetType: 'User',
+            targetId: id,
+            metadata: {
+              revokedAccessTokens: tokens.count,
+              canceledEntitlements: grants.count,
+              canceledSubscriptions: subscriptions.count,
+              expiredTrafficPacks: trafficPacks.count,
+              expiredPaymentAttempts: paymentAttempts.count,
+            },
+          },
+        });
+
+        return {
+          success: true,
+          id,
+          deletedAt: deletedAt.toISOString(),
+          emailReleased: true,
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
   async adjustBalance(
     id: string,
     deltaCents: number,
@@ -863,7 +990,9 @@ export class CustomerAdminService {
       });
       if (replay) return replay;
       const user = await tx.user.findUnique({ where: { id } });
-      if (!user) throw new NotFoundException('Customer not found');
+      if (!user || user.deletedAt) {
+        throw new NotFoundException('Customer not found');
+      }
       const after = user.balanceCents + deltaCents;
       if (after < 0)
         throw new BadRequestException('Balance cannot be negative');
@@ -971,7 +1100,7 @@ export class CustomerAdminService {
     }
     return this.prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({ where: { id: userId } });
-      if (!user || user.role !== UserRole.MEMBER) {
+      if (!user || user.role !== UserRole.MEMBER || user.deletedAt) {
         throw new NotFoundException('Customer not found');
       }
       const before = await tx.accessAccount.findUnique({ where: { userId } });
@@ -1192,9 +1321,9 @@ export class CustomerAdminService {
   private async requireCustomer(id: string) {
     const user = await this.prisma.user.findUnique({
       where: { id },
-      select: { id: true, role: true },
+      select: { id: true, role: true, deletedAt: true },
     });
-    if (!user || user.role !== UserRole.MEMBER) {
+    if (!user || user.role !== UserRole.MEMBER || user.deletedAt) {
       throw new NotFoundException('Customer not found');
     }
     return user;
@@ -1203,9 +1332,9 @@ export class CustomerAdminService {
   private async requireCustomerWith(tx: Prisma.TransactionClient, id: string) {
     const user = await tx.user.findUnique({
       where: { id },
-      select: { id: true, role: true },
+      select: { id: true, role: true, deletedAt: true },
     });
-    if (!user || user.role !== UserRole.MEMBER) {
+    if (!user || user.role !== UserRole.MEMBER || user.deletedAt) {
       throw new NotFoundException('Customer not found');
     }
     return user;

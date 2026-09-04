@@ -46,7 +46,7 @@ export class CustomerTrafficService {
         ) AS date,
         COALESCE(SUM(rollup."txBytes"), 0)::bigint AS "txBytes",
         COALESCE(SUM(rollup."rxBytes"), 0)::bigint AS "rxBytes",
-        COALESCE(SUM(rollup."txBytes" + rollup."rxBytes"), 0)::bigint AS "physicalBytes",
+        COALESCE(SUM(COALESCE(rollup."rawBytes", rollup."txBytes" + rollup."rxBytes")), 0)::bigint AS "physicalBytes",
         COALESCE(SUM(COALESCE(
           rollup."accountedBytes", rollup."txBytes" + rollup."rxBytes"
         )), 0)::bigint AS "accountedBytes",
@@ -54,7 +54,7 @@ export class CustomerTrafficService {
           COALESCE(SUM(COALESCE(
             rollup."accountedBytes", rollup."txBytes" + rollup."rxBytes"
           )), 0) * 10000.0 /
-          NULLIF(COALESCE(SUM(rollup."txBytes" + rollup."rxBytes"), 0), 0)
+          NULLIF(COALESCE(SUM(COALESCE(rollup."rawBytes", rollup."txBytes" + rollup."rxBytes")), 0), 0)
         )::integer AS "multiplierBasisPoints",
         MIN(COALESCE(rollup."multiplierBasisPoints", 10000))::integer
           AS "minMultiplierBasisPoints",

@@ -76,6 +76,15 @@ export class UpdateSettingsDto {
   announcementContent?: string;
 
   @IsOptional()
+  @IsBoolean()
+  anniversaryGiftEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  anniversaryGiftOfferId?: string;
+
+  @IsOptional()
   @IsString()
   googleClientId?: string;
 
@@ -116,6 +125,12 @@ export class UpdateSettingsDto {
   @Min(350)
   @Max(600)
   siteFontWeight?: number;
+
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 1 })
+  @Min(1)
+  @Max(3)
+  siteIconStrokeWidth?: number;
 
   @IsOptional()
   @IsIn(['balance', 'cdk'])

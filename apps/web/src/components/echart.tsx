@@ -23,7 +23,7 @@ export function EChart({
   ariaLabel,
 }: {
   option: EChartsOption;
-  height?: number;
+  height?: number | string;
   ariaLabel: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);

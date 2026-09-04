@@ -107,6 +107,7 @@ describe('SettingsService cache', () => {
         findMany: jest.fn().mockResolvedValue([
           { key: 'site.name', value: 'Control Plane' },
           { key: 'site.fontWeight', value: '550' },
+          { key: 'site.iconStrokeWidth', value: '2.2' },
         ]),
       },
     };
@@ -123,6 +124,7 @@ describe('SettingsService cache', () => {
     await expect(service.getSiteInfo()).resolves.toMatchObject({
       name: 'Control Plane',
       fontWeight: 550,
+      iconStrokeWidth: 2.2,
     });
   });
 
@@ -146,6 +148,30 @@ describe('SettingsService cache', () => {
 
     await expect(service.getSiteInfo()).resolves.toMatchObject({
       fontWeight: 400,
+      iconStrokeWidth: 1.5,
+    });
+  });
+
+  it('falls back to the standard icon stroke width for unsupported stored values', async () => {
+    const prisma = {
+      setting: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ key: 'site.iconStrokeWidth', value: '4' }]),
+      },
+    };
+    const cache = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new SettingsService(
+      prisma as never,
+      {} as never,
+      cache as never,
+    );
+
+    await expect(service.getSiteInfo()).resolves.toMatchObject({
+      iconStrokeWidth: 1.5,
     });
   });
 
@@ -391,5 +417,85 @@ describe('SettingsService cache', () => {
       '1',
       12 * 60 * 60,
     );
+  });
+
+  it('exposes only serviceable permanent traffic packs as anniversary gifts', async () => {
+    const offer = {
+      id: 'offer_200g',
+      name: '永久',
+      active: true,
+      archivedAt: null,
+      billingPeriod: 'ONE_TIME',
+      trafficBytes: 200n * 1024n * 1024n * 1024n,
+      product: {
+        id: 'product_200g',
+        name: '200GB 流量包',
+        kind: 'TRAFFIC_PACK',
+        status: 'ACTIVE',
+        quotaCadence: 'ONE_TIME',
+        requiresActivePlan: false,
+        systemManaged: false,
+        accessProfile: {
+          active: true,
+          nodeBindings: [{ nodeId: 'node_1' }],
+        },
+      },
+    };
+    const prisma = {
+      setting: {
+        findMany: jest.fn().mockResolvedValue([
+          { key: 'anniversaryGift.enabled', value: 'true' },
+          { key: 'anniversaryGift.offerId', value: offer.id },
+        ]),
+      },
+      catalogOffer: {
+        findUnique: jest.fn().mockResolvedValue(offer),
+        findMany: jest.fn().mockResolvedValue([offer]),
+      },
+    };
+    const service = new SettingsService(
+      prisma as never,
+      {} as never,
+      {
+        get: jest.fn().mockResolvedValue(null),
+        set: jest.fn().mockResolvedValue(undefined),
+      } as never,
+    );
+
+    await expect(service.getAnniversaryGiftConfig(true)).resolves.toMatchObject(
+      {
+        enabled: true,
+        configured: true,
+        offerId: 'offer_200g',
+        gift: {
+          name: '200GB 流量包',
+          trafficBytes: 200 * 1024 * 1024 * 1024,
+          permanent: true,
+        },
+        options: [{ offerId: 'offer_200g' }],
+      },
+    );
+  });
+
+  it('rejects enabling an anniversary gift without a valid offer', async () => {
+    const prisma = {
+      setting: { findMany: jest.fn().mockResolvedValue([]) },
+      catalogOffer: { findUnique: jest.fn().mockResolvedValue(null) },
+    };
+    const service = new SettingsService(
+      prisma as never,
+      {} as never,
+      {
+        get: jest.fn().mockResolvedValue(null),
+        set: jest.fn().mockResolvedValue(undefined),
+      } as never,
+    );
+
+    await expect(
+      service.prepareAnniversaryGiftSettingsUpdate({
+        anniversaryGiftEnabled: true,
+        anniversaryGiftOfferId: '',
+      }),
+    ).rejects.toThrow('请选择一个可独立使用的永久流量包');
   });
 });

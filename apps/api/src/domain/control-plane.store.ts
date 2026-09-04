@@ -130,7 +130,7 @@ export class ControlPlaneStoreService {
   async health() {
     const [users, plans, subscriptions, nodes] = await this.prisma.$transaction(
       [
-        this.prisma.user.count(),
+        this.prisma.user.count({ where: { deletedAt: null } }),
         this.prisma.plan.count(),
         this.prisma.subscription.count(),
         this.prisma.node.count({ where: { retiredAt: null } }),
@@ -142,6 +142,7 @@ export class ControlPlaneStoreService {
 
   async getUsers() {
     const users = await this.prisma.user.findMany({
+      where: { deletedAt: null },
       include: {
         accessTokens: {
           where: { revokedAt: null },
@@ -1138,7 +1139,9 @@ export class ControlPlaneStoreService {
             node.label AS "nodeLabel",
             COALESCE(SUM(rollup."txBytes"), 0)::bigint AS "txBytes",
             COALESCE(SUM(rollup."rxBytes"), 0)::bigint AS "rxBytes",
-            COALESCE(SUM(rollup."accountedBytes"), 0)::bigint AS "accountedBytes"
+            COALESCE(SUM(COALESCE(
+              rollup."accountedBytes", rollup."txBytes" + rollup."rxBytes"
+            )), 0)::bigint AS "accountedBytes"
           FROM "UsageRollup" rollup
           INNER JOIN "Node" node ON node.id = rollup."nodeId"
           WHERE rollup."userId" = ${userId}
@@ -4013,7 +4016,9 @@ export class ControlPlaneStoreService {
 
   private async mustGetUserRecord(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) throw new NotFoundException(`Unknown user: ${userId}`);
+    if (!user || user.deletedAt) {
+      throw new NotFoundException(`Unknown user: ${userId}`);
+    }
     return user;
   }
 

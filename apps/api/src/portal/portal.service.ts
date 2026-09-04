@@ -11,6 +11,10 @@ import { EntitlementService } from '../entitlement/entitlement.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { buildMihomoProfile } from './mihomo-profile';
 import { apiPublicUrl } from '../common/public-url';
+import {
+  calculateMembershipJourney,
+  calculateMembershipJourneyForUser,
+} from './portal-membership';
 
 type SubscriptionNode = {
   protocol: 'HYSTERIA2' | 'VLESS_REALITY';
@@ -49,7 +53,12 @@ export class PortalService {
     const overview = (await this.hasV2Entitlements(userId))
       ? await this.getV2SubscriptionOverview(userId)
       : await this.store.getPortalOverview(userId);
-    return { ...overview, alerts: buildPortalAlerts(overview) };
+    const membership = await this.getMembershipJourney(userId, overview);
+    return {
+      ...overview,
+      membership,
+      alerts: buildPortalAlerts(overview),
+    };
   }
 
   getPlans() {
@@ -174,13 +183,46 @@ export class PortalService {
     );
   }
 
+  private async getMembershipJourney(
+    userId: string,
+    overview: {
+      user?: { createdAt?: string };
+      subscription: { startsAt?: string; endsAt: string };
+    },
+  ) {
+    const now = new Date();
+    const registeredAt = new Date(
+      overview.user?.createdAt ?? overview.subscription.startsAt ?? now,
+    );
+    if (!this.prisma) {
+      return calculateMembershipJourney({
+        registeredAt,
+        subscriptionIntervals: overview.subscription.startsAt
+          ? [
+              {
+                startsAt: new Date(overview.subscription.startsAt),
+                endsAt: new Date(overview.subscription.endsAt),
+              },
+            ]
+          : [],
+        now,
+      });
+    }
+
+    return calculateMembershipJourneyForUser(this.prisma, {
+      userId,
+      registeredAt,
+      now,
+    });
+  }
+
   private async getV2SubscriptionOverview(userId: string) {
     if (!this.entitlements || !this.prisma) {
       throw new NotFoundException('Entitlement service unavailable');
     }
     const access = await this.entitlements.resolveAccess(userId);
     const now = new Date();
-    const [user, grants] = await Promise.all([
+    const [user, currentGrants] = await Promise.all([
       this.prisma.user.findUniqueOrThrow({
         where: { id: userId },
         include: {
@@ -195,6 +237,10 @@ export class PortalService {
       }),
       this.getCurrentV2Grants(userId, now),
     ]);
+    const eligibleGrantIds = new Set(access.eligibleGrantIds ?? []);
+    const grants = currentGrants.filter((grant) =>
+      eligibleGrantIds.has(grant.id),
+    );
     const primary = grants.find((grant) => grant.kind === 'PLAN') ?? grants[0];
     if (!primary) throw new NotFoundException('No active access entitlement');
     const remaining = (grant: (typeof grants)[number]) =>
@@ -219,6 +265,8 @@ export class PortalService {
         displayName: user.displayName,
         role: user.role.toLowerCase(),
         status: user.status.toLowerCase(),
+        createdAt: user.createdAt.toISOString(),
+        updatedAt: user.updatedAt.toISOString(),
       },
       subscription: {
         id: primary.id,
@@ -255,6 +303,14 @@ export class PortalService {
           access.allowed && access.deviceLimit !== undefined
             ? access.deviceLimit
             : primary.deviceLimitSnapshot,
+        currentCycle: primary.quotaBuckets[0]
+          ? {
+              id: primary.quotaBuckets[0].id,
+              startsAt: primary.quotaBuckets[0].startsAt.toISOString(),
+              endsAt: primary.quotaBuckets[0].endsAt.toISOString(),
+              overageBytes: 0,
+            }
+          : null,
       },
       plan: {
         id: primary.productId,
@@ -269,19 +325,23 @@ export class PortalService {
       ),
       packs: grants
         .filter((grant) => grant.kind === 'TRAFFIC_PACK')
-        .map((grant) => ({
-          id: grant.id,
-          label: grant.product.name,
-          totalBytes: grant.quotaBuckets.reduce(
-            (sum, bucket) => sum + Number(bucket.grantedBytes),
-            0,
-          ),
-          remainingBytes: remaining(grant),
-          status: 'active' as const,
-          expiresAt: grant.endsAt.toISOString(),
-          createdAt: grant.createdAt.toISOString(),
-          updatedAt: grant.updatedAt.toISOString(),
-        })),
+        .map((grant) => {
+          const remainingBytes = remaining(grant);
+          return {
+            id: grant.id,
+            label: grant.product.name,
+            totalBytes: grant.quotaBuckets.reduce(
+              (sum, bucket) => sum + Number(bucket.grantedBytes),
+              0,
+            ),
+            remainingBytes,
+            status:
+              remainingBytes > 0 ? ('active' as const) : ('exhausted' as const),
+            expiresAt: grant.endsAt.toISOString(),
+            createdAt: grant.createdAt.toISOString(),
+            updatedAt: grant.updatedAt.toISOString(),
+          };
+        }),
     };
     return overview;
   }
@@ -290,8 +350,11 @@ export class PortalService {
     if (!this.entitlements || !this.prisma) {
       throw new NotFoundException('Entitlement service unavailable');
     }
-    await this.entitlements.resolveAccess(userId);
-    const grants = await this.getCurrentV2Grants(userId, new Date());
+    const access = await this.entitlements.resolveAccess(userId);
+    const eligibleGrantIds = new Set(access.eligibleGrantIds ?? []);
+    const grants = (await this.getCurrentV2Grants(userId, new Date())).filter(
+      (grant) => eligibleGrantIds.has(grant.id),
+    );
     const totals = grants.reduce(
       (result, grant) => {
         for (const bucket of grant.quotaBuckets) {
@@ -439,12 +502,9 @@ export class PortalService {
     const primary = nodes[0];
     if (!primary) throw new NotFoundException('No serviceable access node');
     const accessGrants = access.grants ?? [];
-    const expiryGrants = accessGrants.some((grant) => grant.kind === 'plan')
-      ? accessGrants.filter((grant) => grant.kind === 'plan')
-      : accessGrants;
-    const endsAt = expiryGrants.reduce(
+    const endsAt = accessGrants.reduce(
       (latest, grant) => (grant.endsAt > latest ? grant.endsAt : latest),
-      expiryGrants[0]?.endsAt ?? new Date().toISOString(),
+      accessGrants[0]?.endsAt ?? new Date().toISOString(),
     );
     return {
       token,
@@ -453,6 +513,7 @@ export class PortalService {
       subscription: {
         speedUpMbpsSnapshot: access.speedUpMbps ?? 0,
         speedDownMbpsSnapshot: access.speedDownMbps ?? 0,
+        consumedTrafficBytes: access.consumedBytes ?? 0,
         endsAt,
       },
       trafficRemaining: access.remainingBytes ?? 0,

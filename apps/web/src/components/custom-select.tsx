@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Icon } from "@/components/icon";
 
 export function CustomSelect({
   value,
@@ -38,19 +39,7 @@ export function CustomSelect({
         disabled={disabled}
       >
         <span>{selected?.label ?? value}</span>
-        <svg
-          className="custom-select-chevron"
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
+        <Icon name="arrow_down" className="custom-select-chevron" />
       </button>
 
       {open && (

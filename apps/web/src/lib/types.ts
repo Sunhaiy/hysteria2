@@ -462,6 +462,14 @@ export interface PortalOverviewResponse {
   remainingBytes: number;
   balanceCents?: number;
   online: number;
+  membership?: {
+    companionshipDays: number;
+    subscribedDays: number;
+    anniversaryTargetDays: number;
+    anniversaryRemainingDays: number;
+    anniversaryProgressPercent: number;
+    anniversaryEligible: boolean;
+  };
   alerts: Array<{
     id: "traffic_80" | "traffic_95" | "traffic_100" | "subscription_expiry";
     kind: "traffic" | "expiry";
@@ -480,6 +488,31 @@ export interface PortalOverviewResponse {
     createdAt: string;
     updatedAt: string;
   }>;
+}
+
+export interface AnniversaryGiftSummary {
+  offerId: string;
+  productId: string;
+  name: string;
+  offerName: string;
+  label: string;
+  trafficBytes: number;
+  permanent: boolean;
+  available: boolean;
+}
+
+export interface AnniversaryGiftStatus {
+  enabled: boolean;
+  configured: boolean;
+  eligible: boolean;
+  claimable: boolean;
+  claimed: boolean;
+  claimedAt: string | null;
+  orderId: string | null;
+  milestoneDays: number;
+  subscribedDays: number;
+  gift: AnniversaryGiftSummary | null;
+  replayed?: boolean;
 }
 
 export interface ReportingSummaryResponse {

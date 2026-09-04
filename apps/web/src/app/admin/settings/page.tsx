@@ -2,12 +2,15 @@
 
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import { ConsoleShell } from "@/components/console-shell";
+import { AnniversaryGiftDialog } from "@/components/anniversary-gift-dialog";
+import { Icon } from "@/components/icon";
 import { Panel } from "@/components/panel";
 import { PageSkeleton } from "@/components/skeleton";
 import { useAuth } from "@/components/auth-provider";
 import { Toast, useToast } from "@/components/toast";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
+import type { AnniversaryGiftSummary } from "@/lib/types";
 
 interface OAuthProviderState {
   clientId: string;
@@ -60,6 +63,7 @@ interface SettingsResponse {
     browserTitle: string;
     iconUrl: string;
     fontWeight: number;
+    iconStrokeWidth?: number;
   };
   registrationEnabled: boolean;
   announcement: {
@@ -67,6 +71,13 @@ interface SettingsResponse {
     title: string;
     content: string;
     version: string;
+  };
+  anniversaryGift?: {
+    enabled: boolean;
+    offerId: string;
+    configured: boolean;
+    gift: AnniversaryGiftSummary | null;
+    options: AnniversaryGiftSummary[];
   };
 }
 
@@ -118,6 +129,14 @@ export default function AdminSettingsPage() {
   const [announcementTitle, setAnnouncementTitle] = useState("服务公告");
   const [announcementContent, setAnnouncementContent] = useState("");
   const [savingAnnouncement, setSavingAnnouncement] = useState(false);
+  const [anniversaryGiftEnabled, setAnniversaryGiftEnabled] = useState(false);
+  const [anniversaryGiftOfferId, setAnniversaryGiftOfferId] = useState("");
+  const [anniversaryGiftOptions, setAnniversaryGiftOptions] = useState<
+    AnniversaryGiftSummary[]
+  >([]);
+  const [savingAnniversaryGift, setSavingAnniversaryGift] = useState(false);
+  const [previewingAnniversaryGift, setPreviewingAnniversaryGift] =
+    useState(false);
   const [testTo, setTestTo] = useState("");
   const [testing, setTesting] = useState(false);
 
@@ -133,6 +152,7 @@ export default function AdminSettingsPage() {
   const [siteBrowserTitle, setSiteBrowserTitle] = useState("");
   const [siteIconUrl, setSiteIconUrl] = useState("");
   const [siteFontWeight, setSiteFontWeight] = useState(400);
+  const [siteIconStrokeWidth, setSiteIconStrokeWidth] = useState(1.5);
   const [savingSite, setSavingSite] = useState(false);
   const [buyButtonText, setBuyButtonText] = useState("");
   const [cdkButtonText, setCdkButtonText] = useState("");
@@ -168,6 +188,9 @@ export default function AdminSettingsPage() {
     setAnnouncementEnabled(data.announcement.enabled);
     setAnnouncementTitle(data.announcement.title);
     setAnnouncementContent(data.announcement.content);
+    setAnniversaryGiftEnabled(data.anniversaryGift?.enabled ?? false);
+    setAnniversaryGiftOfferId(data.anniversaryGift?.offerId ?? "");
+    setAnniversaryGiftOptions(data.anniversaryGift?.options ?? []);
     setPass("");
     setOauth(data.oauth);
     setGoogleId(data.oauth.google.clientId);
@@ -179,6 +202,11 @@ export default function AdminSettingsPage() {
     setSiteBrowserTitle(data.site.browserTitle);
     setSiteIconUrl(data.site.iconUrl);
     setSiteFontWeight(data.site.fontWeight);
+    setSiteIconStrokeWidth(
+      Number.isFinite(data.site.iconStrokeWidth)
+        ? Number(data.site.iconStrokeWidth)
+        : 1.5,
+    );
     setBuyButtonText(data.branding.buyButtonText);
     setCdkButtonText(data.branding.cdkButtonText);
     setCdkButtonUrl(data.branding.cdkButtonUrl);
@@ -319,6 +347,34 @@ export default function AdminSettingsPage() {
     }
   }
 
+  async function saveAnniversaryGift() {
+    if (!token) return;
+    setSavingAnniversaryGift(true);
+    setError(null);
+    try {
+      const data = await apiRequest<SettingsResponse>("/api/admin/settings", {
+        method: "PATCH",
+        token,
+        body: {
+          anniversaryGiftEnabled,
+          anniversaryGiftOfferId,
+        },
+      });
+      applySettings(data);
+      showToast(
+        data.anniversaryGift?.enabled
+          ? "周年礼物已启用"
+          : "周年礼物已暂停",
+      );
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError ? cause.message : "周年礼物保存失败。",
+      );
+    } finally {
+      setSavingAnniversaryGift(false);
+    }
+  }
+
   async function saveOauth() {
     if (!token) {
       return;
@@ -362,6 +418,7 @@ export default function AdminSettingsPage() {
           siteBrowserTitle,
           siteIconUrl,
           siteFontWeight,
+          siteIconStrokeWidth,
         },
       });
       applySettings(data);
@@ -618,6 +675,19 @@ export default function AdminSettingsPage() {
     }
   }
 
+  const anniversaryGiftPreview = anniversaryGiftOptions.find(
+    (option) => option.offerId === anniversaryGiftOfferId,
+  ) ?? {
+    offerId: "preview-anniversary-gift",
+    productId: "preview-anniversary-product",
+    name: "永久 200GB 流量包",
+    offerName: "永久",
+    label: "永久 200GB 流量包",
+    trafficBytes: 200 * 1024 * 1024 * 1024,
+    permanent: true,
+    available: true,
+  };
+
   return (
     <ConsoleShell
       title="系统设置"
@@ -701,6 +771,29 @@ export default function AdminSettingsPage() {
                   style={{ fontWeight: siteFontWeight }}
                 >
                   中文界面预览 · Interface 123
+                </span>
+              </label>
+              <label className="field typography-weight-field">
+                <span className="setting-range-heading">
+                  <span className="fine-print">全站图标线宽</span>
+                  <output>{siteIconStrokeWidth.toFixed(1)}</output>
+                </span>
+                <input
+                  className="range-control"
+                  type="range"
+                  min={1}
+                  max={3}
+                  step={0.1}
+                  value={siteIconStrokeWidth}
+                  onChange={(event) =>
+                    setSiteIconStrokeWidth(Number(event.target.value))
+                  }
+                />
+                <span className="typography-weight-preview icon-stroke-preview">
+                  <Icon name="space_dashboard" strokeWidth={siteIconStrokeWidth} />
+                  <Icon name="group" strokeWidth={siteIconStrokeWidth} />
+                  <Icon name="settings" strokeWidth={siteIconStrokeWidth} />
+                  <span>Hugeicons 线宽预览</span>
                 </span>
               </label>
               <div className="field site-icon-field">
@@ -874,6 +967,109 @@ export default function AdminSettingsPage() {
                 onClick={() => void saveAnnouncement()}
               >
                 {savingAnnouncement ? "保存中..." : "保存公告"}
+              </button>
+            </div>
+          </Panel>
+
+          <Panel
+            title="周年礼物"
+            copy="会员累计满 365 个有效订阅日后弹出领取动画；每位会员仅可领取一次，赠送订单不计入收入。"
+          >
+            <div className="setting-toggle-row">
+              <div className="setting-toggle-copy">
+                <strong>
+                  {anniversaryGiftEnabled
+                    ? "向符合条件的会员发放礼物"
+                    : "暂停周年礼物"}
+                </strong>
+                <span>
+                  {anniversaryGiftEnabled
+                    ? "达到门槛后，会员登录任一页面都会优先看到领取弹窗。"
+                    : "关闭后不会出现新的领取入口，已发放权益不受影响。"}
+                </span>
+              </div>
+              <label className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={anniversaryGiftEnabled}
+                  onChange={(event) =>
+                    setAnniversaryGiftEnabled(event.target.checked)
+                  }
+                />
+                <span className="toggle-track" aria-hidden="true">
+                  <span />
+                </span>
+                <span className="toggle-label">
+                  {anniversaryGiftEnabled ? "已开启" : "已关闭"}
+                </span>
+              </label>
+            </div>
+
+            <div className="anniversary-gift-setting-grid">
+              <label className="field">
+                <span className="fine-print">周年礼物流量包</span>
+                <select
+                  className="control"
+                  value={anniversaryGiftOfferId}
+                  onChange={(event) =>
+                    setAnniversaryGiftOfferId(event.target.value)
+                  }
+                >
+                  <option value="">请选择永久流量包</option>
+                  {anniversaryGiftOptions.map((option) => (
+                    <option value={option.offerId} key={option.offerId}>
+                      {option.name} · {Math.round(option.trafficBytes / 1024 ** 3)}
+                      GB · 永久有效
+                    </option>
+                  ))}
+                </select>
+                <span className="fine-print">
+                  仅列出无需普通套餐、已绑定可用节点的永久流量包。
+                </span>
+              </label>
+
+              <div className="anniversary-gift-setting-preview">
+                <span className="anniversary-gift-setting-icon">
+                  <Icon name="redeem" />
+                </span>
+                <span>
+                  <small>用户将收到</small>
+                  <strong>{anniversaryGiftPreview.name}</strong>
+                  <small>
+                    {Math.round(
+                      anniversaryGiftPreview.trafficBytes / 1024 ** 3,
+                    )}
+                    GB · 永久有效
+                  </small>
+                </span>
+              </div>
+            </div>
+
+            {!anniversaryGiftOptions.length ? (
+              <div className="feedback warn">
+                当前没有符合条件的永久流量包，请先在商品管理中启用并绑定节点。
+              </div>
+            ) : null}
+
+            <div className="toolbar-actions">
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => setPreviewingAnniversaryGift(true)}
+              >
+                <Icon name="redeem" />
+                预览礼物动画
+              </button>
+              <button
+                className="action-button"
+                type="button"
+                disabled={
+                  savingAnniversaryGift ||
+                  (anniversaryGiftEnabled && !anniversaryGiftOfferId)
+                }
+                onClick={() => void saveAnniversaryGift()}
+              >
+                {savingAnniversaryGift ? "保存中..." : "保存周年礼物"}
               </button>
             </div>
           </Panel>
@@ -1428,6 +1624,14 @@ export default function AdminSettingsPage() {
           </Panel>
         </>
       )}
+      {previewingAnniversaryGift ? (
+        <AnniversaryGiftDialog
+          gift={anniversaryGiftPreview}
+          revealed={false}
+          preview
+          onClose={() => setPreviewingAnniversaryGift(false)}
+        />
+      ) : null}
     </ConsoleShell>
   );
 }

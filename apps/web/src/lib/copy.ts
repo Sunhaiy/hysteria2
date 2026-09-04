@@ -101,35 +101,50 @@ export const adminNav: NavItem[] = [
 ];
 
 export const portalNav: NavItem[] = [
-  { href: "/portal", label: "总览", icon: "account_circle", meta: "HOME" },
+  { href: "/portal", label: "总览", icon: "portal_overview", meta: "HOME" },
   {
     href: "/portal/plans",
     label: "套餐与流量包",
-    icon: "stacks",
+    icon: "portal_plans",
     meta: "SHOP",
   },
   { href: "/portal/redeem", label: "兑换中心", icon: "redeem", meta: "CDK" },
   {
     href: "/portal/access",
     label: "接入信息",
-    icon: "qr_code_2",
+    icon: "portal_access",
     meta: "CLASH",
   },
-  { href: "/portal/tutorial", label: "使用教程", icon: "book", meta: "GUIDE" },
-  { href: "/portal/tickets", label: "我的工单", icon: "mail", meta: "HELP" },
+  {
+    href: "/portal/tutorial",
+    label: "使用教程",
+    icon: "portal_tutorial",
+    meta: "GUIDE",
+  },
+  {
+    href: "/portal/tickets",
+    label: "我的工单",
+    icon: "portal_tickets",
+    meta: "HELP",
+  },
   {
     href: "/portal/referrals",
     label: "邀请奖励",
-    icon: "group_add",
+    icon: "portal_referrals",
     meta: "INVITE",
   },
   {
     href: "/portal/usage",
     label: "流量使用",
-    icon: "network_node",
+    icon: "portal_usage",
     meta: "FLOW",
   },
-  { href: "/portal/orders", label: "订单记录", icon: "payments", meta: "BILL" },
+  {
+    href: "/portal/orders",
+    label: "订单记录",
+    icon: "portal_orders",
+    meta: "BILL",
+  },
 ];
 
 export const homeCopy = {

@@ -5,14 +5,53 @@ import test from "node:test";
 const source = (path) =>
   readFile(new URL(`../src/${path}`, import.meta.url), "utf8");
 
-test("public homepage keeps the original landing composition", async () => {
-  const home = await source("app/page.tsx");
+test("public homepage follows the PPanel landing structure with backend-selected plans", async () => {
+  const [home, catalog, lottie, hoverButton, styles] = await Promise.all([
+    source("app/page.tsx"),
+    source("app/admin/catalog/page.tsx"),
+    source("components/deferred-dot-lottie.tsx"),
+    source("components/hover-border-gradient.tsx"),
+    source("app/globals.scss"),
+  ]);
 
-  assert.match(home, /<main className="lp">/);
-  assert.match(home, /自由连接/);
-  assert.match(home, /全球无限可能/);
-  assert.doesNotMatch(home, /home-plan-grid/);
-  assert.doesNotMatch(home, /BrandLogo/);
+  assert.match(home, /<main className="ppanel-home"/);
+  assert.match(home, /className="ppanel-header"/);
+  assert.match(home, /className="ppanel-hero"/);
+  assert.match(home, /src="\/assets\/lotties\/network-security\.json"/);
+  assert.match(home, /\/assets\/lotties\/users\.json/);
+  assert.match(home, /\/assets\/lotties\/servers\.json/);
+  assert.match(home, /\/assets\/lotties\/locations\.json/);
+  assert.match(home, /src="\/assets\/lotties\/global-map\.json"/);
+  assert.match(home, /<TextGenerateEffect/);
+  assert.match(home, /<HoverBorderGradient/);
+  assert.match(home, /motion\.section/);
+  assert.match(home, /apiRequest<PublicCatalog>\("\/api\/catalog"\)/);
+  assert.match(home, /selectHomepagePlans\(catalog\?\.products \?\? \[\], 4\)/);
+  assert.match(home, /className="ppanel-stats"/);
+  assert.match(home, /className="ppanel-plan-grid"/);
+  assert.match(home, /选择您的套餐/);
+  assert.match(home, /全球连接，轻松无忧/);
+  assert.match(home, /className="ppanel-footer"/);
+  assert.doesNotMatch(home, /<HomeIntroBento/);
+  assert.doesNotMatch(home, /<HomeFaq/);
+  assert.match(catalog, /商城推荐及首页展示（首页最多展示 4 个）/);
+  assert.match(lottie, /@lottiefiles\/dotlottie-react/);
+  assert.match(lottie, /IntersectionObserver/);
+  assert.match(hoverButton, /radial-gradient/);
+  assert.match(styles, /\.ppanel-home\s*\{/);
+  assert.match(styles, /--ppanel-primary:\s*var\(--accent-500\)/);
+  assert.match(
+    styles,
+    /\.ppanel-plan-price strong\s*\{[^}]*color:\s*var\(--ppanel-primary\)/s,
+  );
+  assert.match(
+    styles,
+    /\.auth2-submit\s*\{[^}]*background:\s*var\(--accent-500\)[^}]*border[^;]*var\(--accent-500\)/s,
+  );
+  assert.match(styles, /\.ppanel-header\s*\{[^}]*position:\s*sticky/s);
+  assert.match(styles, /\.ppanel-plan-grid\s*\{[^}]*repeat\(4,/s);
+  assert.match(styles, /backdrop-filter:\s*blur\(16px\)/);
+  assert.match(styles, /@media \(max-width: 1100px\)/);
 });
 
 test("customer controls are immediate and expose subscription-link lifecycle", async () => {

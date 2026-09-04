@@ -31,6 +31,7 @@ export class AdminSettingsController {
     const tutorial = await this.settings.getTutorialConfig();
     const registrationEnabled = await this.settings.isRegistrationEnabled();
     const announcement = await this.settings.getAnnouncementConfig();
+    const anniversaryGift = await this.settings.getAnniversaryGiftConfig(true);
     const epay = await this.settings.getEpayConfig();
     const callbackBase = process.env.OAUTH_CALLBACK_BASE || apiPublicUrl();
     return {
@@ -64,6 +65,7 @@ export class AdminSettingsController {
       tutorial,
       registrationEnabled,
       announcement,
+      anniversaryGift,
       payment: {
         checkoutMode: epay.checkoutMode,
         epay: {
@@ -106,6 +108,10 @@ export class AdminSettingsController {
     if (body.announcementContent !== undefined) {
       updates['announcement.content'] = body.announcementContent.trim();
     }
+    Object.assign(
+      updates,
+      await this.settings.prepareAnniversaryGiftSettingsUpdate(body),
+    );
     if (body.googleClientId !== undefined) {
       updates['oauth.google.id'] = body.googleClientId.trim();
     }
@@ -132,6 +138,9 @@ export class AdminSettingsController {
     }
     if (body.siteFontWeight !== undefined) {
       updates['site.fontWeight'] = String(body.siteFontWeight);
+    }
+    if (body.siteIconStrokeWidth !== undefined) {
+      updates['site.iconStrokeWidth'] = String(body.siteIconStrokeWidth);
     }
     if (body.purchaseMode !== undefined) {
       updates['portal.purchaseMode'] = body.purchaseMode;

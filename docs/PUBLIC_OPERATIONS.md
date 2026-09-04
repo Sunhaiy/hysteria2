@@ -37,6 +37,10 @@ openssl rand -base64 32
   `/api/admin/orders/payment-attempts`, and `/api/admin/orders/summary` provide
   the paginated order center, payment exceptions, and Asia/Shanghai daily and
   month-to-date net revenue.
+- `GET /api/portal/anniversary-gift` reports the signed-in member's first-year
+  eligibility and configured gift. `POST /api/portal/anniversary-gift/claim`
+  grants it once through a complimentary, idempotent order. Gift orders do not
+  create payment records and are excluded from recognized revenue.
 - The single sync worker can reconcile missing callbacks through the merchant
   query endpoint derived from each attempt's immutable gateway snapshot. Set
   `EPAY_RECONCILIATION_ENABLED=true` only after a real signed query succeeds.

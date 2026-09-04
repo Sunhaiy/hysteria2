@@ -272,85 +272,111 @@ export class FinanceService {
   }
 
   async createRefund(orderId: string, input: CreateRefundDto, actorId: string) {
-    return this.prisma.$transaction(async (tx) => {
-      const order = await tx.manualOrder.findUnique({
-        where: { id: orderId },
-        include: { refunds: true, user: true },
-      });
-      if (!order || order.status !== 'APPLIED') {
-        throw new NotFoundException('Applied order not found');
-      }
-      const refunded = order.refunds
-        .filter((refund) => refund.status === RefundStatus.APPLIED)
-        .reduce((sum, refund) => sum + refund.amountCents, 0);
-      if (refunded + input.amountCents > order.amountCents) {
-        throw new BadRequestException('Refund exceeds the refundable amount');
-      }
-      const processedAt = new Date();
-      const refund = await tx.refund.create({
-        data: {
-          orderId,
-          processedById: actorId,
-          method:
-            input.method === 'wallet'
-              ? RefundMethod.WALLET
-              : RefundMethod.MANUAL,
-          status: RefundStatus.APPLIED,
-          amountCents: input.amountCents,
-          reason: input.reason,
-          processedAt,
-        },
-      });
-      if (input.method === 'wallet') {
-        const before = order.user.balanceCents;
-        const after = before + input.amountCents;
-        await tx.user.update({
-          where: { id: order.userId },
-          data: { balanceCents: after },
-        });
-        const legacy = await tx.walletTransaction.create({
-          data: {
-            userId: order.userId,
-            amountCents: input.amountCents,
-            kind: 'REFUND',
-            note: input.reason,
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await this.prisma.$transaction(
+          async (tx) => {
+            const order = await tx.manualOrder.findUnique({
+              where: { id: orderId },
+              include: { refunds: true, user: true },
+            });
+            if (!order || order.status !== 'APPLIED') {
+              throw new NotFoundException('Applied order not found');
+            }
+            const refunded = order.refunds
+              .filter((refund) => refund.status === RefundStatus.APPLIED)
+              .reduce((sum, refund) => sum + refund.amountCents, 0);
+            if (refunded + input.amountCents > order.amountCents) {
+              throw new BadRequestException(
+                'Refund exceeds the refundable amount',
+              );
+            }
+            const processedAt = new Date();
+            const refund = await tx.refund.create({
+              data: {
+                orderId,
+                processedById: actorId,
+                method:
+                  input.method === 'wallet'
+                    ? RefundMethod.WALLET
+                    : RefundMethod.MANUAL,
+                status: RefundStatus.APPLIED,
+                amountCents: input.amountCents,
+                reason: input.reason,
+                processedAt,
+              },
+            });
+            if (input.method === 'wallet') {
+              const before = order.user.balanceCents;
+              const after = before + input.amountCents;
+              await tx.user.update({
+                where: { id: order.userId },
+                data: { balanceCents: after },
+              });
+              const legacy = await tx.walletTransaction.create({
+                data: {
+                  userId: order.userId,
+                  amountCents: input.amountCents,
+                  kind: 'REFUND',
+                  note: input.reason,
+                },
+              });
+              await tx.walletLedgerEntry.create({
+                data: {
+                  legacyTransactionId: legacy.id,
+                  userId: order.userId,
+                  actorId,
+                  orderId,
+                  amountCents: input.amountCents,
+                  beforeBalanceCents: before,
+                  afterBalanceCents: after,
+                  kind: 'REFUND',
+                  idempotencyKey: `refund:${refund.id}`,
+                  note: input.reason,
+                },
+              });
+            }
+            if (this.referrals) {
+              await this.referrals.reverseForRefund(
+                tx,
+                orderId,
+                actorId,
+                refund.id,
+              );
+            }
+            if (
+              this.entitlements &&
+              refunded + input.amountCents === order.amountCents
+            ) {
+              await this.entitlements.reverseUltraForFullRefund(
+                tx,
+                orderId,
+                actorId,
+                refund.id,
+              );
+            }
+            return {
+              ...refund,
+              method: refund.method.toLowerCase(),
+              status: 'applied',
+            };
           },
-        });
-        await tx.walletLedgerEntry.create({
-          data: {
-            legacyTransactionId: legacy.id,
-            userId: order.userId,
-            actorId,
-            orderId,
-            amountCents: input.amountCents,
-            beforeBalanceCents: before,
-            afterBalanceCents: after,
-            kind: 'REFUND',
-            idempotencyKey: `refund:${refund.id}`,
-            note: input.reason,
-          },
-        });
-      }
-      if (this.referrals) {
-        await this.referrals.reverseForRefund(tx, orderId, actorId, refund.id);
-      }
-      if (
-        this.entitlements &&
-        refunded + input.amountCents === order.amountCents
-      ) {
-        await this.entitlements.reverseUltraForFullRefund(
-          tx,
-          orderId,
-          actorId,
-          refund.id,
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
         );
+      } catch (error) {
+        const errorCode =
+          typeof error === 'object' &&
+          error !== null &&
+          'code' in error &&
+          typeof (error as { code: unknown }).code === 'string'
+            ? (error as { code: string }).code
+            : undefined;
+        const retryable = errorCode === 'P2034';
+        if (!retryable || attempt === 2) throw error;
       }
-      return {
-        ...refund,
-        method: refund.method.toLowerCase(),
-        status: 'applied',
-      };
-    });
+    }
+
+    throw new Error('Unreachable refund retry state');
   }
 
   async nodeCosts(query: FinanceQuery) {

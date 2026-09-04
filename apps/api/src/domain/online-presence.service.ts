@@ -13,7 +13,7 @@ export class OnlinePresenceService {
       .map(([userId]) => userId);
     const users = requestedIds.length
       ? await this.prisma.user.findMany({
-          where: { id: { in: requestedIds } },
+          where: { id: { in: requestedIds }, deletedAt: null },
           select: { id: true },
         })
       : [];

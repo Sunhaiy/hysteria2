@@ -85,6 +85,7 @@ export class DestinationTelemetryService {
     const knownUsers = await this.prisma.user.count({
       where: {
         id: { in: [...new Set(normalized.map((item) => item.userId))] },
+        deletedAt: null,
       },
     });
     if (knownUsers !== new Set(normalized.map((item) => item.userId)).size) {

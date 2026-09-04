@@ -25,6 +25,8 @@ describe('SubscriptionFeedController', () => {
       expect.objectContaining({
         'Content-Type': 'text/yaml; charset=utf-8',
         'Content-Disposition': 'inline; filename="mihomo.yaml"',
+        'Subscription-Userinfo':
+          'upload=0; download=128; total=1024; expire=1788220800',
         'X-Subscription-Node-Count': '4',
       }),
     );

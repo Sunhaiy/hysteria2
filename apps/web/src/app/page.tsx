@@ -1,256 +1,352 @@
 "use client";
 
+// Homepage composition adapted from perfect-panel/frontend (GPL-3.0).
+// See /public/vendor/perfect-panel/LICENSE and THIRD_PARTY_NOTICES.md.
+import { motion } from "framer-motion";
 import Link from "next/link";
-import { useEffect } from "react";
-import { HeroGlobe } from "@/components/hero-globe";
+import { useEffect, useMemo, useState } from "react";
+import { DeferredDotLottie } from "@/components/deferred-dot-lottie";
+import { HoverBorderGradient } from "@/components/hover-border-gradient";
 import { Icon } from "@/components/icon";
 import { useSite } from "@/components/site-provider";
+import { TextGenerateEffect } from "@/components/text-generate-effect";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { apiRequest } from "@/lib/api";
+import { formatMoney, formatSpeedLimit, formatTrafficLimit } from "@/lib/format";
+import { selectHomepagePlans } from "@/lib/homepage-plans";
 
-const PILLS = [
-  { icon: "bolt", title: "高速稳定", copy: "优质线路，极速体验" },
-  { icon: "shield", title: "隐私安全", copy: "强加密保护，安全无忧" },
-  { icon: "globe", title: "全球节点", copy: "多地区线路自由选择" },
-];
+type PublicOffer = {
+  id: string;
+  name: string;
+  billingPeriod: "monthly" | "quarterly" | "yearly" | "one_time" | "legacy";
+  intervalMonths: number | null;
+  legacyDurationDays: number | null;
+  trafficBytes: number;
+  priceCents: number;
+  currency: string;
+  active: boolean;
+  isDefault: boolean;
+  archivedAt: string | null;
+};
 
-const TRUST = ["AES-256 加密", "无日志政策", "多平台支持", "7×24 自助"];
+type PublicProduct = {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  featured: boolean;
+  access: {
+    speedUpMbps: number;
+    speedDownMbps: number;
+    deviceLimit: number;
+    availableServerCount: number;
+  };
+  offers: PublicOffer[];
+};
 
-const FEATURES = [
-  {
-    icon: "bolt",
-    title: "秒级自助开通",
-    copy: "余额钱包 + CDK 兑换，付款即到账，套餐立即生效。",
-  },
-  {
-    icon: "plug",
-    title: "多协议原生接入",
-    copy: "支持 Hysteria 2 与 VLESS + REALITY，一键复制 URI、扫码或订阅导入。",
-  },
-  {
-    icon: "puzzle",
-    title: "灵活套餐组合",
-    copy: "限速/不限速、周期流量自由搭配，多设备直接接入。",
-  },
-  {
-    icon: "lock",
-    title: "安全鉴权",
-    copy: "会话可即时吊销、登录限流防撞库，账号更安心。",
-  },
-  {
-    icon: "key",
-    title: "多种登录方式",
-    copy: "邮箱验证码注册，支持 Google、GitHub 一键登录。",
-  },
-  {
-    icon: "monitoring",
-    title: "实时流量统计",
-    copy: "用量日志、活跃连接、到期与余额一目了然。",
-  },
-];
+type PublicCatalog = { products: PublicProduct[] };
 
-const STEPS = [
-  { n: "01", title: "注册账号", copy: "邮箱验证码或第三方账号，30 秒完成。" },
+const PERIOD_LABEL: Record<PublicOffer["billingPeriod"], string> = {
+  monthly: "/月",
+  quarterly: "/季",
+  yearly: "/年",
+  one_time: "/永久",
+  legacy: "/周期",
+};
+
+const STATS = [
   {
-    n: "02",
-    title: "充值 / 兑换",
-    copy: "余额充值或输入 CDK 卡密，立即到账。",
+    lottie: "/assets/lotties/users.json",
+    name: "用户",
+    description: "受到全球用户的信赖",
   },
-  { n: "03", title: "选择套餐", copy: "挑选合适套餐自助开通，立即生效。" },
-  { n: "04", title: "连接即用", copy: "复制接入信息导入客户端，畅享高速。" },
-];
+  {
+    lottie: "/assets/lotties/servers.json",
+    name: "服务器",
+    description: "全球高性能服务器",
+  },
+  {
+    lottie: "/assets/lotties/locations.json",
+    name: "节点位置",
+    description: "覆盖多个地区",
+  },
+] as const;
+
+function primaryOffer(product: PublicProduct) {
+  return (
+    product.offers.find((offer) => offer.billingPeriod === "monthly") ??
+    product.offers.find((offer) => offer.isDefault) ??
+    product.offers[0]
+  );
+}
 
 export default function HomePage() {
   const site = useSite();
+  const [catalog, setCatalog] = useState<PublicCatalog | null>(null);
 
   useEffect(() => {
-    const els = document.querySelectorAll<HTMLElement>(".reveal");
-    const io = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add("in");
-            io.unobserve(entry.target);
-          }
-        });
-      },
-      { threshold: 0.12 },
-    );
-    els.forEach((el) => io.observe(el));
-    return () => io.disconnect();
+    let active = true;
+    void apiRequest<PublicCatalog>("/api/catalog")
+      .then((result) => {
+        if (active) setCatalog(result);
+      })
+      .catch(() => {
+        if (active) setCatalog({ products: [] });
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
+  const plans = useMemo(
+    () => selectHomepagePlans(catalog?.products ?? [], 4),
+    [catalog],
+  );
+  const description =
+    site.description.trim() ||
+    "稳定、简单的网络服务，让每一次连接都清晰、顺畅。";
+
   return (
-    <main className="lp">
-      <header className="lp-nav">
-        <div className="lp-brand">
-          <span className="lp-logo" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="22" height="22">
-              <path d="M4 5h4l4 9 4-9h4l-6 14h-4z" fill="var(--accent-500)" />
-            </svg>
-          </span>
-          <span>{site.name}</span>
-          <span className="lp-brand-tag">VPN</span>
+    <main className="ppanel-home" id="top">
+      <header className="ppanel-header">
+        <div className="ppanel-container ppanel-header-inner">
+          <Link className="ppanel-brand" href="/" aria-label={`${site.name} 首页`}>
+            <span className="ppanel-brand-mark" aria-hidden="true">
+              <Icon name="brand_logo" />
+            </span>
+            <strong>{site.name}</strong>
+          </Link>
+
+          <div className="ppanel-header-actions">
+            <ThemeToggle className="ppanel-theme-toggle" />
+            <Link className="ppanel-login-link" href="/login">
+              登录 / 注册
+            </Link>
+          </div>
         </div>
-        <nav className="lp-nav-links">
-          <Link className="lp-nav-login" href="/login">
-            <Icon name="login" />
-            <span>登录</span>
-          </Link>
-          <ThemeToggle className="lp-icon-btn" />
-          <Link className="lp-btn lp-btn-primary" href="/register">
-            立即使用
-          </Link>
-        </nav>
       </header>
 
-      <section id="top" className="lp-hero">
-        <div className="lp-hero-text">
-          <h1 className="lp-hero-title reveal">
-            自由连接
-            <br />
-            全球无限可能
-          </h1>
-          <p className="lp-hero-sub reveal">
-            稳定、安全、快速的 {site.name} 服务，保护你的隐私，畅享全球网络。
-          </p>
-          <div className="lp-hero-cta reveal">
-            <Link className="lp-btn lp-btn-primary lp-btn-lg" href="/register">
-              立即体验 <span aria-hidden="true">›</span>
+      <div className="ppanel-container ppanel-main">
+        <motion.section
+          animate={{ opacity: 1, y: 0 }}
+          className="ppanel-hero"
+          initial={{ opacity: 0, y: -50 }}
+          transition={{ type: "spring", stiffness: 100, damping: 20 }}
+        >
+          <motion.div
+            animate={{ opacity: 1, y: 0 }}
+            className="ppanel-hero-copy"
+            initial={{ opacity: 0, y: 50 }}
+            transition={{
+              type: "spring",
+              stiffness: 80,
+              damping: 15,
+              delay: 0.3,
+            }}
+          >
+            <h1>欢迎来到 {site.name}</h1>
+            <TextGenerateEffect
+              className="ppanel-hero-description"
+              words={description}
+            />
+            <Link className="ppanel-start-link" href="/register">
+              <HoverBorderGradient
+                as="span"
+                containerClassName="ppanel-start-button"
+              >
+                <span>开始使用</span>
+                <Icon name="arrow_forward" />
+              </HoverBorderGradient>
             </Link>
-            <Link className="lp-btn lp-btn-ghost lp-btn-lg" href="/portal">
-              查看套餐
-            </Link>
-          </div>
-          <div className="lp-pills reveal">
-            {PILLS.map((pill) => (
-              <div key={pill.title} className="lp-pill">
-                <span className="lp-pill-icon">
-                  <Icon name={pill.icon} />
-                </span>
-                <div>
-                  <div className="lp-pill-title">{pill.title}</div>
-                  <div className="lp-pill-copy">{pill.copy}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+          </motion.div>
 
-        <div className="lp-hero-visual reveal">
-          <HeroGlobe />
-          <div className="lp-card lp-card-status">
-            <div className="lp-card-row">
-              <span className="lp-card-label">已连接</span>
-              <span className="lp-dot-online" />
-            </div>
-            <div className="lp-card-time">00:12:36</div>
-            <div className="lp-bars">
-              <span />
-              <span />
-              <span />
-              <span />
-            </div>
-          </div>
-          <div className="lp-card lp-card-speed">
-            <div className="lp-card-label">连接速度</div>
-            <div className="lp-card-speed-value">120 Mbps</div>
-            <svg
-              className="lp-spark"
-              viewBox="0 0 100 28"
-              preserveAspectRatio="none"
+          <motion.div
+            animate={{ opacity: 1, y: 0 }}
+            className="ppanel-hero-visual"
+            initial={{ opacity: 0, y: 50 }}
+            transition={{
+              type: "spring",
+              stiffness: 80,
+              damping: 15,
+              delay: 0.5,
+            }}
+          >
+            <DeferredDotLottie
+              autoplay
+              className="ppanel-hero-lottie"
+              loop
+              src="/assets/lotties/network-security.json"
+            />
+          </motion.div>
+        </motion.section>
+
+        <motion.section
+          className="ppanel-stats"
+          initial={{ opacity: 0, y: 50 }}
+          transition={{ duration: 1, ease: "easeOut" }}
+          viewport={{ once: true, amount: 0.8 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          aria-label="服务能力"
+        >
+          {STATS.map((item, index) => (
+            <motion.article
+              initial={{ opacity: 0, scale: 0.8 }}
+              key={item.name}
+              transition={{
+                duration: 0.8,
+                delay: index * 0.3,
+                ease: "easeOut",
+              }}
+              viewport={{ once: true, amount: 0.8 }}
+              whileInView={{ opacity: 1, scale: 1 }}
             >
-              <polyline
-                points="0,22 18,18 34,20 52,9 70,13 86,5 100,7"
-                fill="none"
-                stroke="var(--accent-500)"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+              <DeferredDotLottie
+                autoplay
+                className="ppanel-stat-lottie"
+                loop
+                src={item.lottie}
               />
-            </svg>
-          </div>
-          <div className="lp-card lp-card-node">
-            <div className="lp-card-label">节点位置</div>
-            <div className="lp-card-node-row">
-              <span>📍 美国 · cn2</span>
-              <span className="lp-chev">⌄</span>
-            </div>
-          </div>
-        </div>
-      </section>
+              <div>
+                <h2>{item.name}</h2>
+                <p>{item.description}</p>
+              </div>
+            </motion.article>
+          ))}
+        </motion.section>
 
-      <div className="lp-trust">
-        <span className="lp-trust-lead">值得信赖的 {site.name} 服务</span>
-        {TRUST.map((item) => (
-          <span key={item} className="lp-trust-item">
-            {item}
-          </span>
-        ))}
+        <motion.section
+          className="ppanel-plans"
+          id="plans"
+          initial={{ opacity: 0 }}
+          transition={{ duration: 0.5 }}
+          viewport={{ once: true }}
+          whileInView={{ opacity: 1 }}
+        >
+          <motion.header
+            className="ppanel-section-heading"
+            initial={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.5 }}
+            viewport={{ once: true }}
+            whileInView={{ opacity: 1, y: 0 }}
+          >
+            <h2>选择您的套餐</h2>
+            <p>让我们帮助您选择最适合您的套餐，享受探索的乐趣。</p>
+          </motion.header>
+
+          {catalog === null ? (
+            <div className="ppanel-plan-grid" aria-label="套餐加载中">
+              {[0, 1, 2, 3].map((item) => (
+                <div className="ppanel-plan-card ppanel-plan-skeleton" key={item} />
+              ))}
+            </div>
+          ) : plans.length ? (
+            <div className="ppanel-plan-grid">
+              {plans.map((product, index) => {
+                const offer = primaryOffer(product);
+                return (
+                  <motion.article
+                    className="ppanel-plan-card"
+                    initial={{ opacity: 0, y: 50 }}
+                    key={product.id}
+                    transition={{ duration: 0.5, delay: index * 0.1 }}
+                    viewport={{ once: true, amount: 0.5 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                  >
+                    <header>
+                      <h3>{product.name}</h3>
+                      {product.featured ? <span>推荐</span> : null}
+                    </header>
+                    <div className="ppanel-plan-content">
+                      <p>{product.description || "稳定线路，购买后即可使用。"}</p>
+                      <ul>
+                        <li>
+                          <Icon name="check" />
+                          <span>每周期 {formatTrafficLimit(offer.trafficBytes)} 流量</span>
+                        </li>
+                        <li>
+                          <Icon name="check" />
+                          <span>最高 {formatSpeedLimit(product.access.speedDownMbps)}</span>
+                        </li>
+                        <li>
+                          <Icon name="check" />
+                          <span>
+                            {product.access.deviceLimit >= 99
+                              ? "不限设备"
+                              : `${product.access.deviceLimit} 台设备`}
+                          </span>
+                        </li>
+                        <li>
+                          <Icon name="check" />
+                          <span>{product.access.availableServerCount} 个可用节点</span>
+                        </li>
+                      </ul>
+                    </div>
+                    <footer>
+                      <div className="ppanel-plan-price">
+                        <strong>{formatMoney(offer.priceCents)}</strong>
+                        <span>{PERIOD_LABEL[offer.billingPeriod]}</span>
+                      </div>
+                      <motion.div className="ppanel-plan-action">
+                        <Link href="/portal/plans">订阅</Link>
+                      </motion.div>
+                    </footer>
+                  </motion.article>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="ppanel-plan-empty">
+              <strong>套餐正在准备中</strong>
+              <span>请稍后再来查看。</span>
+            </div>
+          )}
+        </motion.section>
+
+        <motion.section
+          className="ppanel-global"
+          initial={{ opacity: 0 }}
+          transition={{ duration: 0.5 }}
+          viewport={{ once: true }}
+          whileInView={{ opacity: 1 }}
+        >
+          <motion.header
+            className="ppanel-section-heading"
+            initial={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.5 }}
+            viewport={{ once: true }}
+            whileInView={{ opacity: 1, y: 0 }}
+          >
+            <h2>全球连接，轻松无忧</h2>
+            <p>探索无缝的全球连接。选择适合您需求的网络服务，随时随地保持连接。</p>
+          </motion.header>
+          <motion.div
+            animate={{ scale: 1, opacity: 1 }}
+            className="ppanel-global-visual"
+            initial={{ scale: 0.9, opacity: 0 }}
+            transition={{
+              type: "spring",
+              stiffness: 100,
+              damping: 15,
+              delay: 0.4,
+            }}
+          >
+            <DeferredDotLottie
+              autoplay
+              className="ppanel-global-lottie"
+              loop
+              src="/assets/lotties/global-map.json"
+            />
+          </motion.div>
+        </motion.section>
       </div>
 
-      <section id="features" className="lp-section">
-        <span className="lp-eyebrow reveal">为什么选择 {site.name}</span>
-        <h2 className="lp-section-title reveal">一站式会员与流量管理</h2>
-        <div className="lp-feature-grid">
-          {FEATURES.map((feature, index) => (
-            <article
-              key={feature.title}
-              className="lp-feature reveal"
-              style={{ transitionDelay: `${(index % 3) * 80}ms` }}
-            >
-              <div className="lp-feature-icon">
-                <Icon name={feature.icon} />
-              </div>
-              <h3 className="lp-feature-title">{feature.title}</h3>
-              <p className="lp-feature-copy">{feature.copy}</p>
-            </article>
-          ))}
+      <footer className="ppanel-footer">
+        <div className="ppanel-container ppanel-footer-inner">
+          <div />
+          <div className="ppanel-footer-copy">
+            <strong>{site.name}</strong> © {new Date().getFullYear()} 版权所有。
+          </div>
         </div>
-      </section>
-
-      <section id="how" className="lp-section">
-        <span className="lp-eyebrow reveal">使用流程</span>
-        <h2 className="lp-section-title reveal">四步开始畅连</h2>
-        <div className="lp-steps">
-          {STEPS.map((step, index) => (
-            <div
-              key={step.n}
-              className="lp-step reveal"
-              style={{ transitionDelay: `${index * 80}ms` }}
-            >
-              <div className="lp-step-n">{step.n}</div>
-              <h3 className="lp-step-title">{step.title}</h3>
-              <p className="lp-step-copy">{step.copy}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="lp-cta reveal">
-        <h2 className="lp-cta-title">准备好开始了吗？</h2>
-        <p className="lp-cta-copy">
-          现在注册，几分钟内即可拥有属于你的高速连接。
-        </p>
-        <div className="lp-hero-cta">
-          <Link className="lp-btn lp-btn-primary lp-btn-lg" href="/register">
-            免费注册
-          </Link>
-          <Link className="lp-btn lp-btn-ghost lp-btn-lg" href="/portal">
-            进入用户中心
-          </Link>
-        </div>
-      </section>
-
-      <footer className="lp-footer">
-        <span className="lp-brand">{site.name}</span>
-        <div className="lp-footer-links">
-          <Link href="/login">登录</Link>
-          <Link href="/register">注册</Link>
-          <Link href="/portal">用户中心</Link>
-        </div>
-        <span className="lp-footer-note">
-          © {new Date().getFullYear()} {site.name} · Powered by Hysteria 2
-        </span>
       </footer>
     </main>
   );

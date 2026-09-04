@@ -9,7 +9,12 @@ describe('DashboardService', () => {
           { todayBytes: 300n, yesterdayBytes: 200n, monthBytes: 900n },
         ])
         .mockResolvedValueOnce([
-          { date: '2026-08-27', txBytes: 100n, rxBytes: 200n },
+          {
+            date: '2026-08-27',
+            txBytes: 100n,
+            rxBytes: 200n,
+            physicalBytes: 350n,
+          },
         ])
         .mockResolvedValueOnce([{ count: 18n }])
         .mockResolvedValueOnce([{ users: 3n, connections: 7n }])
@@ -41,6 +46,18 @@ describe('DashboardService', () => {
     const result = await service.summary(new Date('2026-08-27T12:00:00.000Z'));
 
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(7);
+    const sql = prisma.$queryRaw.mock.calls.map(([query]) =>
+      (query as { strings: readonly string[] }).strings.join(''),
+    );
+    expect(sql[0]).toContain(
+      'COALESCE(r."rawBytes", r."txBytes" + r."rxBytes")',
+    );
+    expect(sql[1]).toContain(
+      'SUM(COALESCE(r."rawBytes", r."txBytes" + r."rxBytes"))',
+    );
+    expect(sql[4]).toContain(
+      'SUM(COALESCE(rollup."rawBytes", rollup."txBytes" + rollup."rxBytes"))',
+    );
     expect(result.metrics).toEqual({
       todayPhysicalBytes: 300,
       yesterdayPhysicalBytes: 200,
@@ -54,7 +71,7 @@ describe('DashboardService', () => {
       date: '2026-08-27',
       txBytes: 100,
       rxBytes: 200,
-      physicalBytes: 300,
+      physicalBytes: 350,
     });
     expect(result.nodes[0]).toMatchObject({
       protocol: 'hysteria2',

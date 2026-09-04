@@ -42,6 +42,18 @@ describe('TrafficAnalyticsService', () => {
 
     expect(prisma.usageRollup.findMany).not.toHaveBeenCalled();
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(5);
+    const sql = prisma.$queryRaw.mock.calls.map(([query]) =>
+      (query as { strings: readonly string[] }).strings.join(''),
+    );
+    expect(sql[0]).toContain(
+      'SUM(COALESCE(r."rawBytes", r."txBytes" + r."rxBytes"))',
+    );
+    expect(sql[1]).toContain(
+      'SUM(COALESCE(r."rawBytes", r."txBytes" + r."rxBytes"))',
+    );
+    expect(sql[4]).toContain(
+      'SUM(COALESCE(r."rawBytes", r."txBytes" + r."rxBytes"))',
+    );
     expect(result).toEqual({
       timezone: 'Asia/Shanghai',
       totals: {
@@ -152,8 +164,45 @@ describe('TrafficAnalyticsService', () => {
     >;
     const [query] = queryRaw.mock.calls[0] ?? [];
     const sql = query?.strings.join('') ?? '';
-    expect(sql).toContain(`r."bucketStart" AT TIME ZONE 'Asia/Shanghai'`);
-    expect(sql).not.toContain(`AT TIME ZONE 'UTC' AT TIME ZONE`);
+    expect(sql).toContain(
+      `r."bucketStart" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Shanghai'`,
+    );
+    expect(sql).toContain(
+      'SUM(COALESCE(r."rawBytes", r."txBytes" + r."rxBytes"))',
+    );
+  });
+
+  it('uses stored raw bytes for physical traffic details', async () => {
+    const prisma = {
+      usageRollup: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'usage_1',
+            userId: 'user_1',
+            user: { email: 'user@example.com' },
+            nodeId: 'node_1',
+            node: { label: 'HK' },
+            bucketStart: new Date('2026-08-24T00:00:00.000Z'),
+            txBytes: 100n,
+            rxBytes: 200n,
+            rawBytes: 350n,
+            accountedBytes: 700n,
+            overageBytes: 0n,
+            allocations: [],
+            source: 'sync-v2',
+          },
+        ]),
+        count: jest.fn().mockResolvedValue(1),
+      },
+    };
+    const service = new TrafficAnalyticsService(prisma as never);
+
+    const result = await service.details({});
+
+    expect(result.items[0]).toMatchObject({
+      physicalBytes: 350,
+      accountedBytes: 700,
+    });
   });
 
   it('rejects malformed server traffic months', async () => {

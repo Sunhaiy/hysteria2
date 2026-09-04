@@ -173,6 +173,53 @@ describe('FinanceService', () => {
       'refund_1',
     );
     expect(entitlements.reverseUltraForFullRefund).not.toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: 'Serializable',
+    });
+  });
+
+  it('retries a serialization conflict before applying a refund', async () => {
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'order_retry',
+          userId: 'user_1',
+          status: 'APPLIED',
+          amountCents: 1_000,
+          user: { balanceCents: 0 },
+          refunds: [],
+        }),
+      },
+      refund: {
+        create: jest.fn().mockResolvedValue({
+          id: 'refund_retry',
+          method: 'MANUAL',
+          status: 'APPLIED',
+        }),
+      },
+    };
+    const serializationConflict = Object.assign(new Error('retry'), {
+      code: 'P2034',
+    });
+    const prisma = {
+      $transaction: jest
+        .fn()
+        .mockRejectedValueOnce(serializationConflict)
+        .mockImplementation((operation: (client: typeof tx) => unknown) =>
+          operation(tx),
+        ),
+    };
+    const service = new FinanceService(prisma as never);
+
+    await expect(
+      service.createRefund(
+        'order_retry',
+        { amountCents: 100, method: 'manual', reason: 'Retry safely' },
+        'admin_1',
+      ),
+    ).resolves.toMatchObject({ id: 'refund_retry', status: 'applied' });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    expect(tx.refund.create).toHaveBeenCalledTimes(1);
   });
 
   it('revokes the linked Ultra entitlement after the order is fully refunded', async () => {

@@ -56,7 +56,7 @@ export class TrafficAnalyticsService {
     const [totalRows, trendRows, users, products, nodes] = await Promise.all([
       this.prisma.$queryRaw<TrafficTotalsRow[]>(Prisma.sql`
           SELECT
-            COALESCE(SUM(r."txBytes" + r."rxBytes"), 0)::bigint AS "physicalBytes",
+            COALESCE(SUM(COALESCE(r."rawBytes", r."txBytes" + r."rxBytes")), 0)::bigint AS "physicalBytes",
             COALESCE(SUM(COALESCE(r."accountedBytes", r."txBytes" + r."rxBytes")), 0)::bigint AS "accountedBytes",
             COALESCE(SUM((
               SELECT COALESCE(SUM(a."accountedBytes"), 0)
@@ -77,7 +77,7 @@ export class TrafficAnalyticsService {
               ),
               'YYYY-MM-DD'
             ) AS "date",
-            COALESCE(SUM(r."txBytes" + r."rxBytes"), 0)::bigint AS "physicalBytes",
+            COALESCE(SUM(COALESCE(r."rawBytes", r."txBytes" + r."rxBytes")), 0)::bigint AS "physicalBytes",
             COALESCE(SUM(COALESCE(r."accountedBytes", r."txBytes" + r."rxBytes")), 0)::bigint AS "accountedBytes",
             COALESCE(SUM((
               SELECT COALESCE(SUM(a."accountedBytes"), 0)
@@ -130,7 +130,7 @@ export class TrafficAnalyticsService {
           SELECT
             node."id" AS "id",
             node."label" AS "name",
-            COALESCE(SUM(r."txBytes" + r."rxBytes"), 0)::bigint AS "bytes"
+            COALESCE(SUM(COALESCE(r."rawBytes", r."txBytes" + r."rxBytes")), 0)::bigint AS "bytes"
           FROM "UsageRollup" r
           JOIN "Node" node ON node."id" = r."nodeId"
           ${where}
@@ -196,12 +196,15 @@ export class TrafficAnalyticsService {
         SELECT
           COALESCE(server."id", node."id") AS "serverId",
           to_char(
-            date_trunc('day', r."bucketStart" AT TIME ZONE 'Asia/Shanghai'),
+            date_trunc(
+              'day',
+              r."bucketStart" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Shanghai'
+            ),
             'YYYY-MM-DD'
           ) AS "date",
           COALESCE(SUM(r."txBytes"), 0)::bigint AS "txBytes",
           COALESCE(SUM(r."rxBytes"), 0)::bigint AS "rxBytes",
-          COALESCE(SUM(r."txBytes" + r."rxBytes"), 0)::bigint AS "physicalBytes"
+          COALESCE(SUM(COALESCE(r."rawBytes", r."txBytes" + r."rxBytes")), 0)::bigint AS "physicalBytes"
         FROM "UsageRollup" r
         JOIN "Node" node ON node."id" = r."nodeId"
         LEFT JOIN "NodeServer" server ON server."id" = node."serverId"
@@ -209,7 +212,10 @@ export class TrafficAnalyticsService {
           AND r."bucketStart" < ${range.to}
         GROUP BY
           COALESCE(server."id", node."id"),
-          date_trunc('day', r."bucketStart" AT TIME ZONE 'Asia/Shanghai')
+          date_trunc(
+            'day',
+            r."bucketStart" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Shanghai'
+          )
       )
       SELECT
         inventory."serverId",
@@ -356,7 +362,7 @@ export class TrafficAnalyticsService {
         nodeLabel: row.node.label,
         txBytes: Number(row.txBytes),
         rxBytes: Number(row.rxBytes),
-        physicalBytes: Number(row.txBytes + row.rxBytes),
+        physicalBytes: Number(row.rawBytes ?? row.txBytes + row.rxBytes),
         accountedBytes: Number(row.accountedBytes ?? row.txBytes + row.rxBytes),
         allocatedBytes: row.allocations.reduce(
           (sum, allocation) => sum + Number(allocation.accountedBytes),

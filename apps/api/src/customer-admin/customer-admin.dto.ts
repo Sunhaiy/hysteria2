@@ -1,4 +1,5 @@
 import {
+  IsEmail,
   IsIn,
   IsInt,
   IsNumber,
@@ -8,6 +9,11 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+
+export class DeleteCustomerDto {
+  @IsEmail()
+  confirmationEmail!: string;
+}
 
 export class CustomerStatusDto {
   @IsIn(['active', 'suspended', 'banned'])

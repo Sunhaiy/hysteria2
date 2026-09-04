@@ -11,6 +11,7 @@ type PresenceFilter = {
 
 type UserListQuery = {
   where: {
+    deletedAt?: null;
     subscriptions?: {
       some: {
         planId: string;
@@ -46,6 +47,7 @@ describe('CustomerAdminService list filtering', () => {
     const subscriptionFilter = query.where.subscriptions;
     const presenceFilter = query.where.onlinePresence;
     expect(subscriptionFilter?.some.planId).toBe('plan_1');
+    expect(query.where.deletedAt).toBeNull();
     expect(subscriptionFilter?.some.status).toBe('ACTIVE');
     expect(subscriptionFilter?.some.endsAt.gt).toBeInstanceOf(Date);
     expect(presenceFilter?.some.concurrentClients).toEqual({ gt: 0 });
@@ -341,4 +343,114 @@ describe('CustomerAdminService quota policy', () => {
       expect(prisma.$transaction).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('CustomerAdminService account deletion', () => {
+  function createDeletionHarness() {
+    const user = {
+      id: 'user_1',
+      email: 'Member@Example.com',
+      displayName: 'Member',
+      role: 'MEMBER',
+      deletedAt: null,
+    };
+    const tx = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue(user),
+        update: jest.fn().mockResolvedValue({ ...user, status: 'BANNED' }),
+      },
+      accessToken: {
+        updateMany: jest.fn().mockResolvedValue({ count: 2 }),
+      },
+      entitlementGrant: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      subscription: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      trafficPack: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      epayPaymentAttempt: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      onlinePresence: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      passwordResetToken: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      referralCode: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      referralAttribution: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      $transaction: jest.fn((operation: (client: typeof tx) => unknown) =>
+        operation(tx),
+      ),
+    };
+    const service = new CustomerAdminService(prisma as never, {} as never);
+    return { service, tx, prisma };
+  }
+
+  it('retires access and releases the confirmed email without deleting finance rows', async () => {
+    const { service, tx, prisma } = createDeletionHarness();
+
+    const result = await service.deleteCustomer(
+      'user_1',
+      'member@example.com',
+      'admin_1',
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      id: 'user_1',
+      emailReleased: true,
+    });
+    expect(tx.accessToken.updateMany).toHaveBeenCalled();
+    expect(tx.entitlementGrant.updateMany).toHaveBeenCalled();
+    expect(tx.subscription.updateMany).toHaveBeenCalled();
+    expect(tx.trafficPack.updateMany).toHaveBeenCalled();
+    expect(tx.epayPaymentAttempt.updateMany).toHaveBeenCalled();
+    const [userUpdate] = tx.user.update.mock.calls[0] as unknown as [
+      { where: { id: string }; data: Record<string, unknown> },
+    ];
+    expect(userUpdate.where).toEqual({ id: 'user_1' });
+    expect(userUpdate.data).toMatchObject({
+      email: 'deleted+user_1@accounts.invalid',
+      displayName: '已删除用户',
+      status: 'BANNED',
+      sessionVersion: { increment: 1 },
+    });
+    expect(userUpdate.data.deletedAt).toBeInstanceOf(Date);
+    const [auditCreate] = tx.auditLog.create.mock.calls[0] as unknown as [
+      { data: Record<string, unknown> },
+    ];
+    expect(auditCreate.data).toMatchObject({
+      actorId: 'admin_1',
+      action: 'CUSTOMER_ACCOUNT_DELETED',
+      targetId: 'user_1',
+    });
+    expect(prisma.$transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ isolationLevel: 'Serializable' }),
+    );
+    expect(tx).not.toHaveProperty('manualOrder');
+    expect(tx).not.toHaveProperty('paymentRecord');
+  });
+
+  it('rejects account deletion when the confirmation email differs', async () => {
+    const { service, tx } = createDeletionHarness();
+
+    await expect(
+      service.deleteCustomer('user_1', 'other@example.com', 'admin_1'),
+    ).rejects.toThrow('Confirmation email does not match');
+
+    expect(tx.user.update).not.toHaveBeenCalled();
+    expect(tx.accessToken.updateMany).not.toHaveBeenCalled();
+  });
 });

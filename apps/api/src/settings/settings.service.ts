@@ -1,6 +1,13 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { EpayPaymentStatus, type Prisma } from '@prisma/client';
+import {
+  BillingPeriod,
+  CatalogProductKind,
+  CatalogProductStatus,
+  EpayPaymentStatus,
+  QuotaCadence,
+  type Prisma,
+} from '@prisma/client';
 import { CacheService } from '../cache/cache.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SecretCipherService } from '../security/secret-cipher.service';
@@ -35,6 +42,28 @@ export interface EpaySettingsUpdate {
   epayMerchantKey?: string;
   epayPaymentType?: EpayPaymentType;
 }
+
+type AnniversaryGiftOfferRecord = {
+  id: string;
+  name: string;
+  active: boolean;
+  archivedAt: Date | null;
+  billingPeriod: BillingPeriod;
+  trafficBytes: bigint;
+  product: {
+    id: string;
+    name: string;
+    kind: CatalogProductKind;
+    status: CatalogProductStatus;
+    quotaCadence: QuotaCadence;
+    requiresActivePlan: boolean;
+    systemManaged: boolean;
+    accessProfile: {
+      active: boolean;
+      nodeBindings: Array<{ nodeId: string }>;
+    } | null;
+  };
+};
 
 export type TutorialUploadPlatform = 'windows' | 'android' | 'macos';
 
@@ -294,6 +323,169 @@ export class SettingsService {
     };
   }
 
+  async getAnniversaryGiftConfig(includeOptions = false) {
+    const map = await this.all();
+    const offerId = map.get('anniversaryGift.offerId')?.trim() || '';
+    const selected = offerId
+      ? await this.findAnniversaryGiftOffer(offerId)
+      : null;
+    const configured = this.isAnniversaryGiftOfferReady(selected);
+    const options = includeOptions
+      ? (
+          await this.prisma.catalogOffer.findMany({
+            where: {
+              active: true,
+              archivedAt: null,
+              billingPeriod: BillingPeriod.ONE_TIME,
+              product: {
+                kind: CatalogProductKind.TRAFFIC_PACK,
+                status: CatalogProductStatus.ACTIVE,
+                quotaCadence: QuotaCadence.ONE_TIME,
+                requiresActivePlan: false,
+                systemManaged: false,
+              },
+            },
+            include: {
+              product: {
+                include: {
+                  accessProfile: {
+                    include: {
+                      nodeBindings: {
+                        where: {
+                          node: {
+                            active: true,
+                            lifecycleStatus: 'ACTIVE',
+                          },
+                        },
+                        take: 1,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            orderBy: [
+              { trafficBytes: 'asc' },
+              { product: { sortOrder: 'asc' } },
+              { createdAt: 'asc' },
+            ],
+          })
+        )
+          .filter((offer) => this.isAnniversaryGiftOfferReady(offer))
+          .map((offer) => this.presentAnniversaryGiftOffer(offer))
+      : undefined;
+
+    return {
+      enabled: map.get('anniversaryGift.enabled') === 'true',
+      offerId,
+      configured,
+      gift: selected ? this.presentAnniversaryGiftOffer(selected) : null,
+      ...(options ? { options } : {}),
+    };
+  }
+
+  async prepareAnniversaryGiftSettingsUpdate(input: {
+    anniversaryGiftEnabled?: boolean;
+    anniversaryGiftOfferId?: string;
+  }) {
+    if (
+      input.anniversaryGiftEnabled === undefined &&
+      input.anniversaryGiftOfferId === undefined
+    ) {
+      return {};
+    }
+    const map = await this.all();
+    const enabled =
+      input.anniversaryGiftEnabled ??
+      map.get('anniversaryGift.enabled') === 'true';
+    const offerId =
+      input.anniversaryGiftOfferId === undefined
+        ? map.get('anniversaryGift.offerId')?.trim() || ''
+        : input.anniversaryGiftOfferId.trim();
+    const offer = offerId ? await this.findAnniversaryGiftOffer(offerId) : null;
+    if (enabled && !this.isAnniversaryGiftOfferReady(offer)) {
+      throw new BadRequestException(
+        '启用周年礼物前，请选择一个可独立使用的永久流量包',
+      );
+    }
+    if (
+      input.anniversaryGiftOfferId !== undefined &&
+      offerId &&
+      !this.isAnniversaryGiftOfferReady(offer)
+    ) {
+      throw new BadRequestException('所选周年礼物流量包当前不可用');
+    }
+
+    return {
+      ...(input.anniversaryGiftEnabled === undefined
+        ? {}
+        : {
+            'anniversaryGift.enabled': String(input.anniversaryGiftEnabled),
+          }),
+      ...(input.anniversaryGiftOfferId === undefined
+        ? {}
+        : { 'anniversaryGift.offerId': offerId }),
+    };
+  }
+
+  private async findAnniversaryGiftOffer(
+    offerId: string,
+  ): Promise<AnniversaryGiftOfferRecord | null> {
+    return this.prisma.catalogOffer.findUnique({
+      where: { id: offerId },
+      include: {
+        product: {
+          include: {
+            accessProfile: {
+              include: {
+                nodeBindings: {
+                  where: {
+                    node: { active: true, lifecycleStatus: 'ACTIVE' },
+                  },
+                  take: 1,
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  private isAnniversaryGiftOfferReady(
+    offer: AnniversaryGiftOfferRecord | null,
+  ) {
+    return Boolean(
+      offer &&
+      offer.active &&
+      !offer.archivedAt &&
+      offer.billingPeriod === BillingPeriod.ONE_TIME &&
+      offer.product.kind === CatalogProductKind.TRAFFIC_PACK &&
+      offer.product.status === CatalogProductStatus.ACTIVE &&
+      offer.product.quotaCadence === QuotaCadence.ONE_TIME &&
+      !offer.product.requiresActivePlan &&
+      !offer.product.systemManaged &&
+      offer.product.accessProfile?.active &&
+      offer.product.accessProfile.nodeBindings.length > 0,
+    );
+  }
+
+  private presentAnniversaryGiftOffer(offer: AnniversaryGiftOfferRecord) {
+    return {
+      offerId: offer.id,
+      productId: offer.product.id,
+      name: offer.product.name,
+      offerName: offer.name,
+      label:
+        offer.name && offer.name !== offer.product.name
+          ? `${offer.product.name} · ${offer.name}`
+          : offer.product.name,
+      trafficBytes: Number(offer.trafficBytes),
+      permanent: offer.billingPeriod === BillingPeriod.ONE_TIME,
+      available: this.isAnniversaryGiftOfferReady(offer),
+    };
+  }
+
   async getAnnouncementConfig() {
     const map = await this.all();
     const title = map.get('announcement.title')?.trim() || '服务公告';
@@ -362,12 +554,20 @@ export class SettingsService {
       configuredFontWeight % 50 === 0
         ? configuredFontWeight
         : 400;
+    const configuredIconStrokeWidth = Number(map.get('site.iconStrokeWidth'));
+    const iconStrokeWidth =
+      Number.isFinite(configuredIconStrokeWidth) &&
+      configuredIconStrokeWidth >= 1 &&
+      configuredIconStrokeWidth <= 3
+        ? Math.round(configuredIconStrokeWidth * 10) / 10
+        : 1.5;
     return {
       name,
       description: map.get('site.description') || '',
       browserTitle: map.get('site.browserTitle') || name,
       iconUrl: map.get('site.iconUrl') || '/favicon.ico',
       fontWeight,
+      iconStrokeWidth,
     };
   }
 

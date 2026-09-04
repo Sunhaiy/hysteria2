@@ -14,7 +14,9 @@
   },
   "pnpm": {
     "overrides": {
-      "multer": "^2.3.0"
+      "multer": "^2.3.0",
+      "motion-dom": "12.23.23",
+      "motion-utils": "12.23.6"
     }
   }
 }

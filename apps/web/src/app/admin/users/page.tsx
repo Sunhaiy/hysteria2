@@ -6,6 +6,7 @@ import { ConsoleShell } from "@/components/console-shell";
 import { CustomSelect } from "@/components/custom-select";
 import { DataTable } from "@/components/data-table";
 import { Drawer } from "@/components/drawer";
+import { Icon } from "@/components/icon";
 import { Panel } from "@/components/panel";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
@@ -589,6 +590,49 @@ export default function AdminUsersPage() {
     }
   }
 
+  async function deleteUserAccount(user: AdminUser) {
+    if (!token || user.role !== "member") return;
+    const confirmationEmail = window.prompt(
+      `请输入用户邮箱 ${user.email} 以确认删除账户`,
+    );
+    if (confirmationEmail === null) return;
+    if (
+      confirmationEmail.trim().toLowerCase() !== user.email.trim().toLowerCase()
+    ) {
+      setDrawerError("确认邮箱不一致，账户未删除。");
+      return;
+    }
+    if (
+      !window.confirm(
+        "确认永久删除该账户？登录、订阅和未使用权益会立即失效，原邮箱可重新注册；历史订单、退款和审计记录将脱敏保留。",
+      )
+    ) {
+      return;
+    }
+
+    setSubmitting(true);
+    setDrawerError(null);
+    try {
+      await apiRequest(`/api/admin/users/${user.id}`, {
+        method: "DELETE",
+        token,
+        body: { confirmationEmail },
+      });
+      forceClose();
+      setFeedback({
+        msg: `${user.displayName} 的账户已删除，原邮箱现在可以重新注册。`,
+        kind: "success",
+      });
+      await load();
+    } catch (cause) {
+      setDrawerError(
+        cause instanceof ApiError ? cause.message : "删除账户失败。",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <ConsoleShell
       title="用户管理"
@@ -906,6 +950,17 @@ export default function AdminUsersPage() {
         isDirty={isDirty}
         footer={
           <div className="toolbar-actions">
+            {editingUser?.role === "member" ? (
+              <button
+                className="danger-button"
+                type="button"
+                disabled={submitting}
+                onClick={() => void deleteUserAccount(editingUser)}
+              >
+                <Icon name="trash" />
+                删除账户
+              </button>
+            ) : null}
             <button
               className="action-button"
               type="submit"

@@ -272,6 +272,7 @@ model User {
   status                       UserStatus                    @default(ACTIVE)
   notes                        String?
   balanceCents                 Int                           @default(0)
+  deletedAt                    DateTime?
   createdAt                    DateTime                      @default(now())
   updatedAt                    DateTime                      @updatedAt
   accessTokens                 AccessToken[]
@@ -311,6 +312,7 @@ model User {
   annualOperatingCosts         AnnualOperatingCost[]         @relation("AnnualOperatingCostUpdatedBy")
 
   @@index([role, status, createdAt, id])
+  @@index([deletedAt, role, status, createdAt, id])
 }
 
 model AccessAccount {

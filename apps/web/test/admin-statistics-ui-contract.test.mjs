@@ -53,7 +53,7 @@ test("customer traffic, orders, and operations expose durable daily statistics",
   );
 });
 
-test("member overview fills its top row with a horizontal remaining-quota bar", async () => {
+test("member overview combines billed quota progress with membership status", async () => {
   const [portal, styles] = await Promise.all([
     read("../src/app/portal/page.tsx"),
     read("../src/app/globals.scss"),
@@ -62,10 +62,12 @@ test("member overview fills its top row with a horizontal remaining-quota bar", 
   assert.match(portal, /className="metric-grid portal-primary-metrics"/);
   assert.match(portal, /className="portal-quota-summary"/);
   assert.match(portal, /className="portal-quota-track"/);
+  assert.match(portal, /className="portal-membership-summary"/);
+  assert.match(portal, /本周期已使用/);
   assert.match(portal, /role="progressbar"/);
   assert.doesNotMatch(portal, /<MetricCard\s+label="剩余总流量"/);
   assert.match(
     styles,
-    /\.portal-primary-metrics\s*\{[^}]*grid-template-columns:\s*minmax\(320px,\s*2fr\)\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);/s,
+    /\.portal-primary-metrics\s*\{[^}]*grid-template-columns:\s*minmax\(440px,\s*2fr\)[^}]*1\.28fr/s,
   );
 });

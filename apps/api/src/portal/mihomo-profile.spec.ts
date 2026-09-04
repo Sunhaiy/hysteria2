@@ -35,9 +35,11 @@ describe('buildMihomoProfile', () => {
       realityShortId: '68a2221454f5abdf',
       realityFingerprint: 'chrome',
       vlessFlow: 'xtls-rprx-vision',
+      region: 'US',
+      tags: ['ai-ready'],
     },
     {
-      label: 'US Secondary',
+      label: 'Japan Secondary',
       protocol: 'HYSTERIA2',
       hostname: '203.0.113.20',
       port: 5401,
@@ -49,6 +51,8 @@ describe('buildMihomoProfile', () => {
       realityShortId: null,
       realityFingerprint: null,
       vlessFlow: null,
+      region: 'JP',
+      tags: ['ai-ready'],
     },
   ];
 
@@ -91,7 +95,97 @@ describe('buildMihomoProfile', () => {
       profile.proxies.map((proxy) => proxy.name),
     );
     expect(selector.proxies[0]).toBe('自动故障转移');
-    expect(profile.rules).toEqual(['MATCH,节点选择']);
+    expect(selector.proxies).toContain('DIRECT');
+    expect(profile.rules.at(-1)).toBe('MATCH,节点选择');
+  });
+
+  it('routes private and Chinese traffic directly while keeping overseas traffic automatic', () => {
+    const profile = parseProfile(buildMihomoProfile(credential, nodes));
+
+    expect(profile.rules).toEqual(
+      expect.arrayContaining([
+        'GEOSITE,private,DIRECT',
+        'IP-CIDR,10.0.0.0/8,DIRECT,no-resolve',
+        'GEOSITE,cn,DIRECT',
+        'GEOIP,CN,DIRECT,no-resolve',
+        'MATCH,节点选择',
+      ]),
+    );
+    expect(profile.rules.indexOf('GEOSITE,cn,DIRECT')).toBeLessThan(
+      profile.rules.indexOf('MATCH,节点选择'),
+    );
+  });
+
+  it('uses only authorized US nodes for the AI service group', () => {
+    const profile = parseProfile(buildMihomoProfile(credential, nodes));
+    const usProxy = profile.proxies[0].name;
+    const japanProxy = profile.proxies[1].name;
+    const aiAutomatic = profile['proxy-groups'].find(
+      (group) => group.name === 'AI 自动优选',
+    );
+    const aiSelector = profile['proxy-groups'].find(
+      (group) => group.name === 'AI 服务',
+    );
+
+    expect(aiAutomatic?.proxies).toEqual([usProxy]);
+    expect(aiAutomatic?.proxies).not.toContain(japanProxy);
+    expect(aiSelector?.proxies).toEqual(['AI 自动优选', usProxy]);
+    expect(profile.rules).toEqual(
+      expect.arrayContaining([
+        'DOMAIN-SUFFIX,chatgpt.com,AI 服务',
+        'DOMAIN-SUFFIX,openai.com,AI 服务',
+        'DOMAIN-SUFFIX,claude.ai,AI 服务',
+        'DOMAIN,gemini.google.com,AI 服务',
+      ]),
+    );
+  });
+
+  it('falls back to the normal selector when no authorized US node exists', () => {
+    const profile = parseProfile(
+      buildMihomoProfile(
+        credential,
+        nodes.map((node, index) => ({
+          ...node,
+          label: `Japan ${index + 1}`,
+          region: 'JP',
+          tags: [],
+        })),
+      ),
+    );
+    const aiSelector = profile['proxy-groups'].find(
+      (group) => group.name === 'AI 服务',
+    );
+
+    expect(
+      profile['proxy-groups'].some((group) => group.name === 'AI 自动优选'),
+    ).toBe(false);
+    expect(aiSelector?.proxies).toEqual(['节点选择']);
+  });
+
+  it('only references emitted proxies and acyclic proxy groups', () => {
+    const profile = parseProfile(buildMihomoProfile(credential, nodes));
+    const proxyNames = new Set(profile.proxies.map((proxy) => proxy.name));
+    const groups = new Map(
+      profile['proxy-groups'].map((group) => [group.name, group.proxies]),
+    );
+    const builtIns = new Set(['DIRECT', 'REJECT']);
+
+    for (const proxies of groups.values()) {
+      for (const proxy of proxies) {
+        expect(
+          proxyNames.has(proxy) || groups.has(proxy) || builtIns.has(proxy),
+        ).toBe(true);
+      }
+    }
+
+    const visit = (name: string, path: Set<string>) => {
+      expect(path.has(name)).toBe(false);
+      const nextPath = new Set(path).add(name);
+      for (const target of groups.get(name) ?? []) {
+        if (groups.has(target)) visit(target, nextPath);
+      }
+    };
+    for (const name of groups.keys()) visit(name, new Set());
   });
 
   it('emits Mihomo port hopping only for enabled Hysteria2 nodes', () => {

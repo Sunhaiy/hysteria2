@@ -62,6 +62,16 @@ describe('CustomerTrafficService', () => {
       physicalBytes: 400,
       accountedBytes: 800,
     });
+    const [query] = prisma.$queryRaw.mock.calls[0] as unknown as [
+      { strings: readonly string[] },
+    ];
+    const sql = query.strings.join('');
+    expect(sql).toContain(
+      'SUM(COALESCE(rollup."rawBytes", rollup."txBytes" + rollup."rxBytes"))',
+    );
+    expect(sql).toContain(
+      'NULLIF(COALESCE(SUM(COALESCE(rollup."rawBytes", rollup."txBytes" + rollup."rxBytes")), 0), 0)',
+    );
   });
 
   it('rejects ranges longer than 366 days', async () => {

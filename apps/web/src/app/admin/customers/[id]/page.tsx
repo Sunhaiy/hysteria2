@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { CustomSelect } from "@/components/custom-select";
@@ -181,6 +181,7 @@ function shiftDateKey(date: string, days: number) {
 
 export default function CustomerDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const { token } = useAuth();
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
@@ -457,6 +458,43 @@ export default function CustomerDetailPage() {
     );
   }
 
+  async function deleteCustomerAccount() {
+    if (!token || !customer) return;
+    const confirmationEmail = window.prompt(
+      `请输入客户邮箱 ${customer.email} 以确认删除账户`,
+    );
+    if (confirmationEmail === null) return;
+    if (
+      confirmationEmail.trim().toLowerCase() !==
+      customer.email.trim().toLowerCase()
+    ) {
+      setError("确认邮箱不一致，账户未删除。");
+      return;
+    }
+    if (
+      !window.confirm(
+        "确认永久删除该账户？登录、订阅和未使用权益会立即失效，原邮箱可重新注册；历史订单、退款和审计记录将脱敏保留。",
+      )
+    ) {
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      await apiRequest(`/api/admin/customers/${customer.id}`, {
+        method: "DELETE",
+        token,
+        body: { confirmationEmail },
+      });
+      router.replace("/admin/customers");
+      router.refresh();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "删除账户失败。");
+      setBusy(false);
+    }
+  }
+
   const currentPage =
     view === "entitlements"
       ? grants
@@ -552,6 +590,15 @@ export default function CustomerDetailPage() {
             }
           >
             {customer.status === "active" ? "停用客户" : "恢复客户"}
+          </button>
+          <button
+            className="danger-button"
+            disabled={busy}
+            type="button"
+            onClick={() => void deleteCustomerAccount()}
+          >
+            <Icon name="trash" />
+            删除账户
           </button>
         </>
       }

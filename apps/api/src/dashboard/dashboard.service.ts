@@ -15,6 +15,7 @@ interface TrendRow {
   date: string;
   txBytes: bigint;
   rxBytes: bigint;
+  physicalBytes: bigint;
 }
 
 interface OnlineRow {
@@ -75,13 +76,13 @@ export class DashboardService {
         SELECT
           COALESCE(SUM(CASE WHEN r."bucketStart" >= ${todayStart}
             AND r."bucketStart" < ${tomorrowStart}
-            THEN r."txBytes" + r."rxBytes" ELSE 0 END), 0)::bigint AS "todayBytes",
+            THEN COALESCE(r."rawBytes", r."txBytes" + r."rxBytes") ELSE 0 END), 0)::bigint AS "todayBytes",
           COALESCE(SUM(CASE WHEN r."bucketStart" >= ${yesterdayStart}
             AND r."bucketStart" < ${todayStart}
-            THEN r."txBytes" + r."rxBytes" ELSE 0 END), 0)::bigint AS "yesterdayBytes",
+            THEN COALESCE(r."rawBytes", r."txBytes" + r."rxBytes") ELSE 0 END), 0)::bigint AS "yesterdayBytes",
           COALESCE(SUM(CASE WHEN r."bucketStart" >= ${monthStart}
             AND r."bucketStart" < ${tomorrowStart}
-            THEN r."txBytes" + r."rxBytes" ELSE 0 END), 0)::bigint AS "monthBytes"
+            THEN COALESCE(r."rawBytes", r."txBytes" + r."rxBytes") ELSE 0 END), 0)::bigint AS "monthBytes"
         FROM "UsageRollup" r
         WHERE r."bucketStart" >= ${monthStart < yesterdayStart ? monthStart : yesterdayStart}
           AND r."bucketStart" < ${tomorrowStart}
@@ -93,7 +94,8 @@ export class DashboardService {
             'YYYY-MM-DD'
           ) AS "date",
           COALESCE(SUM(r."txBytes"), 0)::bigint AS "txBytes",
-          COALESCE(SUM(r."rxBytes"), 0)::bigint AS "rxBytes"
+          COALESCE(SUM(r."rxBytes"), 0)::bigint AS "rxBytes",
+          COALESCE(SUM(COALESCE(r."rawBytes", r."txBytes" + r."rxBytes")), 0)::bigint AS "physicalBytes"
         FROM "UsageRollup" r
         WHERE r."bucketStart" >= ${trendStart}
           AND r."bucketStart" < ${tomorrowStart}
@@ -127,7 +129,7 @@ export class DashboardService {
           ORDER BY snapshot."nodeId", snapshot."checkedAt" DESC
         ), node_traffic AS (
           SELECT rollup."nodeId",
-            COALESCE(SUM(rollup."txBytes" + rollup."rxBytes"), 0)::bigint AS bytes,
+            COALESCE(SUM(COALESCE(rollup."rawBytes", rollup."txBytes" + rollup."rxBytes")), 0)::bigint AS bytes,
             MAX(rollup."bucketStart") AS "lastSeenAt"
           FROM "UsageRollup" rollup
           WHERE rollup."bucketStart" >= ${monthStart}
@@ -183,7 +185,12 @@ export class DashboardService {
       const row = trendByDate.get(date);
       const txBytes = Number(row?.txBytes ?? 0n);
       const rxBytes = Number(row?.rxBytes ?? 0n);
-      return { date, txBytes, rxBytes, physicalBytes: txBytes + rxBytes };
+      return {
+        date,
+        txBytes,
+        rxBytes,
+        physicalBytes: Number(row?.physicalBytes ?? 0n),
+      };
     });
     const subscriptions = Object.fromEntries(
       subscriptionRows.map((row) => [

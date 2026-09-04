@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -20,6 +21,7 @@ import {
   CreateUserDto,
   UpdateUserDto,
 } from '../contracts/http.dto';
+import { DeleteCustomerDto } from '../customer-admin/customer-admin.dto';
 import { ControlPlaneStoreService } from '../domain/control-plane.store';
 import {
   CustomerAdminService,
@@ -98,6 +100,24 @@ export class AdminUsersController {
       status: body.status,
       notes: body.notes,
     });
+  }
+
+  @Delete(':id')
+  deleteUser(
+    @Param('id') id: string,
+    @Body() body: DeleteCustomerDto,
+    @CurrentPrincipal() principal: SessionPrincipal,
+  ) {
+    if (id === principal.sub) {
+      throw new BadRequestException(
+        'The super administrator cannot delete its own account',
+      );
+    }
+    return this.customers.deleteCustomer(
+      id,
+      body.confirmationEmail,
+      principal.sub,
+    );
   }
 
   @Get(':id/access')

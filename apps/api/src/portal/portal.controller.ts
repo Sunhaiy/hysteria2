@@ -20,6 +20,7 @@ import {
   RequestPlanOrderDto,
 } from '../contracts/http.dto';
 import { SettingsService } from '../settings/settings.service';
+import { AnniversaryGiftService } from './anniversary-gift.service';
 import { PortalService } from './portal.service';
 
 @Controller('api/portal')
@@ -28,7 +29,18 @@ export class PortalController {
   constructor(
     private readonly portalService: PortalService,
     private readonly settings: SettingsService,
+    private readonly anniversaryGift: AnniversaryGiftService,
   ) {}
+
+  @Get('anniversary-gift')
+  getAnniversaryGift(@CurrentPrincipal() principal: SessionPrincipal) {
+    return this.anniversaryGift.getStatus(principal.sub);
+  }
+
+  @Post('anniversary-gift/claim')
+  claimAnniversaryGift(@CurrentPrincipal() principal: SessionPrincipal) {
+    return this.anniversaryGift.claim(principal.sub);
+  }
 
   @Get('announcement')
   async getAnnouncement(@CurrentPrincipal() principal: SessionPrincipal) {

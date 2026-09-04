@@ -93,6 +93,15 @@ test("member catalog uses the standard panel surface and aligned card headings",
   assert.match(source, /近期热门/);
   assert.match(source, /年付月均/);
   assert.match(source, /已购权益按原订单履约/);
+  assert.match(source, /calculateTermSavings/);
+  assert.match(source, /省下/);
+  assert.match(source, /每月额度独立重置/);
+  assert.doesNotMatch(source, /支付完成后订单会自动确认/);
+  assert.doesNotMatch(source, /点击去购买后将进入所选规格对应的店铺页面/);
+  assert.match(
+    styles,
+    /\.checkout-product-summary\s*\{[\s\S]*?background:\s*var\(--bg-panel\);/,
+  );
   assert.match(styles, /\.catalog-standard-tiers\s*\{[\s\S]*?gap:\s*22px;/);
 });
 

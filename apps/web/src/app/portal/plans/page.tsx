@@ -13,6 +13,7 @@ import {
   formatSpeedLimit,
   formatTrafficLimit,
 } from "@/lib/format";
+import { calculateTermSavings } from "@/lib/catalog-pricing";
 import { sortCatalogProductsByPrice } from "@/lib/catalog-sort";
 import type { PortalOverviewResponse } from "@/lib/types";
 
@@ -169,17 +170,13 @@ function preferredOffer(product: Product) {
 
 function yearlyValue(product: Product) {
   const offers = activeOffers(product);
-  const monthly = offers.find((offer) => offer.billingPeriod === "monthly");
   const yearly = offers.find((offer) => offer.billingPeriod === "yearly");
-  if (!monthly || !yearly || monthly.priceCents <= 0) return null;
-  const undiscounted = monthly.priceCents * 12;
-  const savingsPercent = Math.round(
-    ((undiscounted - yearly.priceCents) / undiscounted) * 100,
-  );
-  if (savingsPercent <= 0) return null;
+  if (!yearly) return null;
+  const savings = calculateTermSavings(offers, yearly);
+  if (!savings) return null;
   return {
     monthlyEquivalentCents: Math.round(yearly.priceCents / 12),
-    savingsPercent,
+    savingsPercent: savings.savingsPercent,
   };
 }
 
@@ -289,6 +286,38 @@ export default function PortalPlansPage() {
     ],
     [groups.plans],
   );
+  const checkoutSavings = checkout
+    ? calculateTermSavings(activeOffers(checkout.product), checkout.offer)
+    : null;
+  const checkoutFinalPriceCents =
+    quote?.finalPriceCents ?? checkout?.offer.priceCents ?? 0;
+  const checkoutListPriceCents =
+    quote?.purchaseMode === "upgrade"
+      ? quote.basePriceCents
+      : (checkoutSavings?.listPriceCents ??
+        quote?.basePriceCents ??
+        checkout?.offer.priceCents ??
+        0);
+  const checkoutDiscountCents =
+    quote?.purchaseMode === "upgrade"
+      ? 0
+      : Math.max(
+          checkoutSavings?.savingsCents ?? 0,
+          checkoutListPriceCents - checkoutFinalPriceCents,
+          quote?.discountCents ?? 0,
+        );
+  const checkoutMonthlyEquivalentCents =
+    checkout?.offer.intervalMonths && checkout.offer.intervalMonths > 1
+      ? Math.round(
+          checkoutFinalPriceCents / checkout.offer.intervalMonths,
+        )
+      : null;
+  const checkoutNodeCount =
+    checkout?.product.access.servers.reduce(
+      (total, server) =>
+        total + server.nodes.filter((node) => node.serviceable).length,
+      0,
+    ) ?? 0;
   function submitGateway(
     payment: EpayPayment,
     targetName: string,
@@ -681,17 +710,17 @@ export default function PortalPlansPage() {
               9 档流量覆盖不同需求，月付、季付与年付均按月重置额度。
             </span>
           </div>
-        </div>
-        <div className="catalog-assurances" aria-label="套餐购买保障">
-          <span>
-            <Icon name="check" /> 季付 95 折
-          </span>
-          <span>
-            <Icon name="check" /> 年付 9 折
-          </span>
-          <span>
-            <Icon name="check" /> 已购权益按原订单履约
-          </span>
+          <div className="catalog-assurances" aria-label="套餐购买保障">
+            <span>
+              <Icon name="check" /> 季付 95 折
+            </span>
+            <span>
+              <Icon name="check" /> 年付 9 折
+            </span>
+            <span>
+              <Icon name="check" /> 已购权益按原订单履约
+            </span>
+          </div>
         </div>
         {loading ? (
           <CardGridSkeleton />
@@ -825,6 +854,10 @@ export default function PortalPlansPage() {
               <div className="checkout-offer-options" role="radiogroup">
                 {activeOffers(checkout.product).map((offer) => {
                   const selected = checkout.offer.id === offer.id;
+                  const savings = calculateTermSavings(
+                    activeOffers(checkout.product),
+                    offer,
+                  );
                   const available =
                     branding.checkoutMode === "epay" ||
                     Boolean(resolveStoreUrl(checkout.product, offer, branding));
@@ -838,13 +871,26 @@ export default function PortalPlansPage() {
                       onClick={() => selectCheckoutOffer(offer)}
                       key={offer.id}
                     >
-                      <span>
-                        {checkout.product.kind === "traffic_pack"
-                          ? "永久有效"
-                          : offerPeriodName(offer)}
-                        {!available ? " · 未配置" : ""}
+                      <span className="checkout-offer-label">
+                        <span>
+                          {checkout.product.kind === "traffic_pack"
+                            ? "永久有效"
+                            : offerPeriodName(offer)}
+                          {!available ? " · 未配置" : ""}
+                        </span>
+                        {savings ? <em>{savings.discountLabel}</em> : null}
                       </span>
                       <strong>{formatMoney(offer.priceCents)}</strong>
+                      {savings ? (
+                        <small>
+                          省下 {formatMoney(savings.savingsCents)} · 月均
+                          {formatMoney(
+                            Math.round(
+                              offer.priceCents / (offer.intervalMonths ?? 1),
+                            ),
+                          )}
+                        </small>
+                      ) : null}
                     </button>
                   );
                 })}
@@ -916,6 +962,22 @@ export default function PortalPlansPage() {
                 </strong>
               </div>
             </div>
+            {checkout.product.kind === "plan" ? (
+              <div
+                className="checkout-purchase-highlights"
+                aria-label="套餐购买亮点"
+              >
+                <span>
+                  <Icon name="check" /> 每月额度独立重置
+                </span>
+                <span>
+                  <Icon name="check" /> {checkoutNodeCount} 个可用节点
+                </span>
+                <span>
+                  <Icon name="check" /> 不限设备
+                </span>
+              </div>
+            ) : null}
             {checkout.product.series === "ultra" ? (
               <div className="feedback info">
                 Ultra 只在专属节点扣除此额度，与现有普通套餐和流量包分开计费。
@@ -925,33 +987,55 @@ export default function PortalPlansPage() {
                 该流量包无需有效套餐，购买后即可使用商品绑定的节点，剩余流量永久有效。
               </div>
             ) : null}
-            {branding.checkoutMode === "epay" && quote ? (
-              <div className="checkout-facts">
+            {quote?.purchaseMode === "upgrade" ? (
+              <div className="checkout-price-summary">
                 <div>
-                  <span>商品原价</span>
+                  <span>目标档位价格</span>
                   <strong>{formatMoney(quote.basePriceCents)}</strong>
                 </div>
                 <div>
-                  <span>
-                    {quote.purchaseMode === "upgrade" ? "当前档位" : "优惠"}
-                  </span>
-                  <strong>
-                    {quote.purchaseMode === "upgrade"
-                      ? quote.upgradeFromProductName ?? "已有 Ultra"
-                      : `-${formatMoney(quote.discountCents)}`}
-                  </strong>
+                  <span>当前档位</span>
+                  <strong>{quote.upgradeFromProductName ?? "已有 Ultra"}</strong>
                 </div>
                 <div>
-                  <span>应付</span>
+                  <span>应付差价</span>
                   <strong>{formatMoney(quote.finalPriceCents)}</strong>
                 </div>
               </div>
-            ) : null}
-            <div className="feedback info">
-              {branding.checkoutMode === "epay"
-                ? "支付完成后订单会自动确认，套餐或流量权益正常到账。"
-                : "点击去购买后将进入所选规格对应的店铺页面。"}
-            </div>
+            ) : (
+              <div className="checkout-price-summary">
+                <div>
+                  <span>
+                    {checkoutSavings ? "按月购买原价" : "商品价格"}
+                  </span>
+                  <strong>{formatMoney(checkoutListPriceCents)}</strong>
+                </div>
+                <div className={checkoutDiscountCents > 0 ? "saving" : ""}>
+                  <span>周期优惠</span>
+                  {checkoutDiscountCents > 0 ? (
+                    <>
+                      <strong>
+                        -{formatMoney(checkoutDiscountCents)}
+                      </strong>
+                      <small>
+                        {checkoutSavings?.discountLabel ?? quote?.discountLabel}
+                      </small>
+                    </>
+                  ) : (
+                    <strong>标准价</strong>
+                  )}
+                </div>
+                <div className="total">
+                  <span>应付</span>
+                  <strong>{formatMoney(checkoutFinalPriceCents)}</strong>
+                  {checkoutMonthlyEquivalentCents ? (
+                    <small>
+                      月均 {formatMoney(checkoutMonthlyEquivalentCents)}
+                    </small>
+                  ) : null}
+                </div>
+              </div>
+            )}
           </div>
         ) : null}
       </Drawer>

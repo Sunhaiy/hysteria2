@@ -45,6 +45,13 @@ const platformOrder: Record<PlatformId, number> = {
   ios: 3,
 };
 
+const platformIcons: Record<PlatformId, string> = {
+  windows: "platform_windows",
+  android: "platform_android",
+  macos: "platform_macos",
+  ios: "platform_ios",
+};
+
 const defaultSteps = (clientName: string): TutorialStep[] => [
   {
     id: "install",
@@ -189,13 +196,7 @@ export default function TutorialPage() {
               onClick={() => setPlatformId(item.platform)}
             >
               <span className="tutorial-platform-mark" aria-hidden="true">
-                {item.platform === "windows"
-                  ? "W"
-                  : item.platform === "macos"
-                    ? "M"
-                    : item.platform === "android"
-                      ? "A"
-                      : "i"}
+                <Icon name={platformIcons[item.platform]} />
               </span>
               <span>
                 <strong>{item.name}</strong>

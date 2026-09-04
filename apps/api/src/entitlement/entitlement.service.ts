@@ -345,7 +345,12 @@ export class EntitlementService {
     const now = new Date();
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user || user.status !== UserStatus.ACTIVE) {
-      return { allowed: false, reason: 'user_not_active' as const, nodes: [] };
+      return {
+        allowed: false,
+        reason: 'user_not_active' as const,
+        nodes: [],
+        eligibleGrantIds: [],
+      };
     }
     const grants = await this.prisma.entitlementGrant.findMany({
       where: {
@@ -386,14 +391,16 @@ export class EntitlementService {
           endsAt: { gt: now },
         },
       })) > 0;
-    const usable = grants.filter(
+    const eligible = grants.filter(
       (grant) =>
-        (!grant.product.requiresActivePlan ||
-          activePlanGrants.length > 0 ||
-          hasLegacyPlan) &&
-        grant.quotaBuckets.some(
-          (bucket) => bucket.grantedBytes > bucket.consumedBytes,
-        ),
+        !grant.product.requiresActivePlan ||
+        activePlanGrants.length > 0 ||
+        hasLegacyPlan,
+    );
+    const usable = eligible.filter((grant) =>
+      grant.quotaBuckets.some(
+        (bucket) => bucket.grantedBytes > bucket.consumedBytes,
+      ),
     );
     const accessSources = usable;
     const nodes = new Map<
@@ -429,6 +436,16 @@ export class EntitlementService {
           ),
         )
       : accessSources;
+    const requestedEligibleSources = nodeId
+      ? eligible.filter((grant) =>
+          grant.accessProfile.nodeBindings.some(
+            (binding) =>
+              binding.node.id === nodeId &&
+              binding.node.active &&
+              binding.node.lifecycleStatus === 'ACTIVE',
+          ),
+        )
+      : eligible;
     if (requestedSources.length === 0) {
       const entitledToRequestedNode = nodeId
         ? grants.some((grant) =>
@@ -444,6 +461,7 @@ export class EntitlementService {
             ? ('traffic_exhausted' as const)
             : ('node_denied' as const),
         nodes: orderedNodes,
+        eligibleGrantIds: requestedEligibleSources.map((grant) => grant.id),
       };
     }
     return {
@@ -458,6 +476,16 @@ export class EntitlementService {
       deviceLimit: Math.max(
         ...requestedSources.map((grant) => grant.deviceLimitSnapshot),
       ),
+      totalBytes: Number(
+        requestedEligibleSources
+          .flatMap((grant) => grant.quotaBuckets)
+          .reduce((total, bucket) => total + bucket.grantedBytes, BigInt(0)),
+      ),
+      consumedBytes: Number(
+        requestedEligibleSources
+          .flatMap((grant) => grant.quotaBuckets)
+          .reduce((total, bucket) => total + bucket.consumedBytes, BigInt(0)),
+      ),
       remainingBytes: Number(
         requestedSources
           .flatMap((grant) => grant.quotaBuckets)
@@ -468,6 +496,7 @@ export class EntitlementService {
           ),
       ),
       nodes: orderedNodes,
+      eligibleGrantIds: requestedEligibleSources.map((grant) => grant.id),
       grants: requestedSources.map((grant) => ({
         id: grant.id,
         kind: grant.kind.toLowerCase(),

@@ -149,6 +149,12 @@ describe('ControlPlaneStoreService performance-sensitive reads', () => {
 
     expect(prisma.usageRollup.findMany).not.toHaveBeenCalled();
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    const [query] = prisma.$queryRaw.mock.calls[0] as unknown as [
+      { strings: readonly string[] },
+    ];
+    expect(query.strings.join('')).toMatch(
+      /COALESCE\(\s*rollup\."accountedBytes",\s*rollup\."txBytes" \+ rollup\."rxBytes"\s*\)/,
+    );
     expect(result.recent).toEqual([
       expect.objectContaining({
         nodeId: 'node_a',

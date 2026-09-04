@@ -2,22 +2,18 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { HeroGlobe } from "./hero-globe";
+import { AuthShaderBackground } from "./auth-shader-background";
 import { Icon } from "./icon";
 import { ThemeToggle } from "./theme-toggle";
 import { useSite } from "./site-provider";
 
-const FEATURES = [
-  { icon: "lock", title: "隐私安全", copy: "保护你的数据" },
-  { icon: "bolt", title: "高速稳定", copy: "优质线路体验" },
-  { icon: "globe", title: "全球覆盖", copy: "多地区线路" },
-];
-
 export function AuthShell({
   active,
+  onModeChange,
   children,
 }: {
   active: "login" | "register" | "reset";
+  onModeChange?: (mode: "login" | "register") => void;
   children: ReactNode;
 }) {
   const site = useSite();
@@ -26,40 +22,25 @@ export function AuthShell({
     <main className="auth2">
       <div className="auth2-card">
         <section className="auth2-left">
+          <AuthShaderBackground />
+          <div className="auth2-shader-scrim" aria-hidden="true" />
           <Link className="auth2-brand" href="/">
             <span className="lp-logo" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="24" height="24">
-                <path d="M4 5h4l4 9 4-9h4l-6 14h-4z" fill="var(--accent-500)" />
-              </svg>
+              <Icon name="brand_logo" />
             </span>
             <span>{site.name}</span>
-            <span className="lp-brand-tag">VPN</span>
           </Link>
 
-          <h1 className="auth2-title">
-            自由连接
-            <br />
-            全球<span className="auth2-grad">无限</span>可能
-          </h1>
-          <p className="auth2-sub">安全 · 稳定 · 高速的全球网络加速服务</p>
-
-          <div className="auth2-globe">
-            <HeroGlobe className="auth2-globe-svg" />
+          <div className="auth2-left-copy">
+            <span className="auth2-eyebrow">SUXIN NETWORK</span>
+            <h1 className="auth2-title">
+              自由连接
+              <br />
+              抵达更远的地方
+            </h1>
+            <p className="auth2-sub">安全 · 稳定 · 高速</p>
           </div>
-
-          <div className="auth2-features">
-            {FEATURES.map((f) => (
-              <div key={f.title} className="auth2-feature">
-                <span className="auth2-feature-icon">
-                  <Icon name={f.icon} />
-                </span>
-                <div>
-                  <div className="auth2-feature-title">{f.title}</div>
-                  <div className="auth2-feature-copy">{f.copy}</div>
-                </div>
-              </div>
-            ))}
-          </div>
+          <span className="auth2-left-index">EST. 2026</span>
         </section>
 
         <section className="auth2-right">
@@ -71,19 +52,61 @@ export function AuthShell({
             <ThemeToggle className="lp-icon-btn" />
           </div>
 
-          <div className="auth2-tabs">
-            <Link className={`auth2-tab${active === "login" ? " active" : ""}`} href="/login">
-              登录
-            </Link>
-            <Link
-              className={`auth2-tab${active === "register" ? " active" : ""}`}
-              href="/register"
-            >
-              注册
-            </Link>
-          </div>
+          <div className="auth2-panel">
+            {active !== "reset" ? (
+              <div className="auth2-intro">
+                <span>{active === "login" ? "WELCOME BACK" : "JOIN SUXIN"}</span>
+                <h2>{active === "login" ? "欢迎回来" : "创建您的账户"}</h2>
+                <p>
+                  {active === "login"
+                    ? "登录后继续管理您的订阅与连接。"
+                    : "完成邮箱验证后即可开始使用。"}
+                </p>
+              </div>
+            ) : null}
 
-          <div className="auth2-form">{children}</div>
+            <div className="auth2-tabs" role="tablist" aria-label="账户入口">
+              {onModeChange ? (
+                <>
+                  <button
+                    className={`auth2-tab${active === "login" ? " active" : ""}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={active === "login"}
+                    onClick={() => onModeChange("login")}
+                  >
+                    登录
+                  </button>
+                  <button
+                    className={`auth2-tab${active === "register" ? " active" : ""}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={active === "register"}
+                    onClick={() => onModeChange("register")}
+                  >
+                    注册
+                  </button>
+                </>
+              ) : (
+                <>
+                  <Link
+                    className={`auth2-tab${active === "login" ? " active" : ""}`}
+                    href="/login"
+                  >
+                    登录
+                  </Link>
+                  <Link
+                    className={`auth2-tab${active === "register" ? " active" : ""}`}
+                    href="/register"
+                  >
+                    注册
+                  </Link>
+                </>
+              )}
+            </div>
+
+            <div className="auth2-form">{children}</div>
+          </div>
         </section>
       </div>
     </main>

@@ -20,6 +20,7 @@ import { KickService } from '../kick-service/kick-service.service';
 import type { PageQuery } from '../common/pagination';
 import {
   CustomerBalanceAdjustmentDto,
+  DeleteCustomerDto,
   CustomerPlanSwitchDto,
   CustomerQuotaOperationDto,
   CustomerQuotaAdjustmentDto,
@@ -55,6 +56,19 @@ export class CustomerAdminController {
   @Get(':id')
   get(@Param('id') id: string) {
     return this.customers.getCustomer(id);
+  }
+
+  @Delete(':id')
+  deleteCustomer(
+    @Param('id') id: string,
+    @Body() body: DeleteCustomerDto,
+    @CurrentPrincipal() principal: SessionPrincipal,
+  ) {
+    return this.customers.deleteCustomer(
+      id,
+      body.confirmationEmail,
+      principal.sub,
+    );
   }
 
   @Get(':id/entitlements')

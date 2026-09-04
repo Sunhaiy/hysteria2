@@ -540,7 +540,7 @@ export default function CatalogPage() {
                     .join(" · "),
               <span className="list" key={`${product.id}-rules`}>
                 <span>{product.access.speedDownMbps} Mbps · 不限设备</span>
-                {product.featured ? <small>前台推荐</small> : null}
+                {product.featured ? <small>商城推荐及首页展示</small> : null}
                 {product.purchaseLimitPerUser ? (
                   <small>每账号限购 {product.purchaseLimitPerUser} 次</small>
                 ) : null}
@@ -795,7 +795,7 @@ export default function CatalogPage() {
                     }))
                   }
                 />
-                <span>在会员商城标记为推荐套餐</span>
+                <span>商城推荐及首页展示（首页最多展示 4 个）</span>
               </label>
               <label className="checkbox-row">
                 <input

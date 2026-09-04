@@ -619,12 +619,72 @@ describe('EntitlementService V2', () => {
       speedUpMbps: 40,
       speedDownMbps: 240,
       deviceLimit: 5,
+      totalBytes: 150,
+      consumedBytes: 20,
       remainingBytes: 130,
     });
     expect(access.nodes.map((node) => node.id)).toEqual([
       'node_pack',
       'node_core',
     ]);
+  });
+
+  it('reports exhausted plan usage while authorizing an active permanent pack', async () => {
+    const coreNode = {
+      id: 'node_core',
+      label: 'Core node',
+      active: true,
+      lifecycleStatus: 'ACTIVE',
+      region: 'US',
+    };
+    const grant = (
+      id: string,
+      kind: 'PLAN' | 'TRAFFIC_PACK',
+      consumedBytes: bigint,
+    ) => ({
+      id,
+      kind,
+      endsAt: new Date('9999-12-31T23:59:59.999Z'),
+      speedUpMbpsSnapshot: 100,
+      speedDownMbpsSnapshot: 300,
+      deviceLimitSnapshot: 1000,
+      quotaBuckets: [{ grantedBytes: 100n, consumedBytes }],
+      product: {
+        name: kind === 'PLAN' ? 'Core plan' : 'Permanent pack',
+        requiresActivePlan: false,
+      },
+      accessProfile: {
+        nodeBindings: [{ priority: 0, node: coreNode }],
+      },
+    });
+    const prisma = {
+      entitlementGrant: {
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([
+            grant('grant_plan', 'PLAN', 100n),
+            grant('grant_pack', 'TRAFFIC_PACK', 50n),
+          ]),
+      },
+      quotaBucket: { upsert: jest.fn() },
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'user_1',
+          status: 'ACTIVE',
+        }),
+      },
+    };
+    const service = new EntitlementService(prisma as never);
+
+    await expect(service.resolveAccess('user_1')).resolves.toMatchObject({
+      allowed: true,
+      totalBytes: 200,
+      consumedBytes: 150,
+      remainingBytes: 50,
+      grants: [{ id: 'grant_pack', kind: 'traffic_pack' }],
+      nodes: [{ id: 'node_core' }],
+    });
   });
 
   it('spends plan quota before an earlier-expiring traffic pack', async () => {

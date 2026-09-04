@@ -52,7 +52,9 @@ function ForgotPasswordForm() {
   return (
     <AuthShell active="reset">
       <h1 className="auth2-form-title">找回密码</h1>
-      <p className="auth2-form-sub">输入注册邮箱，我们会发送一条 30 分钟内有效的重置链接。</p>
+      <p className="auth2-form-sub">
+        输入注册邮箱，我们会发送一条 30 分钟内有效的重置链接。
+      </p>
       {complete ? (
         <div className="form-grid">
           <div className="feedback success" role="status">
@@ -64,23 +66,37 @@ function ForgotPasswordForm() {
         </div>
       ) : (
         <form className="auth2-fields" onSubmit={submit}>
-          <label className="auth2-input">
-            <span className="auth2-input-icon"><Icon name="mail" /></span>
-            <input
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="注册邮箱"
-              autoComplete="email"
-              required
-            />
-          </label>
-          {error ? <div className="feedback error" role="alert">{error}</div> : null}
+          <div className="auth2-field-stack">
+            <label className="auth2-input">
+              <span className="auth2-input-icon">
+                <Icon name="mail" />
+              </span>
+              <span className="auth2-field-body">
+                <span className="auth2-field-label">注册邮箱</span>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="邮箱地址"
+                  autoComplete="email"
+                  required
+                />
+              </span>
+            </label>
+          </div>
+          {error ? (
+            <div className="feedback error" role="alert">
+              {error}
+            </div>
+          ) : null}
           <button className="auth2-submit" type="submit" disabled={submitting}>
             {submitting ? "发送中..." : "发送重置链接"}
           </button>
           <div className="auth2-foot">
-            想起密码了？<Link className="auth2-link" href="/login">返回登录</Link>
+            想起密码了？
+            <Link className="auth2-link" href="/login">
+              返回登录
+            </Link>
           </div>
         </form>
       )}

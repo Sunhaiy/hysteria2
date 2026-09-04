@@ -65,6 +65,14 @@ describe('AuthService sessions', () => {
     expect(response.user).not.toHaveProperty('passwordHash');
   });
 
+  it('normalizes the login email with the same rule used by password reset', async () => {
+    const { service, store } = createService('active');
+
+    await service.login('Member@Example.com', 'correct-password');
+
+    expect(store.findUserByEmail).toHaveBeenCalledWith('member@example.com');
+  });
+
   it('consumes a one-time reset token without storing the raw token or password', async () => {
     const { service, store } = createService('active');
 

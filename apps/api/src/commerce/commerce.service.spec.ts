@@ -881,6 +881,136 @@ describe('CommerceService checkout', () => {
     });
   });
 
+  it('grants an anniversary traffic pack as a zero-revenue entitlement', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-03T08:00:00.000Z'));
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest
+          .fn()
+          .mockImplementation(({ data }) =>
+            Promise.resolve({ id: 'order_gift', ...data }),
+          ),
+      },
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'user_1',
+          status: 'ACTIVE',
+          balanceCents: 0,
+        }),
+        updateMany: jest.fn(),
+      },
+      catalogOffer: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'offer_200g',
+          slug: 'gift-200g-permanent',
+          name: '永久',
+          active: true,
+          archivedAt: null,
+          billingPeriod: 'ONE_TIME',
+          intervalMonths: null,
+          trafficBytes: 200n * 1024n * 1024n * 1024n,
+          priceCents: 12_200,
+          currency: 'CNY',
+          legacyPlanOfferId: null,
+          legacyPlanOffer: null,
+          product: {
+            id: 'product_200g',
+            name: '200GB 流量包',
+            kind: 'TRAFFIC_PACK',
+            series: 'STANDARD',
+            quotaCadence: 'ONE_TIME',
+            status: 'ACTIVE',
+            accessProfileId: 'profile_standard',
+            legacyPlanId: null,
+            legacyTrafficPackProductId: null,
+            legacyPlan: null,
+            purchaseLimitPerUser: null,
+            purchaseLimitKey: null,
+            requiresActivePlan: false,
+            defaultTrafficMultiplierBasisPoints: 10000,
+            accessProfile: {
+              active: true,
+              speedUpMbps: 300,
+              speedDownMbps: 300,
+              deviceLimit: 999,
+            },
+          },
+        }),
+      },
+      accessProfileNode: {
+        findFirst: jest.fn().mockResolvedValue({ nodeId: 'node_1' }),
+      },
+      accessAccount: {
+        upsert: jest.fn().mockResolvedValue({ id: 'account_1' }),
+      },
+      trafficPack: {
+        create: jest.fn().mockResolvedValue({ id: 'traffic_pack_gift' }),
+      },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const entitlements = {
+      grantFromOrder: jest.fn().mockResolvedValue({ id: 'grant_gift' }),
+    };
+    const prisma = {
+      $transaction: jest.fn((callback: (client: typeof tx) => unknown) =>
+        callback(tx),
+      ),
+    };
+    const service = new CommerceService(
+      prisma as never,
+      {} as never,
+      entitlements as never,
+    );
+
+    const result = await service.grantAnniversaryTrafficPack(
+      'user_1',
+      'offer_200g',
+      'anniversary-gift:first',
+    );
+
+    expect(result).toMatchObject({
+      orderId: 'order_gift',
+      chargedCents: 0,
+      kind: 'traffic_pack',
+    });
+    expect(tx.user.updateMany).not.toHaveBeenCalled();
+    const [packCreate] = tx.trafficPack.create.mock.calls[0] as unknown as [
+      { data: Record<string, unknown> },
+    ];
+    expect(packCreate.data).toMatchObject({
+      userId: 'user_1',
+      totalBytes: 200n * 1024n * 1024n * 1024n,
+      remainingBytes: 200n * 1024n * 1024n * 1024n,
+      expiresAt: null,
+    });
+    const [orderCreate] = tx.manualOrder.create.mock.calls[0] as unknown as [
+      { data: Record<string, unknown> },
+    ];
+    expect(orderCreate.data).toMatchObject({
+      source: 'ADMIN',
+      amountCents: 0,
+      discountCents: 12_200,
+      idempotencyKey: 'anniversary-gift:first',
+    });
+    const [auditCreate] = tx.auditLog.create.mock.calls[0] as unknown as [
+      { data: Record<string, unknown> },
+    ];
+    expect(auditCreate.data).toMatchObject({
+      actorId: undefined,
+      action: 'ANNIVERSARY_GIFT_CLAIMED',
+      targetId: 'order_gift',
+    });
+    expect(entitlements.grantFromOrder).toHaveBeenCalledWith(
+      {
+        orderId: 'order_gift',
+        subscriptionId: undefined,
+        trafficPackId: 'traffic_pack_gift',
+      },
+      tx,
+    );
+  });
+
   it('checks out a migrated legacy catalog offer using its day duration', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2027-01-31T08:00:00.000Z'));
     const tx = {

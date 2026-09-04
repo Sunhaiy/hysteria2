@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import type { NavItem } from "@/lib/copy";
 import { useAuth } from "./auth-provider";
 import { Icon } from "./icon";
-import { MemberAnnouncementDialog } from "./member-announcement-dialog";
+import { MemberPortalDialogs } from "./member-portal-dialogs";
 import { SidebarNav } from "./sidebar-nav";
 import { ConsoleSkeleton } from "./skeleton";
 import { useSite } from "./site-provider";
@@ -83,6 +83,9 @@ export function ConsoleShell({
         <div className="sidebar-header">
           <div className="sidebar-brand-row">
             <div className="brand-lockup">
+              <span className="sidebar-brand-mark" aria-hidden="true">
+                <Icon name="brand_logo" />
+              </span>
               <h1 className="brand-title">{site.name}</h1>
             </div>
             <button
@@ -139,7 +142,7 @@ export function ConsoleShell({
           {children}
         </div>
       </main>
-      {requireRole === "member" ? <MemberAnnouncementDialog /> : null}
+      {requireRole === "member" ? <MemberPortalDialogs /> : null}
     </div>
   );
 }
