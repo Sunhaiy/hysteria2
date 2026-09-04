@@ -5,11 +5,11 @@ import { selectHomepagePlans } from "../src/lib/homepage-plans.ts";
 
 const plan = (
   id,
-  featured = false,
+  homepageVisible = false,
   offers = [{ active: true, archivedAt: null }],
-) => ({ id, featured, offers });
+) => ({ id, homepageVisible, offers });
 
-test("homepage plans put featured products first while preserving backend order", () => {
+test("homepage plans include only the products selected by administrators", () => {
   const result = selectHomepagePlans([
     plan("start"),
     plan("pro", true),
@@ -17,18 +17,24 @@ test("homepage plans put featured products first while preserving backend order"
     plan("max", true),
   ]);
 
-  assert.deepEqual(result.map(({ id }) => id), ["pro", "max", "start", "plus"]);
+  assert.deepEqual(
+    result.map(({ id }) => id),
+    ["pro", "max"],
+  );
 });
 
-test("homepage plans fill open slots, exclude unavailable products, and stop at four", () => {
+test("homepage plans exclude unavailable products and stop at four", () => {
   const result = selectHomepagePlans([
     plan("go", true),
     plan("hidden", true, [{ active: false, archivedAt: null }]),
-    plan("start"),
-    plan("pro"),
-    plan("plus"),
-    plan("max"),
+    plan("start", true),
+    plan("pro", true),
+    plan("plus", true),
+    plan("max", true),
   ]);
 
-  assert.deepEqual(result.map(({ id }) => id), ["go", "start", "pro", "plus"]);
+  assert.deepEqual(
+    result.map(({ id }) => id),
+    ["go", "start", "pro", "plus"],
+  );
 });

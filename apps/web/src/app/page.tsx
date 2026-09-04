@@ -12,7 +12,12 @@ import { useSite } from "@/components/site-provider";
 import { TextGenerateEffect } from "@/components/text-generate-effect";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { apiRequest } from "@/lib/api";
-import { formatMoney, formatSpeedLimit, formatTrafficLimit } from "@/lib/format";
+import { calculateTermSavings } from "@/lib/catalog-pricing";
+import {
+  formatMoney,
+  formatSpeedLimit,
+  formatTrafficLimit,
+} from "@/lib/format";
 import { selectHomepagePlans } from "@/lib/homepage-plans";
 
 type PublicOffer = {
@@ -35,24 +40,18 @@ type PublicProduct = {
   name: string;
   description?: string | null;
   featured: boolean;
+  homepageVisible: boolean;
   access: {
     speedUpMbps: number;
     speedDownMbps: number;
     deviceLimit: number;
     availableServerCount: number;
+    availableNodeCount: number;
   };
   offers: PublicOffer[];
 };
 
 type PublicCatalog = { products: PublicProduct[] };
-
-const PERIOD_LABEL: Record<PublicOffer["billingPeriod"], string> = {
-  monthly: "/月",
-  quarterly: "/季",
-  yearly: "/年",
-  one_time: "/永久",
-  legacy: "/周期",
-};
 
 const STATS = [
   {
@@ -78,6 +77,19 @@ function primaryOffer(product: PublicProduct) {
     product.offers.find((offer) => offer.isDefault) ??
     product.offers[0]
   );
+}
+
+function yearlyValue(product: PublicProduct) {
+  const yearly = product.offers.find(
+    (offer) => offer.billingPeriod === "yearly" && offer.active,
+  );
+  if (!yearly) return null;
+  const savings = calculateTermSavings(product.offers, yearly);
+  if (!savings) return null;
+  return {
+    monthlyEquivalentCents: Math.round(yearly.priceCents / 12),
+    savingsPercent: savings.savingsPercent,
+  };
 }
 
 export default function HomePage() {
@@ -110,7 +122,11 @@ export default function HomePage() {
     <main className="ppanel-home" id="top">
       <header className="ppanel-header">
         <div className="ppanel-container ppanel-header-inner">
-          <Link className="ppanel-brand" href="/" aria-label={`${site.name} 首页`}>
+          <Link
+            className="ppanel-brand"
+            href="/"
+            aria-label={`${site.name} 首页`}
+          >
             <span className="ppanel-brand-mark" aria-hidden="true">
               <Icon name="brand_logo" />
             </span>
@@ -236,60 +252,94 @@ export default function HomePage() {
           {catalog === null ? (
             <div className="ppanel-plan-grid" aria-label="套餐加载中">
               {[0, 1, 2, 3].map((item) => (
-                <div className="ppanel-plan-card ppanel-plan-skeleton" key={item} />
+                <div
+                  className="plan-card premium-plan-card homepage-plan-card homepage-plan-skeleton"
+                  key={item}
+                />
               ))}
             </div>
           ) : plans.length ? (
             <div className="ppanel-plan-grid">
               {plans.map((product, index) => {
                 const offer = primaryOffer(product);
+                const annualValue = yearlyValue(product);
                 return (
                   <motion.article
-                    className="ppanel-plan-card"
+                    className={`plan-card premium-plan-card homepage-plan-card${product.featured ? " featured" : ""}`}
                     initial={{ opacity: 0, y: 50 }}
                     key={product.id}
                     transition={{ duration: 0.5, delay: index * 0.1 }}
                     viewport={{ once: true, amount: 0.5 }}
                     whileInView={{ opacity: 1, y: 0 }}
                   >
-                    <header>
-                      <h3>{product.name}</h3>
-                      {product.featured ? <span>推荐</span> : null}
-                    </header>
-                    <div className="ppanel-plan-content">
-                      <p>{product.description || "稳定线路，购买后即可使用。"}</p>
-                      <ul>
-                        <li>
-                          <Icon name="check" />
-                          <span>每周期 {formatTrafficLimit(offer.trafficBytes)} 流量</span>
-                        </li>
-                        <li>
-                          <Icon name="check" />
-                          <span>最高 {formatSpeedLimit(product.access.speedDownMbps)}</span>
-                        </li>
-                        <li>
-                          <Icon name="check" />
-                          <span>
-                            {product.access.deviceLimit >= 99
-                              ? "不限设备"
-                              : `${product.access.deviceLimit} 台设备`}
-                          </span>
-                        </li>
-                        <li>
-                          <Icon name="check" />
-                          <span>{product.access.availableServerCount} 个可用节点</span>
-                        </li>
-                      </ul>
-                    </div>
-                    <footer>
-                      <div className="ppanel-plan-price">
-                        <strong>{formatMoney(offer.priceCents)}</strong>
-                        <span>{PERIOD_LABEL[offer.billingPeriod]}</span>
+                    <div className="plan-card-head">
+                      <div className="plan-card-copy">
+                        <div className="plan-card-title-row">
+                          <h3 className="panel-title plan-card-title">
+                            <span aria-hidden="true" />
+                            {product.name}
+                          </h3>
+                          {product.featured ? (
+                            <div className="plan-card-labels">
+                              <span className="badge success">推荐</span>
+                            </div>
+                          ) : null}
+                        </div>
+                        <span className="panel-copy">
+                          {product.description || "标准会员套餐"}
+                        </span>
                       </div>
-                      <motion.div className="ppanel-plan-action">
-                        <Link href="/portal/plans">订阅</Link>
-                      </motion.div>
-                    </footer>
+                    </div>
+                    <div className="panel-body">
+                      <div className="plan-price-block">
+                        <div className="price-line">
+                          {formatMoney(offer.priceCents)}
+                          <span>起</span>
+                        </div>
+                        <span className="plan-price-caption">
+                          每月 {formatTrafficLimit(offer.trafficBytes)}
+                        </span>
+                        {annualValue ? (
+                          <span className="plan-price-saving">
+                            年付月均{" "}
+                            {formatMoney(annualValue.monthlyEquivalentCents)} ·
+                            省 {annualValue.savingsPercent}%
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="plan-benefit-list">
+                        <div>
+                          <Icon name="network_node" />
+                          <span>
+                            每月可用{" "}
+                            <strong>
+                              {formatTrafficLimit(offer.trafficBytes)}
+                            </strong>
+                            {" 流量"}
+                          </span>
+                        </div>
+                        <div>
+                          <Icon name="bolt" />
+                          <span>
+                            上行 {formatSpeedLimit(product.access.speedUpMbps)}{" "}
+                            · 下行{" "}
+                            {formatSpeedLimit(product.access.speedDownMbps)}
+                          </span>
+                        </div>
+                        <div>
+                          <Icon name="globe" />
+                          <span>
+                            {product.access.availableNodeCount} 个可用节点 ·
+                            稳定线路自动更新
+                          </span>
+                        </div>
+                      </div>
+                      <div className="plan-card-footer">
+                        <Link className="action-button" href="/portal/plans">
+                          查看套餐
+                        </Link>
+                      </div>
+                    </div>
                   </motion.article>
                 );
               })}
@@ -317,7 +367,9 @@ export default function HomePage() {
             whileInView={{ opacity: 1, y: 0 }}
           >
             <h2>全球连接，轻松无忧</h2>
-            <p>探索无缝的全球连接。选择适合您需求的网络服务，随时随地保持连接。</p>
+            <p>
+              探索无缝的全球连接。选择适合您需求的网络服务，随时随地保持连接。
+            </p>
           </motion.header>
           <motion.div
             animate={{ scale: 1, opacity: 1 }}
@@ -342,7 +394,6 @@ export default function HomePage() {
 
       <footer className="ppanel-footer">
         <div className="ppanel-container ppanel-footer-inner">
-          <div />
           <div className="ppanel-footer-copy">
             <strong>{site.name}</strong> © {new Date().getFullYear()} 版权所有。
           </div>

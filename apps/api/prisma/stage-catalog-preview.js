@@ -113,6 +113,7 @@ async function stagePlan(tx, plan, index, nodeIds) {
       accent: plan.accent,
       sortOrder: (index + 1) * 10,
       featured: plan.featured,
+      homepageVisible: index < 4,
       purchaseLimitPerUser: plan.purchaseLimitPerUser ?? null,
       purchaseLimitKey: plan.purchaseLimitKey ?? null,
       requiresActivePlan: false,

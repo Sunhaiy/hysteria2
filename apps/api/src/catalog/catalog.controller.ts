@@ -17,6 +17,7 @@ import {
   CreateAccessProfileDto,
   CreatePlanOfferDto,
   UpdateAccessProfileDto,
+  UpdateHomepageProductsDto,
   UpdatePlanOfferDto,
   SaveCatalogProductDto,
 } from './catalog.dto';
@@ -47,6 +48,11 @@ export class CatalogController {
     @CurrentPrincipal() principal: SessionPrincipal,
   ) {
     return this.catalog.updateProduct(id, body, principal.sub);
+  }
+
+  @Patch('homepage-products')
+  updateHomepageProducts(@Body() body: UpdateHomepageProductsDto) {
+    return this.catalog.updateHomepageProducts(body);
   }
 
   @Get('access-profiles')

@@ -41,6 +41,7 @@ type Product = {
   accent: string;
   sortOrder: number;
   featured: boolean;
+  homepageVisible: boolean;
   purchaseLimitPerUser?: number | null;
   purchaseLimitKey?: string | null;
   requiresActivePlan: boolean;
@@ -78,6 +79,11 @@ type CatalogServer = {
   }>;
 };
 type Catalog = { products: Product[]; servers: CatalogServer[] };
+const isHomepageEligible = (product: Product) =>
+  product.kind === "plan" &&
+  product.series === "standard" &&
+  product.status === "active" &&
+  product.offers.some((offer) => offer.active && !offer.archivedAt);
 type ProductForm = {
   slug: string;
   kind: "plan" | "traffic_pack";
@@ -181,6 +187,8 @@ export default function CatalogPage() {
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [homepageBusy, setHomepageBusy] = useState(false);
+  const [homepageProductIds, setHomepageProductIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [ultraNotice, setUltraNotice] = useState({
     enabled: true,
@@ -205,6 +213,13 @@ export default function CatalogPage() {
         }>("/api/admin/settings", { token }),
       ]);
       setCatalog(nextCatalog);
+      setHomepageProductIds(
+        nextCatalog.products
+          .filter(
+            (product) => product.homepageVisible && isHomepageEligible(product),
+          )
+          .map((product) => product.id),
+      );
       setUltraNotice(settings.branding.ultraPurchaseNotice);
       setError(null);
     } catch (cause) {
@@ -229,6 +244,57 @@ export default function CatalogPage() {
       ),
     [catalog.products, kindFilter, statusFilter],
   );
+  const homepageProducts = useMemo(
+    () => catalog.products.filter(isHomepageEligible),
+    [catalog.products],
+  );
+
+  function toggleHomepageProduct(productId: string) {
+    if (homepageProductIds.includes(productId)) {
+      setHomepageProductIds((current) =>
+        current.filter((id) => id !== productId),
+      );
+      setError(null);
+      return;
+    }
+    if (homepageProductIds.length >= 4) {
+      setError("首页最多展示 4 个套餐，请先取消一个已选套餐。");
+      return;
+    }
+    setHomepageProductIds((current) => [...current, productId]);
+    setError(null);
+  }
+
+  async function saveHomepageProducts() {
+    if (!token) return;
+    setHomepageBusy(true);
+    setError(null);
+    try {
+      const nextCatalog = await apiRequest<Catalog>(
+        "/api/admin/catalog/homepage-products",
+        {
+          method: "PATCH",
+          token,
+          body: { productIds: homepageProductIds },
+        },
+      );
+      setCatalog(nextCatalog);
+      setHomepageProductIds(
+        nextCatalog.products
+          .filter(
+            (product) => product.homepageVisible && isHomepageEligible(product),
+          )
+          .map((product) => product.id),
+      );
+      setFeedback("首页展示套餐已更新。");
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError ? cause.message : "首页展示套餐保存失败。",
+      );
+    } finally {
+      setHomepageBusy(false);
+    }
+  }
 
   function openProduct(product?: Product) {
     setEditing(product ?? null);
@@ -470,6 +536,58 @@ export default function CatalogPage() {
           />
         </div>
         <Panel
+          className="homepage-products-panel"
+          title="首页套餐展示"
+          copy="最多选择 4 个上架套餐，保存后按商品排序显示在网站首页。"
+          action={
+            <button
+              className="action-button compact"
+              disabled={homepageBusy}
+              onClick={() => void saveHomepageProducts()}
+              type="button"
+            >
+              <Icon name="check" />
+              {homepageBusy ? "保存中..." : "保存首页展示"}
+            </button>
+          }
+        >
+          <div className="homepage-product-picker" aria-label="首页展示套餐">
+            {homepageProducts.map((product) => {
+              const selected = homepageProductIds.includes(product.id);
+              const monthlyOffer = product.offers.find(
+                (offer) => offer.billingPeriod === "monthly" && offer.active,
+              );
+              return (
+                <button
+                  aria-pressed={selected}
+                  className={`homepage-product-option${selected ? " selected" : ""}`}
+                  key={product.id}
+                  onClick={() => toggleHomepageProduct(product.id)}
+                  type="button"
+                >
+                  <span className="homepage-product-check" aria-hidden="true">
+                    <Icon name={selected ? "check" : "add"} />
+                  </span>
+                  <span>
+                    <strong>{product.name}</strong>
+                    <small>
+                      {monthlyOffer
+                        ? `${formatMoney(monthlyOffer.priceCents)} / 月`
+                        : "无月付规格"}
+                    </small>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {!homepageProducts.length ? (
+            <div className="empty-state compact">暂无可选择的上架套餐。</div>
+          ) : null}
+          <div className="homepage-product-count">
+            已选择 {homepageProductIds.length} / 4
+          </div>
+        </Panel>
+        <Panel
           className="admin-data-panel"
           title="统一商品列表"
           copy="套餐和流量包使用同一状态筛选与编辑流程。"
@@ -540,7 +658,7 @@ export default function CatalogPage() {
                     .join(" · "),
               <span className="list" key={`${product.id}-rules`}>
                 <span>{product.access.speedDownMbps} Mbps · 不限设备</span>
-                {product.featured ? <small>商城推荐及首页展示</small> : null}
+                {product.featured ? <small>商城推荐</small> : null}
                 {product.purchaseLimitPerUser ? (
                   <small>每账号限购 {product.purchaseLimitPerUser} 次</small>
                 ) : null}
@@ -795,7 +913,7 @@ export default function CatalogPage() {
                     }))
                   }
                 />
-                <span>商城推荐及首页展示（首页最多展示 4 个）</span>
+                <span>商城推荐</span>
               </label>
               <label className="checkbox-row">
                 <input

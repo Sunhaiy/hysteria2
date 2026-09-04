@@ -1121,6 +1121,7 @@ model CatalogProduct {
   accent                              String               @default("green")
   sortOrder                           Int                  @default(0)
   featured                            Boolean              @default(false)
+  homepageVisible                     Boolean              @default(false)
   purchaseLimitPerUser                Int?
   purchaseLimitKey                    String?
   requiresActivePlan                  Boolean              @default(false)
@@ -1136,6 +1137,7 @@ model CatalogProduct {
 
   @@index([kind, status, sortOrder])
   @@index([series, status, sortOrder])
+  @@index([homepageVisible, status, sortOrder])
   @@index([accessProfileId, status])
   @@index([purchaseLimitKey])
 }

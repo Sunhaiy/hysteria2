@@ -29,12 +29,18 @@ test("public homepage follows the PPanel landing structure with backend-selected
   assert.match(home, /selectHomepagePlans\(catalog\?\.products \?\? \[\], 4\)/);
   assert.match(home, /className="ppanel-stats"/);
   assert.match(home, /className="ppanel-plan-grid"/);
+  assert.match(home, /plan-card premium-plan-card homepage-plan-card/);
   assert.match(home, /选择您的套餐/);
   assert.match(home, /全球连接，轻松无忧/);
   assert.match(home, /className="ppanel-footer"/);
   assert.doesNotMatch(home, /<HomeIntroBento/);
   assert.doesNotMatch(home, /<HomeFaq/);
-  assert.match(catalog, /商城推荐及首页展示（首页最多展示 4 个）/);
+  assert.match(catalog, /首页套餐展示/);
+  assert.match(catalog, /最多选择 4 个上架套餐/);
+  assert.match(catalog, /\/api\/admin\/catalog\/homepage-products/);
+  assert.match(catalog, /保存首页展示/);
+  assert.match(catalog, /商城推荐/);
+  assert.doesNotMatch(catalog, /商城推荐及首页展示/);
   assert.match(lottie, /@lottiefiles\/dotlottie-react/);
   assert.match(lottie, /IntersectionObserver/);
   assert.match(hoverButton, /radial-gradient/);
@@ -132,7 +138,7 @@ test("catalog uses one product quota while offers only edit prices and links", a
   );
   assert.match(catalog, /三档共用下方节点/);
   assert.match(catalog, /Ultra 专属/);
-  assert.match(catalog, /速率固定为上下行 300 Mbps，倍率固定为 1x/);
+  assert.match(catalog, /速率固定为上下行\s*300 Mbps，倍率固定为 1x/);
 });
 
 test("node operations separate access and runtime service controls", async () => {

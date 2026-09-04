@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   ArrayUnique,
   IsArray,
   IsBoolean,
@@ -173,6 +174,14 @@ export class CatalogOfferInputDto {
   @IsOptional()
   @IsBoolean()
   isDefault?: boolean;
+}
+
+export class UpdateHomepageProductsDto {
+  @IsArray()
+  @ArrayUnique()
+  @ArrayMaxSize(4)
+  @IsString({ each: true })
+  productIds!: string[];
 }
 
 export class SaveCatalogProductDto {

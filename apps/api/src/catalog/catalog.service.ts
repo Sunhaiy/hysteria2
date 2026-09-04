@@ -19,11 +19,12 @@ import type {
   CreateAccessProfileDto,
   CreatePlanOfferDto,
   UpdateAccessProfileDto,
+  UpdateHomepageProductsDto,
   UpdatePlanOfferDto,
   SaveCatalogProductDto,
 } from './catalog.dto';
 
-const portalCatalogCacheKey = 'catalog:portal:v2';
+const portalCatalogCacheKey = 'catalog:portal:v3';
 const ultraAccessProfileId = 'catalog-ultra-shared';
 
 @Injectable()
@@ -150,6 +151,7 @@ export class CatalogService {
           description: product.description,
           accent: product.accent,
           featured: product.featured,
+          homepageVisible: product.homepageVisible,
           series: (product.series ?? 'standard').toLowerCase(),
           quotaCadence: (product.quotaCadence ?? 'monthly_reset').toLowerCase(),
           purchaseLimitPerUser: product.purchaseLimitPerUser,
@@ -161,6 +163,11 @@ export class CatalogService {
             availableServerCount: product.access.servers.filter((server) =>
               server.nodes.some((node) => node.serviceable),
             ).length,
+            availableNodeCount: product.access.servers.reduce(
+              (count, server) =>
+                count + server.nodes.filter((node) => node.serviceable).length,
+              0,
+            ),
           },
           offers: product.offers
             .filter((offer) => offer.active && !offer.archivedAt)
@@ -377,6 +384,47 @@ export class CatalogService {
     });
     await this.invalidatePortalCatalog();
     return this.getUnifiedProduct(id);
+  }
+
+  async updateHomepageProducts(input: UpdateHomepageProductsDto) {
+    await this.prisma.$transaction(async (tx) => {
+      const selected = input.productIds.length
+        ? await tx.catalogProduct.findMany({
+            where: {
+              id: { in: input.productIds },
+              kind: CatalogProductKind.PLAN,
+              series: CatalogProductSeries.STANDARD,
+              status: CatalogProductStatus.ACTIVE,
+              systemManaged: false,
+              offers: {
+                some: {
+                  active: true,
+                  archivedAt: null,
+                },
+              },
+            },
+            select: { id: true },
+          })
+        : [];
+      if (selected.length !== input.productIds.length) {
+        throw new BadRequestException(
+          'Homepage products must be purchasable active standard plans',
+        );
+      }
+
+      await tx.catalogProduct.updateMany({
+        where: { homepageVisible: true },
+        data: { homepageVisible: false },
+      });
+      if (input.productIds.length) {
+        await tx.catalogProduct.updateMany({
+          where: { id: { in: input.productIds } },
+          data: { homepageVisible: true },
+        });
+      }
+    });
+    await this.invalidatePortalCatalog();
+    return this.getAdminCatalog();
   }
 
   async updateProduct(
@@ -918,6 +966,7 @@ export class CatalogService {
         accent: product.accent,
         sortOrder: product.sortOrder,
         featured: product.featured,
+        homepageVisible: product.homepageVisible,
         purchaseLimitPerUser: product.purchaseLimitPerUser,
         purchaseLimitKey: product.purchaseLimitKey,
         requiresActivePlan: product.requiresActivePlan,

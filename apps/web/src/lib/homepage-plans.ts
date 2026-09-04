@@ -5,7 +5,7 @@ export type HomepagePlanOffer = {
 
 export type HomepagePlan = {
   id: string;
-  featured: boolean;
+  homepageVisible: boolean;
   offers: HomepagePlanOffer[];
 };
 
@@ -21,8 +21,9 @@ export function selectHomepagePlans<T extends HomepagePlan>(
 ) {
   if (limit <= 0) return [];
 
-  const purchasable = products.filter(hasPurchasableOffer);
-  const featured = purchasable.filter((product) => product.featured);
-  const remaining = purchasable.filter((product) => !product.featured);
-  return [...featured, ...remaining].slice(0, limit);
+  return products
+    .filter(
+      (product) => product.homepageVisible && hasPurchasableOffer(product),
+    )
+    .slice(0, limit);
 }

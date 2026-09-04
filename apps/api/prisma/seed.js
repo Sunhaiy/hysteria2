@@ -518,6 +518,7 @@ async function main() {
         speedDownMbps: 120,
         accent: 'green',
         sortOrder: 10,
+        homepageVisible: true,
       },
       {
         id: 'catalog_pro',
@@ -533,6 +534,7 @@ async function main() {
         speedDownMbps: 240,
         accent: 'teal',
         sortOrder: 20,
+        homepageVisible: true,
       },
       {
         id: 'catalog_pack_50g',

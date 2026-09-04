@@ -674,7 +674,7 @@ describe('CatalogService publishing rules', () => {
 
     await service.archiveOffer('offer_1');
 
-    expect(cache.del).toHaveBeenCalledWith('catalog:portal:v2');
+    expect(cache.del).toHaveBeenCalledWith('catalog:portal:v3');
   });
 
   it('returns only public plan fields for the landing page', async () => {
@@ -690,6 +690,7 @@ describe('CatalogService publishing rules', () => {
           description: 'Everyday plan',
           accent: 'green',
           featured: true,
+          homepageVisible: true,
           purchaseLimitPerUser: null,
           purchaseLimitKey: null,
           requiresActivePlan: false,
@@ -755,10 +756,72 @@ describe('CatalogService publishing rules', () => {
     expect(catalog.products[0]).toMatchObject({
       id: 'product_1',
       name: 'Pro',
-      access: { availableServerCount: 1 },
+      homepageVisible: true,
+      access: { availableServerCount: 1, availableNodeCount: 1 },
       offers: [{ id: 'offer_1', priceCents: 1690 }],
     });
     expect(catalog.products[0]).not.toHaveProperty('access.servers');
     expect(catalog.products[0].offers[0]).not.toHaveProperty('storeUrl');
+  });
+
+  it('atomically updates the independently selected homepage products', async () => {
+    const tx = {
+      catalogProduct: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ id: 'plan_1' }, { id: 'plan_2' }]),
+        updateMany: jest.fn().mockResolvedValue({ count: 2 }),
+      },
+    };
+    const cache = { del: jest.fn().mockResolvedValue(undefined) };
+    const service = serviceWith(tx, cache);
+    jest
+      .spyOn(service, 'getAdminCatalog')
+      .mockResolvedValue({ products: [] } as never);
+
+    await service.updateHomepageProducts({ productIds: ['plan_1', 'plan_2'] });
+
+    expect(tx.catalogProduct.findMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: ['plan_1', 'plan_2'] },
+        kind: 'PLAN',
+        series: 'STANDARD',
+        status: 'ACTIVE',
+        systemManaged: false,
+        offers: {
+          some: {
+            active: true,
+            archivedAt: null,
+          },
+        },
+      },
+      select: { id: true },
+    });
+    expect(tx.catalogProduct.updateMany).toHaveBeenNthCalledWith(1, {
+      where: { homepageVisible: true },
+      data: { homepageVisible: false },
+    });
+    expect(tx.catalogProduct.updateMany).toHaveBeenNthCalledWith(2, {
+      where: { id: { in: ['plan_1', 'plan_2'] } },
+      data: { homepageVisible: true },
+    });
+    expect(cache.del).toHaveBeenCalledWith('catalog:portal:v3');
+  });
+
+  it('rejects homepage selections containing unavailable products', async () => {
+    const tx = {
+      catalogProduct: {
+        findMany: jest.fn().mockResolvedValue([{ id: 'plan_1' }]),
+        updateMany: jest.fn(),
+      },
+    };
+    const service = serviceWith(tx);
+
+    await expect(
+      service.updateHomepageProducts({ productIds: ['plan_1', 'draft_1'] }),
+    ).rejects.toThrow(
+      'Homepage products must be purchasable active standard plans',
+    );
+    expect(tx.catalogProduct.updateMany).not.toHaveBeenCalled();
   });
 });
