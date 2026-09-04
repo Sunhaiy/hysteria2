@@ -128,11 +128,13 @@ test("all interface icons use Hugeicons with an admin-controlled stroke width", 
 });
 
 test("the Suit 01 Hugeicon is used as the visible brand mark", async () => {
-  const [home, authShell, consoleShell, styles] = await Promise.all([
+  const [home, authShell, consoleShell, styles, layout, siteProvider] = await Promise.all([
     source("app/page.tsx"),
     source("components/auth-shell.tsx"),
     source("components/console-shell.tsx"),
     source("app/globals.scss"),
+    source("app/layout.tsx"),
+    source("components/site-provider.tsx"),
   ]);
 
   assert.match(home, /ppanel-brand-mark[\s\S]*?<Icon name="brand_logo"/);
@@ -145,6 +147,8 @@ test("the Suit 01 Hugeicon is used as the visible brand mark", async () => {
   )?.[1];
   assert.ok(sidebarBrandMark);
   assert.doesNotMatch(sidebarBrandMark, /background|border/);
+  assert.match(layout, /brand-icon\.svg/);
+  assert.match(siteProvider, /iconUrl:\s*"\/brand-icon\.svg"/);
 });
 
 test("authentication text remains monochrome", async () => {

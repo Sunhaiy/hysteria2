@@ -24,7 +24,7 @@ const defaultSite: SiteInfo = {
   name: "Hysteria 2",
   description: "",
   browserTitle: "Hysteria 2",
-  iconUrl: "/favicon.ico",
+  iconUrl: "/brand-icon.svg",
   fontWeight: 400,
   iconStrokeWidth: 1.5,
 };
@@ -41,6 +41,11 @@ function normalizeFontWeight(value: number | undefined) {
 function normalizeIconStrokeWidth(value: number | undefined) {
   if (!Number.isFinite(value)) return defaultSite.iconStrokeWidth;
   return Math.min(3, Math.max(1, Math.round(Number(value) * 10) / 10));
+}
+
+function normalizeSiteIconUrl(value: string | undefined) {
+  const iconUrl = value?.trim();
+  return !iconUrl || iconUrl === "/favicon.ico" ? "/brand-icon.svg" : iconUrl;
 }
 
 const SiteContext = createContext<SiteInfo>(defaultSite);
@@ -81,6 +86,7 @@ export function SiteProvider({ children }: { children: ReactNode }) {
       if (!info?.name) return;
       const next = {
         ...info,
+        iconUrl: normalizeSiteIconUrl(info.iconUrl),
         fontWeight: normalizeFontWeight(info.fontWeight),
         iconStrokeWidth: normalizeIconStrokeWidth(info.iconStrokeWidth),
       };
@@ -124,7 +130,7 @@ export function SiteProvider({ children }: { children: ReactNode }) {
       icon.rel = "icon";
       document.head.appendChild(icon);
     }
-    icon.href = site.iconUrl || "/favicon.ico";
+    icon.href = normalizeSiteIconUrl(site.iconUrl);
   }, [pathname, site]);
 
   return <SiteContext.Provider value={site}>{children}</SiteContext.Provider>;

@@ -565,7 +565,10 @@ export class SettingsService {
       name,
       description: map.get('site.description') || '',
       browserTitle: map.get('site.browserTitle') || name,
-      iconUrl: map.get('site.iconUrl') || '/favicon.ico',
+      iconUrl:
+        !map.get('site.iconUrl') || map.get('site.iconUrl') === '/favicon.ico'
+          ? '/brand-icon.svg'
+          : map.get('site.iconUrl')!,
       fontWeight,
       iconStrokeWidth,
     };

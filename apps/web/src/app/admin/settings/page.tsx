@@ -802,7 +802,7 @@ export default function AdminSettingsPage() {
                   <div className="site-icon-preview">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={siteIconUrl || "/favicon.ico"}
+                      src={siteIconUrl || "/brand-icon.svg"}
                       alt="站点图标预览"
                     />
                   </div>
@@ -833,7 +833,7 @@ export default function AdminSettingsPage() {
                       <button
                         className="ghost-button"
                         type="button"
-                        onClick={() => setSiteIconUrl("/favicon.ico")}
+                        onClick={() => setSiteIconUrl("/brand-icon.svg")}
                       >
                         恢复默认
                       </button>

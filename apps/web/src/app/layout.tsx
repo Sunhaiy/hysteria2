@@ -11,6 +11,10 @@ const themeBootstrap = `(function(){try{var t=localStorage.getItem('theme');if(t
 export const metadata: Metadata = {
   title: "Hysteria 2 Control Plane",
   description: "Operator-first membership and traffic management console for Hysteria 2 and VLESS + REALITY.",
+  icons: {
+    icon: [{ url: "/brand-icon.svg", type: "image/svg+xml" }],
+    shortcut: "/brand-icon.svg",
+  },
 };
 
 export default function RootLayout({
