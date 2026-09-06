@@ -11725,7 +11725,8 @@ select.control {
 }
 
 .checkout-offer-options,
-.checkout-payment-options {
+.checkout-payment-options,
+.checkout-purchase-action-options {
   display: grid;
   gap: 8px;
 }
@@ -11807,6 +11808,97 @@ select.control {
 
 .checkout-payment-options {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.checkout-purchase-action-options {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.checkout-purchase-action-options > button {
+  display: grid;
+  min-width: 0;
+  min-height: 72px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 7px;
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  text-align: left;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.checkout-purchase-action-options > button:hover {
+  border-color: var(--border-strong);
+}
+
+.checkout-purchase-action-options > button.selected {
+  border-color: var(--accent-500);
+  background: var(--accent-500);
+  color: #fff;
+}
+
+.checkout-purchase-action-options .icon-slot {
+  width: 18px;
+  height: 18px;
+}
+
+.checkout-purchase-action-options button > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.checkout-purchase-action-options strong {
+  font-size: 12px;
+}
+
+.checkout-purchase-action-options small {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.checkout-purchase-action-options button.selected small {
+  color: rgb(255 255 255 / 78%);
+}
+
+.checkout-reset-preview > div:last-child {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 7px;
+  background: var(--bg-panel);
+}
+
+.checkout-reset-preview > div:last-child > span {
+  display: grid;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.checkout-reset-preview > div:last-child > span:last-child {
+  text-align: right;
+}
+
+.checkout-reset-preview > div:last-child strong {
+  color: var(--text-primary);
+  font-size: 15px;
+}
+
+.checkout-reset-preview > div:last-child > .icon-slot {
+  width: 16px;
+  height: 16px;
+  color: var(--accent-400);
 }
 
 .checkout-payment-options > button {
@@ -11909,6 +12001,10 @@ select.control {
   }
 
   .checkout-offer-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .checkout-purchase-action-options {
     grid-template-columns: minmax(0, 1fr);
   }
 

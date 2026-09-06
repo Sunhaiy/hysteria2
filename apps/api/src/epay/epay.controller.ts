@@ -35,6 +35,7 @@ export class EpayController {
       idempotencyKey,
       body.discountCode,
       body.paymentType,
+      body.purchaseAction,
     );
   }
 

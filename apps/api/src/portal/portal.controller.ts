@@ -218,7 +218,11 @@ export class PortalController {
 
   private toCheckoutInput(body: CheckoutDto): CheckoutInput {
     if (body.offerId) {
-      return { offerId: body.offerId, discountCode: body.discountCode };
+      return {
+        offerId: body.offerId,
+        discountCode: body.discountCode,
+        purchaseAction: body.purchaseAction,
+      };
     }
     if (!body.kind || !body.productId) {
       throw new BadRequestException(

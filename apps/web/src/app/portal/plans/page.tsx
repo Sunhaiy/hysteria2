@@ -12,6 +12,7 @@ import {
   formatMoney,
   formatSpeedLimit,
   formatTrafficLimit,
+  formatDateTime,
 } from "@/lib/format";
 import { calculateTermSavings } from "@/lib/catalog-pricing";
 import { sortCatalogProductsByPrice } from "@/lib/catalog-sort";
@@ -78,10 +79,13 @@ type Quote = {
   finalPriceCents: number;
   balanceCents: number;
   sufficient: boolean;
-  purchaseMode: "initial" | "upgrade";
+  purchaseMode: "initial" | "upgrade" | "plan_reset";
   upgradeFromProductId?: string | null;
   upgradeFromProductName?: string | null;
   resetAnchorAt?: string | null;
+  resetCurrentRemainingBytes?: number | null;
+  resetCreditBytes?: number | null;
+  resetExpiresAt?: string | null;
 };
 type Branding = {
   purchaseMode: "balance" | "cdk";
@@ -209,6 +213,7 @@ export default function PortalPlansPage() {
   const [checkout, setCheckout] = useState<{
     product: Product;
     offer: Offer;
+    purchaseAction: "purchase" | "plan_reset";
   } | null>(null);
   const [paymentType, setPaymentType] = useState<"alipay" | "wxpay">("alipay");
   const [quote, setQuote] = useState<Quote | null>(null);
@@ -286,13 +291,14 @@ export default function PortalPlansPage() {
     ],
     [groups.plans],
   );
-  const checkoutSavings = checkout
-    ? calculateTermSavings(activeOffers(checkout.product), checkout.offer)
-    : null;
+  const checkoutSavings =
+    checkout && checkout.purchaseAction === "purchase"
+      ? calculateTermSavings(activeOffers(checkout.product), checkout.offer)
+      : null;
   const checkoutFinalPriceCents =
     quote?.finalPriceCents ?? checkout?.offer.priceCents ?? 0;
   const checkoutListPriceCents =
-    quote?.purchaseMode === "upgrade"
+    quote?.purchaseMode === "upgrade" || quote?.purchaseMode === "plan_reset"
       ? quote.basePriceCents
       : (checkoutSavings?.listPriceCents ??
         quote?.basePriceCents ??
@@ -307,10 +313,10 @@ export default function PortalPlansPage() {
           quote?.discountCents ?? 0,
         );
   const checkoutMonthlyEquivalentCents =
-    checkout?.offer.intervalMonths && checkout.offer.intervalMonths > 1
-      ? Math.round(
-          checkoutFinalPriceCents / checkout.offer.intervalMonths,
-        )
+    checkout?.purchaseAction === "purchase" &&
+    checkout.offer.intervalMonths &&
+    checkout.offer.intervalMonths > 1
+      ? Math.round(checkoutFinalPriceCents / checkout.offer.intervalMonths)
       : null;
   const checkoutNodeCount =
     checkout?.product.access.servers.reduce(
@@ -318,6 +324,9 @@ export default function PortalPlansPage() {
         total + server.nodes.filter((node) => node.serviceable).length,
       0,
     ) ?? 0;
+  const checkoutIsCurrentPlan =
+    checkout?.product.kind === "plan" &&
+    checkout.product.name === currentPlanName;
   function submitGateway(
     payment: EpayPayment,
     targetName: string,
@@ -390,7 +399,10 @@ export default function PortalPlansPage() {
     };
   }, [load, pendingPaymentId, token]);
 
-  async function fetchQuote(offer: Offer) {
+  async function fetchQuote(
+    offer: Offer,
+    purchaseAction: "purchase" | "plan_reset" = "purchase",
+  ) {
     if (!token) return;
     setBusy(true);
     setError(null);
@@ -398,7 +410,7 @@ export default function PortalPlansPage() {
       const nextQuote = await apiRequest<Quote>("/api/portal/commerce/quote", {
         method: "POST",
         token,
-        body: { offerId: offer.id },
+        body: { offerId: offer.id, purchaseAction },
       });
       setQuote(nextQuote);
     } catch (cause) {
@@ -420,21 +432,44 @@ export default function PortalPlansPage() {
           ) ?? preferred)
         : preferred;
     if (!offer) return;
-    setCheckout({ product, offer });
+    setCheckout({ product, offer, purchaseAction: "purchase" });
     setQuote(null);
     setError(null);
     setPaymentType("alipay");
     setIdempotencyKey(crypto.randomUUID());
-    if (branding.checkoutMode === "epay") void fetchQuote(offer);
+    if (branding.checkoutMode === "epay") void fetchQuote(offer, "purchase");
   }
 
   function selectCheckoutOffer(offer: Offer) {
     if (!checkout || checkout.offer.id === offer.id) return;
-    setCheckout({ product: checkout.product, offer });
+    setCheckout({
+      product: checkout.product,
+      offer,
+      purchaseAction: "purchase",
+    });
     setQuote(null);
     setError(null);
     setIdempotencyKey(crypto.randomUUID());
-    if (branding.checkoutMode === "epay") void fetchQuote(offer);
+    if (branding.checkoutMode === "epay") void fetchQuote(offer, "purchase");
+  }
+
+  function selectPurchaseAction(purchaseAction: "purchase" | "plan_reset") {
+    if (!checkout || checkout.purchaseAction === purchaseAction) return;
+    const offer =
+      purchaseAction === "plan_reset"
+        ? activeOffers(checkout.product).find(
+            (item) => item.billingPeriod === "monthly",
+          )
+        : checkout.offer;
+    if (!offer) {
+      setError("当前套餐没有可用于流量重置的月付规格。");
+      return;
+    }
+    setCheckout({ product: checkout.product, offer, purchaseAction });
+    setQuote(null);
+    setError(null);
+    setIdempotencyKey(crypto.randomUUID());
+    void fetchQuote(offer, purchaseAction);
   }
 
   function closeCheckout() {
@@ -481,6 +516,7 @@ export default function PortalPlansPage() {
           body: {
             offerId: checkout.offer.id,
             paymentType,
+            purchaseAction: checkout.purchaseAction,
           },
         },
       );
@@ -792,8 +828,18 @@ export default function PortalPlansPage() {
       <Drawer
         open={Boolean(checkout)}
         onClose={closeCheckout}
-        title={checkout ? `购买 ${checkout.product.name}` : "购买商品"}
-        subtitle="确认规格与商品信息后继续"
+        title={
+          checkout
+            ? checkout.purchaseAction === "plan_reset"
+              ? `重置 ${checkout.product.name} 流量`
+              : `购买 ${checkout.product.name}`
+            : "购买商品"
+        }
+        subtitle={
+          checkout?.purchaseAction === "plan_reset"
+            ? "补足当前计费周期的套餐流量"
+            : "确认规格与商品信息后继续"
+        }
         footer={
           <div className="toolbar-actions checkout-footer-actions">
             <button
@@ -846,60 +892,134 @@ export default function PortalPlansPage() {
                       : "一次购买永久有效，可直接使用商品绑定的节点。")}
               </p>
             </section>
-            <section className="checkout-option-section">
-              <div className="checkout-section-heading">
-                <strong>
-                  {checkout.product.kind === "plan"
-                    ? "选择购买周期"
-                    : "购买规格"}
-                </strong>
-                <span>选择后价格与权益立即更新</span>
-              </div>
-              <div className="checkout-offer-options" role="radiogroup">
-                {activeOffers(checkout.product).map((offer) => {
-                  const selected = checkout.offer.id === offer.id;
-                  const savings = calculateTermSavings(
-                    activeOffers(checkout.product),
-                    offer,
-                  );
-                  const available =
-                    branding.checkoutMode === "epay" ||
-                    Boolean(resolveStoreUrl(checkout.product, offer, branding));
-                  return (
-                    <button
-                      className={`checkout-offer-option${selected ? " selected" : ""}`}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      disabled={busy || !available}
-                      onClick={() => selectCheckoutOffer(offer)}
-                      key={offer.id}
-                    >
-                      <span className="checkout-offer-label">
-                        <span>
-                          {checkout.product.kind === "traffic_pack"
-                            ? "永久有效"
-                            : offerPeriodName(offer)}
-                          {!available ? " · 未配置" : ""}
+            {checkoutIsCurrentPlan && branding.checkoutMode === "epay" ? (
+              <section className="checkout-option-section">
+                <div className="checkout-section-heading">
+                  <strong>选择操作</strong>
+                  <span>续期延长时间，重置恢复本期额度</span>
+                </div>
+                <div
+                  className="checkout-purchase-action-options"
+                  role="radiogroup"
+                >
+                  <button
+                    className={
+                      checkout.purchaseAction === "purchase" ? "selected" : ""
+                    }
+                    type="button"
+                    role="radio"
+                    aria-checked={checkout.purchaseAction === "purchase"}
+                    onClick={() => selectPurchaseAction("purchase")}
+                  >
+                    <Icon name="schedule" />
+                    <span>
+                      <strong>延长有效期</strong>
+                      <small>续费不会立即恢复本期流量</small>
+                    </span>
+                  </button>
+                  <button
+                    className={
+                      checkout.purchaseAction === "plan_reset" ? "selected" : ""
+                    }
+                    type="button"
+                    role="radio"
+                    aria-checked={checkout.purchaseAction === "plan_reset"}
+                    onClick={() => selectPurchaseAction("plan_reset")}
+                  >
+                    <Icon name="refresh" />
+                    <span>
+                      <strong>重置本期流量</strong>
+                      <small>月付价 7 折，仅当前周期有效</small>
+                    </span>
+                  </button>
+                </div>
+              </section>
+            ) : null}
+            {checkout.purchaseAction === "purchase" ? (
+              <section className="checkout-option-section">
+                <div className="checkout-section-heading">
+                  <strong>
+                    {checkout.product.kind === "plan"
+                      ? "选择购买周期"
+                      : "购买规格"}
+                  </strong>
+                  <span>选择后价格与权益立即更新</span>
+                </div>
+                <div className="checkout-offer-options" role="radiogroup">
+                  {activeOffers(checkout.product).map((offer) => {
+                    const selected = checkout.offer.id === offer.id;
+                    const savings = calculateTermSavings(
+                      activeOffers(checkout.product),
+                      offer,
+                    );
+                    const available =
+                      branding.checkoutMode === "epay" ||
+                      Boolean(
+                        resolveStoreUrl(checkout.product, offer, branding),
+                      );
+                    return (
+                      <button
+                        className={`checkout-offer-option${selected ? " selected" : ""}`}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        disabled={busy || !available}
+                        onClick={() => selectCheckoutOffer(offer)}
+                        key={offer.id}
+                      >
+                        <span className="checkout-offer-label">
+                          <span>
+                            {checkout.product.kind === "traffic_pack"
+                              ? "永久有效"
+                              : offerPeriodName(offer)}
+                            {!available ? " · 未配置" : ""}
+                          </span>
+                          {savings ? <em>{savings.discountLabel}</em> : null}
                         </span>
-                        {savings ? <em>{savings.discountLabel}</em> : null}
-                      </span>
-                      <strong>{formatMoney(offer.priceCents)}</strong>
-                      {savings ? (
-                        <small>
-                          省下 {formatMoney(savings.savingsCents)} · 月均
-                          {formatMoney(
-                            Math.round(
-                              offer.priceCents / (offer.intervalMonths ?? 1),
-                            ),
-                          )}
-                        </small>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
+                        <strong>{formatMoney(offer.priceCents)}</strong>
+                        {savings ? (
+                          <small>
+                            省下 {formatMoney(savings.savingsCents)} · 月均
+                            {formatMoney(
+                              Math.round(
+                                offer.priceCents / (offer.intervalMonths ?? 1),
+                              ),
+                            )}
+                          </small>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : (
+              <section className="checkout-option-section checkout-reset-preview">
+                <div className="checkout-section-heading">
+                  <strong>本期重置结果</strong>
+                  <span>支付到账后立即补足，不修改历史用量</span>
+                </div>
+                <div>
+                  <span>
+                    当前剩余
+                    <strong>
+                      {formatTrafficLimit(
+                        quote?.resetCurrentRemainingBytes ?? 0,
+                      )}
+                    </strong>
+                  </span>
+                  <Icon name="arrow_forward" />
+                  <span>
+                    重置后
+                    <strong>
+                      {formatTrafficLimit(
+                        (quote?.resetCurrentRemainingBytes ?? 0) +
+                          (quote?.resetCreditBytes ?? 0),
+                      )}
+                    </strong>
+                  </span>
+                </div>
+              </section>
+            )}
             {branding.checkoutMode === "epay" ? (
               <section className="checkout-option-section">
                 <div className="checkout-section-heading">
@@ -940,15 +1060,22 @@ export default function PortalPlansPage() {
               <div>
                 <span>流量规则</span>
                 <strong>
-                  {checkout.product.kind === "plan" ||
-                  checkout.product.series === "ultra"
-                    ? `每月重置 ${formatTrafficLimit(checkout.offer.trafficBytes)}`
-                    : `一次性总量 ${formatTrafficLimit(checkout.offer.trafficBytes)}`}
+                  {checkout.purchaseAction === "plan_reset"
+                    ? `补发 ${formatTrafficLimit(quote?.resetCreditBytes ?? 0)}`
+                    : checkout.product.kind === "plan" ||
+                        checkout.product.series === "ultra"
+                      ? `每月重置 ${formatTrafficLimit(checkout.offer.trafficBytes)}`
+                      : `一次性总量 ${formatTrafficLimit(checkout.offer.trafficBytes)}`}
                 </strong>
               </div>
               <div>
                 <span>有效期</span>
-                <strong>{durationName(checkout.offer)}</strong>
+                <strong>
+                  {checkout.purchaseAction === "plan_reset" &&
+                  quote?.resetExpiresAt
+                    ? formatDateTime(quote.resetExpiresAt)
+                    : durationName(checkout.offer)}
+                </strong>
               </div>
               <div>
                 <span>服务器范围</span>
@@ -972,17 +1099,30 @@ export default function PortalPlansPage() {
                 aria-label="套餐购买亮点"
               >
                 <span>
-                  <Icon name="check" /> 每月额度独立重置
+                  <Icon name="check" />
+                  {checkout.purchaseAction === "plan_reset"
+                    ? "本期结束自动失效"
+                    : "每月额度独立重置"}
                 </span>
                 <span>
-                  <Icon name="check" /> {checkoutNodeCount} 个可用节点
+                  <Icon name="check" />
+                  {checkout.purchaseAction === "plan_reset"
+                    ? "不延长套餐有效期"
+                    : `${checkoutNodeCount} 个可用节点`}
                 </span>
                 <span>
-                  <Icon name="check" /> 不限设备
+                  <Icon name="check" />
+                  {checkout.purchaseAction === "plan_reset"
+                    ? "历史计费完整保留"
+                    : "不限设备"}
                 </span>
               </div>
             ) : null}
-            {checkout.product.series === "ultra" ? (
+            {checkout.purchaseAction === "plan_reset" ? (
+              <div className="feedback info">
+                本次只把当前套餐周期的剩余流量补到套餐上限；补发部分随本期结束失效，不结转到下个周期。
+              </div>
+            ) : checkout.product.series === "ultra" ? (
               <div className="feedback info">
                 Ultra 只在专属节点扣除此额度，与现有普通套餐和流量包分开计费。
               </div>
@@ -991,7 +1131,23 @@ export default function PortalPlansPage() {
                 该流量包无需有效套餐，购买后即可使用商品绑定的节点，剩余流量永久有效。
               </div>
             ) : null}
-            {quote?.purchaseMode === "upgrade" ? (
+            {quote?.purchaseMode === "plan_reset" ? (
+              <div className="checkout-price-summary">
+                <div>
+                  <span>套餐月付价</span>
+                  <strong>{formatMoney(quote.basePriceCents)}</strong>
+                </div>
+                <div className="saving">
+                  <span>重置优惠</span>
+                  <strong>-{formatMoney(quote.discountCents)}</strong>
+                  <small>{quote.discountLabel ?? "本期流量重置 7 折"}</small>
+                </div>
+                <div className="total">
+                  <span>应付</span>
+                  <strong>{formatMoney(quote.finalPriceCents)}</strong>
+                </div>
+              </div>
+            ) : quote?.purchaseMode === "upgrade" ? (
               <div className="checkout-price-summary">
                 <div>
                   <span>目标档位价格</span>

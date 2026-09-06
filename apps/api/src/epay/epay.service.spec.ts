@@ -56,7 +56,7 @@ describe('EpayService callbacks', () => {
     };
   }
 
-  it('creates and signs a payment with the payment method selected by the member', async () => {
+  it('creates and signs a plan reset with an isolated active key and entitlement snapshot', async () => {
     const offer = {
       id: 'offer_1',
       slug: 'spark-monthly',
@@ -75,6 +75,8 @@ describe('EpayService callbacks', () => {
         slug: 'spark',
         name: 'Spark',
         kind: CatalogProductKind.PLAN,
+        series: 'STANDARD',
+        quotaCadence: 'MONTHLY_RESET',
         accessProfileId: 'profile_1',
         accessProfile: {
           speedUpMbps: 20,
@@ -140,9 +142,15 @@ describe('EpayService callbacks', () => {
       } as never,
       {
         quoteCheckout: jest.fn().mockResolvedValue({
-          productName: 'Spark · 月付',
+          productName: 'Spark · 本期流量重置',
           basePriceCents: 1230,
-          finalPriceCents: 1230,
+          finalPriceCents: 861,
+          purchaseMode: 'plan_reset',
+          resetGrantId: 'grant_1',
+          resetBucketId: 'bucket_1',
+          resetCycleStartsAt: '2026-09-01T00:00:00.000Z',
+          resetCycleEndsAt: '2026-10-01T00:00:00.000Z',
+          resetTrafficBytes: String(100 * 1024 * 1024 * 1024),
         }),
       } as never,
       cipher as never,
@@ -150,7 +158,14 @@ describe('EpayService callbacks', () => {
     );
 
     await expect(
-      service.createPayment('user_1', 'offer_1', 'key_1', undefined, 'wxpay'),
+      service.createPayment(
+        'user_1',
+        'offer_1',
+        'key_1',
+        undefined,
+        'wxpay',
+        'plan_reset',
+      ),
     ).resolves.toMatchObject({
       gateway: {
         url: 'https://direct-pay.test/session',
@@ -160,6 +175,16 @@ describe('EpayService callbacks', () => {
     expect(checkout.prepare).toHaveBeenCalledTimes(1);
     expect(checkout.prepare.mock.calls[0]?.[0].fields.type).toBe('wxpay');
     expect(createdData?.paymentType).toBe('wxpay');
+    expect(createdData?.activeKey).toBe('user_1:product_1:plan_reset');
+    expect(createdData?.amountCents).toBe(861);
+    expect(createdData?.entitlementSnapshot).toMatchObject({
+      purchaseMode: 'plan_reset',
+      resetGrantId: 'grant_1',
+      resetBucketId: 'bucket_1',
+      resetCycleStartsAt: '2026-09-01T00:00:00.000Z',
+      resetCycleEndsAt: '2026-10-01T00:00:00.000Z',
+      resetTrafficBytes: String(100 * 1024 * 1024 * 1024),
+    });
   });
 
   it('creates a one-cent gateway test without creating a commerce order', async () => {

@@ -61,6 +61,207 @@ describe('CommerceService checkout', () => {
     });
   });
 
+  it('quotes a current plan quota reset at 70 percent of the monthly price', async () => {
+    const cycleEndsAt = new Date('2026-10-05T08:00:00.000Z');
+    const offer = {
+      id: 'offer_prime_monthly',
+      productId: 'product_prime',
+      slug: 'prime-monthly',
+      name: '月付',
+      archivedAt: null,
+      active: true,
+      billingPeriod: 'MONTHLY',
+      priceCents: 3_290,
+      trafficBytes: 350n,
+      product: {
+        id: 'product_prime',
+        name: 'Prime',
+        kind: 'PLAN',
+        series: 'STANDARD',
+        status: 'ACTIVE',
+        accessProfileId: 'profile_prime',
+        purchaseLimitPerUser: null,
+        purchaseLimitKey: null,
+        requiresActivePlan: false,
+        accessProfile: {
+          active: true,
+          nodeBindings: [{ nodeId: 'node_prime' }],
+        },
+      },
+    };
+    const prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'user_1',
+          status: 'ACTIVE',
+          balanceCents: 0,
+        }),
+      },
+      catalogOffer: { findUnique: jest.fn().mockResolvedValue(offer) },
+      entitlementGrant: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'grant_prime',
+          trafficBytesSnapshot: 350n,
+          quotaBuckets: [
+            {
+              id: 'bucket_prime',
+              startsAt: new Date('2026-09-05T08:00:00.000Z'),
+              endsAt: cycleEndsAt,
+              grantedBytes: 350n,
+              consumedBytes: 345n,
+            },
+          ],
+        }),
+      },
+    };
+    const service = new CommerceService(prisma as never, {} as never);
+
+    await expect(
+      service.quoteCheckout('user_1', {
+        offerId: 'offer_prime_monthly',
+        purchaseAction: 'plan_reset',
+      }),
+    ).resolves.toMatchObject({
+      productName: 'Prime · 本期流量重置',
+      basePriceCents: 3_290,
+      discountCents: 987,
+      finalPriceCents: 2_303,
+      purchaseMode: 'plan_reset',
+      resetGrantId: 'grant_prime',
+      resetBucketId: 'bucket_prime',
+      resetCurrentRemainingBytes: 5,
+      resetCreditBytes: 345,
+      resetExpiresAt: cycleEndsAt.toISOString(),
+    });
+  });
+
+  it('settles a paid plan reset by topping the current cycle up to its cap', async () => {
+    const paidAt = new Date('2026-09-08T08:00:00.000Z');
+    const cycleStartsAt = new Date('2026-09-05T08:00:00.000Z');
+    const cycleEndsAt = new Date('2026-10-05T08:00:00.000Z');
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockImplementation(({ data }) =>
+          Promise.resolve({
+            id: 'order_reset',
+            ...data,
+          }),
+        ),
+      },
+      entitlementGrant: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'grant_prime',
+          userId: 'user_1',
+          accessAccountId: 'account_1',
+          productId: 'product_prime',
+          accessProfileId: 'profile_prime',
+          legacySubscriptionId: 'subscription_prime',
+          speedUpMbpsSnapshot: 220,
+          speedDownMbpsSnapshot: 220,
+          deviceLimitSnapshot: 999,
+          trafficMultiplierBasisPointsSnapshot: 21_000,
+        }),
+      },
+      quotaBucket: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'bucket_prime',
+          grantId: 'grant_prime',
+          startsAt: cycleStartsAt,
+          endsAt: cycleEndsAt,
+          grantedBytes: 350n,
+          consumedBytes: 345n,
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      subscriptionCycle: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'cycle_prime' }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      quotaAdjustment: { create: jest.fn().mockResolvedValue({}) },
+      paymentRecord: { create: jest.fn().mockResolvedValue({}) },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const service = new CommerceService({} as never, {} as never);
+
+    await expect(
+      service.fulfillEpayPayment(tx as never, {
+        attemptId: 'attempt_reset',
+        userId: 'user_1',
+        offerId: 'offer_prime_monthly',
+        merchantOrderNo: 'EP-RESET-1',
+        gatewayTradeNo: 'gateway-reset-1',
+        amountCents: 2_303,
+        basePriceCents: 3_290,
+        paidAt,
+        entitlementSnapshot: {
+          version: 2,
+          offerId: 'offer_prime_monthly',
+          offerSlug: 'prime-monthly',
+          offerName: '月付',
+          productId: 'product_prime',
+          productSlug: 'prime',
+          productName: 'Prime',
+          productKind: 'PLAN',
+          productSeries: 'STANDARD',
+          quotaCadence: 'MONTHLY_RESET',
+          billingPeriod: 'MONTHLY',
+          intervalMonths: 1,
+          legacyDurationDays: null,
+          trafficBytes: '350',
+          currency: 'CNY',
+          accessProfileId: 'profile_prime',
+          speedUpMbps: 220,
+          speedDownMbps: 220,
+          deviceLimit: 999,
+          trafficMultiplierBasisPoints: 21_000,
+          requiresActivePlan: false,
+          purchaseLimitPerUser: null,
+          purchaseLimitKey: null,
+          legacyPlanId: 'plan_prime',
+          legacyPlanOfferId: 'plan_offer_prime',
+          legacyTrafficPackProductId: null,
+          purchaseMode: 'plan_reset',
+          resetGrantId: 'grant_prime',
+          resetBucketId: 'bucket_prime',
+          resetCycleStartsAt: cycleStartsAt.toISOString(),
+          resetCycleEndsAt: cycleEndsAt.toISOString(),
+          resetTrafficBytes: '350',
+        },
+      }),
+    ).resolves.toMatchObject({
+      orderId: 'order_reset',
+      chargedCents: 2_303,
+      entitlementExpiresAt: cycleEndsAt.toISOString(),
+    });
+    const [orderCreate] = tx.manualOrder.create.mock.calls[0] as unknown as [
+      { data: Record<string, unknown> },
+    ];
+    expect(orderCreate.data).toMatchObject({
+      amountCents: 2_303,
+      discountCents: 987,
+      trafficBytes: 345n,
+      entitlementGrantId: 'grant_prime',
+      note: 'PLAN_QUOTA_RESET',
+    });
+    expect(tx.quotaBucket.update).toHaveBeenCalledWith({
+      where: { id: 'bucket_prime' },
+      data: { grantedBytes: { increment: 345n } },
+    });
+    expect(tx.subscriptionCycle.update).toHaveBeenCalledWith({
+      where: { id: 'cycle_prime' },
+      data: { adjustmentBytes: { increment: 345n } },
+    });
+    const [adjustmentCreate] = tx.quotaAdjustment.create.mock
+      .calls[0] as unknown as [{ data: Record<string, unknown> }];
+    expect(adjustmentCreate.data).toMatchObject({
+      quotaBucketId: 'bucket_prime',
+      deltaBytes: 345n,
+      beforeRemainingBytes: 5n,
+      afterRemainingBytes: 350n,
+    });
+  });
+
   it('materializes a V2 entitlement for a traffic pack CDK redemption', async () => {
     const tx = {
       trafficPack: {

@@ -8,6 +8,10 @@ import {
 
 export class CheckoutDto {
   @IsOptional()
+  @IsIn(['purchase', 'plan_reset'])
+  purchaseAction?: 'purchase' | 'plan_reset';
+
+  @IsOptional()
   @IsIn(['plan', 'plan_offer', 'traffic_pack'])
   kind?: 'plan' | 'plan_offer' | 'traffic_pack';
 

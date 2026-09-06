@@ -18,6 +18,10 @@ export class CreateEpayPaymentDto {
 
   @IsIn(['alipay', 'wxpay'])
   paymentType!: 'alipay' | 'wxpay';
+
+  @IsOptional()
+  @IsIn(['purchase', 'plan_reset'])
+  purchaseAction?: 'purchase' | 'plan_reset';
 }
 
 export class CreateEpayGatewayTestDto {

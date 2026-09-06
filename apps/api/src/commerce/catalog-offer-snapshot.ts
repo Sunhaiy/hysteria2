@@ -48,19 +48,29 @@ export interface CatalogOfferSnapshot {
   legacyPlanId: string | null;
   legacyPlanOfferId: string | null;
   legacyTrafficPackProductId: string | null;
-  purchaseMode?: 'initial' | 'upgrade';
+  purchaseMode?: 'initial' | 'upgrade' | 'plan_reset';
   upgradeFromGrantId?: string | null;
   upgradeFromProductId?: string | null;
   upgradeFromPriceCents?: number | null;
   resetAnchorAt?: string | null;
+  resetGrantId?: string | null;
+  resetBucketId?: string | null;
+  resetCycleStartsAt?: string | null;
+  resetCycleEndsAt?: string | null;
+  resetTrafficBytes?: string | null;
 }
 
 export interface CatalogOfferPurchaseContext {
-  purchaseMode: 'initial' | 'upgrade';
-  upgradeFromGrantId: string | null;
-  upgradeFromProductId: string | null;
-  upgradeFromPriceCents: number | null;
-  resetAnchorAt: string | null;
+  purchaseMode: 'initial' | 'upgrade' | 'plan_reset';
+  upgradeFromGrantId?: string | null;
+  upgradeFromProductId?: string | null;
+  upgradeFromPriceCents?: number | null;
+  resetAnchorAt?: string | null;
+  resetGrantId?: string | null;
+  resetBucketId?: string | null;
+  resetCycleStartsAt?: string | null;
+  resetCycleEndsAt?: string | null;
+  resetTrafficBytes?: string | null;
 }
 
 export function snapshotCatalogOffer(
@@ -109,6 +119,11 @@ export function snapshotCatalogOffer(
     upgradeFromProductId: purchaseContext?.upgradeFromProductId ?? null,
     upgradeFromPriceCents: purchaseContext?.upgradeFromPriceCents ?? null,
     resetAnchorAt: purchaseContext?.resetAnchorAt ?? null,
+    resetGrantId: purchaseContext?.resetGrantId ?? null,
+    resetBucketId: purchaseContext?.resetBucketId ?? null,
+    resetCycleStartsAt: purchaseContext?.resetCycleStartsAt ?? null,
+    resetCycleEndsAt: purchaseContext?.resetCycleEndsAt ?? null,
+    resetTrafficBytes: purchaseContext?.resetTrafficBytes ?? null,
   };
 }
 
@@ -132,6 +147,17 @@ export function parseCatalogOfferSnapshot(
     )
   ) {
     throw new Error('易支付权益快照无效');
+  }
+  if (
+    candidate.purchaseMode === 'plan_reset' &&
+    (typeof candidate.resetGrantId !== 'string' ||
+      typeof candidate.resetBucketId !== 'string' ||
+      typeof candidate.resetCycleStartsAt !== 'string' ||
+      typeof candidate.resetCycleEndsAt !== 'string' ||
+      typeof candidate.resetTrafficBytes !== 'string' ||
+      !/^\d+$/.test(candidate.resetTrafficBytes))
+  ) {
+    throw new Error('易支付流量重置快照无效');
   }
   return candidate as unknown as CatalogOfferSnapshot;
 }

@@ -13,6 +13,8 @@ import {
   OrderKind,
   OrderSource,
   OrderStatus,
+  QuotaAdjustmentMode,
+  QuotaCadence,
   RedemptionCodeKind,
   RedemptionCodeStatus,
   type Prisma,
@@ -32,10 +34,17 @@ import {
   assertCatalogPurchaseEligibility,
   assertCatalogPurchaseLimit,
 } from './purchase-eligibility';
-import { parseCatalogOfferSnapshot } from './catalog-offer-snapshot';
+import {
+  parseCatalogOfferSnapshot,
+  type CatalogOfferSnapshot,
+} from './catalog-offer-snapshot';
 
 export type CheckoutInput =
-  | { offerId: string; discountCode?: string }
+  | {
+      offerId: string;
+      discountCode?: string;
+      purchaseAction?: 'purchase' | 'plan_reset';
+    }
   | { kind: 'plan'; productId: string; discountCode?: string }
   | { kind: 'plan_offer'; productId: string; discountCode?: string }
   | { kind: 'traffic_pack'; productId: string; discountCode?: string };
@@ -61,6 +70,9 @@ export interface EpaySettlementInput {
   paidAt: Date;
 }
 
+const PLAN_RESET_PRICE_PERCENT = 70;
+const PLAN_RESET_ORDER_NOTE = 'PLAN_QUOTA_RESET';
+
 @Injectable()
 export class CommerceService {
   constructor(
@@ -78,8 +90,15 @@ export class CommerceService {
     }
 
     const product = await this.resolveQuoteProduct(input);
+    const planReset =
+      'offerId' in input && input.purchaseAction === 'plan_reset'
+        ? await this.resolvePlanReset(this.prisma, userId, input.offerId)
+        : null;
+    if (planReset && input.discountCode) {
+      throw new BadRequestException('本期流量重置不支持叠加优惠码');
+    }
     const ultraPurchase =
-      product.series === CatalogProductSeries.ULTRA
+      !planReset && product.series === CatalogProductSeries.ULTRA
         ? await this.resolveUltraPurchase(this.prisma, userId, {
             id: product.productId,
             name: product.productName,
@@ -87,7 +106,7 @@ export class CommerceService {
             trafficBytes: product.trafficBytes,
           })
         : null;
-    if (product.purchaseRules && !ultraPurchase) {
+    if (product.purchaseRules && !ultraPurchase && !planReset) {
       await assertCatalogPurchaseEligibility(
         this.prisma,
         userId,
@@ -96,15 +115,18 @@ export class CommerceService {
     }
 
     const payableBeforeDiscountCents =
-      ultraPurchase?.payableCents ?? product.priceCents;
-    const discount = input.discountCode
-      ? await this.previewDiscount(
-          this.prisma,
-          userId,
-          input.discountCode,
-          payableBeforeDiscountCents,
-        )
-      : null;
+      planReset?.payableCents ??
+      ultraPurchase?.payableCents ??
+      product.priceCents;
+    const discount =
+      input.discountCode && !planReset
+        ? await this.previewDiscount(
+            this.prisma,
+            userId,
+            input.discountCode,
+            payableBeforeDiscountCents,
+          )
+        : null;
     const finalPriceCents = Math.max(
       payableBeforeDiscountCents - (discount?.discountCents ?? 0),
       0,
@@ -112,19 +134,37 @@ export class CommerceService {
     return {
       kind: 'kind' in input ? input.kind : product.kind,
       productId: product.id,
-      productName: product.name,
+      productName: planReset
+        ? `${product.productName} · 本期流量重置`
+        : product.name,
       basePriceCents: product.priceCents,
-      discountCents: discount?.discountCents ?? 0,
-      discountLabel: discount?.label ?? null,
+      discountCents: planReset
+        ? product.priceCents - planReset.payableCents
+        : (discount?.discountCents ?? 0),
+      discountLabel: planReset
+        ? `本期流量重置 ${PLAN_RESET_PRICE_PERCENT / 10} 折`
+        : (discount?.label ?? null),
       finalPriceCents,
       balanceCents: user.balanceCents,
       sufficient: user.balanceCents >= finalPriceCents,
-      purchaseMode: ultraPurchase?.mode ?? 'initial',
+      purchaseMode: planReset
+        ? ('plan_reset' as const)
+        : (ultraPurchase?.mode ?? ('initial' as const)),
       upgradeFromGrantId: ultraPurchase?.grantId ?? null,
       upgradeFromProductId: ultraPurchase?.productId ?? null,
       upgradeFromProductName: ultraPurchase?.productName ?? null,
       upgradeFromPriceCents: ultraPurchase?.priceCents ?? null,
       resetAnchorAt: ultraPurchase?.resetAnchorAt?.toISOString() ?? null,
+      resetGrantId: planReset?.grantId ?? null,
+      resetBucketId: planReset?.bucketId ?? null,
+      resetCycleStartsAt: planReset?.cycleStartsAt.toISOString() ?? null,
+      resetCycleEndsAt: planReset?.cycleEndsAt.toISOString() ?? null,
+      resetTrafficBytes: planReset?.targetBytes.toString() ?? null,
+      resetCurrentRemainingBytes:
+        planReset === null ? null : Number(planReset.currentRemainingBytes),
+      resetCreditBytes:
+        planReset === null ? null : Number(planReset.creditBytes),
+      resetExpiresAt: planReset?.cycleEndsAt.toISOString() ?? null,
     };
   }
 
@@ -215,6 +255,9 @@ export class CommerceService {
     input: CheckoutInput,
     idempotencyKey: string,
   ): Promise<CheckoutResult> {
+    if ('offerId' in input && input.purchaseAction === 'plan_reset') {
+      throw new BadRequestException('本期流量重置仅支持站内支付');
+    }
     const normalizedKey = idempotencyKey.trim();
     if (!normalizedKey || normalizedKey.length > 120) {
       throw new BadRequestException('A valid Idempotency-Key is required');
@@ -359,6 +402,10 @@ export class CommerceService {
     });
     if (existing) {
       return this.replayCheckout(existing, { offerId: input.offerId });
+    }
+    const snapshot = parseCatalogOfferSnapshot(input.entitlementSnapshot);
+    if (snapshot?.purchaseMode === 'plan_reset') {
+      return this.fulfillPlanReset(tx, input, snapshot, idempotencyKey);
     }
     return this.createOfferCheckout(
       tx,
@@ -1080,6 +1127,244 @@ export class CommerceService {
       orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
     });
     return binding?.nodeId ?? null;
+  }
+
+  private async resolvePlanReset(
+    client: PrismaService | Prisma.TransactionClient,
+    userId: string,
+    offerId: string,
+    now = new Date(),
+  ) {
+    const offer = await client.catalogOffer.findUnique({
+      where: { id: offerId },
+      include: { product: true },
+    });
+    if (
+      !offer ||
+      offer.archivedAt ||
+      !offer.active ||
+      offer.billingPeriod !== BillingPeriod.MONTHLY ||
+      offer.product.kind !== CatalogProductKind.PLAN ||
+      offer.product.series !== CatalogProductSeries.STANDARD
+    ) {
+      throw new BadRequestException('请选择当前套餐的月付规格重置流量');
+    }
+    const grant = await client.entitlementGrant.findFirst({
+      where: {
+        userId,
+        productId: offer.productId,
+        kind: 'PLAN',
+        status: 'ACTIVE',
+        startsAt: { lte: now },
+        endsAt: { gt: now },
+      },
+      include: {
+        quotaBuckets: {
+          where: { startsAt: { lte: now }, endsAt: { gt: now } },
+          orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
+          take: 1,
+        },
+      },
+      orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
+    });
+    const bucket = grant?.quotaBuckets[0];
+    if (!grant || !bucket) {
+      throw new BadRequestException('当前没有可重置的有效套餐周期');
+    }
+    const targetBytes = grant.trafficBytesSnapshot ?? offer.trafficBytes;
+    const currentRemainingBytes =
+      bucket.grantedBytes > bucket.consumedBytes
+        ? bucket.grantedBytes - bucket.consumedBytes
+        : BigInt(0);
+    if (targetBytes <= BigInt(0) || currentRemainingBytes >= targetBytes) {
+      throw new BadRequestException('当前套餐流量充足，暂不需要重置');
+    }
+    const payableCents = Math.round(
+      (offer.priceCents * PLAN_RESET_PRICE_PERCENT) / 100,
+    );
+    if (payableCents <= 0) {
+      throw new BadRequestException('本期流量重置价格无效');
+    }
+    return {
+      grantId: grant.id,
+      bucketId: bucket.id,
+      cycleStartsAt: bucket.startsAt,
+      cycleEndsAt: bucket.endsAt,
+      targetBytes,
+      currentRemainingBytes,
+      creditBytes: targetBytes - currentRemainingBytes,
+      payableCents,
+    };
+  }
+
+  private async fulfillPlanReset(
+    tx: Prisma.TransactionClient,
+    input: EpaySettlementInput,
+    snapshot: CatalogOfferSnapshot,
+    idempotencyKey: string,
+  ): Promise<CheckoutResult> {
+    if (
+      snapshot.productKind !== CatalogProductKind.PLAN ||
+      snapshot.productSeries === CatalogProductSeries.ULTRA ||
+      snapshot.billingPeriod !== BillingPeriod.MONTHLY ||
+      !snapshot.resetGrantId ||
+      !snapshot.resetBucketId ||
+      !snapshot.resetCycleStartsAt ||
+      !snapshot.resetCycleEndsAt ||
+      !snapshot.resetTrafficBytes
+    ) {
+      throw new ConflictException('本期流量重置快照不完整');
+    }
+    const expectedAmountCents = Math.round(
+      (input.basePriceCents * PLAN_RESET_PRICE_PERCENT) / 100,
+    );
+    if (
+      snapshot.offerId !== input.offerId ||
+      input.amountCents !== expectedAmountCents ||
+      input.amountCents <= 0
+    ) {
+      throw new ConflictException('本期流量重置支付金额不匹配');
+    }
+    const [grant, bucket] = await Promise.all([
+      tx.entitlementGrant.findFirst({
+        where: {
+          id: snapshot.resetGrantId,
+          userId: input.userId,
+          productId: snapshot.productId,
+          kind: 'PLAN',
+          status: 'ACTIVE',
+          startsAt: { lte: input.paidAt },
+          endsAt: { gt: input.paidAt },
+        },
+      }),
+      tx.quotaBucket.findUnique({ where: { id: snapshot.resetBucketId } }),
+    ]);
+    if (
+      !grant ||
+      !bucket ||
+      bucket.grantId !== grant.id ||
+      bucket.startsAt.toISOString() !== snapshot.resetCycleStartsAt ||
+      bucket.endsAt.toISOString() !== snapshot.resetCycleEndsAt ||
+      bucket.startsAt > input.paidAt ||
+      bucket.endsAt <= input.paidAt
+    ) {
+      throw new ConflictException('套餐周期已经变化，流量重置无法自动入账');
+    }
+    const targetBytes = BigInt(snapshot.resetTrafficBytes);
+    const beforeRemainingBytes =
+      bucket.grantedBytes > bucket.consumedBytes
+        ? bucket.grantedBytes - bucket.consumedBytes
+        : BigInt(0);
+    if (targetBytes <= BigInt(0) || beforeRemainingBytes >= targetBytes) {
+      throw new ConflictException('当前套餐流量已经达到重置上限');
+    }
+    const creditBytes = targetBytes - beforeRemainingBytes;
+    const cycle = grant.legacySubscriptionId
+      ? await tx.subscriptionCycle.findFirst({
+          where: {
+            subscriptionId: grant.legacySubscriptionId,
+            startsAt: { lte: input.paidAt },
+            endsAt: { gt: input.paidAt },
+          },
+          orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
+        })
+      : null;
+    const order = await tx.manualOrder.create({
+      data: {
+        userId: input.userId,
+        planId: snapshot.legacyPlanId,
+        planOfferId: snapshot.legacyPlanOfferId,
+        catalogOfferId: snapshot.offerId,
+        status: OrderStatus.APPLIED,
+        kind: OrderKind.RENEWAL,
+        source: OrderSource.PAYMENT,
+        amountCents: input.amountCents,
+        basePriceCents: input.basePriceCents,
+        discountCents: input.basePriceCents - input.amountCents,
+        currency: snapshot.currency,
+        productSlugSnapshot: snapshot.offerSlug,
+        productNameSnapshot: `${snapshot.productName} · 本期流量重置`,
+        trafficBytes: creditBytes,
+        entitlementExpiresAt: bucket.endsAt,
+        billingPeriodSnapshot: BillingPeriod.MONTHLY,
+        intervalMonthsSnapshot: 1,
+        accessProfileIdSnapshot: grant.accessProfileId,
+        speedUpMbpsSnapshot: grant.speedUpMbpsSnapshot,
+        speedDownMbpsSnapshot: grant.speedDownMbpsSnapshot,
+        deviceLimitSnapshot: grant.deviceLimitSnapshot,
+        trafficMultiplierBasisPointsSnapshot:
+          grant.trafficMultiplierBasisPointsSnapshot,
+        requiresActivePlanSnapshot: false,
+        quotaCadenceSnapshot: QuotaCadence.MONTHLY_RESET,
+        resetAnchorAtSnapshot: bucket.startsAt,
+        entitlementGrantId: grant.id,
+        idempotencyKey,
+        note: PLAN_RESET_ORDER_NOTE,
+        processedAt: input.paidAt,
+      },
+    });
+    await Promise.all([
+      tx.quotaBucket.update({
+        where: { id: bucket.id },
+        data: { grantedBytes: { increment: creditBytes } },
+      }),
+      cycle
+        ? tx.subscriptionCycle.update({
+            where: { id: cycle.id },
+            data: { adjustmentBytes: { increment: creditBytes } },
+          })
+        : Promise.resolve(),
+      tx.quotaAdjustment.create({
+        data: {
+          accessAccountId: grant.accessAccountId,
+          subscriptionCycleId: cycle?.id,
+          quotaBucketId: bucket.id,
+          idempotencyKey: `plan-reset:${order.id}`,
+          mode: QuotaAdjustmentMode.DELTA,
+          deltaBytes: creditBytes,
+          beforeRemainingBytes,
+          afterRemainingBytes: targetBytes,
+          reason: '用户购买本期流量重置',
+        },
+      }),
+      tx.paymentRecord.create({
+        data: {
+          orderId: order.id,
+          userId: input.userId,
+          source: 'EPAY',
+          status: 'SETTLED',
+          amountCents: input.amountCents,
+          currency: snapshot.currency,
+          externalRef: input.gatewayTradeNo,
+          paidAt: input.paidAt,
+          reconciledAt: input.paidAt,
+        },
+      }),
+      tx.auditLog.create({
+        data: {
+          action: 'PLAN_QUOTA_RESET_SETTLED',
+          targetType: 'ManualOrder',
+          targetId: order.id,
+          metadata: {
+            userId: input.userId,
+            offerId: snapshot.offerId,
+            attemptId: input.attemptId,
+            gatewayTradeNo: input.gatewayTradeNo,
+            paidCents: input.amountCents,
+            creditedBytes: creditBytes.toString(),
+            cycleEndsAt: bucket.endsAt.toISOString(),
+          },
+        },
+      }),
+    ]);
+    return {
+      orderId: order.id,
+      replayed: false,
+      kind: 'plan_offer',
+      productName: `${snapshot.productName} · 本期流量重置`,
+      chargedCents: input.amountCents,
+      entitlementExpiresAt: bucket.endsAt.toISOString(),
+    };
   }
 
   private async createPlanCheckout(

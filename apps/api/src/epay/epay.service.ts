@@ -20,6 +20,7 @@ import { SettingsService, type EpayConfig } from '../settings/settings.service';
 import { apiPublicUrl } from '../common/public-url';
 import {
   catalogOfferSnapshotInclude,
+  parseCatalogOfferSnapshot,
   snapshotCatalogOffer,
 } from '../commerce/catalog-offer-snapshot';
 import {
@@ -57,6 +58,7 @@ export class EpayService {
     idempotencyKey: string,
     discountCode: string | undefined,
     paymentType: 'alipay' | 'wxpay',
+    purchaseAction: 'purchase' | 'plan_reset' = 'purchase',
   ) {
     const normalizedKey = idempotencyKey.trim();
     if (!normalizedKey || normalizedKey.length > 120) {
@@ -69,7 +71,7 @@ export class EpayService {
     const config = await this.requireConfiguredEpay(true);
     const selectedPaymentType = paymentType;
     const [quote, offer] = await Promise.all([
-      this.commerce.quoteCheckout(userId, { offerId }),
+      this.commerce.quoteCheckout(userId, { offerId, purchaseAction }),
       this.prisma.catalogOffer.findUnique({
         where: { id: offerId },
         include: { product: true },
@@ -86,7 +88,9 @@ export class EpayService {
     }
 
     const now = new Date();
-    const activeKey = `${userId}:${offer.product.purchaseLimitKey ?? offer.productId}`;
+    const activeKey = `${userId}:${offer.product.purchaseLimitKey ?? offer.productId}${
+      purchaseAction === 'plan_reset' ? ':plan_reset' : ''
+    }`;
     try {
       const attempt = await this.prisma.$transaction(
         async (tx) => {
@@ -112,7 +116,9 @@ export class EpayService {
           if (replay) {
             if (
               replay.offerId !== offerId ||
-              replay.paymentType !== selectedPaymentType
+              replay.paymentType !== selectedPaymentType ||
+              this.paymentPurchaseAction(replay.entitlementSnapshot) !==
+                purchaseAction
             ) {
               throw new ConflictException(
                 'Idempotency-Key was already used for another purchase',
@@ -127,7 +133,9 @@ export class EpayService {
           if (active) {
             if (
               active.offerId !== offerId ||
-              active.paymentType !== selectedPaymentType
+              active.paymentType !== selectedPaymentType ||
+              this.paymentPurchaseAction(active.entitlementSnapshot) !==
+                purchaseAction
             ) {
               throw new ConflictException(
                 '该商品已有一笔其他规格或支付方式的待支付订单',
@@ -169,6 +177,11 @@ export class EpayService {
                 upgradeFromProductId: quote.upgradeFromProductId,
                 upgradeFromPriceCents: quote.upgradeFromPriceCents,
                 resetAnchorAt: quote.resetAnchorAt,
+                resetGrantId: quote.resetGrantId,
+                resetBucketId: quote.resetBucketId,
+                resetCycleStartsAt: quote.resetCycleStartsAt,
+                resetCycleEndsAt: quote.resetCycleEndsAt,
+                resetTrafficBytes: quote.resetTrafficBytes,
               }) as unknown as Prisma.InputJsonValue,
               expiresAt: new Date(now.getTime() + PAYMENT_TTL_MS),
             },
@@ -189,7 +202,9 @@ export class EpayService {
       if (!replay) throw error;
       if (
         replay.offerId !== offerId ||
-        replay.paymentType !== selectedPaymentType
+        replay.paymentType !== selectedPaymentType ||
+        this.paymentPurchaseAction(replay.entitlementSnapshot) !==
+          purchaseAction
       ) {
         throw new ConflictException(
           '该商品已有一笔其他规格或支付方式的待支付订单',
@@ -780,6 +795,16 @@ export class EpayService {
       .replace(/[-:TZ.]/g, '')
       .slice(0, 14);
     return `${prefix}${stamp}${randomBytes(8).toString('hex').toUpperCase()}`;
+  }
+
+  private paymentPurchaseAction(value: Prisma.JsonValue | null) {
+    try {
+      return parseCatalogOfferSnapshot(value)?.purchaseMode === 'plan_reset'
+        ? ('plan_reset' as const)
+        : ('purchase' as const);
+    } catch {
+      return 'purchase' as const;
+    }
   }
 
   private isUniqueConflict(error: unknown) {

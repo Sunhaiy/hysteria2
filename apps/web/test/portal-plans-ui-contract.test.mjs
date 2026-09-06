@@ -19,7 +19,10 @@ test("member catalog keeps plan cards and uses exactly one purchase channel", as
   assert.match(source, /选择购买周期/);
   assert.match(source, /paymentType === "alipay"/);
   assert.match(source, /paymentType === "wxpay"/);
-  assert.match(source, /paymentType,\s*\}/);
+  assert.match(source, /paymentType,\s*purchaseAction:/);
+  assert.match(source, /重置本期流量/);
+  assert.match(source, /月付价 7 折，仅当前周期有效/);
+  assert.match(source, /purchaseAction: checkout\.purchaseAction/);
   assert.match(
     source,
     /window\.open\(storeUrl, "_blank", "noopener,noreferrer"\)/,
