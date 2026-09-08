@@ -32,10 +32,12 @@ stability window, but they do not receive new business rules.
 
 ## Entitlements and usage
 
-- **EntitlementGrant** is the immutable record that a product was successfully
-  granted to a customer for a bounded period. It snapshots the purchased
-  traffic multiplier; usage consumes each quota bucket with the higher of its
-  grant multiplier and the member override.
+- **EntitlementGrant** is the durable record that a product was successfully
+  granted to a customer for a bounded period. Purchased price, traffic,
+  cadence, reset anchor, and multiplier snapshots are contractual. Revocation
+  changes lifecycle state and end time but never rewrites consumed usage.
+  Explicit administrator changes to an active product's access profile may
+  propagate speed and node-access snapshots through `EntitlementService`.
 - **QuotaBucket** is spendable traffic owned by one grant. Recurring plan
   buckets reset monthly from the subscription anchor; traffic-pack buckets are
   normally one-time. Ultra traffic-pack grants also reset monthly from their
@@ -85,12 +87,21 @@ online collection, health probing, and manual-check consumption.
 
 - **ManualOrder** is the order compatibility ledger. Revenue is recognized only
   after its entitlement is applied.
+- **WalletLedgerEntry** is the authoritative immutable balance ledger. Every
+  debit, credit, rebate, recovery, forfeiture, and absolute administrator
+  correction locks the wallet owner, validates integer cents, writes the
+  compatibility transaction, and records before/after balances through the
+  single wallet posting API. No feature module writes balances directly.
 - **EpayPaymentAttempt** is a signed external-payment intent. It snapshots the
   gateway credentials and entitlement terms used when the intent was created,
   so later settings or catalog edits cannot invalidate or alter settlement.
   Verified callbacks are idempotent. Fulfillment failures remain retryable and
-  record their reason and attempt count for reconciliation. Callback and active
-  query results share one serializable settlement entry point. Active query
+  record their reason and attempt count for reconciliation. A verified payment
+  that can no longer be fulfilled is marked `REFUND_PENDING`; its immutable
+  credential snapshot is used for automatic refund. Missing credentials,
+  rejected verification, and failed compensation become `MANUAL_REVIEW`
+  instead of silently accepting revenue. Callback and active query results
+  share one serializable settlement entry point. Active query
   responses are trusted only after signature, order number, integer-cent
   amount, channel, and status validation; query failures never create revenue
   or entitlements.
@@ -112,8 +123,25 @@ online collection, health probing, and manual-check consumption.
   its bound offer immediately and reset the base plan entitlement.
 - Existing product CDKs remain redeemable after the site switches to 易支付.
   New plan and traffic-pack CDKs are blocked while 易支付 is active.
-- **Refund** reduces recognized revenue. It does not rewrite the entitlement or
-  historical usage ledger.
+- **Refund** reduces recognized payment revenue. Partial refunds recover
+  inviter cashback proportionally and preserve granted bonus traffic. A full
+  refund revokes the unused portion of the linked standard plan, traffic pack,
+  Ultra grant, plan-reset credit, referral bonus, and group-buy bonus as
+  applicable. Historical usage and usage allocations remain immutable.
+
+## Member activities
+
+- **DailyCheckIn** is one idempotent daily reward for a member with a currently
+  active Standard or Ultra entitlement. Its quota credit is posted by
+  `EntitlementService` and recorded as a quota adjustment.
+- **GroupBuy** snapshots its offer, member count, duration, discount or balance
+  rebate, and bonus traffic. Every member pays independently and receives a
+  normal order. The first valid payment for a member fulfills; a later valid
+  duplicate enters compensation refund. Successful groups post rebates through
+  the wallet ledger and bonuses through `EntitlementService`.
+- Unrecovered group-buy rebate debt is stored in structured member fields and
+  indexed for the administrator exception view; it is never hidden only in an
+  audit JSON blob.
 
 ## Tutorials
 
@@ -143,7 +171,8 @@ draft, and switch the guide pointer in one database transaction.
 - A pending attribution qualifies only when the invitee's first plan CDK or
   verified Epay purchase successfully grants an eligible plan entitlement.
   Wallet checkout, traffic-pack and balance CDKs, and complimentary admin
-  grants do not qualify.
+  grants do not qualify. Wallet checkout intentionally does not earn cashback,
+  avoiding rebate and refund loops where credited balance creates more credit.
 - New attributions snapshot the configured inviter cashback basis points. At
   settlement, the inviter receives that percentage of the qualifying paid plan
   order amount, rounded down to integer cents, and the actual amount is stored
@@ -151,20 +180,25 @@ draft, and switch the guide pointer in one database transaction.
   keep their promised fixed reward. The invitee traffic amount is also a
   snapshot and is issued as a system-managed traffic-pack entitlement with the
   qualifying plan's access profile and expiry.
-- Any applied refund on the qualifying order reverses the reward once. Wallet
-  recovery stops at zero and records the unrecovered amount; canceling the
-  bonus grant preserves consumed traffic and immutable usage allocations.
+- A partial refund recovers inviter cashback in proportion to the cumulative
+  refunded amount. A full refund completes cashback recovery and cancels the
+  invitee bonus grant. Wallet recovery stops at zero and records unrecovered
+  debt; consumed traffic and immutable usage allocations are never rewritten.
 
 ## Module seams
 
 - `CatalogService`: catalog products, offers, access profiles, portal catalog.
 - `EntitlementService`: grants, quota buckets, access resolution, usage batches.
+- `wallet/wallet-ledger`: the only balance mutation and immutable ledger API.
 - `CustomerAdminService`: customer search and lazy detail views.
 - `NodeOpsService` and `OperationsService`: server topology and live operations.
 - `FinanceService`: paged ledgers and database-aggregated reporting.
 - `TutorialsService`: drafts, assets, publication, and published guides.
 - `ReferralService`: stable codes, read models, transactional settlement, and
   conservative refund reversal.
+- `CheckInService` and `GroupBuyService`: activity state machines. They request
+  quota and wallet mutations from their owning domain APIs rather than writing
+  buckets, grants, or balances directly.
 - `MemberOnboardingService`: atomic member, access identity, and optional email
   referral attribution creation.
 - `ControlPlaneStoreService`: legacy compatibility adapter only. Do not add new

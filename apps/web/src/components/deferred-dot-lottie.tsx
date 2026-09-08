@@ -67,7 +67,7 @@ export function DeferredDotLottie({
           entry?.isIntersecting && entry.intersectionRatio >= threshold,
         );
         setIsVisible(visible);
-        if (visible) setShouldRender(true);
+        setShouldRender(visible);
       },
       { rootMargin, threshold },
     );
@@ -83,6 +83,14 @@ export function DeferredDotLottie({
     }
     playerRef.current?.play();
   }, [autoplay, isVisible, prefersReducedMotion]);
+
+  useEffect(
+    () => () => {
+      playerRef.current?.destroy();
+      playerRef.current = null;
+    },
+    [],
+  );
 
   const setPlayerRef = useCallback(
     (player: DotLottie | null) => {

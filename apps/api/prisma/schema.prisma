@@ -201,6 +201,15 @@ enum EpayPaymentStatus {
   FAILED
 }
 
+enum PaymentFulfillmentStatus {
+  PENDING
+  APPLIED
+  RETRYING
+  REFUND_PENDING
+  REFUNDED
+  MANUAL_REVIEW
+}
+
 enum RefundMethod {
   WALLET
   MANUAL
@@ -262,6 +271,41 @@ enum ReferralStatus {
   REVERSED
 }
 
+enum GroupBuyStatus {
+  PENDING_PAYMENT
+  OPEN
+  FULFILLING
+  SUCCEEDED
+  REFUNDING
+  REFUNDED
+  FALLBACK_FULFILLED
+  EXCEPTION
+  CANCELED
+}
+
+enum GroupBuyMemberStatus {
+  PAYMENT_PENDING
+  PAID
+  FULFILLED
+  REFUND_PENDING
+  REFUNDED
+  FALLBACK_FULFILLED
+  PAYMENT_CLOSED
+  EXCEPTION
+}
+
+enum GroupBuySettlementMode {
+  UPFRONT_DISCOUNT_REFUND_ON_FAILURE
+  ORIGINAL_PRICE_BALANCE_REBATE
+}
+
+enum EpayRefundStatus {
+  PENDING
+  SUBMITTED
+  CONFIRMED
+  FAILED
+}
+
 model User {
   id                           String                        @id @default(cuid())
   email                        String                        @unique
@@ -310,6 +354,9 @@ model User {
   referralsSent                ReferralAttribution[]         @relation("ReferralInviter")
   referralReceived             ReferralAttribution?          @relation("ReferralInvitee")
   annualOperatingCosts         AnnualOperatingCost[]         @relation("AnnualOperatingCostUpdatedBy")
+  dailyCheckIns                DailyCheckIn[]
+  groupBuysCreated             GroupBuy[]                    @relation("GroupBuyCreator")
+  groupBuyMembers              GroupBuyMember[]
 
   @@index([role, status, createdAt, id])
   @@index([deletedAt, role, status, createdAt, id])
@@ -610,6 +657,7 @@ model SubscriptionCycle {
   subscription    Subscription      @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
   adjustments     QuotaAdjustment[]
   usageRollups    UsageRollup[]
+  dailyCheckIns   DailyCheckIn[]
 
   @@unique([subscriptionId, startsAt])
   @@index([endsAt, subscriptionId])
@@ -659,6 +707,7 @@ model QuotaAdjustment {
   trafficPack          TrafficPack?        @relation(fields: [trafficPackId], references: [id], onDelete: Cascade)
   quotaBucket          QuotaBucket?        @relation(fields: [quotaBucketId], references: [id], onDelete: Cascade)
   actor                User?               @relation("QuotaAdjustmentActor", fields: [actorId], references: [id], onDelete: SetNull)
+  dailyCheckIn         DailyCheckIn?
 
   @@index([accessAccountId, createdAt])
   @@index([subscriptionCycleId, createdAt])
@@ -714,6 +763,7 @@ model ManualOrder {
   epayPaymentAttempt                   EpayPaymentAttempt?
   refunds                              Refund[]
   walletLedger                         WalletLedgerEntry[]
+  groupBuyMember                       GroupBuyMember?
   qualifyingReferral                   ReferralAttribution?
   entitlementGrant                     EntitlementGrant?    @relation(fields: [entitlementGrantId], references: [id], onDelete: SetNull)
 
@@ -1165,6 +1215,7 @@ model CatalogOffer {
   entitlementGrants   EntitlementGrant[]
   redemptionCodes     RedemptionCode[]
   epayPaymentAttempts EpayPaymentAttempt[]
+  groupBuyCampaign    GroupBuyCampaign?
 
   @@unique([productId, billingPeriod])
   @@index([productId, active, archivedAt])
@@ -1204,6 +1255,8 @@ model EntitlementGrant {
   quotaBuckets                         QuotaBucket[]
   referralBonusFor                     ReferralAttribution?
   orders                               ManualOrder[]
+  dailyCheckIns                        DailyCheckIn[]
+  groupBuyBonusFor                     GroupBuyMember?
 
   @@unique([userId, activeSlot])
   @@index([userId, kind, status, endsAt])
@@ -1226,6 +1279,7 @@ model QuotaBucket {
   grant                                EntitlementGrant  @relation(fields: [grantId], references: [id], onDelete: Cascade)
   allocations                          UsageAllocation[]
   adjustments                          QuotaAdjustment[]
+  dailyCheckIns                        DailyCheckIn[]
 
   @@unique([grantId, startsAt])
   @@index([endsAt, grantId])
@@ -1305,39 +1359,42 @@ model PaymentRecord {
 }
 
 model EpayPaymentAttempt {
-  id                     String            @id @default(cuid())
+  id                     String             @id @default(cuid())
   userId                 String
   offerId                String
-  orderId                String?           @unique
-  merchantOrderNo        String            @unique
-  gatewayTradeNo         String?           @unique
+  orderId                String?            @unique
+  merchantOrderNo        String             @unique
+  gatewayTradeNo         String?            @unique
   idempotencyKey         String
-  activeKey              String?           @unique
-  status                 EpayPaymentStatus @default(PENDING)
+  activeKey              String?            @unique
+  status                 EpayPaymentStatus  @default(PENDING)
+  fulfillmentStatus      PaymentFulfillmentStatus @default(PENDING)
   paymentType            String
   gatewayUrlSnapshot     String?
   merchantIdSnapshot     String?
   merchantKeyCiphertext  String?
   amountCents            Int
   basePriceCents         Int
-  currency               String            @default("CNY")
+  currency               String             @default("CNY")
   productNameSnapshot    String
   entitlementSnapshot    Json?
-  settlementFailureCount Int               @default(0)
+  settlementFailureCount Int                @default(0)
   lastSettlementError    String?
   lastSettlementFailedAt DateTime?
   lastQueryAt            DateTime?
-  queryFailureCount      Int               @default(0)
+  queryFailureCount      Int                @default(0)
   lastQueryError         String?
   closedAt               DateTime?
   expiresAt              DateTime
   settledAt              DateTime?
   failedAt               DateTime?
-  createdAt              DateTime          @default(now())
-  updatedAt              DateTime          @updatedAt
-  user                   User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  offer                  CatalogOffer      @relation(fields: [offerId], references: [id], onDelete: Restrict)
-  order                  ManualOrder?      @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  user                   User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  offer                  CatalogOffer       @relation(fields: [offerId], references: [id], onDelete: Restrict)
+  order                  ManualOrder?       @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  groupBuyMember         GroupBuyMember?
+  refundAttempt          EpayRefundAttempt?
 
   @@unique([userId, idempotencyKey])
   @@index([userId, createdAt])
@@ -1345,6 +1402,7 @@ model EpayPaymentAttempt {
   @@index([offerId, status])
   @@index([paymentType, status, createdAt, id])
   @@index([status, lastQueryAt, createdAt, id])
+  @@index([fulfillmentStatus, updatedAt, id])
 }
 
 model EpayGatewayTestAttempt {
@@ -1394,6 +1452,7 @@ model WalletLedgerEntry {
   order               ManualOrder?         @relation(fields: [orderId], references: [id], onDelete: SetNull)
   referralReward      ReferralAttribution? @relation("ReferralRewardLedger")
   referralReversal    ReferralAttribution? @relation("ReferralReversalLedger")
+  groupBuyRebate      GroupBuyMember?      @relation("GroupBuyRebateWalletLedger")
 
   @@unique([userId, idempotencyKey])
   @@index([userId, createdAt])
@@ -1443,6 +1502,128 @@ model ReferralAttribution {
   @@index([inviterId, status, createdAt, id])
   @@index([status, createdAt, id])
   @@index([codeSnapshot, createdAt, id])
+}
+
+model DailyCheckIn {
+  id                  String             @id @default(cuid())
+  userId              String
+  businessDate        DateTime           @db.Date
+  rewardBytes         BigInt
+  entitlementGrantId  String
+  quotaBucketId       String
+  subscriptionCycleId String?
+  quotaAdjustmentId   String             @unique
+  claimedAt           DateTime           @default(now())
+  user                User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entitlementGrant    EntitlementGrant   @relation(fields: [entitlementGrantId], references: [id], onDelete: Restrict)
+  quotaBucket         QuotaBucket        @relation(fields: [quotaBucketId], references: [id], onDelete: Restrict)
+  subscriptionCycle   SubscriptionCycle? @relation(fields: [subscriptionCycleId], references: [id], onDelete: SetNull)
+  quotaAdjustment     QuotaAdjustment    @relation(fields: [quotaAdjustmentId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, businessDate])
+  @@index([businessDate, claimedAt, id])
+  @@index([userId, claimedAt, id])
+}
+
+model GroupBuyCampaign {
+  id                  String       @id @default(cuid())
+  offerId             String       @unique
+  enabled             Boolean      @default(false)
+  requiredMembers     Int          @default(2)
+  durationMinutes     Int          @default(1440)
+  discountBasisPoints Int          @default(10000)
+  bonusTrafficBytes   BigInt       @default(21474836480)
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  offer               CatalogOffer @relation(fields: [offerId], references: [id], onDelete: Restrict)
+  groups              GroupBuy[]
+
+  @@index([enabled, updatedAt])
+}
+
+model GroupBuy {
+  id                          String                 @id @default(cuid())
+  campaignId                  String
+  creatorId                   String
+  shareCode                   String                 @unique
+  status                      GroupBuyStatus         @default(PENDING_PAYMENT)
+  offerIdSnapshot             String
+  productNameSnapshot         String
+  offerNameSnapshot           String
+  priceCentsSnapshot          Int
+  currencySnapshot            String                 @default("CNY")
+  requiredMembersSnapshot     Int                    @default(2)
+  discountBasisPointsSnapshot Int                    @default(10000)
+  bonusTrafficBytesSnapshot   BigInt                 @default(21474836480)
+  settlementModeSnapshot      GroupBuySettlementMode @default(UPFRONT_DISCOUNT_REFUND_ON_FAILURE)
+  entitlementSnapshot         Json
+  openedAt                    DateTime?
+  expiresAt                   DateTime?
+  completedAt                 DateTime?
+  createdAt                   DateTime               @default(now())
+  updatedAt                   DateTime               @updatedAt
+  campaign                    GroupBuyCampaign       @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  creator                     User                   @relation("GroupBuyCreator", fields: [creatorId], references: [id], onDelete: Restrict)
+  members                     GroupBuyMember[]
+
+  @@index([status, expiresAt, id])
+  @@index([campaignId, status, createdAt, id])
+  @@index([creatorId, createdAt, id])
+}
+
+model GroupBuyMember {
+  id                      String               @id @default(cuid())
+  groupId                 String
+  userId                  String
+  isCreator               Boolean              @default(false)
+  status                  GroupBuyMemberStatus @default(PAYMENT_PENDING)
+  activeSlot              String?              @unique
+  paymentAttemptId        String?              @unique
+  orderId                 String?              @unique
+  bonusEntitlementGrantId String?              @unique
+  rebateWalletLedgerId    String?              @unique
+  rebateRecoveredCents    Int                  @default(0)
+  rebateUnrecoveredCents  Int                  @default(0)
+  walletIdempotencyKey    String?
+  paidAt                  DateTime?
+  fulfilledAt             DateTime?
+  createdAt               DateTime             @default(now())
+  updatedAt               DateTime             @updatedAt
+  group                   GroupBuy             @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user                    User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+  paymentAttempt          EpayPaymentAttempt?  @relation(fields: [paymentAttemptId], references: [id], onDelete: SetNull)
+  order                   ManualOrder?         @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  bonusEntitlementGrant   EntitlementGrant?    @relation(fields: [bonusEntitlementGrantId], references: [id], onDelete: SetNull)
+  rebateWalletLedger      WalletLedgerEntry?   @relation("GroupBuyRebateWalletLedger", fields: [rebateWalletLedgerId], references: [id], onDelete: SetNull)
+  refundAttempt           EpayRefundAttempt?
+
+  @@unique([groupId, userId])
+  @@unique([userId, walletIdempotencyKey])
+  @@index([groupId, status, createdAt, id])
+  @@index([userId, status, createdAt, id])
+  @@index([rebateUnrecoveredCents, updatedAt, id])
+}
+
+model EpayRefundAttempt {
+  id                String             @id @default(cuid())
+  paymentAttemptId  String             @unique
+  groupBuyMemberId  String?            @unique
+  status            EpayRefundStatus   @default(PENDING)
+  amountCents       Int
+  reasonCode        String?
+  requestCount      Int                @default(0)
+  lastError         String?
+  gatewayMessage    String?
+  fallbackAllowedAt DateTime?
+  lastRequestedAt   DateTime?
+  submittedAt       DateTime?
+  confirmedAt       DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  paymentAttempt    EpayPaymentAttempt @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
+  groupBuyMember    GroupBuyMember?    @relation(fields: [groupBuyMemberId], references: [id], onDelete: SetNull)
+
+  @@index([status, updatedAt, id])
 }
 
 model Refund {

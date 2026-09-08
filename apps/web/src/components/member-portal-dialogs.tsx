@@ -19,16 +19,12 @@ export function MemberPortalDialogs() {
   useEffect(() => {
     if (!token) return;
     const controller = new AbortController();
-    void apiRequest<AnniversaryGiftStatus>(
-      "/api/portal/anniversary-gift",
-      { token, signal: controller.signal },
-    )
-      .then((response) => setGift(response))
-      .catch((cause) => {
-        if (!(cause instanceof DOMException && cause.name === "AbortError")) {
-          setGift(null);
-        }
-      })
+    void apiRequest<AnniversaryGiftStatus>("/api/portal/anniversary-gift", {
+      token,
+      signal: controller.signal,
+    })
+      .then(setGift)
+      .catch(() => undefined)
       .finally(() => setLoaded(true));
     return () => controller.abort();
   }, [token]);
@@ -46,7 +42,9 @@ export function MemberPortalDialogs() {
       setRevealed(true);
     } catch (cause) {
       setError(
-        cause instanceof ApiError ? cause.message : "礼物领取失败，请稍后重试。",
+        cause instanceof ApiError
+          ? cause.message
+          : "礼物领取失败，请稍后重试。",
       );
     } finally {
       setClaiming(false);

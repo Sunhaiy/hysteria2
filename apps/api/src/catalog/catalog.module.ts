@@ -5,8 +5,10 @@ import {
   PublicCatalogController,
 } from './catalog.controller';
 import { CatalogService } from './catalog.service';
+import { EntitlementModule } from '../entitlement/entitlement.module';
 
 @Module({
+  imports: [EntitlementModule],
   controllers: [
     CatalogController,
     PublicCatalogController,

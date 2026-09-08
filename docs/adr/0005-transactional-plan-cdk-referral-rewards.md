@@ -5,10 +5,11 @@ verified Epay plan purchase and are settled in the same database transaction as
 the order and plan entitlement. The settlement service verifies the persisted
 order source before issuing a reward. This excludes wallet purchases, non-plan
 CDKs, and complimentary grants without duplicating eligibility rules across
-callers. Any applied refund reverses the whole reward once, but wallet recovery
-is capped at the inviter's current balance and consumed traffic is never
-rewritten; the explicit unrecovered amount is preferable to negative balances
-or retroactive usage changes.
+callers. Partial refunds recover the inviter cashback in proportion to the
+cumulative refunded amount; only a full refund cancels the invitee traffic
+bonus and completes reward reversal. Wallet recovery is capped at the inviter's
+current balance and consumed traffic is never rewritten; explicit unrecovered
+debt is preferable to negative balances or retroactive usage changes.
 
 New referral attributions snapshot a configurable cashback percentage in basis
 points. Settlement calculates the inviter reward from the qualifying order

@@ -6,6 +6,7 @@ import { AuthModule } from './auth/auth.module';
 import { AuditModule } from './audit/audit.module';
 import { BackupModule } from './backups/backup.module';
 import { CacheModule } from './cache/cache.module';
+import { CheckInModule } from './check-in/check-in.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { CommerceModule } from './commerce/commerce.module';
 import { DomainModule } from './domain/domain.module';
@@ -14,6 +15,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { EntitlementModule } from './entitlement/entitlement.module';
 import { EpayModule } from './epay/epay.module';
 import { HealthModule } from './health/health.module';
+import { GroupBuyModule } from './group-buy/group-buy.module';
 import { FinanceModule } from './finance/finance.module';
 import { HysteriaAuthModule } from './hysteria-auth/hysteria-auth.module';
 import { IntegrationsModule } from './integrations/integrations.module';
@@ -55,6 +57,7 @@ import { TicketsModule } from './tickets/tickets.module';
     ScheduleModule.forRoot(),
     BackupModule,
     CacheModule,
+    CheckInModule,
     CatalogModule,
     PrismaModule,
     SecurityModule,
@@ -71,6 +74,7 @@ import { TicketsModule } from './tickets/tickets.module';
     AuditModule,
     OAuthModule,
     HealthModule,
+    GroupBuyModule,
     FinanceModule,
     MonitoringModule,
     AdminUsersModule,

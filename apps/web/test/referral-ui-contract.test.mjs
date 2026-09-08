@@ -39,9 +39,11 @@ test("referral entry keeps copy actions aligned and exposes both rewards", () =>
 test("referral page has responsive metrics and a designed empty state", () => {
   assert.match(page, /referral-metric-grid/);
   assert.match(page, /referral-empty-state/);
+  assert.doesNotMatch(page, /referral-page-kicker/);
+  assert.doesNotMatch(styles, /\.referral-metric::before/);
   assert.match(
     styles,
-    /\.referral-metric::before\s*\{[^}]*background:\s*var\(--status-success\);/s,
+    /\.referral-metric-head \.icon-slot\s*\{[^}]*color:\s*var\(--text-primary\);[^}]*background:\s*var\(--bg-panel-alt\);/s,
   );
   assert.match(
     styles,

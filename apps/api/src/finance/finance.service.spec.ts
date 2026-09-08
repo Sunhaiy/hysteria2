@@ -13,6 +13,12 @@ describe('FinanceService', () => {
           },
           {
             status: 'APPLIED',
+            source: 'PAYMENT',
+            _sum: { amountCents: 700 },
+            _count: { _all: 1 },
+          },
+          {
+            status: 'APPLIED',
             source: 'ADMIN',
             _sum: { amountCents: 500 },
             _count: { _all: 1 },
@@ -87,15 +93,15 @@ describe('FinanceService', () => {
     expect(summary).toMatchObject({
       currency: 'CNY',
       timezone: 'Asia/Shanghai',
-      fulfilledNetRevenueCents: 2100,
-      walletRevenueCents: 1000,
-      manualRevenueCents: 500,
+      fulfilledNetRevenueCents: 500,
+      walletRevenueCents: 0,
+      manualRevenueCents: 0,
       cdkEntitlementValueCents: 600,
       refundCents: 200,
       amortizedNodeCostCents: 1000,
-      grossProfitCents: 900,
+      grossProfitCents: -500,
       walletLiabilityCents: 5000,
-      appliedOrders: 3,
+      appliedOrders: 4,
       pendingOrders: 1,
     });
   });
@@ -122,11 +128,19 @@ describe('FinanceService', () => {
           }),
         ),
       },
-      user: { update: jest.fn().mockResolvedValue({}) },
+      user: {
+        update: jest
+          .fn()
+          .mockResolvedValueOnce({ balanceCents: 400, deletedAt: null })
+          .mockResolvedValueOnce({ balanceCents: 650 }),
+      },
       walletTransaction: {
         create: jest.fn().mockResolvedValue({ id: 'wallet_refund_1' }),
       },
-      walletLedgerEntry: { create: jest.fn().mockResolvedValue({}) },
+      walletLedgerEntry: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'ledger_refund_1' }),
+      },
     };
     const prisma = {
       $transaction: jest.fn((operation: (client: typeof tx) => unknown) =>
@@ -171,6 +185,11 @@ describe('FinanceService', () => {
       'order_1',
       'admin_1',
       'refund_1',
+      {
+        cumulativeRefundedCents: 350,
+        orderAmountCents: 1000,
+        fullRefund: false,
+      },
     );
     expect(entitlements.reverseUltraForFullRefund).not.toHaveBeenCalled();
     expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
@@ -222,7 +241,7 @@ describe('FinanceService', () => {
     expect(tx.refund.create).toHaveBeenCalledTimes(1);
   });
 
-  it('revokes the linked Ultra entitlement after the order is fully refunded', async () => {
+  it('revokes the linked order entitlement after the order is fully refunded', async () => {
     const tx = {
       manualOrder: {
         findUnique: jest.fn().mockResolvedValue({
@@ -252,14 +271,18 @@ describe('FinanceService', () => {
     };
     const referrals = { reverseForRefund: jest.fn() };
     const entitlements = {
-      reverseUltraForFullRefund: jest.fn().mockResolvedValue({
+      reverseOrderForFullRefund: jest.fn().mockResolvedValue({
         reversed: true,
       }),
+    };
+    const groupBuys = {
+      reverseBonusForRefund: jest.fn().mockResolvedValue({ reversed: true }),
     };
     const service = new FinanceService(
       prisma as never,
       referrals as never,
       entitlements as never,
+      groupBuys as never,
     );
 
     await service.createRefund(
@@ -268,7 +291,13 @@ describe('FinanceService', () => {
       'admin_1',
     );
 
-    expect(entitlements.reverseUltraForFullRefund).toHaveBeenCalledWith(
+    expect(entitlements.reverseOrderForFullRefund).toHaveBeenCalledWith(
+      tx,
+      'order_ultra',
+      'admin_1',
+      'refund_ultra',
+    );
+    expect(groupBuys.reverseBonusForRefund).toHaveBeenCalledWith(
       tx,
       'order_ultra',
       'admin_1',

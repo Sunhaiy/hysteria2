@@ -71,6 +71,12 @@ describe('EpayReconciliationService', () => {
       'merchantKeyCiphertext'
     > & { merchantKeyCiphertext?: string | null } = {},
   ) {
+    const paymentFindMany = jest.fn(
+      (input: { where: Record<string, unknown> }) => {
+        void input;
+        return Promise.resolve([{ ...baseAttempt, ...attemptOverrides }]);
+      },
+    );
     const paymentUpdates: UpdateManyInput[] = [];
     const paymentUpdateMany = jest.fn((input: UpdateManyInput) => {
       paymentUpdates.push(input);
@@ -85,9 +91,10 @@ describe('EpayReconciliationService', () => {
     };
     const prisma = {
       epayPaymentAttempt: {
-        findMany: jest
+        findMany: paymentFindMany,
+        findUnique: jest
           .fn()
-          .mockResolvedValue([{ ...baseAttempt, ...attemptOverrides }]),
+          .mockResolvedValue({ ...baseAttempt, ...attemptOverrides }),
         updateMany: paymentUpdateMany,
       },
       epayGatewayTestAttempt: {
@@ -120,7 +127,6 @@ describe('EpayReconciliationService', () => {
       prisma as never,
       epay as never,
       cipher as never,
-      { getEpayConfig: jest.fn() } as never,
     );
     return {
       service,
@@ -138,7 +144,7 @@ describe('EpayReconciliationService', () => {
   });
 
   it('queries with signed parameters and settles a verified paid order', async () => {
-    const { service, epay, fetchMock } = setup(response());
+    const { service, epay, fetchMock, prisma } = setup(response());
 
     await expect(service.reconcileDueAttempts()).resolves.toMatchObject({
       checked: 1,
@@ -163,6 +169,24 @@ describe('EpayReconciliationService', () => {
       baseAttempt.merchantOrderNo,
     );
     expect(requestUrl.searchParams.get('sign')).toBeTruthy();
+    const findRequest = prisma.epayPaymentAttempt.findMany.mock.calls[0]?.[0];
+    expect(findRequest.where.createdAt).not.toHaveProperty('gte');
+  });
+
+  it('allows an administrator to reconcile one old payment attempt on demand', async () => {
+    const oldAttempt = {
+      ...baseAttempt,
+      createdAt: new Date('2025-01-01T00:00:00.000Z'),
+    };
+    const { service, epay } = setup(response(), false, oldAttempt);
+
+    await expect(
+      service.reconcilePaymentAttempt(baseAttempt.id),
+    ).resolves.toEqual({
+      attemptId: baseAttempt.id,
+      outcome: 'settled',
+    });
+    expect(epay.settleVerifiedPayment).toHaveBeenCalledTimes(1);
   });
 
   it('keeps a valid pending order unsettled and records the query time', async () => {
@@ -178,6 +202,28 @@ describe('EpayReconciliationService', () => {
       | { data: { lastQueryError?: string | null } }
       | undefined;
     expect(update?.data.lastQueryError).toBeNull();
+  });
+
+  it('closes an expired order that the gateway confirms does not exist', async () => {
+    const { service, epay, paymentUpdates } = setup(
+      response({
+        code: '-1',
+        msg: 'not found',
+        status: '0',
+        trade_status: 'CLOSED',
+        trade_no: '',
+      }),
+    );
+
+    await expect(service.reconcileDueAttempts()).resolves.toMatchObject({
+      closed: 1,
+      notFound: 0,
+    });
+    expect(epay.settleVerifiedPayment).not.toHaveBeenCalled();
+    expect(paymentUpdates.at(-1)?.data).toMatchObject({
+      status: EpayPaymentStatus.FAILED,
+      activeKey: null,
+    });
   });
 
   it('closes a signed closed order and releases its active purchase key', async () => {
@@ -235,7 +281,7 @@ describe('EpayReconciliationService', () => {
     expect(update?.data.lastQueryError).toBe('易支付查单请求失败');
   });
 
-  it('rejects a partial credential snapshot instead of mixing current settings', async () => {
+  it('sends an incomplete credential snapshot to manual review without querying', async () => {
     const { service, fetchMock, paymentUpdates } = setup({}, false, {
       merchantKeyCiphertext: null,
     });
@@ -247,7 +293,11 @@ describe('EpayReconciliationService', () => {
     const update = paymentUpdates.at(-1) as unknown as
       | { data: { lastQueryError?: string } }
       | undefined;
-    expect(update?.data.lastQueryError).toBe('易支付订单查单配置快照不完整');
+    expect(update?.data).toMatchObject({
+      activeKey: null,
+      fulfillmentStatus: 'MANUAL_REVIEW',
+      lastQueryError: '易支付订单缺少完整的不可变凭据快照，必须人工处理',
+    });
   });
 
   it('reconciles a paid gateway test without creating customer fulfillment', async () => {
@@ -315,7 +365,6 @@ describe('EpayReconciliationService', () => {
       prisma as never,
       epay as never,
       cipher as never,
-      {} as never,
     );
 
     await expect(service.reconcileDueAttempts()).resolves.toMatchObject({

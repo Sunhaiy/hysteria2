@@ -108,6 +108,35 @@ test("member catalog uses the standard panel surface and aligned card headings",
   assert.match(styles, /\.catalog-standard-tiers\s*\{[\s\S]*?gap:\s*22px;/);
 });
 
+test("plan reset waits for a valid quote and keeps its highlights aligned", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8"),
+  ]);
+
+  assert.match(source, /async function selectPurchaseAction/);
+  assert.doesNotMatch(
+    source,
+    /payment\.status === "expired" \|\| payment\.status === "failed"/,
+  );
+  assert.match(
+    source,
+    /payment\.status === "expired"[\s\S]*?setPendingPaymentId\(payment\.id\)/,
+  );
+  assert.match(
+    source,
+    /const nextQuote = await fetchQuote\(offer, purchaseAction\);[\s\S]*?if \(!nextQuote\) return;[\s\S]*?setCheckout\(/,
+  );
+  assert.match(
+    styles,
+    /\.checkout-purchase-highlights\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/,
+  );
+  assert.match(
+    styles,
+    /\.checkout-purchase-highlights > span\s*\{[\s\S]*?justify-content:\s*center;/,
+  );
+});
+
 test("shared motion keeps closed drawers hidden and status badges readable", async () => {
   const styles = await readFile(stylesUrl, "utf8");
   const reveal = styles.match(/@keyframes content-reveal\s*\{[\s\S]*?\n\}/)?.[0] ?? "";

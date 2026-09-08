@@ -25,6 +25,14 @@ const multiplierScale = BigInt(10_000);
 
 type DbClient = PrismaService | Prisma.TransactionClient;
 
+export interface AvailableQuotaAdjustmentInput {
+  mode: 'delta' | 'set_remaining';
+  bytes?: number;
+  remainingBytes?: number;
+  grantId?: string;
+  reason?: string;
+}
+
 type MeteredQuotaBucket = {
   id: string;
   grantedBytes: bigint;
@@ -41,7 +49,311 @@ type MeteredQuotaBucket = {
 export class EntitlementService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async reverseUltraForFullRefund(
+  async creditQuotaBucket(
+    client: DbClient,
+    input: {
+      bucketId: string;
+      bytes: bigint;
+      at: Date;
+      reason: string;
+      idempotencyKey: string;
+      actorId?: string;
+    },
+  ) {
+    if (input.bytes <= BigInt(0)) {
+      throw new BadRequestException('Quota credit must be positive');
+    }
+    const replay = await client.quotaAdjustment.findUnique({
+      where: { idempotencyKey: input.idempotencyKey },
+    });
+    if (replay) {
+      return {
+        adjustmentId: replay.id,
+        bucketId: replay.quotaBucketId,
+        subscriptionCycleId: replay.subscriptionCycleId,
+        beforeRemainingBytes: replay.beforeRemainingBytes,
+        afterRemainingBytes: replay.afterRemainingBytes,
+        replayed: true,
+      };
+    }
+    const bucket = await client.quotaBucket.findUnique({
+      where: { id: input.bucketId },
+      include: {
+        grant: {
+          include: {
+            legacySubscription: {
+              include: {
+                cycles: {
+                  where: {
+                    startsAt: { lte: input.at },
+                    endsAt: { gt: input.at },
+                  },
+                  orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
+                  take: 1,
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (
+      !bucket ||
+      bucket.grant.status !== EntitlementGrantStatus.ACTIVE ||
+      bucket.grant.startsAt > input.at ||
+      bucket.grant.endsAt <= input.at ||
+      bucket.startsAt > input.at ||
+      bucket.endsAt <= input.at
+    ) {
+      throw new ConflictException('Active quota bucket is no longer available');
+    }
+    const beforeRemainingBytes =
+      bucket.grantedBytes > bucket.consumedBytes
+        ? bucket.grantedBytes - bucket.consumedBytes
+        : BigInt(0);
+    const subscriptionCycleId =
+      bucket.grant.legacySubscription?.cycles[0]?.id ?? null;
+    await client.quotaBucket.update({
+      where: { id: bucket.id },
+      data: { grantedBytes: { increment: input.bytes } },
+    });
+    if (subscriptionCycleId) {
+      await client.subscriptionCycle.update({
+        where: { id: subscriptionCycleId },
+        data: { adjustmentBytes: { increment: input.bytes } },
+      });
+    }
+    const adjustment = await client.quotaAdjustment.create({
+      data: {
+        accessAccountId: bucket.grant.accessAccountId,
+        subscriptionCycleId,
+        quotaBucketId: bucket.id,
+        actorId: input.actorId,
+        idempotencyKey: input.idempotencyKey,
+        mode: QuotaAdjustmentMode.DELTA,
+        deltaBytes: input.bytes,
+        beforeRemainingBytes,
+        afterRemainingBytes: beforeRemainingBytes + input.bytes,
+        reason: input.reason,
+      },
+    });
+    return {
+      adjustmentId: adjustment.id,
+      bucketId: bucket.id,
+      subscriptionCycleId,
+      beforeRemainingBytes,
+      afterRemainingBytes: beforeRemainingBytes + input.bytes,
+      replayed: false,
+    };
+  }
+
+  async createBonusTrafficGrantFromOrder(
+    client: DbClient,
+    input: {
+      orderId: string;
+      userId: string;
+      productId: string;
+      startsAt: Date;
+      bytes: bigint;
+    },
+  ) {
+    if (input.bytes <= BigInt(0)) {
+      throw new BadRequestException('Bonus traffic must be positive');
+    }
+    const order = await client.manualOrder.findUnique({
+      where: { id: input.orderId },
+      include: { entitlementGrant: true },
+    });
+    const planGrant = order?.entitlementGrant;
+    if (
+      !order ||
+      order.userId !== input.userId ||
+      !planGrant ||
+      planGrant.userId !== input.userId ||
+      planGrant.status !== EntitlementGrantStatus.ACTIVE ||
+      !order.entitlementExpiresAt ||
+      order.entitlementExpiresAt <= input.startsAt
+    ) {
+      throw new ConflictException('Plan entitlement for bonus is unavailable');
+    }
+    const grant = await client.entitlementGrant.create({
+      data: {
+        userId: input.userId,
+        accessAccountId: planGrant.accessAccountId,
+        productId: input.productId,
+        kind: EntitlementGrantKind.TRAFFIC_PACK,
+        status: EntitlementGrantStatus.ACTIVE,
+        startsAt: input.startsAt,
+        endsAt: order.entitlementExpiresAt,
+        accessProfileId: planGrant.accessProfileId,
+        speedUpMbpsSnapshot: planGrant.speedUpMbpsSnapshot,
+        speedDownMbpsSnapshot: planGrant.speedDownMbpsSnapshot,
+        deviceLimitSnapshot: planGrant.deviceLimitSnapshot,
+        trafficMultiplierBasisPointsSnapshot:
+          planGrant.trafficMultiplierBasisPointsSnapshot,
+        trafficBytesSnapshot: input.bytes,
+        priceCentsSnapshot: 0,
+      },
+    });
+    const bucket = await client.quotaBucket.create({
+      data: {
+        grantId: grant.id,
+        kind: QuotaBucketKind.TRAFFIC_PACK,
+        startsAt: input.startsAt,
+        endsAt: order.entitlementExpiresAt,
+        grantedBytes: input.bytes,
+        trafficMultiplierBasisPointsSnapshot:
+          planGrant.trafficMultiplierBasisPointsSnapshot,
+      },
+    });
+    return { grantId: grant.id, bucketId: bucket.id };
+  }
+
+  async revokeGrant(
+    client: DbClient,
+    input: {
+      grantId: string;
+      at: Date;
+      actorId?: string;
+      reason: string;
+      auditAction?: string;
+    },
+  ) {
+    const grant = await client.entitlementGrant.findUnique({
+      where: { id: input.grantId },
+      include: { quotaBuckets: true },
+    });
+    if (!grant || grant.status !== EntitlementGrantStatus.ACTIVE) {
+      return { revoked: false, revokedUnusedBytes: BigInt(0) };
+    }
+    const revokedUnusedBytes = grant.quotaBuckets.reduce((total, bucket) => {
+      const remaining = bucket.grantedBytes - bucket.consumedBytes;
+      return total + (remaining > BigInt(0) ? remaining : BigInt(0));
+    }, BigInt(0));
+    const claimed = await client.entitlementGrant.updateMany({
+      where: { id: grant.id, status: EntitlementGrantStatus.ACTIVE },
+      data: {
+        status: EntitlementGrantStatus.CANCELED,
+        endsAt: input.at,
+        activeSlot: null,
+      },
+    });
+    if (claimed.count !== 1) {
+      return { revoked: false, revokedUnusedBytes: BigInt(0) };
+    }
+    await client.quotaBucket.updateMany({
+      where: { grantId: grant.id, endsAt: { gt: input.at } },
+      data: { endsAt: input.at },
+    });
+    if (grant.legacySubscriptionId) {
+      await client.subscription.updateMany({
+        where: {
+          id: grant.legacySubscriptionId,
+          status: {
+            in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED],
+          },
+        },
+        data: { status: SubscriptionStatus.CANCELED, endsAt: input.at },
+      });
+    }
+    if (grant.legacyTrafficPackId) {
+      await client.trafficPack.updateMany({
+        where: {
+          id: grant.legacyTrafficPackId,
+          status: TrafficPackStatus.ACTIVE,
+        },
+        data: {
+          status: TrafficPackStatus.EXPIRED,
+          expiresAt: input.at,
+          remainingBytes: BigInt(0),
+        },
+      });
+    }
+    await client.auditLog.create({
+      data: {
+        actorId: input.actorId,
+        action: input.auditAction ?? 'entitlement.grant.revoked',
+        targetType: 'EntitlementGrant',
+        targetId: grant.id,
+        metadata: {
+          reason: input.reason,
+          revokedAt: input.at.toISOString(),
+          revokedUnusedBytes: revokedUnusedBytes.toString(),
+        },
+      },
+    });
+    return { revoked: true, revokedUnusedBytes };
+  }
+
+  async revokeUserEntitlements(
+    client: DbClient,
+    input: { userId: string; at: Date; actorId?: string; reason: string },
+  ) {
+    const grants = await client.entitlementGrant.findMany({
+      where: {
+        userId: input.userId,
+        status: EntitlementGrantStatus.ACTIVE,
+      },
+      select: { id: true },
+    });
+    for (const grant of grants) {
+      await this.revokeGrant(client, {
+        grantId: grant.id,
+        at: input.at,
+        actorId: input.actorId,
+        reason: input.reason,
+        auditAction: 'entitlement.account_deleted',
+      });
+    }
+    const subscriptions = await client.subscription.updateMany({
+      where: {
+        userId: input.userId,
+        status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED] },
+      },
+      data: { status: SubscriptionStatus.CANCELED, endsAt: input.at },
+    });
+    const trafficPacks = await client.trafficPack.updateMany({
+      where: { userId: input.userId, status: TrafficPackStatus.ACTIVE },
+      data: {
+        status: TrafficPackStatus.EXPIRED,
+        expiresAt: input.at,
+        remainingBytes: BigInt(0),
+      },
+    });
+    return {
+      grants: grants.length,
+      subscriptions: subscriptions.count,
+      trafficPacks: trafficPacks.count,
+    };
+  }
+
+  updateActiveProductAccessSnapshots(
+    client: DbClient,
+    input: {
+      productId: string;
+      accessProfileId: string;
+      speedUpMbps: number;
+      speedDownMbps: number;
+      deviceLimit: number;
+      at: Date;
+    },
+  ) {
+    return client.entitlementGrant.updateMany({
+      where: {
+        productId: input.productId,
+        status: EntitlementGrantStatus.ACTIVE,
+        endsAt: { gt: input.at },
+      },
+      data: {
+        accessProfileId: input.accessProfileId,
+        speedUpMbpsSnapshot: input.speedUpMbps,
+        speedDownMbpsSnapshot: input.speedDownMbps,
+        deviceLimitSnapshot: input.deviceLimit,
+      },
+    });
+  }
+
+  async reverseOrderForFullRefund(
     client: DbClient,
     orderId: string,
     actorId: string,
@@ -50,45 +362,200 @@ export class EntitlementService {
     const order = await client.manualOrder.findUnique({
       where: { id: orderId },
       include: {
-        entitlementGrant: true,
+        entitlementGrant: { include: { quotaBuckets: true } },
         catalogOffer: { include: { product: true } },
       },
     });
     if (
       !order?.entitlementGrant ||
-      order.catalogOffer?.product.series !== CatalogProductSeries.ULTRA ||
       order.entitlementGrant.status !== EntitlementGrantStatus.ACTIVE
     ) {
       return { reversed: false };
     }
     const reversedAt = new Date();
-    const result = await client.entitlementGrant.updateMany({
-      where: {
-        id: order.entitlementGrant.id,
-        status: EntitlementGrantStatus.ACTIVE,
-        activeSlot: 'ULTRA',
-      },
-      data: {
-        status: EntitlementGrantStatus.CANCELED,
-        endsAt: reversedAt,
-        activeSlot: null,
-      },
-    });
-    if (result.count === 0) return { reversed: false };
-    await client.auditLog.create({
-      data: {
+    if (order.note === 'PLAN_QUOTA_RESET') {
+      const adjustment = await client.quotaAdjustment.findUnique({
+        where: { idempotencyKey: `plan-reset:${order.id}` },
+      });
+      const bucket = adjustment?.quotaBucketId
+        ? await client.quotaBucket.findUnique({
+            where: { id: adjustment.quotaBucketId },
+          })
+        : null;
+      if (!adjustment || !bucket) return { reversed: false };
+      const remaining =
+        bucket.grantedBytes > bucket.consumedBytes
+          ? bucket.grantedBytes - bucket.consumedBytes
+          : BigInt(0);
+      const removable =
+        remaining < adjustment.deltaBytes ? remaining : adjustment.deltaBytes;
+      if (removable > BigInt(0)) {
+        await client.quotaBucket.update({
+          where: { id: bucket.id },
+          data: { grantedBytes: { decrement: removable } },
+        });
+        if (adjustment.subscriptionCycleId) {
+          await client.subscriptionCycle.update({
+            where: { id: adjustment.subscriptionCycleId },
+            data: { adjustmentBytes: { decrement: removable } },
+          });
+        }
+        await client.quotaAdjustment.create({
+          data: {
+            accessAccountId: adjustment.accessAccountId,
+            subscriptionCycleId: adjustment.subscriptionCycleId,
+            quotaBucketId: bucket.id,
+            actorId,
+            idempotencyKey: `refund-entitlement:${refundId}`,
+            mode: QuotaAdjustmentMode.DELTA,
+            deltaBytes: -removable,
+            beforeRemainingBytes: remaining,
+            afterRemainingBytes: remaining - removable,
+            reason: `全额退款撤销流量重置 ${refundId}`,
+          },
+        });
+      }
+      await this.auditEntitlementRefund(client, {
         actorId,
-        action: 'ULTRA_ENTITLEMENT_REVERSED',
-        targetType: 'EntitlementGrant',
-        targetId: order.entitlementGrant.id,
-        metadata: { orderId, refundId, reversedAt: reversedAt.toISOString() },
-      },
+        orderId,
+        refundId,
+        grantId: order.entitlementGrant.id,
+        reversedAt,
+        action: 'PLAN_RESET_ENTITLEMENT_REVERSED',
+        revokedBytes: removable,
+      });
+      return {
+        reversed: removable > BigInt(0),
+        grantId: order.entitlementGrant.id,
+        revokedBytes: removable,
+      };
+    }
+
+    const fullGrantCancellation =
+      order.entitlementGrant.kind === EntitlementGrantKind.TRAFFIC_PACK ||
+      order.catalogOffer?.product.series === CatalogProductSeries.ULTRA;
+    if (fullGrantCancellation) {
+      const result = await client.entitlementGrant.updateMany({
+        where: {
+          id: order.entitlementGrant.id,
+          status: EntitlementGrantStatus.ACTIVE,
+        },
+        data: {
+          status: EntitlementGrantStatus.CANCELED,
+          endsAt: reversedAt,
+          activeSlot: null,
+        },
+      });
+      if (result.count === 0) return { reversed: false };
+      await client.quotaBucket.updateMany({
+        where: {
+          grantId: order.entitlementGrant.id,
+          endsAt: { gt: reversedAt },
+        },
+        data: { endsAt: reversedAt },
+      });
+      if (order.entitlementGrant.legacyTrafficPackId) {
+        await client.trafficPack.update({
+          where: { id: order.entitlementGrant.legacyTrafficPackId },
+          data: {
+            status: TrafficPackStatus.EXPIRED,
+            expiresAt: reversedAt,
+            remainingBytes: BigInt(0),
+          },
+        });
+      }
+    } else {
+      const months = order.intervalMonthsSnapshot ?? 0;
+      const days = order.durationDays ?? 0;
+      const contractualEnd =
+        months > 0
+          ? this.addUtcMonthsClamped(order.entitlementGrant.endsAt, -months)
+          : new Date(
+              order.entitlementGrant.endsAt.getTime() -
+                days * 24 * 60 * 60 * 1000,
+            );
+      const endsAt = contractualEnd > reversedAt ? contractualEnd : reversedAt;
+      const canceled = endsAt <= reversedAt;
+      await client.entitlementGrant.update({
+        where: { id: order.entitlementGrant.id },
+        data: {
+          endsAt,
+          status: canceled
+            ? EntitlementGrantStatus.CANCELED
+            : EntitlementGrantStatus.ACTIVE,
+        },
+      });
+      await client.quotaBucket.updateMany({
+        where: { grantId: order.entitlementGrant.id, endsAt: { gt: endsAt } },
+        data: { endsAt },
+      });
+      if (order.entitlementGrant.legacySubscriptionId) {
+        await client.subscription.update({
+          where: { id: order.entitlementGrant.legacySubscriptionId },
+          data: {
+            endsAt,
+            status: canceled
+              ? SubscriptionStatus.CANCELED
+              : SubscriptionStatus.ACTIVE,
+          },
+        });
+      }
+    }
+    await this.auditEntitlementRefund(client, {
+      actorId,
+      orderId,
+      refundId,
+      grantId: order.entitlementGrant.id,
+      reversedAt,
+      action: 'ORDER_ENTITLEMENT_REVERSED',
     });
     return { reversed: true, grantId: order.entitlementGrant.id };
   }
 
+  async reverseUltraForFullRefund(
+    client: DbClient,
+    orderId: string,
+    actorId: string,
+    refundId: string,
+  ) {
+    return this.reverseOrderForFullRefund(client, orderId, actorId, refundId);
+  }
+
+  private auditEntitlementRefund(
+    client: DbClient,
+    input: {
+      actorId: string;
+      orderId: string;
+      refundId: string;
+      grantId: string;
+      reversedAt: Date;
+      action: string;
+      revokedBytes?: bigint;
+    },
+  ) {
+    return client.auditLog.create({
+      data: {
+        actorId: input.actorId,
+        action: input.action,
+        targetType: 'EntitlementGrant',
+        targetId: input.grantId,
+        metadata: {
+          orderId: input.orderId,
+          refundId: input.refundId,
+          reversedAt: input.reversedAt.toISOString(),
+          revokedBytes: input.revokedBytes?.toString(),
+        },
+      },
+    });
+  }
+
   async grantFromOrder(
-    input: { orderId: string; subscriptionId?: string; trafficPackId?: string },
+    input: {
+      orderId: string;
+      subscriptionId?: string;
+      trafficPackId?: string;
+      replacePlan?: boolean;
+    },
     client: DbClient = this.prisma,
   ) {
     const order = await client.manualOrder.findUnique({
@@ -235,14 +702,37 @@ export class EntitlementService {
     ) {
       throw new ConflictException('Ultra upgrade source changed');
     }
-    const replacesPlanProduct =
+    const restartsPlan =
       kind === EntitlementGrantKind.PLAN &&
       existing !== null &&
-      existing.productId !== product.id;
+      (existing.productId !== product.id ||
+        input.replacePlan === true ||
+        existing.endsAt <= startsAt);
     const previousTrafficBytes = existing?.trafficBytesSnapshot ?? null;
-    const resetAnchorAt =
-      existing?.resetAnchorAt ?? existing?.startsAt ?? startsAt;
+    const resetAnchorAt = restartsPlan
+      ? startsAt
+      : (existing?.resetAnchorAt ?? existing?.startsAt ?? startsAt);
     const trafficBytes = order.trafficBytes ?? order.catalogOffer.trafficBytes;
+    if (restartsPlan && existing) {
+      await client.quotaBucket.updateMany({
+        where: {
+          grantId: existing.id,
+          startsAt: { lt: startsAt },
+          endsAt: { gt: startsAt },
+        },
+        data: { endsAt: startsAt },
+      });
+      if (input.subscriptionId) {
+        await client.subscriptionCycle.updateMany({
+          where: {
+            subscriptionId: input.subscriptionId,
+            startsAt: { lt: startsAt },
+            endsAt: { gt: startsAt },
+          },
+          data: { endsAt: startsAt },
+        });
+      }
+    }
     const grant = existing
       ? await client.entitlementGrant.update({
           where: { id: existing.id },
@@ -250,7 +740,7 @@ export class EntitlementService {
             productId: product.id,
             offerId: order.catalogOffer.id,
             status: EntitlementGrantStatus.ACTIVE,
-            startsAt: replacesPlanProduct ? startsAt : undefined,
+            startsAt: restartsPlan ? startsAt : undefined,
             endsAt: order.entitlementExpiresAt,
             accessProfileId,
             speedUpMbpsSnapshot: speedUpMbps,
@@ -294,7 +784,7 @@ export class EntitlementService {
     const bounds =
       quotaCadence === QuotaCadence.MONTHLY_RESET
         ? this.monthlyCycleBounds(
-            replacesPlanProduct ? startsAt : resetAnchorAt,
+            restartsPlan ? startsAt : resetAnchorAt,
             order.entitlementExpiresAt,
             startsAt,
           )
@@ -323,20 +813,26 @@ export class EntitlementService {
       },
       update: {
         endsAt: bounds.endsAt,
-        ...(upgradeTrafficBytes > BigInt(0)
-          ? { grantedBytes: { increment: upgradeTrafficBytes } }
-          : {}),
+        ...(restartsPlan
+          ? {
+              kind: QuotaBucketKind.PLAN_CYCLE,
+              grantedBytes: trafficBytes,
+              consumedBytes: BigInt(0),
+              trafficMultiplierBasisPointsSnapshot,
+            }
+          : upgradeTrafficBytes > BigInt(0)
+            ? { grantedBytes: { increment: upgradeTrafficBytes } }
+            : {}),
       },
     });
-    if (isUltra) {
-      await client.manualOrder.update({
-        where: { id: order.id },
-        data: {
-          entitlementGrantId: grant.id,
-          resetAnchorAtSnapshot: resetAnchorAt,
-        },
-      });
-    }
+    await client.manualOrder.update({
+      where: { id: order.id },
+      data: {
+        entitlementGrantId: grant.id,
+        resetAnchorAtSnapshot:
+          quotaCadence === QuotaCadence.MONTHLY_RESET ? resetAnchorAt : null,
+      },
+    });
     return grant;
   }
 
@@ -601,7 +1097,11 @@ export class EntitlementService {
     actorId: string,
   ) {
     const basisPoints = Math.round(multiplier * 10_000);
-    if (basisPoints < 1_000 || basisPoints > 1_000_000) {
+    if (
+      !Number.isFinite(multiplier) ||
+      basisPoints < 1_000 ||
+      basisPoints > 1_000_000
+    ) {
       throw new BadRequestException('Traffic multiplier must be 0.1 to 100');
     }
 
@@ -637,6 +1137,228 @@ export class EntitlementService {
             updated.trafficMultiplierBasisPoints,
             updated.trafficMultiplierOverrideBasisPoints ?? 10_000,
           ) / 10_000,
+      };
+    });
+  }
+
+  adjustQuotaBucketRemaining(
+    bucketId: string,
+    remainingBytes: number,
+    reason: string | undefined,
+    actorId: string,
+  ) {
+    if (!Number.isSafeInteger(remainingBytes) || remainingBytes < 0) {
+      throw new BadRequestException(
+        'remainingBytes must be a non-negative integer',
+      );
+    }
+    const auditReason = reason?.trim() || '管理员即时调整';
+    return this.serializable(async (tx) => {
+      const bucket = await tx.quotaBucket.findUnique({
+        where: { id: bucketId },
+        include: { grant: true },
+      });
+      if (!bucket) throw new NotFoundException('Quota bucket not found');
+      const before =
+        bucket.grantedBytes > bucket.consumedBytes
+          ? bucket.grantedBytes - bucket.consumedBytes
+          : BigInt(0);
+      const remaining = BigInt(remainingBytes);
+      const delta = remaining - before;
+      const updated = await tx.quotaBucket.update({
+        where: { id: bucketId },
+        data: { grantedBytes: bucket.consumedBytes + remaining },
+      });
+      const adjustment = await tx.quotaAdjustment.create({
+        data: {
+          accessAccountId: bucket.grant.accessAccountId,
+          quotaBucketId: bucket.id,
+          actorId,
+          mode: QuotaAdjustmentMode.SET_REMAINING,
+          deltaBytes: delta,
+          beforeRemainingBytes: before,
+          afterRemainingBytes: remaining,
+          reason: auditReason,
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: 'entitlement.quota_bucket.adjusted',
+          targetType: 'QuotaBucket',
+          targetId: bucketId,
+          metadata: {
+            adjustmentId: adjustment.id,
+            userId: bucket.grant.userId,
+            beforeRemainingBytes: before.toString(),
+            afterRemainingBytes: remaining.toString(),
+            reason: auditReason,
+          },
+        },
+      });
+      return {
+        id: updated.id,
+        grantedBytes: Number(updated.grantedBytes),
+        consumedBytes: Number(updated.consumedBytes),
+        remainingBytes,
+        adjustmentId: adjustment.id,
+      };
+    });
+  }
+
+  adjustAvailableQuota(
+    userId: string,
+    input: AvailableQuotaAdjustmentInput,
+    actorId: string,
+  ) {
+    const auditReason = input.reason?.trim() || '管理员即时调整';
+    return this.serializable(async (tx) => {
+      const account = await tx.accessAccount.findUnique({ where: { userId } });
+      if (!account) {
+        throw new NotFoundException('Customer access account not found');
+      }
+      const now = new Date();
+      const buckets = await tx.quotaBucket.findMany({
+        where: {
+          grant: {
+            userId,
+            status: EntitlementGrantStatus.ACTIVE,
+            endsAt: { gt: now },
+            ...(input.grantId ? { id: input.grantId } : {}),
+          },
+          startsAt: { lte: now },
+          endsAt: { gt: now },
+        },
+        orderBy: [{ endsAt: 'asc' }, { id: 'asc' }],
+      });
+      if (!buckets.length) {
+        throw new BadRequestException('Customer has no active quota bucket');
+      }
+      const totalBefore = buckets.reduce(
+        (sum, bucket) =>
+          sum +
+          (bucket.grantedBytes > bucket.consumedBytes
+            ? bucket.grantedBytes - bucket.consumedBytes
+            : BigInt(0)),
+        BigInt(0),
+      );
+      let delta: bigint;
+      if (input.mode === 'delta') {
+        if (input.bytes === undefined || !Number.isSafeInteger(input.bytes)) {
+          throw new BadRequestException(
+            'bytes is required for delta adjustment',
+          );
+        }
+        delta = BigInt(input.bytes);
+      } else {
+        if (
+          input.remainingBytes === undefined ||
+          !Number.isSafeInteger(input.remainingBytes) ||
+          input.remainingBytes < 0
+        ) {
+          throw new BadRequestException(
+            'remainingBytes is required for set_remaining adjustment',
+          );
+        }
+        delta = BigInt(input.remainingBytes) - totalBefore;
+      }
+      if (totalBefore + delta < BigInt(0)) {
+        throw new BadRequestException('Adjustment would make quota negative');
+      }
+
+      const adjustments: Array<{
+        bucketId: string;
+        beforeRemainingBytes: number;
+        afterRemainingBytes: number;
+      }> = [];
+      const mode =
+        input.mode === 'delta'
+          ? QuotaAdjustmentMode.DELTA
+          : QuotaAdjustmentMode.SET_REMAINING;
+      if (delta >= BigInt(0)) {
+        const bucket = buckets[0];
+        const before = bucket.grantedBytes - bucket.consumedBytes;
+        const after = before + delta;
+        await tx.quotaBucket.update({
+          where: { id: bucket.id },
+          data: { grantedBytes: bucket.consumedBytes + after },
+        });
+        await tx.quotaAdjustment.create({
+          data: {
+            accessAccountId: account.id,
+            quotaBucketId: bucket.id,
+            actorId,
+            mode,
+            deltaBytes: delta,
+            beforeRemainingBytes: before,
+            afterRemainingBytes: after,
+            reason: auditReason,
+          },
+        });
+        adjustments.push({
+          bucketId: bucket.id,
+          beforeRemainingBytes: Number(before),
+          afterRemainingBytes: Number(after),
+        });
+      } else {
+        let remainingReduction = -delta;
+        for (const bucket of buckets) {
+          if (remainingReduction === BigInt(0)) break;
+          const before =
+            bucket.grantedBytes > bucket.consumedBytes
+              ? bucket.grantedBytes - bucket.consumedBytes
+              : BigInt(0);
+          const reduction =
+            before < remainingReduction ? before : remainingReduction;
+          if (reduction === BigInt(0)) continue;
+          const after = before - reduction;
+          await tx.quotaBucket.update({
+            where: { id: bucket.id },
+            data: { grantedBytes: bucket.consumedBytes + after },
+          });
+          await tx.quotaAdjustment.create({
+            data: {
+              accessAccountId: account.id,
+              quotaBucketId: bucket.id,
+              actorId,
+              mode,
+              deltaBytes: -reduction,
+              beforeRemainingBytes: before,
+              afterRemainingBytes: after,
+              reason: auditReason,
+            },
+          });
+          adjustments.push({
+            bucketId: bucket.id,
+            beforeRemainingBytes: Number(before),
+            afterRemainingBytes: Number(after),
+          });
+          remainingReduction -= reduction;
+        }
+      }
+
+      const totalAfter = totalBefore + delta;
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: 'entitlement.available_quota.adjusted',
+          targetType: 'AccessAccount',
+          targetId: account.id,
+          metadata: {
+            userId,
+            grantId: input.grantId ?? null,
+            beforeRemainingBytes: totalBefore.toString(),
+            afterRemainingBytes: totalAfter.toString(),
+            reason: auditReason,
+          },
+        },
+      });
+      return {
+        userId,
+        grantId: input.grantId ?? null,
+        beforeRemainingBytes: Number(totalBefore),
+        remainingBytes: Number(totalAfter),
+        adjustments,
       };
     });
   }
@@ -677,6 +1399,49 @@ export class EntitlementService {
         where: { id: cycle.id },
         data: { adjustmentBytes: { increment: delta } },
       });
+      const now = new Date();
+      const grant = await tx.entitlementGrant.findUnique({
+        where: { legacySubscriptionId: subscription.id },
+      });
+      const bucket = grant
+        ? await tx.quotaBucket.findFirst({
+            where: {
+              grantId: grant.id,
+              startsAt: { lte: now },
+              endsAt: { gt: now },
+            },
+            orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
+          })
+        : null;
+      let bucketAdjustmentId: string | null = null;
+      if (bucket) {
+        const bucketBefore =
+          bucket.grantedBytes > bucket.consumedBytes
+            ? bucket.grantedBytes - bucket.consumedBytes
+            : BigInt(0);
+        const bucketDelta =
+          input.mode === 'set_remaining' ? after - bucketBefore : delta;
+        if (bucketBefore + bucketDelta < BigInt(0)) {
+          throw new BadRequestException('Adjustment would make quota negative');
+        }
+        await tx.quotaBucket.update({
+          where: { id: bucket.id },
+          data: { grantedBytes: { increment: bucketDelta } },
+        });
+        const bucketAdjustment = await tx.quotaAdjustment.create({
+          data: {
+            accessAccountId: account.id,
+            quotaBucketId: bucket.id,
+            actorId,
+            mode: this.toAdjustmentMode(input.mode),
+            deltaBytes: bucketDelta,
+            beforeRemainingBytes: bucketBefore,
+            afterRemainingBytes: bucketBefore + bucketDelta,
+            reason: input.reason.trim(),
+          },
+        });
+        bucketAdjustmentId = bucketAdjustment.id;
+      }
       const adjustment = await tx.quotaAdjustment.create({
         data: {
           accessAccountId: account.id,
@@ -697,6 +1462,7 @@ export class EntitlementService {
           targetId: subscription.id,
           metadata: {
             adjustmentId: adjustment.id,
+            bucketAdjustmentId,
             cycleId: cycle.id,
             deltaBytes: delta.toString(),
             afterRemainingBytes: after.toString(),
@@ -736,6 +1502,49 @@ export class EntitlementService {
               : TrafficPackStatus.ACTIVE,
         },
       });
+      const now = new Date();
+      const grant = await tx.entitlementGrant.findUnique({
+        where: { legacyTrafficPackId: pack.id },
+      });
+      const bucket = grant
+        ? await tx.quotaBucket.findFirst({
+            where: {
+              grantId: grant.id,
+              startsAt: { lte: now },
+              endsAt: { gt: now },
+            },
+            orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
+          })
+        : null;
+      let bucketAdjustmentId: string | null = null;
+      if (bucket) {
+        const bucketBefore =
+          bucket.grantedBytes > bucket.consumedBytes
+            ? bucket.grantedBytes - bucket.consumedBytes
+            : BigInt(0);
+        const bucketDelta =
+          input.mode === 'set_remaining' ? after - bucketBefore : delta;
+        if (bucketBefore + bucketDelta < BigInt(0)) {
+          throw new BadRequestException('Adjustment would make quota negative');
+        }
+        await tx.quotaBucket.update({
+          where: { id: bucket.id },
+          data: { grantedBytes: { increment: bucketDelta } },
+        });
+        const bucketAdjustment = await tx.quotaAdjustment.create({
+          data: {
+            accessAccountId: account.id,
+            quotaBucketId: bucket.id,
+            actorId,
+            mode: this.toAdjustmentMode(input.mode),
+            deltaBytes: bucketDelta,
+            beforeRemainingBytes: bucketBefore,
+            afterRemainingBytes: bucketBefore + bucketDelta,
+            reason: input.reason.trim(),
+          },
+        });
+        bucketAdjustmentId = bucketAdjustment.id;
+      }
       const adjustment = await tx.quotaAdjustment.create({
         data: {
           accessAccountId: account.id,
@@ -756,6 +1565,7 @@ export class EntitlementService {
           targetId: pack.id,
           metadata: {
             adjustmentId: adjustment.id,
+            bucketAdjustmentId,
             deltaBytes: delta.toString(),
             afterRemainingBytes: after.toString(),
           },
@@ -827,12 +1637,8 @@ export class EntitlementService {
   }
 
   async getNodeAccess(userId: string, nodeId: string) {
-    const v2GrantCount = await this.prisma.entitlementGrant.count({
-      where: { userId },
-    });
-    if (v2GrantCount > 0) {
-      return this.resolveAccess(userId, nodeId);
-    }
+    const v2Access = await this.resolveAccess(userId, nodeId);
+    if (v2Access.reason === 'user_not_active') return v2Access;
     await this.ensureCurrentCycles(userId);
     const now = new Date();
     const [user, packs, subscriptions] = await Promise.all([
@@ -840,6 +1646,7 @@ export class EntitlementService {
       this.prisma.trafficPack.findMany({
         where: {
           userId,
+          entitlementGrant: null,
           status: TrafficPackStatus.ACTIVE,
           remainingBytes: { gt: BigInt(0) },
           OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
@@ -862,6 +1669,7 @@ export class EntitlementService {
       this.prisma.subscription.findMany({
         where: {
           userId,
+          entitlementGrant: null,
           status: SubscriptionStatus.ACTIVE,
           startsAt: { lte: now },
           endsAt: { gt: now },
@@ -894,7 +1702,7 @@ export class EntitlementService {
       return cycle && this.cycleRemaining(cycle) > BigInt(0);
     });
     if (packs.length === 0 && usableSubscriptions.length === 0) {
-      return { allowed: false, reason: 'traffic_exhausted' as const };
+      return v2Access;
     }
     const limits = [
       ...packs.map((pack) => ({
@@ -923,12 +1731,28 @@ export class EntitlementService {
           subscription.deviceLimitSnapshot,
       })),
     ];
-    return {
+    const legacyAccess = {
       allowed: true,
       reason: 'ok' as const,
       speedUpMbps: Math.max(...limits.map((item) => item.speedUpMbps)),
       speedDownMbps: Math.max(...limits.map((item) => item.speedDownMbps)),
       deviceLimit: Math.max(...limits.map((item) => item.deviceLimit)),
+    };
+    if (!v2Access.allowed) return legacyAccess;
+    return {
+      ...v2Access,
+      speedUpMbps: Math.max(
+        v2Access.speedUpMbps ?? 0,
+        legacyAccess.speedUpMbps,
+      ),
+      speedDownMbps: Math.max(
+        v2Access.speedDownMbps ?? 0,
+        legacyAccess.speedDownMbps,
+      ),
+      deviceLimit: Math.max(
+        v2Access.deviceLimit ?? 1,
+        legacyAccess.deviceLimit,
+      ),
     };
   }
 
@@ -1107,6 +1931,18 @@ export class EntitlementService {
           }
         }
       }
+      const legacy =
+        metered.overageBytes > BigInt(0)
+          ? await this.consumeLegacyQuota(
+              tx,
+              account.id,
+              nodeId,
+              bucketStart,
+              metered.overageBytes,
+            )
+          : null;
+      subscriptionId ??= legacy?.subscriptionId;
+      subscriptionCycleId ??= legacy?.subscriptionCycleId;
       await tx.usageRollup.create({
         data: {
           userId,
@@ -1119,7 +1955,7 @@ export class EntitlementService {
           rawBytes: physical,
           multiplierBasisPoints: metered.multiplierBasisPoints,
           accountedBytes: metered.accountedBytes,
-          overageBytes: metered.overageBytes,
+          overageBytes: legacy?.remainingBytes ?? metered.overageBytes,
           source: 'sync-v2',
           importBatchId,
           allocations: { create: allocations },
@@ -1137,15 +1973,49 @@ export class EntitlementService {
       where: { id: account.id },
       data: { trafficMultiplierRemainder: remainder },
     });
-    let remaining = accounted;
+    const legacy = await this.consumeLegacyQuota(
+      tx,
+      account.id,
+      nodeId,
+      bucketStart,
+      accounted,
+    );
 
-    const now = bucketStart;
+    await tx.usageRollup.create({
+      data: {
+        userId,
+        subscriptionId: legacy.subscriptionId,
+        subscriptionCycleId: legacy.subscriptionCycleId,
+        nodeId,
+        bucketStart,
+        txBytes: BigInt(counters.tx),
+        rxBytes: BigInt(counters.rx),
+        rawBytes: physical,
+        multiplierBasisPoints: accountMultiplierBasisPoints,
+        accountedBytes: accounted,
+        overageBytes: legacy.remainingBytes,
+        source: 'sync',
+        importBatchId,
+      },
+    });
+    return true;
+  }
+
+  private async consumeLegacyQuota(
+    tx: Prisma.TransactionClient,
+    accessAccountId: string,
+    nodeId: string,
+    at: Date,
+    accountedBytes: bigint,
+  ) {
+    let remaining = accountedBytes;
     const packs = await tx.trafficPack.findMany({
       where: {
-        accessAccountId: account.id,
+        accessAccountId,
+        entitlementGrant: null,
         status: TrafficPackStatus.ACTIVE,
         remainingBytes: { gt: BigInt(0) },
-        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+        OR: [{ expiresAt: null }, { expiresAt: { gt: at } }],
         AND: [
           {
             OR: [
@@ -1182,10 +2052,11 @@ export class EntitlementService {
 
     const subscription = await tx.subscription.findFirst({
       where: {
-        accessAccountId: account.id,
+        accessAccountId,
+        entitlementGrant: null,
         status: SubscriptionStatus.ACTIVE,
-        startsAt: { lte: now },
-        endsAt: { gt: now },
+        startsAt: { lte: at },
+        endsAt: { gt: at },
         OR: [
           { nodeId },
           {
@@ -1202,7 +2073,7 @@ export class EntitlementService {
       orderBy: { endsAt: 'desc' },
     });
     let cycle = subscription
-      ? await this.ensureCurrentCycleInTransaction(tx, subscription, now)
+      ? await this.ensureCurrentCycleInTransaction(tx, subscription, at)
       : null;
     if (remaining > BigInt(0) && cycle) {
       const available = this.cycleRemaining(cycle);
@@ -1227,25 +2098,11 @@ export class EntitlementService {
         data: { overageBytes: { increment: remaining } },
       });
     }
-
-    await tx.usageRollup.create({
-      data: {
-        userId,
-        subscriptionId: subscription?.id,
-        subscriptionCycleId: cycle?.id,
-        nodeId,
-        bucketStart,
-        txBytes: BigInt(counters.tx),
-        rxBytes: BigInt(counters.rx),
-        rawBytes: physical,
-        multiplierBasisPoints: accountMultiplierBasisPoints,
-        accountedBytes: accounted,
-        overageBytes: remaining,
-        source: 'sync',
-        importBatchId,
-      },
-    });
-    return true;
+    return {
+      remainingBytes: remaining,
+      subscriptionId: subscription?.id,
+      subscriptionCycleId: cycle?.id,
+    };
   }
 
   private meterV2Usage<T extends MeteredQuotaBucket>(

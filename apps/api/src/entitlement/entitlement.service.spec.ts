@@ -187,6 +187,8 @@ describe('EntitlementService V2', () => {
           entitlementGrant: {
             id: 'grant_ultra',
             status: 'ACTIVE',
+            kind: 'PLAN',
+            legacyTrafficPackId: null,
           },
           catalogOffer: { product: { series: 'ULTRA' } },
         }),
@@ -194,6 +196,7 @@ describe('EntitlementService V2', () => {
       entitlementGrant: {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
+      quotaBucket: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
       auditLog: { create: jest.fn().mockResolvedValue({}) },
     };
     const service = new EntitlementService(tx as never);
@@ -217,7 +220,6 @@ describe('EntitlementService V2', () => {
     expect(grantUpdate.where).toEqual({
       id: 'grant_ultra',
       status: 'ACTIVE',
-      activeSlot: 'ULTRA',
     });
     expect(grantUpdate.data).toMatchObject({
       status: 'CANCELED',
@@ -335,6 +337,7 @@ describe('EntitlementService V2', () => {
             },
           },
         }),
+        update: jest.fn().mockResolvedValue({}),
       },
       user: { findUnique: jest.fn().mockResolvedValue({ id: 'user_1' }) },
       accessAccount: {
@@ -372,6 +375,13 @@ describe('EntitlementService V2', () => {
       speedDownMbpsSnapshot: 180,
       deviceLimitSnapshot: 4,
     });
+    expect(tx.manualOrder.update).toHaveBeenCalledWith({
+      where: { id: 'order_1' },
+      data: {
+        entitlementGrantId: 'grant_1',
+        resetAnchorAtSnapshot: startsAt,
+      },
+    });
   });
 
   it('starts a new quota bucket when a plan CDK switches an existing subscription', async () => {
@@ -401,6 +411,7 @@ describe('EntitlementService V2', () => {
             },
           },
         }),
+        update: jest.fn().mockResolvedValue({}),
       },
       user: { findUnique: jest.fn().mockResolvedValue({ id: 'user_1' }) },
       accessAccount: {
@@ -423,7 +434,13 @@ describe('EntitlementService V2', () => {
           startsAt,
         }),
       },
-      quotaBucket: { upsert: jest.fn().mockResolvedValue({}) },
+      quotaBucket: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        upsert: jest.fn().mockResolvedValue({}),
+      },
+      subscriptionCycle: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
     };
     const service = new EntitlementService(tx as never);
 
@@ -435,6 +452,22 @@ describe('EntitlementService V2', () => {
     const [grantUpdate] = tx.entitlementGrant.update.mock
       .calls[0] as unknown as [{ data: { startsAt?: Date } }];
     expect(grantUpdate.data.startsAt).toEqual(startsAt);
+    expect(tx.quotaBucket.updateMany).toHaveBeenCalledWith({
+      where: {
+        grantId: 'grant_existing',
+        startsAt: { lt: startsAt },
+        endsAt: { gt: startsAt },
+      },
+      data: { endsAt: startsAt },
+    });
+    expect(tx.subscriptionCycle.updateMany).toHaveBeenCalledWith({
+      where: {
+        subscriptionId: 'subscription_1',
+        startsAt: { lt: startsAt },
+        endsAt: { gt: startsAt },
+      },
+      data: { endsAt: startsAt },
+    });
     expect(tx.quotaBucket.upsert).toHaveBeenCalledWith({
       where: {
         grantId_startsAt: { grantId: 'grant_existing', startsAt },
@@ -447,7 +480,232 @@ describe('EntitlementService V2', () => {
         grantedBytes: 120n,
         trafficMultiplierBasisPointsSnapshot: 10_000,
       },
-      update: { endsAt },
+      update: {
+        kind: 'PLAN_CYCLE',
+        endsAt,
+        grantedBytes: 120n,
+        consumedBytes: 0n,
+        trafficMultiplierBasisPointsSnapshot: 10_000,
+      },
+    });
+  });
+
+  it('restarts the same plan quota when a REPLACE code is redeemed', async () => {
+    const startsAt = new Date('2026-09-07T04:00:00.000Z');
+    const endsAt = new Date('2026-10-07T04:00:00.000Z');
+    const previousStartsAt = new Date('2026-09-01T00:00:00.000Z');
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'order_replace',
+          userId: 'user_1',
+          kind: 'RENEWAL',
+          createdAt: startsAt,
+          processedAt: startsAt,
+          entitlementExpiresAt: endsAt,
+          trafficBytes: 120n,
+          catalogOffer: {
+            id: 'offer_pro_monthly',
+            trafficBytes: 120n,
+            product: {
+              id: 'product_pro',
+              kind: 'PLAN',
+              accessProfileId: 'profile_pro',
+              speedUpMbps: 35,
+              speedDownMbps: 180,
+              defaultTrafficMultiplierBasisPoints: 10_000,
+              quotaCadence: 'MONTHLY_RESET',
+            },
+          },
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      user: { findUnique: jest.fn().mockResolvedValue({ id: 'user_1' }) },
+      accessAccount: {
+        upsert: jest.fn().mockResolvedValue({ id: 'account_1' }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      accessProfile: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ deviceLimit: 4 }),
+      },
+      entitlementGrant: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'grant_existing',
+          productId: 'product_pro',
+          startsAt: previousStartsAt,
+          endsAt: new Date('2026-10-01T00:00:00.000Z'),
+          resetAnchorAt: previousStartsAt,
+          trafficBytesSnapshot: 120n,
+        }),
+        update: jest.fn().mockResolvedValue({ id: 'grant_existing' }),
+      },
+      quotaBucket: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        upsert: jest.fn().mockResolvedValue({}),
+      },
+      subscriptionCycle: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+    const service = new EntitlementService(tx as never);
+
+    await service.grantFromOrder(
+      {
+        orderId: 'order_replace',
+        subscriptionId: 'subscription_1',
+        replacePlan: true,
+      },
+      tx as never,
+    );
+
+    const [grantWrite] = tx.entitlementGrant.update.mock
+      .calls[0] as unknown as [
+      { where: { id: string }; data: Record<string, unknown> },
+    ];
+    expect(grantWrite.where).toEqual({ id: 'grant_existing' });
+    expect(grantWrite.data).toMatchObject({
+      startsAt,
+      resetAnchorAt: startsAt,
+    });
+    const [bucketWrite] = tx.quotaBucket.upsert.mock.calls[0] as unknown as [
+      {
+        where: { grantId_startsAt: { grantId: string; startsAt: Date } };
+        update: Record<string, unknown>;
+      },
+    ];
+    expect(bucketWrite.where).toEqual({
+      grantId_startsAt: { grantId: 'grant_existing', startsAt },
+    });
+    expect(bucketWrite.update).toMatchObject({
+      grantedBytes: 120n,
+      consumedBytes: 0n,
+    });
+  });
+
+  it('updates the V2 quota bucket through the legacy subscription adjustment endpoint', async () => {
+    const now = new Date('2027-03-10T08:00:00.000Z');
+    jest.useFakeTimers().setSystemTime(now);
+    const cycle = {
+      id: 'cycle_1',
+      startsAt: new Date('2027-03-01T00:00:00.000Z'),
+      endsAt: new Date('2027-04-01T00:00:00.000Z'),
+      grantedBytes: 100n,
+      adjustmentBytes: 0n,
+      consumedBytes: 80n,
+      overageBytes: 0n,
+      legacy: false,
+    };
+    const bucket = {
+      id: 'bucket_1',
+      grantedBytes: 100n,
+      consumedBytes: 80n,
+    };
+    const tx = {
+      user: { findUnique: jest.fn().mockResolvedValue({ id: 'user_1' }) },
+      accessAccount: {
+        upsert: jest.fn().mockResolvedValue({ id: 'account_1' }),
+      },
+      subscription: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'subscription_1',
+          userId: 'user_1',
+          accessAccountId: 'account_1',
+          plan: { trafficBytes: 100n },
+          planOffer: null,
+        }),
+      },
+      entitlementGrant: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'grant_1' }),
+      },
+      quotaBucket: {
+        findFirst: jest.fn().mockResolvedValue(bucket),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      subscriptionCycle: {
+        findFirst: jest.fn().mockResolvedValue(cycle),
+        update: jest.fn().mockResolvedValue({ ...cycle, adjustmentBytes: 30n }),
+      },
+      quotaAdjustment: { create: jest.fn().mockResolvedValue({ id: 'adj_1' }) },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)),
+    };
+    const service = new EntitlementService(prisma as never);
+
+    await service.adjustSubscriptionQuota(
+      'subscription_1',
+      {
+        mode: 'set_remaining',
+        remainingBytes: 50,
+        reason: 'Support correction',
+      },
+      'admin_1',
+    );
+
+    expect(tx.quotaBucket.update).toHaveBeenCalledWith({
+      where: { id: 'bucket_1' },
+      data: { grantedBytes: { increment: 30n } },
+    });
+  });
+
+  it('updates the V2 quota bucket through the legacy traffic-pack adjustment endpoint', async () => {
+    const now = new Date('2027-03-10T08:00:00.000Z');
+    jest.useFakeTimers().setSystemTime(now);
+    const pack = {
+      id: 'pack_1',
+      userId: 'user_1',
+      remainingBytes: 20n,
+      totalBytes: 100n,
+    };
+    const bucket = {
+      id: 'bucket_pack_1',
+      grantedBytes: 100n,
+      consumedBytes: 80n,
+    };
+    const tx = {
+      user: { findUnique: jest.fn().mockResolvedValue({ id: 'user_1' }) },
+      accessAccount: {
+        upsert: jest.fn().mockResolvedValue({ id: 'account_1' }),
+      },
+      trafficPack: {
+        findUnique: jest.fn().mockResolvedValue(pack),
+        update: jest.fn().mockResolvedValue({
+          ...pack,
+          remainingBytes: 50n,
+          totalBytes: 130n,
+          status: 'ACTIVE',
+        }),
+      },
+      entitlementGrant: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'grant_pack_1' }),
+      },
+      quotaBucket: {
+        findFirst: jest.fn().mockResolvedValue(bucket),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      quotaAdjustment: { create: jest.fn().mockResolvedValue({ id: 'adj_1' }) },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)),
+    };
+    const service = new EntitlementService(prisma as never);
+
+    await service.adjustTrafficPackQuota(
+      'pack_1',
+      {
+        mode: 'set_remaining',
+        remainingBytes: 50,
+        reason: 'Support correction',
+      },
+      'admin_1',
+    );
+
+    expect(tx.quotaBucket.update).toHaveBeenCalledWith({
+      where: { id: 'bucket_pack_1' },
+      data: { grantedBytes: { increment: 30n } },
     });
   });
 
@@ -478,6 +736,7 @@ describe('EntitlementService V2', () => {
             },
           },
         }),
+        update: jest.fn().mockResolvedValue({}),
       },
       user: { findUnique: jest.fn().mockResolvedValue({ id: 'user_1' }) },
       accessAccount: {
@@ -687,6 +946,62 @@ describe('EntitlementService V2', () => {
     });
   });
 
+  it('falls back to an unlinked legacy entitlement when historical V2 grants do not authorize the node', async () => {
+    const prisma = {
+      entitlementGrant: { count: jest.fn().mockResolvedValue(1) },
+      quotaBucket: { upsert: jest.fn() },
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'user_1',
+          status: 'ACTIVE',
+        }),
+      },
+      trafficPack: { findMany: jest.fn().mockResolvedValue([]) },
+      subscription: {
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([
+            {
+              id: 'legacy_subscription',
+              speedUpMbpsSnapshot: 20,
+              speedDownMbpsSnapshot: 120,
+              deviceLimitSnapshot: 3,
+              plan: { accessProfile: null },
+              cycles: [
+                {
+                  grantedBytes: 100n,
+                  adjustmentBytes: 0n,
+                  consumedBytes: 20n,
+                },
+              ],
+            },
+          ]),
+      },
+    };
+    const service = new EntitlementService(prisma as never);
+    jest.spyOn(service, 'resolveAccess').mockResolvedValue({
+      allowed: false,
+      reason: 'node_denied',
+      nodes: [],
+      eligibleGrantIds: [],
+    });
+    await expect(
+      service.getNodeAccess('user_1', 'legacy_node'),
+    ).resolves.toMatchObject({
+      allowed: true,
+      speedUpMbps: 20,
+      speedDownMbps: 120,
+      deviceLimit: 3,
+    });
+    const [subscriptionQuery] = prisma.subscription.findMany.mock
+      .calls[1] as unknown as [{ where: Record<string, unknown> }];
+    const [packQuery] = prisma.trafficPack.findMany.mock
+      .calls[0] as unknown as [{ where: Record<string, unknown> }];
+    expect(subscriptionQuery.where.entitlementGrant).toBeNull();
+    expect(packQuery.where.entitlementGrant).toBeNull();
+  });
+
   it('spends plan quota before an earlier-expiring traffic pack', async () => {
     const early = {
       id: 'bucket_early',
@@ -734,10 +1049,18 @@ describe('EntitlementService V2', () => {
         findMany: jest.fn().mockResolvedValue([early, later]),
         update: jest.fn().mockResolvedValue({}),
       },
-      trafficPack: { findUnique: jest.fn(), update: jest.fn() },
+      trafficPack: {
+        findUnique: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
+        update: jest.fn(),
+      },
       subscriptionCycle: { findFirst: jest.fn(), update: jest.fn() },
       entitlementGrant: { count: jest.fn().mockResolvedValue(1) },
-      subscription: { count: jest.fn(), update: jest.fn() },
+      subscription: {
+        count: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue(null),
+        update: jest.fn(),
+      },
       usageRollup: { create: jest.fn().mockResolvedValue({ id: 'usage_1' }) },
     };
     const prisma = {
@@ -808,6 +1131,140 @@ describe('EntitlementService V2', () => {
         create: [{ quotaBucketId: 'bucket_later', accountedBytes: 50n }],
       },
     });
+  });
+
+  it('meters only unlinked legacy quota when no V2 bucket can serve the node', async () => {
+    const tx = {
+      usageImportBatch: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'batch_db_legacy' }),
+      },
+      user: { findUnique: jest.fn().mockResolvedValue({ id: 'user_legacy' }) },
+      accessAccount: {
+        upsert: jest.fn().mockResolvedValue({
+          id: 'account_legacy',
+          trafficMultiplierBasisPoints: 10_000,
+          trafficMultiplierOverrideBasisPoints: null,
+          trafficMultiplierRemainder: 0,
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      quotaBucket: { findMany: jest.fn().mockResolvedValue([]) },
+      entitlementGrant: { count: jest.fn() },
+      trafficPack: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ id: 'pack_unlinked', remainingBytes: 100n }]),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      subscription: { findFirst: jest.fn().mockResolvedValue(null) },
+      usageRollup: {
+        create: jest.fn().mockResolvedValue({ id: 'usage_legacy' }),
+      },
+    };
+    const prisma = {
+      $transaction: jest.fn((operation: (client: typeof tx) => unknown) =>
+        operation(tx),
+      ),
+    };
+    const service = new EntitlementService(prisma as never);
+
+    await service.applyUsageBatch('node_legacy', {
+      id: 'batch-legacy',
+      claimedAt: '2027-03-30T08:00:00.000Z',
+      traffic: { user_legacy: { tx: 5, rx: 5 } },
+    });
+
+    const [legacyPackQuery] = tx.trafficPack.findMany.mock
+      .calls[0] as unknown as [{ where: Record<string, unknown> }];
+    const [legacySubscriptionQuery] = tx.subscription.findFirst.mock
+      .calls[0] as unknown as [{ where: Record<string, unknown> }];
+    expect(legacyPackQuery.where.entitlementGrant).toBeNull();
+    expect(legacySubscriptionQuery.where.entitlementGrant).toBeNull();
+    expect(tx.trafficPack.update).toHaveBeenCalledWith({
+      where: { id: 'pack_unlinked' },
+      data: { remainingBytes: 90n, status: 'ACTIVE' },
+    });
+  });
+
+  it('continues into unlinked legacy quota when one batch exhausts its V2 bucket', async () => {
+    const bucket = {
+      id: 'bucket_v2',
+      grantedBytes: 5n,
+      consumedBytes: 0n,
+      trafficMultiplierBasisPointsSnapshot: 10_000,
+      endsAt: new Date('2027-05-01T00:00:00.000Z'),
+      createdAt: new Date('2027-03-01T00:00:00.000Z'),
+      grant: {
+        kind: 'PLAN',
+        legacySubscriptionId: null,
+        legacyTrafficPackId: null,
+        product: { requiresActivePlan: false },
+      },
+    };
+    const tx = {
+      usageImportBatch: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'batch_db_cross_model' }),
+      },
+      user: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'user_cross_model' }),
+      },
+      accessAccount: {
+        upsert: jest.fn().mockResolvedValue({
+          id: 'account_cross_model',
+          trafficMultiplierBasisPoints: 10_000,
+          trafficMultiplierOverrideBasisPoints: null,
+          trafficMultiplierRemainder: 0,
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      quotaBucket: {
+        findMany: jest.fn().mockResolvedValue([bucket]),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      entitlementGrant: { count: jest.fn() },
+      trafficPack: {
+        findUnique: jest.fn(),
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ id: 'pack_unlinked', remainingBytes: 100n }]),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      subscriptionCycle: { findFirst: jest.fn(), update: jest.fn() },
+      subscription: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        update: jest.fn(),
+      },
+      usageRollup: {
+        create: jest.fn().mockResolvedValue({ id: 'usage_cross_model' }),
+      },
+    };
+    const prisma = {
+      $transaction: jest.fn((operation: (client: typeof tx) => unknown) =>
+        operation(tx),
+      ),
+    };
+    const service = new EntitlementService(prisma as never);
+
+    await service.applyUsageBatch('node_cross_model', {
+      id: 'batch-cross-model',
+      claimedAt: '2027-03-30T08:00:00.000Z',
+      traffic: { user_cross_model: { tx: 5, rx: 5 } },
+    });
+
+    expect(tx.quotaBucket.update).toHaveBeenCalledWith({
+      where: { id: 'bucket_v2' },
+      data: { consumedBytes: { increment: 5n } },
+    });
+    expect(tx.trafficPack.update).toHaveBeenCalledWith({
+      where: { id: 'pack_unlinked' },
+      data: { remainingBytes: 95n, status: 'ACTIVE' },
+    });
+    const [rollupWrite] = tx.usageRollup.create.mock.calls[0] as unknown as [
+      { data: { overageBytes: bigint } },
+    ];
+    expect(rollupWrite.data.overageBytes).toBe(0n);
   });
 
   it('pauses a dependent add-on after plan expiry and resumes after renewal', async () => {
@@ -1181,9 +1638,17 @@ describe('EntitlementService V2', () => {
         findMany: jest.fn().mockResolvedValue([bucket]),
         update: jest.fn().mockResolvedValue({}),
       },
-      trafficPack: { findUnique: jest.fn(), update: jest.fn() },
+      trafficPack: {
+        findUnique: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
+        update: jest.fn(),
+      },
       subscriptionCycle: { findFirst: jest.fn(), update: jest.fn() },
-      subscription: { count: jest.fn(), update: jest.fn() },
+      subscription: {
+        count: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue(null),
+        update: jest.fn(),
+      },
       usageRollup: {
         create: jest.fn().mockResolvedValue({ id: 'usage_ultra_boundary' }),
       },
@@ -1214,6 +1679,181 @@ describe('EntitlementService V2', () => {
       accountedBytes: 100n,
       multiplierBasisPoints: 10_000,
       overageBytes: 50n,
+    });
+  });
+
+  it('credits quota through one idempotent adjustment contract', async () => {
+    const at = new Date('2026-09-07T08:00:00.000Z');
+    const tx = {
+      quotaAdjustment: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({
+          id: 'adjustment_1',
+          quotaBucketId: 'bucket_1',
+          subscriptionCycleId: 'cycle_1',
+        }),
+      },
+      quotaBucket: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'bucket_1',
+          startsAt: new Date('2026-09-01T00:00:00.000Z'),
+          endsAt: new Date('2026-10-01T00:00:00.000Z'),
+          grantedBytes: 100n,
+          consumedBytes: 80n,
+          grant: {
+            status: 'ACTIVE',
+            startsAt: new Date('2026-09-01T00:00:00.000Z'),
+            endsAt: new Date('2026-10-01T00:00:00.000Z'),
+            accessAccountId: 'account_1',
+            legacySubscription: { cycles: [{ id: 'cycle_1' }] },
+          },
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      subscriptionCycle: { update: jest.fn().mockResolvedValue({}) },
+    };
+    const service = new EntitlementService({} as never);
+
+    await expect(
+      service.creditQuotaBucket(tx as never, {
+        bucketId: 'bucket_1',
+        bytes: 30n,
+        at,
+        actorId: 'admin_1',
+        idempotencyKey: 'quota-credit-1',
+        reason: 'Test credit',
+      }),
+    ).resolves.toMatchObject({
+      adjustmentId: 'adjustment_1',
+      beforeRemainingBytes: 20n,
+      afterRemainingBytes: 50n,
+      replayed: false,
+    });
+    expect(tx.quotaBucket.update).toHaveBeenCalledWith({
+      where: { id: 'bucket_1' },
+      data: { grantedBytes: { increment: 30n } },
+    });
+    expect(tx.subscriptionCycle.update).toHaveBeenCalledWith({
+      where: { id: 'cycle_1' },
+      data: { adjustmentBytes: { increment: 30n } },
+    });
+    const [adjustmentWrite] = tx.quotaAdjustment.create.mock
+      .calls[0] as unknown as [{ data: Record<string, unknown> }];
+    expect(adjustmentWrite.data).toMatchObject({
+      idempotencyKey: 'quota-credit-1',
+      deltaBytes: 30n,
+      beforeRemainingBytes: 20n,
+      afterRemainingBytes: 50n,
+    });
+  });
+
+  it('creates a bonus grant only from the matching active plan order', async () => {
+    const startsAt = new Date('2026-09-07T08:00:00.000Z');
+    const endsAt = new Date('2026-10-07T08:00:00.000Z');
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'order_1',
+          userId: 'user_1',
+          entitlementExpiresAt: endsAt,
+          entitlementGrant: {
+            id: 'plan_grant_1',
+            userId: 'user_1',
+            status: 'ACTIVE',
+            accessAccountId: 'account_1',
+            accessProfileId: 'profile_1',
+            speedUpMbpsSnapshot: 100,
+            speedDownMbpsSnapshot: 300,
+            deviceLimitSnapshot: 5,
+            trafficMultiplierBasisPointsSnapshot: 21_000,
+          },
+        }),
+      },
+      entitlementGrant: {
+        create: jest.fn().mockResolvedValue({ id: 'bonus_grant_1' }),
+      },
+      quotaBucket: {
+        create: jest.fn().mockResolvedValue({ id: 'bonus_bucket_1' }),
+      },
+    };
+    const service = new EntitlementService({} as never);
+
+    await expect(
+      service.createBonusTrafficGrantFromOrder(tx as never, {
+        orderId: 'order_1',
+        userId: 'user_1',
+        productId: 'system_bonus',
+        startsAt,
+        bytes: 20n,
+      }),
+    ).resolves.toEqual({
+      grantId: 'bonus_grant_1',
+      bucketId: 'bonus_bucket_1',
+    });
+    const [grantWrite] = tx.entitlementGrant.create.mock
+      .calls[0] as unknown as [{ data: Record<string, unknown> }];
+    expect(grantWrite.data).toMatchObject({
+      userId: 'user_1',
+      accessAccountId: 'account_1',
+      productId: 'system_bonus',
+      startsAt,
+      endsAt,
+      trafficMultiplierBasisPointsSnapshot: 21_000,
+      trafficBytesSnapshot: 20n,
+      priceCentsSnapshot: 0,
+    });
+    const [bucketWrite] = tx.quotaBucket.create.mock.calls[0] as unknown as [
+      { data: Record<string, unknown> },
+    ];
+    expect(bucketWrite.data).toMatchObject({
+      grantId: 'bonus_grant_1',
+      startsAt,
+      endsAt,
+      grantedBytes: 20n,
+      trafficMultiplierBasisPointsSnapshot: 21_000,
+    });
+  });
+
+  it('revokes only unused quota while retaining immutable usage history', async () => {
+    const revokedAt = new Date('2026-09-07T08:00:00.000Z');
+    const tx = {
+      entitlementGrant: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'grant_1',
+          status: 'ACTIVE',
+          legacySubscriptionId: null,
+          legacyTrafficPackId: null,
+          quotaBuckets: [
+            { grantedBytes: 100n, consumedBytes: 30n },
+            { grantedBytes: 20n, consumedBytes: 25n },
+          ],
+        }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      quotaBucket: { updateMany: jest.fn().mockResolvedValue({ count: 2 }) },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const service = new EntitlementService({} as never);
+
+    await expect(
+      service.revokeGrant(tx as never, {
+        grantId: 'grant_1',
+        at: revokedAt,
+        actorId: 'admin_1',
+        reason: 'Full refund',
+      }),
+    ).resolves.toEqual({ revoked: true, revokedUnusedBytes: 70n });
+    expect(tx.entitlementGrant.updateMany).toHaveBeenCalledWith({
+      where: { id: 'grant_1', status: 'ACTIVE' },
+      data: {
+        status: 'CANCELED',
+        endsAt: revokedAt,
+        activeSlot: null,
+      },
+    });
+    expect(tx.quotaBucket.updateMany).toHaveBeenCalledWith({
+      where: { grantId: 'grant_1', endsAt: { gt: revokedAt } },
+      data: { endsAt: revokedAt },
     });
   });
 });

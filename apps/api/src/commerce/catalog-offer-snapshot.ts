@@ -2,6 +2,7 @@ import {
   BillingPeriod,
   CatalogProductKind,
   CatalogProductSeries,
+  GroupBuySettlementMode,
   Prisma,
   QuotaCadence,
 } from '@prisma/client';
@@ -48,7 +49,7 @@ export interface CatalogOfferSnapshot {
   legacyPlanId: string | null;
   legacyPlanOfferId: string | null;
   legacyTrafficPackProductId: string | null;
-  purchaseMode?: 'initial' | 'upgrade' | 'plan_reset';
+  purchaseMode?: 'initial' | 'upgrade' | 'plan_reset' | 'group_buy';
   upgradeFromGrantId?: string | null;
   upgradeFromProductId?: string | null;
   upgradeFromPriceCents?: number | null;
@@ -58,10 +59,18 @@ export interface CatalogOfferSnapshot {
   resetCycleStartsAt?: string | null;
   resetCycleEndsAt?: string | null;
   resetTrafficBytes?: string | null;
+  resetCreditBytes?: string | null;
+  groupBuyId?: string | null;
+  groupBuyMemberId?: string | null;
+  groupBuyBonusBytes?: string | null;
+  groupBuyOriginalPriceCents?: number | null;
+  groupBuyPriceCents?: number | null;
+  groupBuyDiscountBasisPoints?: number | null;
+  groupBuySettlementMode?: GroupBuySettlementMode | null;
 }
 
 export interface CatalogOfferPurchaseContext {
-  purchaseMode: 'initial' | 'upgrade' | 'plan_reset';
+  purchaseMode: 'initial' | 'upgrade' | 'plan_reset' | 'group_buy';
   upgradeFromGrantId?: string | null;
   upgradeFromProductId?: string | null;
   upgradeFromPriceCents?: number | null;
@@ -71,6 +80,14 @@ export interface CatalogOfferPurchaseContext {
   resetCycleStartsAt?: string | null;
   resetCycleEndsAt?: string | null;
   resetTrafficBytes?: string | null;
+  resetCreditBytes?: string | null;
+  groupBuyId?: string | null;
+  groupBuyMemberId?: string | null;
+  groupBuyBonusBytes?: string | null;
+  groupBuyOriginalPriceCents?: number | null;
+  groupBuyPriceCents?: number | null;
+  groupBuyDiscountBasisPoints?: number | null;
+  groupBuySettlementMode?: GroupBuySettlementMode | null;
 }
 
 export function snapshotCatalogOffer(
@@ -124,6 +141,16 @@ export function snapshotCatalogOffer(
     resetCycleStartsAt: purchaseContext?.resetCycleStartsAt ?? null,
     resetCycleEndsAt: purchaseContext?.resetCycleEndsAt ?? null,
     resetTrafficBytes: purchaseContext?.resetTrafficBytes ?? null,
+    resetCreditBytes: purchaseContext?.resetCreditBytes ?? null,
+    groupBuyId: purchaseContext?.groupBuyId ?? null,
+    groupBuyMemberId: purchaseContext?.groupBuyMemberId ?? null,
+    groupBuyBonusBytes: purchaseContext?.groupBuyBonusBytes ?? null,
+    groupBuyOriginalPriceCents:
+      purchaseContext?.groupBuyOriginalPriceCents ?? null,
+    groupBuyPriceCents: purchaseContext?.groupBuyPriceCents ?? null,
+    groupBuyDiscountBasisPoints:
+      purchaseContext?.groupBuyDiscountBasisPoints ?? null,
+    groupBuySettlementMode: purchaseContext?.groupBuySettlementMode ?? null,
   };
 }
 
@@ -155,9 +182,34 @@ export function parseCatalogOfferSnapshot(
       typeof candidate.resetCycleStartsAt !== 'string' ||
       typeof candidate.resetCycleEndsAt !== 'string' ||
       typeof candidate.resetTrafficBytes !== 'string' ||
-      !/^\d+$/.test(candidate.resetTrafficBytes))
+      !/^\d+$/.test(candidate.resetTrafficBytes) ||
+      (candidate.resetCreditBytes != null &&
+        (typeof candidate.resetCreditBytes !== 'string' ||
+          !/^\d+$/.test(candidate.resetCreditBytes))))
   ) {
     throw new Error('易支付流量重置快照无效');
+  }
+  if (
+    candidate.purchaseMode === 'group_buy' &&
+    (typeof candidate.groupBuyId !== 'string' ||
+      typeof candidate.groupBuyMemberId !== 'string' ||
+      typeof candidate.groupBuyBonusBytes !== 'string' ||
+      !/^\d+$/.test(candidate.groupBuyBonusBytes) ||
+      !Number.isInteger(candidate.groupBuyOriginalPriceCents) ||
+      Number(candidate.groupBuyOriginalPriceCents) <= 0 ||
+      !Number.isInteger(candidate.groupBuyPriceCents) ||
+      Number(candidate.groupBuyPriceCents) <= 0 ||
+      Number(candidate.groupBuyPriceCents) >
+        Number(candidate.groupBuyOriginalPriceCents) ||
+      !Number.isInteger(candidate.groupBuyDiscountBasisPoints) ||
+      Number(candidate.groupBuyDiscountBasisPoints) < 100 ||
+      Number(candidate.groupBuyDiscountBasisPoints) > 10_000 ||
+      (candidate.groupBuySettlementMode != null &&
+        !Object.values(GroupBuySettlementMode).includes(
+          candidate.groupBuySettlementMode as GroupBuySettlementMode,
+        )))
+  ) {
+    throw new Error('易支付拼团快照无效');
   }
   return candidate as unknown as CatalogOfferSnapshot;
 }

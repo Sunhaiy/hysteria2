@@ -30,6 +30,16 @@ type OrderRecord = {
   offer: { id: string; name: string; billingPeriod: string } | null;
   source: string;
   fulfillmentStatus: "pending" | "applied" | "void";
+  paymentFulfillmentStatus:
+    | "pending"
+    | "applied"
+    | "retrying"
+    | "refund_pending"
+    | "refunded"
+    | "manual_review"
+    | null;
+  refundStatus: "pending" | "submitted" | "confirmed" | "failed" | null;
+  reasonCode: string | null;
   paymentStatus: string;
   paymentType: "alipay" | "wxpay" | null;
   amountCents: number;
@@ -48,10 +58,28 @@ type PaymentAttempt = {
   merchantOrderNo: string;
   gatewayTradeNo: string | null;
   status: "pending" | "settled" | "expired" | "failed";
+  fulfillmentStatus:
+    | "pending"
+    | "applied"
+    | "retrying"
+    | "refund_pending"
+    | "refunded"
+    | "manual_review";
   paymentType: "alipay" | "wxpay";
   amountCents: number;
   productName: string;
   fulfillmentPending: boolean;
+  requiresAttention: boolean;
+  refundAttempt: {
+    id: string;
+    status: "pending" | "submitted" | "confirmed" | "failed";
+    reasonCode: string | null;
+    requestCount: number;
+    lastError: string | null;
+    gatewayMessage: string | null;
+    submittedAt: string | null;
+    confirmedAt: string | null;
+  } | null;
   settlementFailureCount: number;
   lastSettlementError: string | null;
   lastSettlementFailedAt: string | null;
@@ -83,7 +111,7 @@ type OrderDetail = OrderRecord & {
   entitlementExpiresAt: string | null;
   quotaCadence: "monthly_reset" | "one_time" | null;
   resetAnchorAt: string | null;
-  purchaseMode: "initial" | "upgrade";
+  purchaseMode: "initial" | "upgrade" | "plan_reset";
   upgradeFromProductId: string | null;
   upgradeFromPriceCents: number | null;
   entitlementGrant: {
@@ -208,6 +236,40 @@ const sourceLabel: Record<string, string> = {
   admin: "人工",
   legacy: "历史",
 };
+
+const fulfillmentStatusLabel: Record<string, string> = {
+  pending: "待履约",
+  applied: "已生效",
+  retrying: "发放重试中",
+  refund_pending: "补偿退款中",
+  refunded: "已补偿退款",
+  manual_review: "需人工处理",
+  void: "已作废",
+};
+
+const refundStatusLabel: Record<string, string> = {
+  pending: "等待退款",
+  submitted: "退款已提交",
+  confirmed: "退款已确认",
+  failed: "退款异常",
+};
+
+function effectiveFulfillmentStatus(order: OrderRecord) {
+  return order.paymentFulfillmentStatus ?? order.fulfillmentStatus;
+}
+
+function attemptException(attempt: PaymentAttempt) {
+  if (attempt.refundAttempt) {
+    return refundStatusLabel[attempt.refundAttempt.status];
+  }
+  if (attempt.fulfillmentPending) {
+    return `${fulfillmentStatusLabel[attempt.fulfillmentStatus]} ${attempt.settlementFailureCount} 次`;
+  }
+  if (attempt.lastQueryError) {
+    return `查单失败 ${attempt.queryFailureCount} 次`;
+  }
+  return attempt.status === "pending" ? "等待付款" : "-";
+}
 
 const channelLabel: Record<string, string> = {
   alipay: "支付宝",
@@ -450,6 +512,60 @@ export default function AdminOrdersPage() {
       setFeedback({
         kind: "error",
         message: cause instanceof ApiError ? cause.message : "订单处理失败。",
+      });
+    } finally {
+      setActingId(null);
+    }
+  }
+
+  async function reconcileAttempt(id: string) {
+    if (!token) return;
+    setActingId(id);
+    try {
+      const result = await apiRequest<{ outcome: string }>(
+        `/api/admin/orders/payment-attempts/${id}/reconcile`,
+        { method: "POST", token },
+      );
+      setFeedback({
+        kind: result.outcome === "settled" ? "success" : "error",
+        message:
+          result.outcome === "settled"
+            ? "查单完成，支付与权益已结算。"
+            : `查单完成：${paymentStatusLabel[result.outcome] ?? result.outcome}`,
+      });
+      setAttemptDetail(null);
+      await refresh();
+    } catch (cause) {
+      setFeedback({
+        kind: "error",
+        message: cause instanceof ApiError ? cause.message : "主动查单失败。",
+      });
+    } finally {
+      setActingId(null);
+    }
+  }
+
+  async function retryRefundAttempt(id: string) {
+    if (!token) return;
+    setActingId(id);
+    try {
+      const result = await apiRequest<{ outcome: string }>(
+        `/api/admin/group-buys/refunds/${id}/retry`,
+        { method: "POST", token },
+      );
+      setFeedback({
+        kind: result.outcome === "refunded" ? "success" : "error",
+        message:
+          result.outcome === "refunded"
+            ? "补偿退款已由网关确认。"
+            : `退款处理结果：${result.outcome}`,
+      });
+      setAttemptDetail(null);
+      await refresh();
+    } catch (cause) {
+      setFeedback({
+        kind: "error",
+        message: cause instanceof ApiError ? cause.message : "退款重试失败。",
       });
     } finally {
       setActingId(null);
@@ -815,14 +931,11 @@ export default function AdminOrdersPage() {
                 {paymentStatusLabel[order.paymentStatus] ?? order.paymentStatus}
               </span>,
               <span
-                className={`badge ${statusTone(order.fulfillmentStatus)}`}
+                className={`badge ${statusTone(effectiveFulfillmentStatus(order))}`}
                 key={`${order.id}-fulfillment`}
               >
-                {order.fulfillmentStatus === "applied"
-                  ? "已生效"
-                  : order.fulfillmentStatus === "pending"
-                    ? "待处理"
-                    : "已作废"}
+                {fulfillmentStatusLabel[effectiveFulfillmentStatus(order)] ??
+                  effectiveFulfillmentStatus(order)}
               </span>,
               <div className="table-actions" key={`${order.id}-actions`}>
                 <button
@@ -896,21 +1009,26 @@ export default function AdminOrdersPage() {
               >
                 {paymentStatusLabel[attempt.status] ?? attempt.status}
               </span>,
-              attempt.fulfillmentPending
-                ? `权益发放失败 ${attempt.settlementFailureCount} 次`
-                : attempt.lastQueryError
-                  ? `查单失败 ${attempt.queryFailureCount} 次`
-                  : attempt.status === "pending"
-                    ? "等待付款"
-                    : "-",
-              <button
-                className="ghost-button compact"
-                type="button"
-                onClick={() => setAttemptDetail(attempt)}
-                key={`${attempt.id}-detail`}
-              >
-                查看
-              </button>,
+              attemptException(attempt),
+              <div className="table-actions" key={`${attempt.id}-actions`}>
+                <button
+                  className="ghost-button compact"
+                  type="button"
+                  onClick={() => setAttemptDetail(attempt)}
+                >
+                  查看
+                </button>
+                {attempt.status !== "settled" ? (
+                  <button
+                    className="action-button compact"
+                    type="button"
+                    disabled={actingId === attempt.id}
+                    onClick={() => void reconcileAttempt(attempt.id)}
+                  >
+                    {actingId === attempt.id ? "查单中" : "重新查单"}
+                  </button>
+                ) : null}
+              </div>,
             ])}
             emptyText="没有待支付或异常记录"
           />
@@ -945,11 +1063,13 @@ export default function AdminOrdersPage() {
               <span className="muted">商品</span>
               <strong>{detail.product.name}</strong>
             </div>
-            {detail.product.series === "ultra" ? (
+            {detail.purchaseMode !== "initial" ? (
               <div className="list-row">
                 <span className="muted">购买方式</span>
                 <strong>
-                  {detail.purchaseMode === "upgrade" ? "补差价升级" : "首次购买"}
+                  {detail.purchaseMode === "upgrade"
+                    ? "补差价升级"
+                    : "本期流量重置"}
                 </strong>
               </div>
             ) : null}
@@ -994,7 +1114,8 @@ export default function AdminOrdersPage() {
               <div className="list-row">
                 <span className="muted">关联权益</span>
                 <strong className="mono">
-                  {detail.entitlementGrant.id} · {detail.entitlementGrant.status}
+                  {detail.entitlementGrant.id} ·{" "}
+                  {detail.entitlementGrant.status}
                 </strong>
               </div>
             ) : null}
@@ -1053,6 +1174,16 @@ export default function AdminOrdersPage() {
               ["渠道", channelLabel[attemptDetail.paymentType]],
               ["金额", formatMoney(attemptDetail.amountCents)],
               ["状态", paymentStatusLabel[attemptDetail.status]],
+              [
+                "履约状态",
+                fulfillmentStatusLabel[attemptDetail.fulfillmentStatus],
+              ],
+              [
+                "补偿退款",
+                attemptDetail.refundAttempt
+                  ? refundStatusLabel[attemptDetail.refundAttempt.status]
+                  : "-",
+              ],
               ["创建时间", formatDateTime(attemptDetail.createdAt)],
               ["过期时间", formatDateTime(attemptDetail.expiresAt)],
               [
@@ -1084,6 +1215,44 @@ export default function AdminOrdersPage() {
               <div className="feedback error">
                 最近查单失败：{attemptDetail.lastQueryError}
               </div>
+            ) : null}
+            {attemptDetail.refundAttempt?.lastError ? (
+              <div className="feedback error">
+                退款异常：{attemptDetail.refundAttempt.lastError}
+              </div>
+            ) : null}
+            {attemptDetail.refundAttempt?.reasonCode ? (
+              <div className="list-row">
+                <span className="muted">异常原因码</span>
+                <strong className="mono">
+                  {attemptDetail.refundAttempt.reasonCode}
+                </strong>
+              </div>
+            ) : null}
+            {attemptDetail.status !== "settled" ? (
+              <button
+                className="action-button"
+                type="button"
+                disabled={actingId === attemptDetail.id}
+                onClick={() => void reconcileAttempt(attemptDetail.id)}
+              >
+                {actingId === attemptDetail.id ? "正在查单" : "立即重新查单"}
+              </button>
+            ) : null}
+            {attemptDetail.refundAttempt &&
+            attemptDetail.refundAttempt.status !== "confirmed" ? (
+              <button
+                className="action-button"
+                type="button"
+                disabled={actingId === attemptDetail.refundAttempt.id}
+                onClick={() =>
+                  void retryRefundAttempt(attemptDetail.refundAttempt!.id)
+                }
+              >
+                {actingId === attemptDetail.refundAttempt.id
+                  ? "正在处理退款"
+                  : "重试补偿退款"}
+              </button>
             ) : null}
           </div>
         ) : null}

@@ -16,6 +16,10 @@ import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import type { SessionPrincipal } from '../common/auth.types';
 import { webPublicUrl } from '../common/public-url';
 import { CreateEpayGatewayTestDto, CreateEpayPaymentDto } from './epay.dto';
+import {
+  CreateGroupBuyPaymentDto,
+  JoinGroupBuyPaymentDto,
+} from '../group-buy/group-buy.dto';
 import { EpayService } from './epay.service';
 
 @Controller('api')
@@ -46,6 +50,37 @@ export class EpayController {
     @Param('id') attemptId: string,
   ) {
     return this.epay.getPayment(principal.sub, attemptId);
+  }
+
+  @Post('portal/group-buys')
+  @UseGuards(JwtAuthGuard)
+  createGroupBuy(
+    @CurrentPrincipal() principal: SessionPrincipal,
+    @Body() body: CreateGroupBuyPaymentDto,
+    @Headers('idempotency-key') idempotencyKey = '',
+  ) {
+    return this.epay.createGroupBuyPayment(
+      principal.sub,
+      { kind: 'create', campaignId: body.campaignId },
+      body.paymentType,
+      idempotencyKey,
+    );
+  }
+
+  @Post('portal/group-buys/:id/join')
+  @UseGuards(JwtAuthGuard)
+  joinGroupBuy(
+    @CurrentPrincipal() principal: SessionPrincipal,
+    @Param('id') groupId: string,
+    @Body() body: JoinGroupBuyPaymentDto,
+    @Headers('idempotency-key') idempotencyKey = '',
+  ) {
+    return this.epay.createGroupBuyPayment(
+      principal.sub,
+      { kind: 'join', groupId },
+      body.paymentType,
+      idempotencyKey,
+    );
   }
 
   @Post('admin/payments/epay/tests')

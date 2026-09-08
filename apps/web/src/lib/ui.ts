@@ -4,15 +4,21 @@ export function statusTone(status: string) {
     case "applied":
     case "redeemed":
     case "success":
+    case "refunded":
       return "success";
     case "paused":
     case "pending":
     case "suspended":
+    case "retrying":
+    case "refund_pending":
+    case "submitted":
       return "warn";
     case "banned":
     case "canceled":
     case "expired":
     case "void":
+    case "failed":
+    case "manual_review":
       return "danger";
     default:
       return "info";

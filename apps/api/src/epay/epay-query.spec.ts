@@ -53,11 +53,18 @@ describe('易支付 active query protocol', () => {
     });
   });
 
-  it('accepts signed paid, pending, closed, and not-found outcomes', () => {
+  it('accepts signed paid, refunded, pending, closed, and not-found outcomes', () => {
     expect(parseEpayQueryResponse(response(), expected, merchantKey)).toEqual({
       kind: 'paid',
       gatewayTradeNo: 'gateway-1',
     });
+    expect(
+      parseEpayQueryResponse(
+        response({ status: '2', trade_status: 'TRADE_REFUNDED' }),
+        expected,
+        merchantKey,
+      ),
+    ).toEqual({ kind: 'refunded', gatewayTradeNo: 'gateway-1' });
     expect(
       parseEpayQueryResponse(
         response({ status: '0', trade_status: 'PENDING', trade_no: '' }),
@@ -74,7 +81,12 @@ describe('易支付 active query protocol', () => {
     ).toEqual({ kind: 'closed' });
     expect(
       parseEpayQueryResponse(
-        { code: -1, msg: 'not found' },
+        response({
+          code: '-1',
+          status: '0',
+          trade_status: 'CLOSED',
+          trade_no: '',
+        }),
         expected,
         merchantKey,
       ),
@@ -87,6 +99,7 @@ describe('易支付 active query protocol', () => {
     ['amount', () => response({ money: '12.91' })],
     ['channel', () => response({ type: 'wxpay' })],
     ['status pair', () => response({ status: '1', trade_status: 'PENDING' })],
+    ['unsigned not-found result', () => ({ code: -1, msg: 'not found' })],
   ])('rejects a tampered or invalid %s', (_name, createPayload) => {
     expect(() =>
       parseEpayQueryResponse(createPayload(), expected, merchantKey),

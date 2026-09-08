@@ -30,7 +30,11 @@ export function SidebarNav({
           <span className="nav-label">{section.label}</span>
           <div className="nav-section-links">
             {section.items.map((item) => {
-              const active = pathname === item.href;
+              const active =
+                pathname === item.href ||
+                (item.href !== "/portal" &&
+                  item.href !== "/admin" &&
+                  pathname.startsWith(`${item.href}/`));
               return (
                 <Link
                   key={item.href}

@@ -14,6 +14,8 @@ import { webPublicUrl } from '../common/public-url';
 import { pageResponse, parsePage, type PageQuery } from '../common/pagination';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
+import { postWalletEntry, recoverWalletCredit } from '../wallet/wallet-ledger';
+import { EntitlementService } from '../entitlement/entitlement.service';
 
 const referralAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const referralBonusProductId = 'system_referral_traffic_bonus';
@@ -45,6 +47,7 @@ export class ReferralService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
+    private readonly entitlements: EntitlementService,
   ) {}
 
   async getOrCreateCode(ownerId: string) {
@@ -330,69 +333,35 @@ export class ReferralService {
     });
     if (claimed.count !== 1) return { settled: false } as const;
 
-    const bonusGrant = await tx.entitlementGrant.create({
-      data: {
+    const bonusGrant = await this.entitlements.createBonusTrafficGrantFromOrder(
+      tx,
+      {
+        orderId,
         userId: inviteeId,
-        accessAccountId: planGrant.accessAccountId,
         productId: referralBonusProductId,
-        kind: 'TRAFFIC_PACK',
-        status: 'ACTIVE',
         startsAt: rewardedAt,
-        endsAt: planGrant.endsAt,
-        accessProfileId: planGrant.accessProfileId,
-        speedUpMbpsSnapshot: planGrant.speedUpMbpsSnapshot,
-        speedDownMbpsSnapshot: planGrant.speedDownMbpsSnapshot,
-        deviceLimitSnapshot: planGrant.deviceLimitSnapshot,
+        bytes: attribution.inviteeRewardBytes,
       },
-    });
-    await tx.quotaBucket.create({
-      data: {
-        grantId: bonusGrant.id,
-        kind: 'TRAFFIC_PACK',
-        startsAt: rewardedAt,
-        endsAt: planGrant.endsAt,
-        grantedBytes: attribution.inviteeRewardBytes,
-      },
-    });
+    );
 
     let rewardWalletLedgerId: string | null = null;
     if (inviterRewardCents > 0) {
-      const updatedInviter = await tx.user.update({
-        where: { id: attribution.inviterId },
-        data: {
-          balanceCents: { increment: inviterRewardCents },
-        },
-        select: { balanceCents: true },
+      const posting = await postWalletEntry(tx, {
+        userId: attribution.inviterId,
+        orderId,
+        amountCents: inviterRewardCents,
+        kind: 'ADJUST',
+        idempotencyKey: `referral:${attribution.id}:reward`,
+        note: `邀请奖励 ${attribution.codeSnapshot}`,
       });
-      const legacy = await tx.walletTransaction.create({
-        data: {
-          userId: attribution.inviterId,
-          amountCents: inviterRewardCents,
-          kind: 'ADJUST',
-          note: `邀请奖励 ${attribution.codeSnapshot}`,
-        },
-      });
-      const ledger = await tx.walletLedgerEntry.create({
-        data: {
-          legacyTransactionId: legacy.id,
-          userId: attribution.inviterId,
-          orderId,
-          amountCents: inviterRewardCents,
-          beforeBalanceCents: updatedInviter.balanceCents - inviterRewardCents,
-          afterBalanceCents: updatedInviter.balanceCents,
-          kind: 'ADJUST',
-          idempotencyKey: `referral:${attribution.id}:reward`,
-          note: `邀请奖励 ${attribution.codeSnapshot}`,
-        },
-      });
-      rewardWalletLedgerId = ledger.id;
+      rewardWalletLedgerId = posting.ledgerId;
     }
 
     await tx.referralAttribution.update({
       where: { id: attribution.id },
       data: {
         rewardWalletLedgerId,
-        bonusEntitlementGrantId: bonusGrant.id,
+        bonusEntitlementGrantId: bonusGrant.grantId,
       },
     });
     await tx.auditLog.create({
@@ -407,7 +376,7 @@ export class ReferralService {
           inviterRewardCents,
           inviterRewardBasisPoints: attribution.inviterRewardBasisPoints,
           inviteeRewardBytes: attribution.inviteeRewardBytes.toString(),
-          bonusEntitlementGrantId: bonusGrant.id,
+          bonusEntitlementGrantId: bonusGrant.grantId,
         },
       },
     });
@@ -419,6 +388,15 @@ export class ReferralService {
     orderId: string,
     actorId: string,
     refundId: string,
+    refund: {
+      cumulativeRefundedCents: number;
+      orderAmountCents: number;
+      fullRefund: boolean;
+    } = {
+      cumulativeRefundedCents: 1,
+      orderAmountCents: 1,
+      fullRefund: true,
+    },
   ) {
     const attribution = await tx.referralAttribution.findUnique({
       where: { qualifyingOrderId: orderId },
@@ -430,73 +408,65 @@ export class ReferralService {
       return { reversed: false } as const;
     }
     const reversedAt = new Date();
-    const claimed = await tx.referralAttribution.updateMany({
-      where: { id: attribution.id, status: 'REWARDED' },
-      data: { status: 'REVERSED', reversedAt },
-    });
-    if (claimed.count !== 1) return { reversed: false } as const;
-
-    const lockedInviter = await tx.user.update({
-      where: { id: attribution.inviterId },
-      data: { balanceCents: { increment: 0 } },
-      select: { balanceCents: true },
-    });
-    const recoveredCents = Math.min(
-      lockedInviter.balanceCents,
-      attribution.inviterRewardCents,
-    );
-    const unrecoveredCents = attribution.inviterRewardCents - recoveredCents;
-    let reversalWalletLedgerId: string | null = null;
-    if (recoveredCents > 0) {
-      await tx.user.update({
-        where: { id: attribution.inviterId },
-        data: { balanceCents: { decrement: recoveredCents } },
-        select: { balanceCents: true },
+    if (refund.fullRefund) {
+      const claimed = await tx.referralAttribution.updateMany({
+        where: { id: attribution.id, status: 'REWARDED' },
+        data: { status: 'REVERSED', reversedAt },
       });
-      const legacy = await tx.walletTransaction.create({
-        data: {
-          userId: attribution.inviterId,
-          amountCents: -recoveredCents,
-          kind: 'ADJUST',
-          note: `邀请奖励退款追回 ${refundId}`,
-        },
-      });
-      const ledger = await tx.walletLedgerEntry.create({
-        data: {
-          legacyTransactionId: legacy.id,
-          userId: attribution.inviterId,
-          actorId,
-          orderId,
-          amountCents: -recoveredCents,
-          beforeBalanceCents: lockedInviter.balanceCents,
-          afterBalanceCents: lockedInviter.balanceCents - recoveredCents,
-          kind: 'ADJUST',
-          idempotencyKey: `referral:${attribution.id}:reversal`,
-          note: `邀请奖励退款追回 ${refundId}`,
-        },
-      });
-      reversalWalletLedgerId = ledger.id;
+      if (claimed.count !== 1) return { reversed: false } as const;
     }
 
-    const revokedUnusedBytes = (
-      attribution.bonusEntitlementGrant?.quotaBuckets ?? []
-    ).reduce((total, bucket) => {
-      const unused = bucket.grantedBytes - bucket.consumedBytes;
-      return total + (unused > BigInt(0) ? unused : BigInt(0));
-    }, BigInt(0));
-    if (attribution.bonusEntitlementGrantId) {
-      await tx.entitlementGrant.update({
-        where: { id: attribution.bonusEntitlementGrantId },
-        data: { status: 'CANCELED' },
+    const targetRecoveryCents = refund.fullRefund
+      ? attribution.inviterRewardCents
+      : Math.floor(
+          (attribution.inviterRewardCents *
+            Math.min(refund.cumulativeRefundedCents, refund.orderAmountCents)) /
+            Math.max(1, refund.orderAmountCents),
+        );
+    const previouslyRecoveredCents = attribution.recoveredCents ?? 0;
+    const outstandingCents = Math.max(
+      0,
+      targetRecoveryCents - previouslyRecoveredCents,
+    );
+
+    const recovery = await recoverWalletCredit(tx, {
+      userId: attribution.inviterId,
+      actorId,
+      orderId,
+      requestedCents: outstandingCents,
+      kind: 'ADJUST',
+      idempotencyKey: `referral:${attribution.id}:refund:${refundId}`,
+      note: `邀请奖励退款追回 ${refundId}`,
+    });
+    const recoveredCents = recovery.recoveredCents;
+    const totalRecoveredCents = previouslyRecoveredCents + recoveredCents;
+    const unrecoveredCents = Math.max(
+      0,
+      targetRecoveryCents - totalRecoveredCents,
+    );
+    const reversalWalletLedgerId = recovery.ledgerId;
+
+    let revokedUnusedBytes = attribution.revokedUnusedBytes ?? BigInt(0);
+    if (refund.fullRefund && attribution.bonusEntitlementGrantId) {
+      const revoked = await this.entitlements.revokeGrant(tx, {
+        grantId: attribution.bonusEntitlementGrantId,
+        at: reversedAt,
+        actorId,
+        reason: `邀请奖励关联订单全额退款 ${refundId}`,
+        auditAction: 'referral.bonus_revoked',
       });
+      revokedUnusedBytes = revoked.revokedUnusedBytes;
     }
     await tx.referralAttribution.update({
       where: { id: attribution.id },
       data: {
-        recoveredCents,
+        status: refund.fullRefund ? 'REVERSED' : 'REWARDED',
+        recoveredCents: totalRecoveredCents,
         unrecoveredCents,
         revokedUnusedBytes,
-        reversalWalletLedgerId,
+        reversalWalletLedgerId:
+          reversalWalletLedgerId ?? attribution.reversalWalletLedgerId,
+        reversedAt: refund.fullRefund ? reversedAt : null,
       },
     });
     await tx.auditLog.create({
@@ -509,6 +479,7 @@ export class ReferralService {
           refundId,
           orderId,
           recoveredCents,
+          totalRecoveredCents,
           unrecoveredCents,
           revokedUnusedBytes: revokedUnusedBytes.toString(),
         },
@@ -517,7 +488,7 @@ export class ReferralService {
     return {
       reversed: true,
       attributionId: attribution.id,
-      recoveredCents,
+      recoveredCents: totalRecoveredCents,
       unrecoveredCents,
     } as const;
   }

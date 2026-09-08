@@ -30,6 +30,7 @@ import {
   isPermanentBillingPeriod,
   permanentEntitlementEnd,
 } from '../entitlement/entitlement-lifetime';
+import { postWalletEntry, setWalletBalance } from '../wallet/wallet-ledger';
 
 const bytesInGiB = 1024 * 1024 * 1024;
 const reconnectGraceMs = 2 * 60_000;
@@ -1062,13 +1063,18 @@ export class ControlPlaneStoreService {
     return [...users.values()];
   }
 
-  async getUsageForUser(userId: string, includeRecent = true) {
+  async getUsageForUser(
+    userId: string,
+    includeRecent = true,
+    options: { unlinkedOnly?: boolean } = {},
+  ) {
     await this.expireOverdueSubscriptions();
     await this.expireTrafficPacks();
     const now = new Date();
     const subscription = await this.prisma.subscription.findFirst({
       where: {
         userId,
+        entitlementGrant: options.unlinkedOnly ? null : undefined,
         status: SubscriptionStatus.ACTIVE,
         endsAt: { gt: now },
       },
@@ -1083,6 +1089,7 @@ export class ControlPlaneStoreService {
     const packs = await this.prisma.trafficPack.findMany({
       where: {
         userId,
+        entitlementGrant: options.unlinkedOnly ? null : undefined,
         status: TrafficPackStatus.ACTIVE,
         OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
       },
@@ -1176,22 +1183,29 @@ export class ControlPlaneStoreService {
     };
   }
 
-  async getPortalOverview(userId: string) {
+  async getPortalOverview(
+    userId: string,
+    options: { unlinkedOnly?: boolean } = {},
+  ) {
     const user = await this.mustGetUserRecord(userId);
     const now = new Date();
     const subscription = await this.prisma.subscription.findFirst({
       where: {
         userId,
+        entitlementGrant: options.unlinkedOnly ? null : undefined,
         status: SubscriptionStatus.ACTIVE,
         endsAt: { gt: now },
       },
       include: { user: true, plan: true, node: true, trafficPacks: true },
       orderBy: { endsAt: 'desc' },
     });
-    const usage = await this.getUsageForUser(userId, false);
+    const usage = await this.getUsageForUser(userId, false, options);
     const online = await this.presence.countForUser(userId);
     const packs = await this.prisma.trafficPack.findMany({
-      where: { userId },
+      where: {
+        userId,
+        entitlementGrant: options.unlinkedOnly ? null : undefined,
+      },
       include: {
         accessProfile: {
           include: {
@@ -1288,13 +1302,17 @@ export class ControlPlaneStoreService {
     };
   }
 
-  async getAccessBundle(userId: string) {
+  async getAccessBundle(
+    userId: string,
+    options: { unlinkedOnly?: boolean } = {},
+  ) {
     const user = await this.mustGetUserRecord(userId);
     const token = await this.mustGetAccessTokenByUser(userId);
     const now = new Date();
     const subscription = await this.prisma.subscription.findFirst({
       where: {
         userId,
+        entitlementGrant: options.unlinkedOnly ? null : undefined,
         status: SubscriptionStatus.ACTIVE,
         endsAt: { gt: now },
       },
@@ -1304,6 +1322,7 @@ export class ControlPlaneStoreService {
     const packs = await this.prisma.trafficPack.findMany({
       where: {
         userId,
+        entitlementGrant: options.unlinkedOnly ? null : undefined,
         status: TrafficPackStatus.ACTIVE,
         remainingBytes: { gt: BigInt(0) },
         OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
@@ -1349,7 +1368,7 @@ export class ControlPlaneStoreService {
       throw new NotFoundException('No active nodes are available');
     }
     const node = nodeList[0];
-    const usage = await this.getUsageForUser(userId, false);
+    const usage = await this.getUsageForUser(userId, false, options);
     const limits = [
       ...(subscription
         ? [
@@ -1407,7 +1426,10 @@ export class ControlPlaneStoreService {
     };
   }
 
-  async getAccessBundleByToken(tokenValue: string) {
+  async getAccessBundleByToken(
+    tokenValue: string,
+    options: { unlinkedOnly?: boolean } = {},
+  ) {
     const token = await this.prisma.accessToken.findFirst({
       where: { token: tokenValue, revokedAt: null },
     });
@@ -1415,7 +1437,7 @@ export class ControlPlaneStoreService {
       throw new NotFoundException('Subscription not found');
     }
 
-    const bundle = await this.getAccessBundle(token.userId);
+    const bundle = await this.getAccessBundle(token.userId, options);
     return { ...bundle, token };
   }
 
@@ -2445,7 +2467,7 @@ export class ControlPlaneStoreService {
     expectedTrafficPackProductId?: string,
     onApplied?: (context: {
       tx: Prisma.TransactionClient;
-      code: { kind: RedemptionCodeKind };
+      code: { kind: RedemptionCodeKind; planMode: RedemptionPlanMode };
       order: {
         id: string;
         kind: OrderKind;
@@ -2570,17 +2592,12 @@ export class ControlPlaneStoreService {
               redeemedAt: timestamp,
             });
           } else if (code.kind === RedemptionCodeKind.BALANCE) {
-            await tx.user.update({
-              where: { id: userId },
-              data: { balanceCents: { increment: code.amountCents } },
-            });
-            await tx.walletTransaction.create({
-              data: {
-                userId,
-                amountCents: code.amountCents,
-                kind: 'TOPUP',
-                note: `兑换码充值 ${code.code}`,
-              },
+            await postWalletEntry(tx, {
+              userId,
+              amountCents: code.amountCents,
+              kind: 'TOPUP',
+              idempotencyKey: `redemption:${code.id}`,
+              note: `兑换码充值 ${code.code}`,
             });
           }
 
@@ -2666,28 +2683,35 @@ export class ControlPlaneStoreService {
     newBalanceCents: number,
     note?: string,
   ) {
-    const user = await this.mustGetUserRecord(userId);
     if (newBalanceCents < 0) {
       throw new BadRequestException('余额不能为负');
     }
-    const delta = newBalanceCents - user.balanceCents;
-    await this.prisma.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id: userId },
-        data: { balanceCents: newBalanceCents },
-      });
-      if (delta !== 0) {
-        await tx.walletTransaction.create({
-          data: {
-            userId,
-            amountCents: delta,
-            kind: 'ADJUST',
-            note: note?.trim() || '管理员调整余额',
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await this.prisma.$transaction(
+          async (tx) => {
+            await setWalletBalance(tx, {
+              userId,
+              balanceCents: newBalanceCents,
+              kind: 'ADJUST',
+              note: note?.trim() || '管理员调整余额',
+            });
           },
-        });
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+        return this.getWallet(userId);
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2034' &&
+          attempt < 2
+        ) {
+          continue;
+        }
+        this.handlePrismaError(error);
       }
-    });
-    return this.getWallet(userId);
+    }
+    throw new ConflictException('余额调整发生并发冲突，请重试');
   }
 
   /**
@@ -2803,23 +2827,6 @@ export class ControlPlaneStoreService {
         }
 
         const finalPriceCents = Math.max(basePriceCents - discountCents, 0);
-        if (user.balanceCents < finalPriceCents) {
-          throw new BadRequestException('余额不足，请先充值');
-        }
-
-        await tx.user.update({
-          where: { id: userId },
-          data: { balanceCents: { decrement: finalPriceCents } },
-        });
-        await tx.walletTransaction.create({
-          data: {
-            userId,
-            amountCents: -finalPriceCents,
-            kind: 'PURCHASE',
-            note: `购买套餐 ${plan.name}`,
-          },
-        });
-
         const order = await tx.manualOrder.create({
           data: {
             userId,
@@ -2834,6 +2841,14 @@ export class ControlPlaneStoreService {
                 : '余额购买',
             processedAt: timestamp,
           },
+        });
+        await postWalletEntry(tx, {
+          userId,
+          orderId: order.id,
+          amountCents: -finalPriceCents,
+          kind: 'PURCHASE',
+          idempotencyKey: `legacy-order:${order.id}`,
+          note: `购买套餐 ${plan.name}`,
         });
 
         await this.grantPlanEntitlement(tx, {
@@ -2985,23 +3000,6 @@ export class ControlPlaneStoreService {
         }
 
         const finalPriceCents = Math.max(product.priceCents - discountCents, 0);
-        const debit = await tx.user.updateMany({
-          where: { id: userId, balanceCents: { gte: finalPriceCents } },
-          data: { balanceCents: { decrement: finalPriceCents } },
-        });
-        if (debit.count !== 1) {
-          throw new BadRequestException('余额不足，请先充值');
-        }
-
-        await tx.walletTransaction.create({
-          data: {
-            userId,
-            amountCents: -finalPriceCents,
-            kind: 'PURCHASE',
-            note: `购买流量包 ${product.name}`,
-          },
-        });
-
         const order = await tx.manualOrder.create({
           data: {
             userId,
@@ -3019,6 +3017,14 @@ export class ControlPlaneStoreService {
                 : product.name,
             processedAt: timestamp,
           },
+        });
+        await postWalletEntry(tx, {
+          userId,
+          orderId: order.id,
+          amountCents: -finalPriceCents,
+          kind: 'PURCHASE',
+          idempotencyKey: `legacy-order:${order.id}`,
+          note: `购买流量包 ${product.name}`,
         });
 
         const account = await tx.accessAccount.upsert({
@@ -3361,6 +3367,7 @@ export class ControlPlaneStoreService {
       mode: input.code.planMode,
       currentPlanId: input.openSubscription?.planId,
       targetPlanId: plan.id,
+      currentStartsAt: input.openSubscription?.startsAt,
       currentEndsAt: input.openSubscription?.endsAt,
       redeemedAt: input.redeemedAt,
       intervalMonths: offer.intervalMonths,
@@ -3536,15 +3543,26 @@ export class ControlPlaneStoreService {
     if (existingSubscription) {
       const isSamePlan = existingSubscription.planId === plan.id;
 
-      if (isSamePlan && !input.forceReplace) {
+      if (
+        isSamePlan &&
+        !input.forceReplace &&
+        existingSubscription.endsAt.getTime() > input.grantedAt.getTime()
+      ) {
         // Renewal of the current plan: extend the cycle and stack the plan's
         // traffic allotment onto the remaining balance.
-        const extensionBase =
-          existingSubscription.endsAt.getTime() > input.grantedAt.getTime()
-            ? new Date(existingSubscription.endsAt)
-            : new Date(input.grantedAt);
+        const extendsCurrentTerm =
+          existingSubscription.endsAt.getTime() > input.grantedAt.getTime();
+        const extensionBase = extendsCurrentTerm
+          ? new Date(existingSubscription.endsAt)
+          : new Date(input.grantedAt);
         const extendedEndsAt = input.durationMonths
-          ? this.addUtcMonthsClamped(extensionBase, input.durationMonths)
+          ? this.addUtcMonthsClamped(
+              extensionBase,
+              input.durationMonths,
+              extendsCurrentTerm
+                ? existingSubscription.startsAt.getUTCDate()
+                : input.grantedAt.getUTCDate(),
+            )
           : this.buildSubscriptionEndDate(extensionBase, plan.durationDays);
 
         await tx.subscription.update({
@@ -4181,7 +4199,11 @@ export class ControlPlaneStoreService {
     return endsAt;
   }
 
-  private addUtcMonthsClamped(anchor: Date, months: number) {
+  private addUtcMonthsClamped(
+    anchor: Date,
+    months: number,
+    anchorDay = anchor.getUTCDate(),
+  ) {
     const first = new Date(
       Date.UTC(
         anchor.getUTCFullYear(),
@@ -4196,7 +4218,7 @@ export class ControlPlaneStoreService {
     const lastDay = new Date(
       Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0),
     ).getUTCDate();
-    first.setUTCDate(Math.min(anchor.getUTCDate(), lastDay));
+    first.setUTCDate(Math.min(anchorDay, lastDay));
     return first;
   }
 

@@ -36,7 +36,22 @@ openssl rand -base64 32
 - `GET /api/admin/orders`, `/api/admin/orders/:id`,
   `/api/admin/orders/payment-attempts`, and `/api/admin/orders/summary` provide
   the paginated order center, payment exceptions, and Asia/Shanghai daily and
-  month-to-date net revenue.
+  month-to-date net revenue. The exception view includes paid attempts whose
+  entitlement is retrying, awaiting compensation refund, or requires manual
+  review. Compensation refunds expose their reason code and retry state.
+- `GET /api/portal/check-ins/today` and `POST /api/portal/check-ins/claim`
+  expose the idempotent daily reward. `GET /api/admin/check-ins`,
+  `GET /api/admin/check-ins/settings`, and
+  `PATCH /api/admin/check-ins/settings` provide paginated audit and
+  configuration.
+- `GET /api/portal/group-buys/campaigns`, `GET /api/portal/group-buys`, and
+  `GET /api/portal/group-buys/:idOrCode` expose member group-buy state.
+  `GET /api/admin/group-buys`, `PUT /api/admin/group-buys/campaigns`,
+  `POST /api/admin/group-buys/refunds/:id/retry`, and
+  `POST /api/admin/group-buys/members/:id/retry-fulfillment` provide activity
+  configuration and explicit exception recovery. Pass
+  `exceptionsOnly=true` to the group list to include refund, fulfillment, and
+  unrecovered balance-rebate debt exceptions only.
 - `GET /api/portal/anniversary-gift` reports the signed-in member's first-year
   eligibility and configured gift. `POST /api/portal/anniversary-gift/claim`
   grants it once through a complimentary, idempotent order. Gift orders do not
@@ -59,7 +74,9 @@ Legacy purchase routes remain compatibility adapters for one version. New client
 - `GET /api/admin/reporting/summary` returns wallet revenue, CDK entitlement value, order completion, node availability, sync delay, and pending usage batches.
 - `GET /api/admin/reporting/orders.csv` exports the immutable order terms and operator trail as UTF-8 CSV.
 - Member overview responses include the highest crossed traffic threshold at 80%, 95%, or 100%, plus a separate warning within three days of subscription expiry.
-- Refund and payment metrics intentionally report as unavailable until a real payment gateway and refund ledger exist.
+- Reporting recognizes only fulfilled `PAYMENT` orders as revenue. Wallet,
+  CDK, administrator, legacy, and gateway-test rows are excluded; applied
+  refunds reduce the same payment-only total.
 
 ## Migration impact
 
@@ -80,15 +97,23 @@ VLESS/Xray agents use `POST /traffic/claim` followed by `POST /traffic/ack`. A f
 
 易支付 settlement uses an immutable payment attempt, MD5 callback signature
 verification, exact integer-cent matching, a serializable fulfillment
-transaction, and a unique gateway trade number. A verified callback that cannot
-apply its entitlement returns `fail` so the gateway can retry; the attempt keeps
-the failure count, timestamp, sanitized reason, and an audit event. Operators
-must monitor `EPAY_SETTLEMENT_FAILED` events and the order center's query
-failure projection. Full-site 易支付 activation remains blocked unless
+transaction, and a unique gateway trade number. A verified callback with a
+retryable failure returns `fail` so the gateway can retry. A verified payment
+that is no longer fulfillable is settled as paid and queued for an automatic
+full compensation refund using its credential snapshot. An old attempt without
+a complete snapshot never falls back to current merchant credentials and enters
+manual review. Operators must monitor fulfillment, refund, and query states in
+the order center. Full-site 易支付 activation remains blocked unless
 `EPAY_RECONCILIATION_ENABLED=true`; setting the flag starts the worker adapter
 but does not switch the site away from store checkout.
 
 ## Backup and restore rehearsal
+
+Application-managed `.h2backup` archives include an exact database migration
+version. Import and isolated restore validation reject older or newer schemas
+before maintenance mode or any live database replacement. Scheduled backups
+retain the newest three by default; manual, imported, and pre-restore safety
+backups are not removed by scheduled retention.
 
 Install PostgreSQL client tools on the operations host, set `DATABASE_URL`, and schedule the backup script with Windows Task Scheduler:
 

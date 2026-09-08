@@ -4,6 +4,7 @@ export function resolvePlanRedemptionWindow(input: {
   mode: PlanRedemptionMode;
   currentPlanId?: string | null;
   targetPlanId: string;
+  currentStartsAt?: Date | null;
   currentEndsAt?: Date | null;
   redeemedAt: Date;
   intervalMonths?: number | null;
@@ -11,10 +12,13 @@ export function resolvePlanRedemptionWindow(input: {
 }) {
   const renewsCurrent =
     input.mode === 'RENEW' && input.currentPlanId === input.targetPlanId;
-  const startsAt =
+  const extendsCurrentTerm = Boolean(
     renewsCurrent &&
     input.currentEndsAt &&
-    input.currentEndsAt > input.redeemedAt
+    input.currentEndsAt > input.redeemedAt,
+  );
+  const startsAt =
+    extendsCurrentTerm && input.currentEndsAt
       ? input.currentEndsAt
       : input.redeemedAt;
   return {
@@ -22,7 +26,11 @@ export function resolvePlanRedemptionWindow(input: {
     forceReplace: input.mode === 'REPLACE',
     startsAt,
     endsAt: input.intervalMonths
-      ? addUtcMonthsClamped(startsAt, input.intervalMonths)
+      ? addUtcMonthsClamped(
+          startsAt,
+          input.intervalMonths,
+          extendsCurrentTerm ? input.currentStartsAt?.getUTCDate() : undefined,
+        )
       : addUtcDays(startsAt, input.durationDays),
   };
 }
@@ -33,14 +41,17 @@ function addUtcDays(value: Date, days: number) {
   return result;
 }
 
-function addUtcMonthsClamped(value: Date, months: number) {
+function addUtcMonthsClamped(
+  value: Date,
+  months: number,
+  anchorDay = value.getUTCDate(),
+) {
   const result = new Date(value);
-  const day = result.getUTCDate();
   result.setUTCDate(1);
   result.setUTCMonth(result.getUTCMonth() + months);
   const lastDay = new Date(
     Date.UTC(result.getUTCFullYear(), result.getUTCMonth() + 1, 0),
   ).getUTCDate();
-  result.setUTCDate(Math.min(day, lastDay));
+  result.setUTCDate(Math.min(anchorDay, lastDay));
   return result;
 }

@@ -515,6 +515,80 @@ export interface AnniversaryGiftStatus {
   replayed?: boolean;
 }
 
+export interface DailyCheckInStatus {
+  enabled: boolean;
+  eligible: boolean;
+  claimable: boolean;
+  claimed: boolean;
+  rewardBytes: number;
+  claimedAt: string | null;
+  checkInId: string | null;
+  replayed: boolean;
+  businessDate: string;
+  timezone: "Asia/Shanghai";
+}
+
+export interface GroupBuyCampaignRecord {
+  id: string;
+  offerId: string;
+  productId: string;
+  productName: string;
+  offerName: string;
+  billingPeriod: "monthly" | "quarterly" | "yearly" | "one_time" | "legacy";
+  originalPriceCents: number;
+  priceCents: number;
+  discountPercent: number;
+  currency: string;
+  trafficBytes: number;
+  requiredMembers: 2;
+  durationMinutes: number;
+  bonusTrafficBytes: number;
+  settlementMode:
+    | "upfront_discount_refund_on_failure"
+    | "original_price_balance_rebate";
+}
+
+export interface GroupBuyRecord {
+  id: string;
+  shareCode: string;
+  shareUrl: string;
+  status:
+    | "pending_payment"
+    | "open"
+    | "fulfilling"
+    | "succeeded"
+    | "refunding"
+    | "refunded"
+    | "fallback_fulfilled"
+    | "exception"
+    | "canceled";
+  productName: string;
+  offerName: string;
+  originalPriceCents: number;
+  priceCents: number;
+  discountPercent: number;
+  currency: string;
+  bonusTrafficBytes: number;
+  settlementMode:
+    | "upfront_discount_refund_on_failure"
+    | "original_price_balance_rebate";
+  requiredMembers: number;
+  paidMembers: number;
+  openedAt: string | null;
+  expiresAt: string | null;
+  completedAt: string | null;
+  canJoin: boolean;
+  viewerMemberId: string | null;
+  members: Array<{
+    id: string;
+    displayName: string;
+    isCreator: boolean;
+    status: string;
+    paidAt: string | null;
+    orderId: string | null;
+  }>;
+}
+
 export interface ReportingSummaryResponse {
   generatedAt: string;
   commerce: {

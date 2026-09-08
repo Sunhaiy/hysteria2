@@ -14,6 +14,7 @@ export interface EpayQueryExpectation {
 
 export type EpayQueryOutcome =
   | { kind: 'paid'; gatewayTradeNo: string }
+  | { kind: 'refunded'; gatewayTradeNo: string }
   | { kind: 'pending' }
   | { kind: 'closed' }
   | { kind: 'not_found' };
@@ -62,8 +63,9 @@ export function parseEpayQueryResponse(
   }
   const parameters = normalizeEpayParameters(input as Record<string, unknown>);
 
-  if (parameters.code === '-1') return { kind: 'not_found' };
-  if (parameters.code !== '1') throw new Error('易支付查单返回未知状态');
+  if (parameters.code !== '1' && parameters.code !== '-1') {
+    throw new Error('易支付查单返回未知状态');
+  }
   if (parameters.sign_type?.toUpperCase() !== 'MD5') {
     throw new Error('易支付查单响应签名类型不正确');
   }
@@ -82,6 +84,7 @@ export function parseEpayQueryResponse(
   ) {
     throw new Error('易支付查单响应金额不匹配');
   }
+  if (parameters.code === '-1') return { kind: 'not_found' };
 
   if (
     parameters.status === '1' &&
@@ -91,6 +94,15 @@ export function parseEpayQueryResponse(
       throw new Error('易支付查单响应缺少平台订单号');
     }
     return { kind: 'paid', gatewayTradeNo: parameters.trade_no };
+  }
+  if (
+    parameters.status === '2' &&
+    parameters.trade_status === 'TRADE_REFUNDED'
+  ) {
+    if (!parameters.trade_no) {
+      throw new Error('易支付查单响应缺少平台订单号');
+    }
+    return { kind: 'refunded', gatewayTradeNo: parameters.trade_no };
   }
   if (parameters.status === '0' && parameters.trade_status === 'PENDING') {
     return { kind: 'pending' };

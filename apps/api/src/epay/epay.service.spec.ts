@@ -2,9 +2,11 @@ import {
   BillingPeriod,
   CatalogProductKind,
   EpayPaymentStatus,
+  Prisma,
 } from '@prisma/client';
 import { EpayService } from './epay.service';
 import { createEpaySignature } from './epay-signature';
+import { PaymentFulfillmentRejectedError } from '../commerce/payment-fulfillment.error';
 
 describe('EpayService callbacks', () => {
   const cipher = {
@@ -93,9 +95,18 @@ describe('EpayService callbacks', () => {
       },
     };
     let createdData: Record<string, unknown> | undefined;
+    const expirationUpdateMany = jest.fn(
+      (input: {
+        where: Record<string, unknown>;
+        data: Record<string, unknown>;
+      }) => {
+        void input;
+        return Promise.resolve({ count: 0 });
+      },
+    );
     const tx = {
       epayPaymentAttempt: {
-        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        updateMany: expirationUpdateMany,
         findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
           createdData = data;
@@ -151,6 +162,7 @@ describe('EpayService callbacks', () => {
           resetCycleStartsAt: '2026-09-01T00:00:00.000Z',
           resetCycleEndsAt: '2026-10-01T00:00:00.000Z',
           resetTrafficBytes: String(100 * 1024 * 1024 * 1024),
+          resetCreditBytes: String(90 * 1024 * 1024 * 1024),
         }),
       } as never,
       cipher as never,
@@ -184,7 +196,58 @@ describe('EpayService callbacks', () => {
       resetCycleStartsAt: '2026-09-01T00:00:00.000Z',
       resetCycleEndsAt: '2026-10-01T00:00:00.000Z',
       resetTrafficBytes: String(100 * 1024 * 1024 * 1024),
+      resetCreditBytes: String(90 * 1024 * 1024 * 1024),
     });
+    const expirationUpdate = expirationUpdateMany.mock.calls[0]?.[0];
+    expect(expirationUpdate).toBeDefined();
+    if (!expirationUpdate) throw new Error('Expected an expiration update');
+    expect(expirationUpdate.data).toMatchObject({ activeKey: null });
+  });
+
+  it('expires a stale payment and releases its group-buy slot when polled', async () => {
+    const expiredAt = new Date('2026-09-07T04:00:00.000Z');
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-07T05:00:00.000Z'));
+    const attempt = {
+      id: 'attempt-expired',
+      userId: 'user-1',
+      merchantOrderNo: 'EP-EXPIRED',
+      status: EpayPaymentStatus.PENDING,
+      activeKey: 'group-buy:member-1',
+      amountCents: 1590,
+      productNameSnapshot: 'Start · 月付 · 拼团',
+      expiresAt: expiredAt,
+      orderId: null,
+      settlementFailureCount: 0,
+    };
+    const tx = {
+      epayPaymentAttempt: {
+        findFirst: jest.fn().mockResolvedValue(attempt),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+    const prisma = {
+      $transaction: jest.fn((work: (client: typeof tx) => Promise<unknown>) =>
+        work(tx),
+      ),
+    };
+    const groupBuys = { closePayment: jest.fn().mockResolvedValue(undefined) };
+    const service = new EpayService(
+      prisma as never,
+      {} as never,
+      {} as never,
+      cipher as never,
+      undefined,
+      groupBuys as never,
+    );
+
+    await expect(
+      service.getPayment('user-1', attempt.id),
+    ).resolves.toMatchObject({ status: 'expired' });
+    expect(tx.epayPaymentAttempt.updateMany).toHaveBeenCalledWith({
+      where: { id: attempt.id, status: EpayPaymentStatus.PENDING },
+      data: { status: EpayPaymentStatus.EXPIRED, activeKey: null },
+    });
+    expect(groupBuys.closePayment).toHaveBeenCalledWith(tx, attempt.id);
   });
 
   it('creates a one-cent gateway test without creating a commerce order', async () => {
@@ -305,6 +368,215 @@ describe('EpayService callbacks', () => {
     });
   });
 
+  it('retries a serializable group-buy slot conflict before creating payment', async () => {
+    const groupBuys = {
+      preparePayment: jest.fn().mockResolvedValue({
+        group: {
+          id: 'group-1',
+          offerIdSnapshot: 'offer-1',
+          priceCentsSnapshot: 1290,
+          currencySnapshot: 'CNY',
+        },
+        member: { id: 'member-2' },
+        offer: { name: '月付', product: { name: 'Start' } },
+        existingAttempt: null,
+        snapshot: {
+          version: 2,
+          purchaseMode: 'group_buy',
+          groupBuyId: 'group-1',
+          groupBuyMemberId: 'member-2',
+          groupBuyBonusBytes: String(20 * 1024 ** 3),
+          groupBuyOriginalPriceCents: 1590,
+          groupBuyPriceCents: 1290,
+          groupBuySettlementMode: 'ORIGINAL_PRICE_BALANCE_REBATE',
+        },
+      }),
+      attachPayment: jest.fn(),
+      closePayment: jest.fn(),
+    };
+    const tx = {
+      epayPaymentAttempt: {
+        findMany: jest.fn().mockResolvedValue([]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn(({ data }: { data: Record<string, unknown> }) =>
+          Promise.resolve({
+            ...data,
+            id: 'attempt-group-1',
+            status: EpayPaymentStatus.PENDING,
+            orderId: null,
+            settlementFailureCount: 0,
+          }),
+        ),
+      },
+    };
+    const serializationConflict = new Prisma.PrismaClientKnownRequestError(
+      'serialization conflict',
+      { code: 'P2034', clientVersion: '6.19.3' },
+    );
+    const prisma = {
+      $transaction: jest
+        .fn()
+        .mockRejectedValueOnce(serializationConflict)
+        .mockImplementation(
+          (operation: (client: typeof tx) => Promise<unknown>) => operation(tx),
+        ),
+    };
+    const service = new EpayService(
+      prisma as never,
+      {
+        getEpayConfig: jest.fn().mockResolvedValue({
+          ...config,
+          checkoutMode: 'epay',
+        }),
+      } as never,
+      {} as never,
+      cipher as never,
+      undefined,
+      groupBuys as never,
+    );
+
+    await expect(
+      service.createGroupBuyPayment(
+        'user-2',
+        { kind: 'join', groupId: 'group-1' },
+        'alipay',
+        'group-idempotency-1',
+      ),
+    ).resolves.toMatchObject({ id: 'attempt-group-1', status: 'pending' });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    expect(groupBuys.preparePayment).toHaveBeenCalledTimes(1);
+    expect(groupBuys.attachPayment).toHaveBeenCalledWith(
+      tx,
+      'member-2',
+      'attempt-group-1',
+    );
+    const groupAttemptInput = tx.epayPaymentAttempt.create.mock.calls[0][0] as {
+      data: { amountCents: number; basePriceCents: number };
+    };
+    expect(groupAttemptInput.data).toMatchObject({
+      amountCents: 1590,
+      basePriceCents: 1590,
+    });
+  });
+
+  it('rejects a create replay when the idempotency key belongs to another campaign', async () => {
+    const replay = {
+      id: 'attempt-old-campaign',
+      userId: 'user-1',
+      paymentType: 'alipay',
+      entitlementSnapshot: {
+        version: 2,
+        offerId: 'offer-old',
+        offerSlug: 'start-monthly',
+        offerName: '月付',
+        productId: 'product-start',
+        productSlug: 'start',
+        productName: 'Start',
+        productKind: CatalogProductKind.PLAN,
+        billingPeriod: BillingPeriod.MONTHLY,
+        intervalMonths: 1,
+        legacyDurationDays: null,
+        trafficBytes: String(100 * 1024 ** 3),
+        currency: 'CNY',
+        accessProfileId: 'profile-start',
+        speedUpMbps: 20,
+        speedDownMbps: 120,
+        deviceLimit: 100,
+        trafficMultiplierBasisPoints: 10_000,
+        requiresActivePlan: false,
+        purchaseLimitPerUser: null,
+        purchaseLimitKey: null,
+        legacyPlanId: null,
+        legacyPlanOfferId: null,
+        legacyTrafficPackProductId: null,
+        purchaseMode: 'group_buy',
+        groupBuyId: 'group-old',
+        groupBuyMemberId: 'member-old',
+        groupBuyBonusBytes: String(20 * 1024 ** 3),
+        groupBuyOriginalPriceCents: 1590,
+        groupBuyPriceCents: 1290,
+        groupBuyDiscountBasisPoints: 8113,
+        groupBuySettlementMode: 'ORIGINAL_PRICE_BALANCE_REBATE',
+      },
+    };
+    const tx = {
+      epayPaymentAttempt: {
+        findMany: jest.fn().mockResolvedValue([]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findUnique: jest.fn().mockResolvedValue(replay),
+      },
+      groupBuy: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ id: 'group-old', campaignId: 'campaign-old' }),
+      },
+    };
+    const prisma = {
+      $transaction: jest.fn((work: (client: typeof tx) => Promise<unknown>) =>
+        work(tx),
+      ),
+    };
+    const service = new EpayService(
+      prisma as never,
+      {
+        getEpayConfig: jest.fn().mockResolvedValue({
+          ...config,
+          checkoutMode: 'epay',
+        }),
+      } as never,
+      {} as never,
+      cipher as never,
+      undefined,
+      { preparePayment: jest.fn(), closePayment: jest.fn() } as never,
+    );
+
+    await expect(
+      service.createGroupBuyPayment(
+        'user-1',
+        { kind: 'create', campaignId: 'campaign-new' },
+        'alipay',
+        'reused-key',
+      ),
+    ).rejects.toThrow('Idempotency-Key was already used for another purchase');
+  });
+
+  it('delegates group-buy balance payment before loading 易支付 configuration', async () => {
+    const settings = { getEpayConfig: jest.fn() };
+    const groupBuys = {
+      purchaseWithWallet: jest.fn().mockResolvedValue({
+        id: 'balance:member-1',
+        status: 'settled',
+        paymentType: 'balance',
+        amountCents: 1590,
+        orderId: 'order-1',
+      }),
+    };
+    const service = new EpayService(
+      {} as never,
+      settings as never,
+      {} as never,
+      cipher as never,
+      undefined,
+      groupBuys as never,
+    );
+
+    await expect(
+      service.createGroupBuyPayment(
+        'user-1',
+        { kind: 'create', campaignId: 'campaign-1' },
+        'balance',
+        'balance-request-1',
+      ),
+    ).resolves.toMatchObject({ status: 'settled', paymentType: 'balance' });
+    expect(groupBuys.purchaseWithWallet).toHaveBeenCalledWith(
+      'user-1',
+      { kind: 'create', campaignId: 'campaign-1' },
+      'balance-request-1',
+    );
+    expect(settings.getEpayConfig).not.toHaveBeenCalled();
+  });
+
   it('settles a gateway test callback without creating an order or entitlement', async () => {
     const attempt = {
       id: 'test_1',
@@ -314,6 +586,7 @@ describe('EpayService callbacks', () => {
       activeKey: 'admin_1:fingerprint_1:alipay',
       status: EpayPaymentStatus.PENDING,
       paymentType: 'alipay',
+      gatewayUrlSnapshot: 'https://pay.test',
       merchantIdSnapshot: '1001',
       merchantKeyCiphertext: 'enc:merchant-secret',
       amountCents: 1,
@@ -366,6 +639,7 @@ describe('EpayService callbacks', () => {
       gatewayTradeNo: null as string | null,
       status: EpayPaymentStatus.PENDING,
       paymentType: 'alipay',
+      gatewayUrlSnapshot: 'https://pay.test',
       merchantIdSnapshot: '1001',
       merchantKeyCiphertext: 'enc:merchant-secret',
       amountCents: 1230,
@@ -452,6 +726,7 @@ describe('EpayService callbacks', () => {
           id: 'attempt_1',
           merchantOrderNo: 'EP202608290001',
           paymentType: 'alipay',
+          gatewayUrlSnapshot: 'https://pay.test',
           merchantIdSnapshot: '1001',
           merchantKeyCiphertext: 'enc:merchant-secret',
           amountCents: 1230,
@@ -481,6 +756,7 @@ describe('EpayService callbacks', () => {
       epayPaymentAttempt: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'attempt_1',
+          gatewayUrlSnapshot: 'https://pay.test',
           merchantIdSnapshot: '1001',
           merchantKeyCiphertext: 'enc:merchant-secret',
         }),
@@ -516,6 +792,7 @@ describe('EpayService callbacks', () => {
       gatewayTradeNo: null,
       status: EpayPaymentStatus.PENDING,
       paymentType: 'alipay',
+      gatewayUrlSnapshot: 'https://pay.test',
       merchantIdSnapshot: '1001',
       merchantKeyCiphertext: 'enc:merchant-secret',
       amountCents: 1230,
@@ -564,6 +841,50 @@ describe('EpayService callbacks', () => {
     expect(settings.getEpayConfig).not.toHaveBeenCalled();
   });
 
+  it('never verifies an old callback with current merchant credentials', async () => {
+    const attempt = {
+      id: 'attempt_without_credentials',
+      merchantOrderNo: 'EP202608290001',
+      merchantIdSnapshot: null,
+      merchantKeyCiphertext: null,
+      gatewayUrlSnapshot: null,
+    };
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const prisma = {
+      epayPaymentAttempt: {
+        findUnique: jest.fn().mockResolvedValue(attempt),
+        updateMany,
+      },
+      $transaction: jest.fn(),
+    };
+    const settings = { getEpayConfig: jest.fn().mockResolvedValue(config) };
+    const service = new EpayService(
+      prisma as never,
+      settings as never,
+      {} as never,
+      cipher as never,
+    );
+
+    await expect(service.processCallback(callback())).resolves.toEqual({
+      accepted: false,
+      status: 'failed',
+    });
+    expect(settings.getEpayConfig).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    const [manualReviewWrite] = updateMany.mock.calls[0] as unknown as [
+      { where: Record<string, unknown>; data: Record<string, unknown> },
+    ];
+    expect(manualReviewWrite.where).toMatchObject({
+      id: attempt.id,
+      orderId: null,
+    });
+    expect(manualReviewWrite.data).toMatchObject({
+      activeKey: null,
+      fulfillmentStatus: 'MANUAL_REVIEW',
+    });
+  });
+
   it('records a verified payment when entitlement fulfillment fails', async () => {
     const attempt = {
       id: 'attempt_1',
@@ -573,6 +894,7 @@ describe('EpayService callbacks', () => {
       gatewayTradeNo: null,
       status: EpayPaymentStatus.PENDING,
       paymentType: 'alipay',
+      gatewayUrlSnapshot: 'https://pay.test',
       merchantIdSnapshot: '1001',
       merchantKeyCiphertext: 'enc:merchant-secret',
       amountCents: 1230,
@@ -621,5 +943,80 @@ describe('EpayService callbacks', () => {
       increment: 1,
     });
     expect(tx.auditLog.create).toHaveBeenCalled();
+  });
+
+  it('settles and queues an automatic refund when fulfillment can no longer succeed', async () => {
+    const attempt = {
+      id: 'attempt-terminal',
+      userId: 'user-1',
+      offerId: 'offer-1',
+      merchantOrderNo: 'EP-TERMINAL',
+      gatewayTradeNo: null,
+      status: EpayPaymentStatus.PENDING,
+      paymentType: 'alipay',
+      amountCents: 861,
+      basePriceCents: 1230,
+      entitlementSnapshot: null,
+    };
+    const tx = {
+      epayPaymentAttempt: {
+        findUnique: jest.fn().mockResolvedValue(attempt),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        update: jest.fn().mockResolvedValue({
+          ...attempt,
+          status: EpayPaymentStatus.SETTLED,
+          gatewayTradeNo: 'gateway-terminal',
+        }),
+      },
+      epayRefundAttempt: {
+        upsert: jest.fn().mockResolvedValue({ id: 'refund-terminal' }),
+      },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      $transaction: jest.fn((work: (client: typeof tx) => Promise<unknown>) =>
+        work(tx),
+      ),
+    };
+    const service = new EpayService(
+      prisma as never,
+      {} as never,
+      {
+        fulfillEpayPayment: jest
+          .fn()
+          .mockRejectedValue(
+            new PaymentFulfillmentRejectedError(
+              'PLAN_RESET_CYCLE_ENDED',
+              '流量重置订单已超过原套餐周期',
+            ),
+          ),
+      } as never,
+      cipher as never,
+    );
+
+    await expect(
+      service.settleVerifiedPayment({
+        attemptId: attempt.id,
+        merchantOrderNo: attempt.merchantOrderNo,
+        gatewayTradeNo: 'gateway-terminal',
+        amountCents: attempt.amountCents,
+        paymentType: attempt.paymentType,
+        paidAt: new Date('2026-10-01T00:00:00.000Z'),
+      }),
+    ).resolves.toMatchObject({
+      accepted: true,
+      attemptId: attempt.id,
+      status: 'success',
+    });
+    const [refundWrite] = tx.epayRefundAttempt.upsert.mock
+      .calls[0] as unknown as [
+      { where: Record<string, unknown>; create: Record<string, unknown> },
+    ];
+    expect(refundWrite.where).toEqual({ paymentAttemptId: attempt.id });
+    expect(refundWrite.create).toMatchObject({
+      paymentAttemptId: attempt.id,
+      amountCents: attempt.amountCents,
+      reasonCode: 'PLAN_RESET_CYCLE_ENDED',
+    });
   });
 });

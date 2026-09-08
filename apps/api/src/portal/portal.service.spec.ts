@@ -1,3 +1,4 @@
+import { NotFoundException } from '@nestjs/common';
 import { PortalService } from './portal.service';
 
 describe('PortalService VLESS + REALITY access', () => {
@@ -134,21 +135,17 @@ describe('PortalService VLESS + REALITY access', () => {
 
   it('prefers unified quota over a stale legacy portal total', async () => {
     const store = {
-      getPortalOverview: jest.fn().mockResolvedValue({
-        remainingBytes: 250,
-        subscription: {
-          includedTrafficBytes: 200,
-          bonusTrafficBytes: 0,
-          endsAt: '2099-09-01T00:00:00.000Z',
-        },
-        packs: [{ remainingBytes: 50 }],
-      }),
+      getPortalOverview: jest
+        .fn()
+        .mockRejectedValue(
+          new NotFoundException('No active access entitlement'),
+        ),
       getUsageForUser: jest.fn().mockResolvedValue({
-        subscriptionId: 'legacy_subscription',
+        subscriptionId: null,
         consumedBytes: 0,
-        baseRemainingBytes: 200,
-        packRemainingBytes: 50,
-        totalRemainingBytes: 250,
+        baseRemainingBytes: 0,
+        packRemainingBytes: 0,
+        totalRemainingBytes: 0,
         recent: [],
       }),
     };
@@ -219,7 +216,9 @@ describe('PortalService VLESS + REALITY access', () => {
     expect(overview.subscription.includedTrafficBytes).toBe(120);
     expect(overview.user.createdAt).toBe('2026-01-01T00:00:00.000Z');
     expect(overview.membership.subscribedDays).toBeGreaterThanOrEqual(8);
-    expect(store.getPortalOverview).not.toHaveBeenCalled();
+    expect(store.getPortalOverview).toHaveBeenCalledWith('user_1', {
+      unlinkedOnly: true,
+    });
 
     const usage = await service.getUsage('user_1');
     expect(usage).toMatchObject({
@@ -227,6 +226,186 @@ describe('PortalService VLESS + REALITY access', () => {
       baseRemainingBytes: 100,
       packRemainingBytes: 0,
       totalRemainingBytes: 100,
+    });
+  });
+
+  it('merges active V2 entitlements with unlinked legacy quota and access nodes', async () => {
+    const v2Node = {
+      id: 'node_v2',
+      label: 'V2 node',
+      protocol: 'HYSTERIA2' as const,
+      hostname: '203.0.113.10',
+      port: 443,
+      sni: 'example.com',
+      obfsPassword: null,
+      pinSHA256: null,
+      allowInsecureTls: false,
+      realityPublicKey: null,
+      realityShortId: null,
+      realityFingerprint: null,
+      realitySpiderX: null,
+      vlessFlow: null,
+    };
+    const legacyNode = {
+      ...v2Node,
+      id: 'node_legacy',
+      label: 'Legacy node',
+      hostname: '203.0.113.11',
+    };
+    const token = {
+      token: 'hy2_mixed_entitlement_token',
+      vlessUuid: '67fbc500-3f3c-4ab9-a076-3e17c56bb3a1',
+    };
+    const store = {
+      getPortalOverview: jest.fn().mockResolvedValue({
+        user: {
+          id: 'user_mixed',
+          email: 'mixed@example.com',
+          displayName: 'Mixed User',
+          role: 'member',
+          status: 'active',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-08-26T00:00:00.000Z',
+        },
+        subscription: {
+          id: 'legacy_pack',
+          userId: 'user_mixed',
+          planId: 'traffic_pack',
+          planName: 'Legacy Pack',
+          status: 'active',
+          startsAt: '2026-08-01T00:00:00.000Z',
+          endsAt: '2099-09-01T00:00:00.000Z',
+          includedTrafficBytes: 50,
+          bonusTrafficBytes: 0,
+          consumedTrafficBytes: 0,
+          speedUpMbpsSnapshot: 30,
+          speedDownMbpsSnapshot: 150,
+          deviceLimitSnapshot: 3,
+        },
+        plan: { id: 'traffic_pack', name: 'Legacy Pack' },
+        nodeLabel: legacyNode.label,
+        remainingBytes: 50,
+        balanceCents: 0,
+        online: 0,
+        packs: [
+          {
+            id: 'legacy_pack',
+            label: 'Legacy Pack',
+            totalBytes: 50,
+            remainingBytes: 50,
+            status: 'active',
+            expiresAt: '2099-09-01T00:00:00.000Z',
+          },
+        ],
+      }),
+      getUsageForUser: jest.fn().mockResolvedValue({
+        subscriptionId: null,
+        consumedBytes: 0,
+        baseRemainingBytes: 0,
+        packRemainingBytes: 50,
+        totalRemainingBytes: 50,
+        recent: [],
+      }),
+      getAccessBundle: jest.fn().mockResolvedValue({
+        token,
+        node: legacyNode,
+        nodes: [legacyNode],
+        subscription: {
+          speedUpMbpsSnapshot: 30,
+          speedDownMbpsSnapshot: 150,
+          deviceLimitSnapshot: 3,
+          consumedTrafficBytes: 0,
+          endsAt: '2099-09-01T00:00:00.000Z',
+        },
+        trafficRemaining: 50,
+      }),
+    };
+    const entitlements = {
+      resolveAccess: jest.fn().mockResolvedValue({
+        allowed: true,
+        eligibleGrantIds: ['grant_plan'],
+        remainingBytes: 100,
+        consumedBytes: 20,
+        speedUpMbps: 20,
+        speedDownMbps: 140,
+        deviceLimit: 3,
+        nodes: [{ id: v2Node.id, label: v2Node.label }],
+        grants: [
+          {
+            id: 'grant_plan',
+            kind: 'plan',
+            endsAt: '2099-09-01T00:00:00.000Z',
+          },
+        ],
+      }),
+    };
+    const prisma = {
+      user: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 'user_mixed',
+          email: 'mixed@example.com',
+          displayName: 'Mixed User',
+          role: 'MEMBER',
+          status: 'ACTIVE',
+          balanceCents: 0,
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-08-26T00:00:00.000Z'),
+          onlinePresence: [],
+        }),
+      },
+      subscription: { findMany: jest.fn().mockResolvedValue([]) },
+      entitlementGrant: {
+        count: jest.fn().mockResolvedValue(1),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'grant_plan',
+            kind: 'PLAN',
+            productId: 'product_pro',
+            legacySubscriptionId: 'linked_subscription',
+            product: { name: 'Pro' },
+            startsAt: new Date('2026-08-26T00:00:00.000Z'),
+            endsAt: new Date('2099-09-01T00:00:00.000Z'),
+            createdAt: new Date('2026-08-26T00:00:00.000Z'),
+            updatedAt: new Date('2026-08-26T00:00:00.000Z'),
+            quotaBuckets: [
+              {
+                id: 'bucket_plan',
+                startsAt: new Date('2026-08-26T00:00:00.000Z'),
+                endsAt: new Date('2099-09-01T00:00:00.000Z'),
+                grantedBytes: 120n,
+                consumedBytes: 20n,
+              },
+            ],
+          },
+        ]),
+      },
+      accessToken: { findFirst: jest.fn().mockResolvedValue(token) },
+      node: { findMany: jest.fn().mockResolvedValue([v2Node]) },
+    };
+    const service = new PortalService(
+      store as never,
+      {} as never,
+      {} as never,
+      entitlements as never,
+      prisma as never,
+    );
+
+    await expect(service.getSubscription('user_mixed')).resolves.toMatchObject({
+      remainingBytes: 150,
+      packs: [expect.objectContaining({ id: 'legacy_pack' })],
+    });
+    await expect(service.getUsage('user_mixed')).resolves.toMatchObject({
+      consumedBytes: 20,
+      baseRemainingBytes: 100,
+      packRemainingBytes: 50,
+      totalRemainingBytes: 150,
+    });
+    await expect(service.getAccess('user_mixed')).resolves.toMatchObject({
+      trafficRemaining: 150,
+      nodes: [
+        expect.objectContaining({ id: 'node_v2' }),
+        expect.objectContaining({ id: 'node_legacy' }),
+      ],
     });
   });
 
@@ -279,12 +458,17 @@ describe('PortalService VLESS + REALITY access', () => {
     };
     const service = new PortalService(
       {
+        getPortalOverview: jest
+          .fn()
+          .mockRejectedValue(
+            new NotFoundException('No active access entitlement'),
+          ),
         getUsageForUser: jest.fn().mockResolvedValue({
           subscriptionId: null,
           consumedBytes: 0,
           baseRemainingBytes: 0,
-          packRemainingBytes: 100,
-          totalRemainingBytes: 100,
+          packRemainingBytes: 0,
+          totalRemainingBytes: 0,
           recent: [],
         }),
       } as never,
@@ -351,7 +535,13 @@ describe('PortalService VLESS + REALITY access', () => {
       node: { findMany: jest.fn().mockResolvedValue([node]) },
     };
     const service = new PortalService(
-      {} as never,
+      {
+        getAccessBundle: jest
+          .fn()
+          .mockRejectedValue(
+            new NotFoundException('No active access entitlement'),
+          ),
+      } as never,
       settings as never,
       {} as never,
       entitlements as never,
@@ -418,7 +608,13 @@ describe('PortalService VLESS + REALITY access', () => {
       node: { findMany: jest.fn().mockResolvedValue([node]) },
     };
     const service = new PortalService(
-      {} as never,
+      {
+        getAccessBundle: jest
+          .fn()
+          .mockRejectedValue(
+            new NotFoundException('No active access entitlement'),
+          ),
+      } as never,
       {
         getSiteInfo: jest.fn().mockResolvedValue({ name: 'Test service' }),
       } as never,

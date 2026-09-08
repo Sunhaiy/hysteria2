@@ -1,4 +1,5 @@
 import { CustomerAdminService } from './customer-admin.service';
+import { EntitlementService } from '../entitlement/entitlement.service';
 
 type PresenceFilter = {
   onlinePresence: {
@@ -37,7 +38,11 @@ describe('CustomerAdminService list filtering', () => {
 
   it('matches only current active subscriptions for a plan and fresh online presence', async () => {
     const prisma = createListPrisma();
-    const service = new CustomerAdminService(prisma as never, {} as never);
+    const service = new CustomerAdminService(
+      prisma as never,
+      {} as never,
+      {} as never,
+    );
 
     await service.listUsers({ planId: 'plan_1', online: 'true' });
 
@@ -62,9 +67,105 @@ describe('CustomerAdminService list filtering', () => {
     expect(prisma.user.count).toHaveBeenCalledWith({ where: query.where });
   });
 
+  it('rejects a balance adjustment without an idempotency key', async () => {
+    const prisma = {
+      $transaction: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new CustomerAdminService(
+      prisma as never,
+      {} as never,
+      {} as never,
+    );
+
+    await expect(
+      service.adjustBalance('user_1', 500, 'manual credit', 'admin_1', '  '),
+    ).rejects.toThrow('Idempotency-Key');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('serializes a balance adjustment and records both wallet ledgers', async () => {
+    const tx = {
+      walletLedgerEntry: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'ledger_1' }),
+      },
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'user_1',
+          balanceCents: 1_000,
+          deletedAt: null,
+        }),
+        update: jest
+          .fn()
+          .mockResolvedValueOnce({ balanceCents: 1_000, deletedAt: null })
+          .mockResolvedValueOnce({ balanceCents: 1_500 }),
+      },
+      walletTransaction: {
+        create: jest.fn().mockResolvedValue({ id: 'legacy_1' }),
+      },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      $transaction: jest.fn((operation: (client: typeof tx) => unknown) =>
+        operation(tx),
+      ),
+    };
+    const entitlements = {
+      adjustQuotaBucketRemaining: jest.fn().mockResolvedValue({
+        id: 'bucket_1',
+        grantedBytes: 70,
+        consumedBytes: 20,
+        remainingBytes: 50,
+      }),
+    };
+    const service = new CustomerAdminService(
+      prisma as never,
+      {} as never,
+      entitlements as never,
+    );
+
+    await expect(
+      service.adjustBalance(
+        'user_1',
+        500,
+        'manual credit',
+        'admin_1',
+        ' adjustment-1 ',
+      ),
+    ).resolves.toMatchObject({
+      id: 'ledger_1',
+      beforeBalanceCents: 1_000,
+      afterBalanceCents: 1_500,
+      replayed: false,
+    });
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: 'Serializable',
+    });
+    expect(tx.walletLedgerEntry.findUnique).toHaveBeenCalledWith({
+      where: {
+        userId_idempotencyKey: {
+          userId: 'user_1',
+          idempotencyKey: 'adjustment-1',
+        },
+      },
+    });
+    const [ledgerWrite] = tx.walletLedgerEntry.create.mock
+      .calls[0] as unknown as [{ data: Record<string, unknown> }];
+    expect(ledgerWrite.data).toMatchObject({
+      legacyTransactionId: 'legacy_1',
+      beforeBalanceCents: 1_000,
+      afterBalanceCents: 1_500,
+      idempotencyKey: 'adjustment-1',
+    });
+  });
+
   it('inverts the fresh-presence predicate for offline customers', async () => {
     const prisma = createListPrisma();
-    const service = new CustomerAdminService(prisma as never, {} as never);
+    const service = new CustomerAdminService(
+      prisma as never,
+      {} as never,
+      {} as never,
+    );
 
     await service.listUsers({ online: 'false' });
 
@@ -81,7 +182,11 @@ describe('CustomerAdminService list filtering', () => {
 
   it('matches every customer with legacy or unified plan history', async () => {
     const prisma = createListPrisma();
-    const service = new CustomerAdminService(prisma as never, {} as never);
+    const service = new CustomerAdminService(
+      prisma as never,
+      {} as never,
+      {} as never,
+    );
 
     await service.listUsers({ subscriptionHistory: 'ever' });
 
@@ -96,6 +201,33 @@ describe('CustomerAdminService list filtering', () => {
         ],
       },
     ]);
+  });
+
+  it('includes V2 and unlinked legacy quota in quota-state filtering', async () => {
+    const prisma = {
+      user: {
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+      },
+      $queryRaw: jest.fn().mockResolvedValue([]),
+    };
+    const service = new CustomerAdminService(
+      prisma as never,
+      {} as never,
+      {} as never,
+    );
+
+    await service.listUsers({ quotaState: 'available' });
+
+    const [query] = prisma.$queryRaw.mock.calls[0] as unknown as [
+      { strings: readonly string[] },
+    ];
+    const sql = query.strings.join(' ');
+    expect(sql).toContain('"EntitlementGrant"');
+    expect(sql).toContain('"SubscriptionCycle"');
+    expect(sql).toContain('"TrafficPack"');
+    expect(sql).toContain('"legacySubscriptionId" IS NULL');
+    expect(sql).toContain('"legacyTrafficPackId" IS NULL');
   });
 
   it('presents unified quota instead of stale legacy subscription totals', async () => {
@@ -115,19 +247,8 @@ describe('CustomerAdminService list filtering', () => {
             updatedAt: now,
             accessTokens: [],
             accessAccount: null,
-            subscriptions: [
-              {
-                plan: { name: 'Legacy Pro' },
-                cycles: [
-                  {
-                    grantedBytes: 200n,
-                    adjustmentBytes: 0n,
-                    consumedBytes: 0n,
-                  },
-                ],
-              },
-            ],
-            trafficPacks: [{ remainingBytes: 50n }],
+            subscriptions: [],
+            trafficPacks: [],
             entitlementGrants: [
               {
                 kind: 'PLAN',
@@ -141,7 +262,11 @@ describe('CustomerAdminService list filtering', () => {
         count: jest.fn().mockResolvedValue(1),
       },
     };
-    const service = new CustomerAdminService(prisma as never, {} as never);
+    const service = new CustomerAdminService(
+      prisma as never,
+      {} as never,
+      {} as never,
+    );
 
     const result = await service.listUsers({ q: 'user@example.com' });
 
@@ -151,6 +276,90 @@ describe('CustomerAdminService list filtering', () => {
       activeTrafficPackCount: 0,
       quotaState: 'low',
     });
+  });
+
+  it('merges unified quota with only unlinked legacy entitlements', async () => {
+    const now = new Date('2026-08-26T00:00:00.000Z');
+    const prisma = {
+      user: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'user_mixed',
+            email: 'mixed@example.com',
+            displayName: 'Mixed User',
+            role: 'MEMBER',
+            status: 'ACTIVE',
+            notes: null,
+            balanceCents: 0,
+            createdAt: now,
+            updatedAt: now,
+            accessTokens: [],
+            accessAccount: {
+              trafficMultiplierBasisPoints: 10_000,
+              trafficMultiplierOverrideBasisPoints: null,
+            },
+            subscriptions: [
+              {
+                plan: { name: 'Legacy Pro' },
+                cycles: [
+                  {
+                    grantedBytes: 200n,
+                    adjustmentBytes: 0n,
+                    consumedBytes: 150n,
+                  },
+                ],
+              },
+            ],
+            trafficPacks: [
+              {
+                remainingBytes: 25n,
+                trafficPackProduct: { catalogProduct: null },
+              },
+            ],
+            entitlementGrants: [
+              {
+                kind: 'PLAN',
+                product: { name: 'Pro' },
+                trafficMultiplierBasisPointsSnapshot: 10_000,
+                quotaBuckets: [
+                  {
+                    grantedBytes: 120n,
+                    consumedBytes: 20n,
+                    trafficMultiplierBasisPointsSnapshot: 10_000,
+                  },
+                ],
+              },
+            ],
+            onlinePresence: [],
+          },
+        ]),
+        count: jest.fn().mockResolvedValue(1),
+      },
+    };
+    const service = new CustomerAdminService(
+      prisma as never,
+      {} as never,
+      {} as never,
+    );
+
+    const result = await service.listUsers({ q: 'mixed@example.com' });
+
+    expect(result.items[0]).toMatchObject({
+      remainingBytes: 175,
+      activePlanNames: ['Pro', 'Legacy Pro'],
+      activeTrafficPackCount: 1,
+      quotaState: 'low',
+    });
+    const [query] = prisma.user.findMany.mock.calls[0] as unknown as [
+      {
+        include: {
+          subscriptions: { where: Record<string, unknown> };
+          trafficPacks: { where: Record<string, unknown> };
+        };
+      },
+    ];
+    expect(query.include.subscriptions.where.entitlementGrant).toBeNull();
+    expect(query.include.trafficPacks.where.entitlementGrant).toBeNull();
   });
 });
 
@@ -183,7 +392,11 @@ describe('CustomerAdminService subscription links', () => {
         operation(tx),
       ),
     };
-    const service = new CustomerAdminService(prisma as never, {} as never);
+    const service = new CustomerAdminService(
+      prisma as never,
+      {} as never,
+      {} as never,
+    );
 
     const result = await service.rotateAccessToken('user_1', 'admin_1');
 
@@ -225,7 +438,11 @@ describe('CustomerAdminService subscription links', () => {
         operation(tx),
       ),
     };
-    const service = new CustomerAdminService(prisma as never, {} as never);
+    const service = new CustomerAdminService(
+      prisma as never,
+      {} as never,
+      {} as never,
+    );
 
     await service.revokeAccessToken('user_1', 'token_1', 'admin_1');
 
@@ -242,6 +459,87 @@ describe('CustomerAdminService subscription links', () => {
 });
 
 describe('CustomerAdminService quota policy', () => {
+  it('merges unlinked legacy quota into the customer detail summary', async () => {
+    const now = new Date('2026-09-03T03:00:00.000Z');
+    const prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'user_mixed',
+          email: 'mixed@example.com',
+          displayName: 'Mixed User',
+          status: 'ACTIVE',
+          notes: null,
+          balanceCents: 0,
+          createdAt: now,
+          updatedAt: now,
+          accessAccount: {
+            trafficMultiplierBasisPoints: 10_000,
+            trafficMultiplierOverrideBasisPoints: null,
+          },
+          entitlementGrants: [
+            {
+              kind: 'PLAN',
+              trafficMultiplierBasisPointsSnapshot: 10_000,
+              quotaBuckets: [
+                {
+                  grantedBytes: 120n,
+                  consumedBytes: 20n,
+                  trafficMultiplierBasisPointsSnapshot: 10_000,
+                },
+              ],
+            },
+          ],
+          subscriptions: [
+            {
+              cycles: [
+                {
+                  grantedBytes: 200n,
+                  adjustmentBytes: 0n,
+                  consumedBytes: 150n,
+                },
+              ],
+            },
+          ],
+          trafficPacks: [
+            {
+              remainingBytes: 25n,
+              totalBytes: 40n,
+              trafficPackProduct: { catalogProduct: null },
+            },
+          ],
+          onlinePresence: [],
+        }),
+      },
+    };
+    const traffic = {
+      daily: jest.fn().mockResolvedValue({ items: [] }),
+    };
+    const service = new CustomerAdminService(
+      prisma as never,
+      traffic as never,
+      {} as never,
+    );
+
+    const result = await service.getCustomer('user_mixed');
+
+    expect(result.summary).toMatchObject({
+      activeGrantCount: 3,
+      grantedBytes: 360,
+      consumedBytes: 185,
+      remainingBytes: 175,
+    });
+    const [query] = prisma.user.findUnique.mock.calls[0] as unknown as [
+      {
+        include: {
+          subscriptions: { where: Record<string, unknown> };
+          trafficPacks: { where: Record<string, unknown> };
+        };
+      },
+    ];
+    expect(query.include.subscriptions.where.entitlementGrant).toBeNull();
+    expect(query.include.trafficPacks.where.entitlementGrant).toBeNull();
+  });
+
   it('reports the active traffic-pack multiplier when the customer has no plan', async () => {
     const now = new Date('2026-09-03T03:00:00.000Z');
     const prisma = {
@@ -272,6 +570,8 @@ describe('CustomerAdminService quota policy', () => {
               ],
             },
           ],
+          subscriptions: [],
+          trafficPacks: [],
           onlinePresence: [],
         }),
       },
@@ -279,7 +579,11 @@ describe('CustomerAdminService quota policy', () => {
     const traffic = {
       daily: jest.fn().mockResolvedValue({ items: [] }),
     };
-    const service = new CustomerAdminService(prisma as never, traffic as never);
+    const service = new CustomerAdminService(
+      prisma as never,
+      traffic as never,
+      {} as never,
+    );
 
     const result = await service.getCustomer('user_traffic_pack_only');
 
@@ -311,7 +615,19 @@ describe('CustomerAdminService quota policy', () => {
         operation(tx),
       ),
     };
-    const service = new CustomerAdminService(prisma as never, {} as never);
+    const entitlements = {
+      adjustQuotaBucketRemaining: jest.fn().mockResolvedValue({
+        id: 'bucket_1',
+        grantedBytes: 70,
+        consumedBytes: 20,
+        remainingBytes: 50,
+      }),
+    };
+    const service = new CustomerAdminService(
+      prisma as never,
+      {} as never,
+      entitlements as never,
+    );
 
     await expect(
       service.adjustQuotaBucket(
@@ -325,17 +641,23 @@ describe('CustomerAdminService quota policy', () => {
       consumedBytes: 20,
       remainingBytes: 50,
     });
-    expect(tx.quotaBucket.update).toHaveBeenCalledWith({
-      where: { id: 'bucket_1' },
-      data: { grantedBytes: 70n },
-    });
+    expect(entitlements.adjustQuotaBucketRemaining).toHaveBeenCalledWith(
+      'bucket_1',
+      50,
+      'Support adjustment',
+      'admin_1',
+    );
   });
 
   it.each([Number.NaN, 0.09, 100.01])(
     'rejects an invalid traffic multiplier before opening a transaction',
     async (multiplier) => {
       const prisma = { $transaction: jest.fn() };
-      const service = new CustomerAdminService(prisma as never, {} as never);
+      const service = new CustomerAdminService(
+        prisma as never,
+        {} as never,
+        new EntitlementService(prisma as never),
+      );
 
       await expect(
         service.setTrafficMultiplier('user_1', multiplier, 'admin_1'),
@@ -352,6 +674,7 @@ describe('CustomerAdminService account deletion', () => {
       email: 'Member@Example.com',
       displayName: 'Member',
       role: 'MEMBER',
+      balanceCents: 900,
       deletedAt: null,
     };
     const tx = {
@@ -386,6 +709,31 @@ describe('CustomerAdminService account deletion', () => {
       referralAttribution: {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
+      groupBuyMember: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'member-1',
+            groupId: 'group-1',
+            status: 'FULFILLED',
+            orderId: 'order-1',
+            isCreator: true,
+            paymentAttemptId: 'payment-1',
+            group: { settlementModeSnapshot: 'ORIGINAL_PRICE_BALANCE_REBATE' },
+            paymentAttempt: { status: 'SETTLED', amountCents: 1290 },
+          },
+        ]),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      groupBuy: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      walletTransaction: {
+        create: jest.fn().mockResolvedValue({ id: 'wallet-forfeit-1' }),
+      },
+      walletLedgerEntry: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'ledger-forfeit-1' }),
+      },
       auditLog: { create: jest.fn().mockResolvedValue({}) },
     };
     const prisma = {
@@ -393,12 +741,23 @@ describe('CustomerAdminService account deletion', () => {
         operation(tx),
       ),
     };
-    const service = new CustomerAdminService(prisma as never, {} as never);
-    return { service, tx, prisma };
+    const entitlements = {
+      revokeUserEntitlements: jest.fn().mockResolvedValue({
+        grants: 1,
+        subscriptions: 1,
+        trafficPacks: 1,
+      }),
+    };
+    const service = new CustomerAdminService(
+      prisma as never,
+      {} as never,
+      entitlements as never,
+    );
+    return { service, tx, prisma, entitlements };
   }
 
   it('retires access and releases the confirmed email without deleting finance rows', async () => {
-    const { service, tx, prisma } = createDeletionHarness();
+    const { service, tx, prisma, entitlements } = createDeletionHarness();
 
     const result = await service.deleteCustomer(
       'user_1',
@@ -412,13 +771,31 @@ describe('CustomerAdminService account deletion', () => {
       emailReleased: true,
     });
     expect(tx.accessToken.updateMany).toHaveBeenCalled();
-    expect(tx.entitlementGrant.updateMany).toHaveBeenCalled();
-    expect(tx.subscription.updateMany).toHaveBeenCalled();
-    expect(tx.trafficPack.updateMany).toHaveBeenCalled();
+    expect(entitlements.revokeUserEntitlements).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ userId: 'user_1', actorId: 'admin_1' }),
+    );
     expect(tx.epayPaymentAttempt.updateMany).toHaveBeenCalled();
-    const [userUpdate] = tx.user.update.mock.calls[0] as unknown as [
-      { where: { id: string }; data: Record<string, unknown> },
-    ];
+    expect(tx.groupBuyMember.updateMany).toHaveBeenCalled();
+    expect(tx.groupBuy.updateMany).toHaveBeenCalled();
+    const [ledgerWrite] = tx.walletLedgerEntry.create.mock
+      .calls[0] as unknown as [{ data: Record<string, unknown> }];
+    expect(ledgerWrite.data).toMatchObject({
+      userId: 'user_1',
+      actorId: 'admin_1',
+      amountCents: -900,
+      beforeBalanceCents: 900,
+      afterBalanceCents: 0,
+      idempotencyKey: 'account-deletion:user_1',
+    });
+    const userUpdate = tx.user.update.mock.calls
+      .map(
+        ([input]) =>
+          input as { where: { id: string }; data: Record<string, unknown> },
+      )
+      .find((input) => typeof input.data.email === 'string');
+    expect(userUpdate).toBeDefined();
+    if (!userUpdate) throw new Error('missing account deletion update');
     expect(userUpdate.where).toEqual({ id: 'user_1' });
     expect(userUpdate.data).toMatchObject({
       email: 'deleted+user_1@accounts.invalid',

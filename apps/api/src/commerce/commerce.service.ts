@@ -13,7 +13,6 @@ import {
   OrderKind,
   OrderSource,
   OrderStatus,
-  QuotaAdjustmentMode,
   QuotaCadence,
   RedemptionCodeKind,
   RedemptionCodeStatus,
@@ -29,6 +28,7 @@ import {
   isPermanentBillingPeriod,
   permanentEntitlementEnd,
 } from '../entitlement/entitlement-lifetime';
+import { PaymentFulfillmentRejectedError } from './payment-fulfillment.error';
 import { ReferralService } from '../referrals/referral.service';
 import {
   assertCatalogPurchaseEligibility,
@@ -38,6 +38,7 @@ import {
   parseCatalogOfferSnapshot,
   type CatalogOfferSnapshot,
 } from './catalog-offer-snapshot';
+import { postWalletEntry } from '../wallet/wallet-ledger';
 
 export type CheckoutInput =
   | {
@@ -67,6 +68,17 @@ export interface EpaySettlementInput {
   amountCents: number;
   basePriceCents: number;
   entitlementSnapshot: Prisma.JsonValue | null;
+  paidAt: Date;
+  entitlementStartsAt?: Date;
+}
+
+export interface GroupBuyWalletSettlementInput {
+  userId: string;
+  offerId: string;
+  memberId: string;
+  amountCents: number;
+  basePriceCents: number;
+  entitlementSnapshot: Prisma.JsonValue;
   paidAt: Date;
 }
 
@@ -195,6 +207,7 @@ export class CommerceService {
                 {
                   orderId: order.id,
                   subscriptionId: subscription?.id,
+                  replacePlan: redeemedCode.planMode === 'REPLACE',
                 },
                 tx,
               );
@@ -403,9 +416,58 @@ export class CommerceService {
     if (existing) {
       return this.replayCheckout(existing, { offerId: input.offerId });
     }
-    const snapshot = parseCatalogOfferSnapshot(input.entitlementSnapshot);
-    if (snapshot?.purchaseMode === 'plan_reset') {
-      return this.fulfillPlanReset(tx, input, snapshot, idempotencyKey);
+    try {
+      const snapshot = parseCatalogOfferSnapshot(input.entitlementSnapshot);
+      if (snapshot?.purchaseMode === 'plan_reset') {
+        return await this.fulfillPlanReset(tx, input, snapshot, idempotencyKey);
+      }
+      return await this.createOfferCheckout(
+        tx,
+        input.userId,
+        { offerId: input.offerId },
+        idempotencyKey,
+        {
+          externalPayment: {
+            attemptId: input.attemptId,
+            gatewayTradeNo: input.gatewayTradeNo,
+            amountCents: input.amountCents,
+            basePriceCents: input.basePriceCents,
+            entitlementSnapshot: input.entitlementSnapshot,
+            paidAt: input.paidAt,
+            entitlementStartsAt: input.entitlementStartsAt,
+          },
+        },
+      );
+    } catch (error) {
+      if (error instanceof PaymentFulfillmentRejectedError) throw error;
+      if (
+        error instanceof BadRequestException ||
+        error instanceof ConflictException
+      ) {
+        throw new PaymentFulfillmentRejectedError(
+          'ENTITLEMENT_NO_LONGER_AVAILABLE',
+          error.message,
+        );
+      }
+      throw error;
+    }
+  }
+
+  async fulfillGroupBuyWalletPayment(
+    tx: Prisma.TransactionClient,
+    input: GroupBuyWalletSettlementInput,
+  ) {
+    const idempotencyKey = `group-buy-wallet:${input.memberId}`;
+    const existing = await tx.manualOrder.findUnique({
+      where: {
+        userId_idempotencyKey: {
+          userId: input.userId,
+          idempotencyKey,
+        },
+      },
+    });
+    if (existing) {
+      return this.replayCheckout(existing, { offerId: input.offerId });
     }
     return this.createOfferCheckout(
       tx,
@@ -413,9 +475,7 @@ export class CommerceService {
       { offerId: input.offerId },
       idempotencyKey,
       {
-        externalPayment: {
-          attemptId: input.attemptId,
-          gatewayTradeNo: input.gatewayTradeNo,
+        walletPayment: {
           amountCents: input.amountCents,
           basePriceCents: input.basePriceCents,
           entitlementSnapshot: input.entitlementSnapshot,
@@ -528,23 +588,6 @@ export class CommerceService {
       0,
     );
 
-    const debit = await tx.user.updateMany({
-      where: { id: userId, balanceCents: { gte: chargedCents } },
-      data: { balanceCents: { decrement: chargedCents } },
-    });
-    if (debit.count !== 1) {
-      throw new BadRequestException('Insufficient wallet balance');
-    }
-
-    await tx.walletTransaction.create({
-      data: {
-        userId,
-        amountCents: -chargedCents,
-        kind: 'PURCHASE',
-        note: `Purchase traffic pack ${product.name}`,
-      },
-    });
-
     const expiresAt = product.validityDays
       ? this.addDays(purchasedAt, product.validityDays)
       : null;
@@ -575,6 +618,14 @@ export class CommerceService {
         processedAt: purchasedAt,
       },
     });
+    await postWalletEntry(tx, {
+      userId,
+      orderId: order.id,
+      amountCents: -chargedCents,
+      kind: 'PURCHASE',
+      idempotencyKey,
+      note: `购买流量包 ${product.name}`,
+    });
 
     if (discount) {
       await tx.redemptionUse.create({
@@ -586,7 +637,7 @@ export class CommerceService {
       });
     }
 
-    await tx.trafficPack.create({
+    const trafficPack = await tx.trafficPack.create({
       data: {
         userId,
         subscriptionId: subscription?.id ?? null,
@@ -600,6 +651,25 @@ export class CommerceService {
         expiresAt,
       },
     });
+
+    await tx.paymentRecord.create({
+      data: {
+        orderId: order.id,
+        userId,
+        source: 'WALLET',
+        status: 'SETTLED',
+        amountCents: chargedCents,
+        currency: 'CNY',
+        paidAt: purchasedAt,
+        reconciledAt: purchasedAt,
+      },
+    });
+    if (this.entitlements && order.catalogOfferId) {
+      await this.entitlements.grantFromOrder(
+        { orderId: order.id, trafficPackId: trafficPack.id },
+        tx,
+      );
+    }
 
     return {
       orderId: order.id,
@@ -628,10 +698,19 @@ export class CommerceService {
         basePriceCents: number;
         entitlementSnapshot: Prisma.JsonValue | null;
         paidAt: Date;
+        entitlementStartsAt?: Date;
+      };
+      walletPayment?: {
+        amountCents: number;
+        basePriceCents: number;
+        entitlementSnapshot: Prisma.JsonValue;
+        paidAt: Date;
       };
     } = {},
   ): Promise<CheckoutResult> {
-    if (options.complimentary && options.externalPayment) {
+    const settledPayment =
+      options.externalPayment ?? options.walletPayment ?? null;
+    if (options.complimentary && settledPayment) {
       throw new BadRequestException('Checkout payment source is ambiguous');
     }
     const [user, offer] = await Promise.all([
@@ -650,11 +729,11 @@ export class CommerceService {
     if (user.status !== UserStatus.ACTIVE) {
       throw new BadRequestException('Account is not active');
     }
-    if (!offer || (offer.archivedAt && !options.externalPayment)) {
+    if (!offer || (offer.archivedAt && !settledPayment)) {
       throw new NotFoundException('Catalog offer not found');
     }
-    const snapshot = options.externalPayment
-      ? parseCatalogOfferSnapshot(options.externalPayment.entitlementSnapshot)
+    const snapshot = settledPayment
+      ? parseCatalogOfferSnapshot(settledPayment.entitlementSnapshot)
       : null;
     if (
       snapshot &&
@@ -703,7 +782,7 @@ export class CommerceService {
         ? Boolean(legacyDurationDays && legacyDurationDays > 0)
         : Boolean(intervalMonths && intervalMonths > 0));
     if (
-      (!options.externalPayment &&
+      (!settledPayment &&
         (!offer.active ||
           offer.product.status !== CatalogProductStatus.ACTIVE ||
           !offer.product.accessProfile?.active)) ||
@@ -725,10 +804,7 @@ export class CommerceService {
       );
     }
     if (!options.complimentary) {
-      if (
-        options.externalPayment &&
-        productSeries !== CatalogProductSeries.ULTRA
-      ) {
+      if (settledPayment && productSeries !== CatalogProductSeries.ULTRA) {
         await assertCatalogPurchaseLimit(tx, userId, {
           kind: productKind,
           purchaseLimitPerUser:
@@ -751,8 +827,7 @@ export class CommerceService {
         ? await this.resolveUltraPurchase(tx, userId, {
             id: offer.product.id,
             name: snapshot?.productName ?? offer.product.name,
-            priceCents:
-              options.externalPayment?.basePriceCents ?? offer.priceCents,
+            priceCents: settledPayment?.basePriceCents ?? offer.priceCents,
             trafficBytes,
           })
         : null;
@@ -769,7 +844,7 @@ export class CommerceService {
     const payableBeforeDiscountCents =
       ultraPurchase?.payableCents ?? offer.priceCents;
     const discount =
-      !options.complimentary && !options.externalPayment && input.discountCode
+      !options.complimentary && !settledPayment && input.discountCode
         ? await this.reserveDiscount(
             tx,
             userId,
@@ -779,32 +854,33 @@ export class CommerceService {
         : null;
     const chargedCents = options.complimentary
       ? 0
-      : options.externalPayment
-        ? options.externalPayment.amountCents
+      : settledPayment
+        ? settledPayment.amountCents
         : Math.max(
             payableBeforeDiscountCents - (discount?.discountCents ?? 0),
             0,
           );
-    const basePriceCents =
-      options.externalPayment?.basePriceCents ?? offer.priceCents;
+    const basePriceCents = settledPayment?.basePriceCents ?? offer.priceCents;
+    const groupBuyPayment =
+      Boolean(settledPayment) && snapshot?.purchaseMode === 'group_buy';
+    const expectedSettledPaymentCents = groupBuyPayment
+      ? snapshot?.groupBuySettlementMode === 'ORIGINAL_PRICE_BALANCE_REBATE'
+        ? snapshot.groupBuyOriginalPriceCents
+        : snapshot?.groupBuyPriceCents
+      : payableBeforeDiscountCents;
     if (
       chargedCents < 0 ||
       chargedCents > basePriceCents ||
-      (options.externalPayment && chargedCents !== payableBeforeDiscountCents)
+      (settledPayment && chargedCents !== expectedSettledPaymentCents) ||
+      (groupBuyPayment &&
+        basePriceCents !== snapshot?.groupBuyOriginalPriceCents)
     ) {
       throw new BadRequestException('External payment amount is invalid');
     }
-    if (!options.complimentary && !options.externalPayment) {
-      const debit = await tx.user.updateMany({
-        where: { id: userId, balanceCents: { gte: chargedCents } },
-        data: { balanceCents: { decrement: chargedCents } },
-      });
-      if (debit.count !== 1) {
-        throw new BadRequestException('Insufficient wallet balance');
-      }
-    }
-
-    const purchasedAt = options.externalPayment?.paidAt ?? new Date();
+    const purchasedAt =
+      options.externalPayment?.entitlementStartsAt ??
+      settledPayment?.paidAt ??
+      new Date();
     const expiryOffer = {
       billingPeriod,
       intervalMonths,
@@ -851,9 +927,15 @@ export class CommerceService {
         existing.planId === legacyPlanId &&
         !options.complimentary
       ) {
-        const extensionBase =
-          existing.endsAt > purchasedAt ? existing.endsAt : purchasedAt;
-        const extendedEndsAt = this.offerExpiry(extensionBase, expiryOffer);
+        const extendsCurrentTerm = existing.endsAt > purchasedAt;
+        const extensionBase = extendsCurrentTerm
+          ? existing.endsAt
+          : purchasedAt;
+        const extendedEndsAt = this.offerExpiry(
+          extensionBase,
+          expiryOffer,
+          extendsCurrentTerm ? existing.startsAt : purchasedAt,
+        );
         const updated = await tx.subscription.update({
           where: { id: existing.id },
           data: {
@@ -861,8 +943,11 @@ export class CommerceService {
             accessAccountId: account.id,
             planOfferId: legacyPlanOfferId,
             status: SubscriptionStatus.ACTIVE,
+            startsAt: extendsCurrentTerm ? undefined : purchasedAt,
             endsAt: extendedEndsAt,
             includedTrafficBytes: trafficBytes,
+            bonusTrafficBytes: extendsCurrentTerm ? undefined : BigInt(0),
+            consumedTrafficBytes: extendsCurrentTerm ? undefined : BigInt(0),
             speedUpMbpsSnapshot: speedUpMbps,
             speedDownMbpsSnapshot: speedDownMbps,
             deviceLimitSnapshot: deviceLimit,
@@ -993,6 +1078,16 @@ export class CommerceService {
         processedAt: purchasedAt,
       },
     });
+    if (!options.complimentary && !options.externalPayment) {
+      await postWalletEntry(tx, {
+        userId,
+        orderId: order.id,
+        amountCents: -chargedCents,
+        kind: 'PURCHASE',
+        idempotencyKey,
+        note: `购买 ${offer.product.name} · ${offer.name}`,
+      });
+    }
     if (discount) {
       await tx.redemptionUse.create({
         data: { codeId: discount.codeId, userId, orderId: order.id },
@@ -1009,7 +1104,7 @@ export class CommerceService {
             amountCents: chargedCents,
             currency,
             externalRef: options.externalPayment.gatewayTradeNo,
-            paidAt: purchasedAt,
+            paidAt: options.externalPayment.paidAt,
             reconciledAt: purchasedAt,
           },
         }),
@@ -1029,41 +1124,18 @@ export class CommerceService {
         }),
       ]);
     } else if (!options.complimentary) {
-      const wallet = await tx.walletTransaction.create({
+      await tx.paymentRecord.create({
         data: {
+          orderId: order.id,
           userId,
-          amountCents: -chargedCents,
-          kind: 'PURCHASE',
-          note: `Purchase ${offer.product.name} · ${offer.name}`,
+          source: 'WALLET',
+          status: 'SETTLED',
+          amountCents: chargedCents,
+          currency: offer.currency,
+          paidAt: purchasedAt,
+          reconciledAt: purchasedAt,
         },
       });
-      await Promise.all([
-        tx.walletLedgerEntry.create({
-          data: {
-            legacyTransactionId: wallet.id,
-            userId,
-            orderId: order.id,
-            amountCents: -chargedCents,
-            beforeBalanceCents: user.balanceCents,
-            afterBalanceCents: user.balanceCents - chargedCents,
-            kind: 'PURCHASE',
-            idempotencyKey,
-            note: `购买 ${offer.product.name} · ${offer.name}`,
-          },
-        }),
-        tx.paymentRecord.create({
-          data: {
-            orderId: order.id,
-            userId,
-            source: 'WALLET',
-            status: 'SETTLED',
-            amountCents: chargedCents,
-            currency: offer.currency,
-            paidAt: purchasedAt,
-            reconciledAt: purchasedAt,
-          },
-        }),
-      ]);
     } else {
       await tx.auditLog.create({
         data: {
@@ -1225,7 +1297,7 @@ export class CommerceService {
     ) {
       throw new ConflictException('本期流量重置支付金额不匹配');
     }
-    const [grant, bucket] = await Promise.all([
+    const [grant, quotedBucket] = await Promise.all([
       tx.entitlementGrant.findFirst({
         where: {
           id: snapshot.resetGrantId,
@@ -1239,36 +1311,42 @@ export class CommerceService {
       }),
       tx.quotaBucket.findUnique({ where: { id: snapshot.resetBucketId } }),
     ]);
-    if (
-      !grant ||
-      !bucket ||
-      bucket.grantId !== grant.id ||
-      bucket.startsAt.toISOString() !== snapshot.resetCycleStartsAt ||
-      bucket.endsAt.toISOString() !== snapshot.resetCycleEndsAt ||
-      bucket.startsAt > input.paidAt ||
-      bucket.endsAt <= input.paidAt
-    ) {
-      throw new ConflictException('套餐周期已经变化，流量重置无法自动入账');
+    if (!grant || !quotedBucket || quotedBucket.grantId !== grant.id) {
+      throw new ConflictException('流量重置关联的套餐权益已经失效');
     }
+    const quotedCycleMatches =
+      quotedBucket.startsAt.toISOString() === snapshot.resetCycleStartsAt &&
+      quotedBucket.endsAt.toISOString() === snapshot.resetCycleEndsAt;
+    if (!quotedCycleMatches) {
+      throw new ConflictException('流量重置订单快照与原套餐周期不匹配');
+    }
+    const quotedCycleIsCurrent =
+      quotedBucket.startsAt <= input.paidAt &&
+      quotedBucket.endsAt > input.paidAt;
+    if (!quotedCycleIsCurrent) {
+      throw new PaymentFulfillmentRejectedError(
+        'PLAN_RESET_CYCLE_ENDED',
+        '流量重置订单已超过原套餐周期',
+      );
+    }
+    const bucket = quotedBucket;
     const targetBytes = BigInt(snapshot.resetTrafficBytes);
     const beforeRemainingBytes =
       bucket.grantedBytes > bucket.consumedBytes
         ? bucket.grantedBytes - bucket.consumedBytes
         : BigInt(0);
-    if (targetBytes <= BigInt(0) || beforeRemainingBytes >= targetBytes) {
-      throw new ConflictException('当前套餐流量已经达到重置上限');
+    if (targetBytes <= BigInt(0)) {
+      throw new ConflictException('流量重置额度无效');
     }
-    const creditBytes = targetBytes - beforeRemainingBytes;
-    const cycle = grant.legacySubscriptionId
-      ? await tx.subscriptionCycle.findFirst({
-          where: {
-            subscriptionId: grant.legacySubscriptionId,
-            startsAt: { lte: input.paidAt },
-            endsAt: { gt: input.paidAt },
-          },
-          orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
-        })
-      : null;
+    const creditBytes =
+      beforeRemainingBytes < targetBytes
+        ? targetBytes - beforeRemainingBytes
+        : snapshot.resetCreditBytes
+          ? BigInt(snapshot.resetCreditBytes)
+          : targetBytes;
+    if (creditBytes <= BigInt(0)) {
+      throw new ConflictException('流量重置承诺额度无效');
+    }
     const order = await tx.manualOrder.create({
       data: {
         userId: input.userId,
@@ -1303,60 +1381,45 @@ export class CommerceService {
         processedAt: input.paidAt,
       },
     });
-    await Promise.all([
-      tx.quotaBucket.update({
-        where: { id: bucket.id },
-        data: { grantedBytes: { increment: creditBytes } },
-      }),
-      cycle
-        ? tx.subscriptionCycle.update({
-            where: { id: cycle.id },
-            data: { adjustmentBytes: { increment: creditBytes } },
-          })
-        : Promise.resolve(),
-      tx.quotaAdjustment.create({
-        data: {
-          accessAccountId: grant.accessAccountId,
-          subscriptionCycleId: cycle?.id,
-          quotaBucketId: bucket.id,
-          idempotencyKey: `plan-reset:${order.id}`,
-          mode: QuotaAdjustmentMode.DELTA,
-          deltaBytes: creditBytes,
-          beforeRemainingBytes,
-          afterRemainingBytes: targetBytes,
-          reason: '用户购买本期流量重置',
-        },
-      }),
-      tx.paymentRecord.create({
-        data: {
-          orderId: order.id,
+    if (!this.entitlements) {
+      throw new ConflictException('Entitlement module is unavailable');
+    }
+    await this.entitlements.creditQuotaBucket(tx, {
+      bucketId: bucket.id,
+      bytes: creditBytes,
+      at: input.paidAt,
+      idempotencyKey: `plan-reset:${order.id}`,
+      reason: '用户购买本期流量重置',
+    });
+    await tx.paymentRecord.create({
+      data: {
+        orderId: order.id,
+        userId: input.userId,
+        source: 'EPAY',
+        status: 'SETTLED',
+        amountCents: input.amountCents,
+        currency: snapshot.currency,
+        externalRef: input.gatewayTradeNo,
+        paidAt: input.paidAt,
+        reconciledAt: input.paidAt,
+      },
+    });
+    await tx.auditLog.create({
+      data: {
+        action: 'PLAN_QUOTA_RESET_SETTLED',
+        targetType: 'ManualOrder',
+        targetId: order.id,
+        metadata: {
           userId: input.userId,
-          source: 'EPAY',
-          status: 'SETTLED',
-          amountCents: input.amountCents,
-          currency: snapshot.currency,
-          externalRef: input.gatewayTradeNo,
-          paidAt: input.paidAt,
-          reconciledAt: input.paidAt,
+          offerId: snapshot.offerId,
+          attemptId: input.attemptId,
+          gatewayTradeNo: input.gatewayTradeNo,
+          paidCents: input.amountCents,
+          creditedBytes: creditBytes.toString(),
+          cycleEndsAt: bucket.endsAt.toISOString(),
         },
-      }),
-      tx.auditLog.create({
-        data: {
-          action: 'PLAN_QUOTA_RESET_SETTLED',
-          targetType: 'ManualOrder',
-          targetId: order.id,
-          metadata: {
-            userId: input.userId,
-            offerId: snapshot.offerId,
-            attemptId: input.attemptId,
-            gatewayTradeNo: input.gatewayTradeNo,
-            paidCents: input.amountCents,
-            creditedBytes: creditBytes.toString(),
-            cycleEndsAt: bucket.endsAt.toISOString(),
-          },
-        },
-      }),
-    ]);
+      },
+    });
     return {
       orderId: order.id,
       replayed: false,
@@ -1412,22 +1475,6 @@ export class CommerceService {
       offer.priceCents - (discount?.discountCents ?? 0),
       0,
     );
-    const debit = await tx.user.updateMany({
-      where: { id: userId, balanceCents: { gte: chargedCents } },
-      data: { balanceCents: { decrement: chargedCents } },
-    });
-    if (debit.count !== 1) {
-      throw new BadRequestException('Insufficient wallet balance');
-    }
-    await tx.walletTransaction.create({
-      data: {
-        userId,
-        amountCents: -chargedCents,
-        kind: 'PURCHASE',
-        note: `Purchase plan ${plan.name}`,
-      },
-    });
-
     const purchasedAt = new Date();
     const account = await tx.accessAccount.upsert({
       where: { userId },
@@ -1472,17 +1519,27 @@ export class CommerceService {
         },
       });
     } else if (existing.planId === plan.id) {
-      const extensionBase =
-        existing.endsAt > purchasedAt ? existing.endsAt : purchasedAt;
-      entitlementExpiresAt = this.offerExpiry(extensionBase, offer);
+      const extendsCurrentTerm = existing.endsAt > purchasedAt;
+      const extensionBase = extendsCurrentTerm ? existing.endsAt : purchasedAt;
+      entitlementExpiresAt = this.offerExpiry(
+        extensionBase,
+        offer,
+        extendsCurrentTerm ? existing.startsAt : purchasedAt,
+      );
       await tx.subscription.update({
         where: { id: existing.id },
         data: {
           nodeId,
           status: SubscriptionStatus.ACTIVE,
+          startsAt: extendsCurrentTerm ? undefined : purchasedAt,
           endsAt: entitlementExpiresAt,
           accessAccountId: account.id,
           planOfferId: offer.id,
+          includedTrafficBytes: extendsCurrentTerm
+            ? undefined
+            : plan.trafficBytes,
+          bonusTrafficBytes: extendsCurrentTerm ? undefined : BigInt(0),
+          consumedTrafficBytes: extendsCurrentTerm ? undefined : BigInt(0),
           speedUpMbpsSnapshot: plan.speedUpMbps,
           speedDownMbpsSnapshot: plan.speedDownMbps,
           deviceLimitSnapshot: plan.deviceLimit,
@@ -1545,11 +1602,31 @@ export class CommerceService {
         processedAt: purchasedAt,
       },
     });
+    await postWalletEntry(tx, {
+      userId,
+      orderId: order.id,
+      amountCents: -chargedCents,
+      kind: 'PURCHASE',
+      idempotencyKey,
+      note: `购买套餐 ${plan.name} · ${offer.name}`,
+    });
     if (discount) {
       await tx.redemptionUse.create({
         data: { codeId: discount.codeId, userId, orderId: order.id },
       });
     }
+    await tx.paymentRecord.create({
+      data: {
+        orderId: order.id,
+        userId,
+        source: 'WALLET',
+        status: 'SETTLED',
+        amountCents: chargedCents,
+        currency: 'CNY',
+        paidAt: purchasedAt,
+        reconciledAt: purchasedAt,
+      },
+    });
     return {
       orderId: order.id,
       replayed: false,
@@ -1818,6 +1895,21 @@ export class CommerceService {
     return { plan, offer };
   }
 
+  private monthlyCycleBounds(anchor: Date, entitlementEnd: Date, now: Date) {
+    let offset =
+      (now.getUTCFullYear() - anchor.getUTCFullYear()) * 12 +
+      now.getUTCMonth() -
+      anchor.getUTCMonth();
+    let startsAt = this.addMonthsClamped(anchor, offset);
+    if (startsAt > now) {
+      offset -= 1;
+      startsAt = this.addMonthsClamped(anchor, offset);
+    }
+    let endsAt = this.addMonthsClamped(anchor, offset + 1);
+    if (endsAt > entitlementEnd) endsAt = entitlementEnd;
+    return { startsAt, endsAt };
+  }
+
   private offerExpiry(
     startsAt: Date,
     offer: {
@@ -1825,6 +1917,7 @@ export class CommerceService {
       intervalMonths: number | null;
       legacyDurationDays: number | null;
     },
+    renewalAnchor?: Date,
   ) {
     if (isPermanentBillingPeriod(offer.billingPeriod)) {
       return permanentEntitlementEnd();
@@ -1838,7 +1931,11 @@ export class CommerceService {
     if (!offer.intervalMonths) {
       throw new BadRequestException('Plan offer interval is invalid');
     }
-    return this.addMonthsClamped(startsAt, offer.intervalMonths);
+    return this.addMonthsClamped(
+      startsAt,
+      offer.intervalMonths,
+      renewalAnchor?.getUTCDate(),
+    );
   }
 
   private firstCycleEnd(startsAt: Date, entitlementEndsAt: Date) {
@@ -1846,7 +1943,11 @@ export class CommerceService {
     return monthly < entitlementEndsAt ? monthly : entitlementEndsAt;
   }
 
-  private addMonthsClamped(date: Date, months: number) {
+  private addMonthsClamped(
+    date: Date,
+    months: number,
+    anchorDay = date.getUTCDate(),
+  ) {
     const result = new Date(
       Date.UTC(
         date.getUTCFullYear(),
@@ -1861,7 +1962,7 @@ export class CommerceService {
     const lastDay = new Date(
       Date.UTC(result.getUTCFullYear(), result.getUTCMonth() + 1, 0),
     ).getUTCDate();
-    result.setUTCDate(Math.min(date.getUTCDate(), lastDay));
+    result.setUTCDate(Math.min(anchorDay, lastDay));
     return result;
   }
 

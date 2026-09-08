@@ -5,9 +5,11 @@ import {
 } from '@nestjs/common';
 import {
   CatalogProductKind,
+  EpayRefundStatus,
   EpayPaymentStatus,
   OrderSource,
   OrderStatus,
+  PaymentFulfillmentStatus,
   PaymentRecordStatus,
   Prisma,
   RefundStatus,
@@ -63,7 +65,7 @@ const orderInclude = {
     },
     orderBy: { createdAt: 'asc' as const },
   },
-  epayPaymentAttempt: true,
+  epayPaymentAttempt: { include: { refundAttempt: true } },
 } satisfies Prisma.ManualOrderInclude;
 
 type OrderWithDetails = Prisma.ManualOrderGetPayload<{
@@ -122,9 +124,12 @@ export class OrderQueryService {
       entitlementExpiresAt: order.entitlementExpiresAt?.toISOString() ?? null,
       quotaCadence: order.quotaCadenceSnapshot?.toLowerCase() ?? null,
       resetAnchorAt: order.resetAnchorAtSnapshot?.toISOString() ?? null,
-      purchaseMode: order.upgradeFromProductIdSnapshot
-        ? ('upgrade' as const)
-        : ('initial' as const),
+      purchaseMode:
+        order.note === 'PLAN_QUOTA_RESET'
+          ? ('plan_reset' as const)
+          : order.upgradeFromProductIdSnapshot
+            ? ('upgrade' as const)
+            : ('initial' as const),
       upgradeFromProductId: order.upgradeFromProductIdSnapshot,
       upgradeFromPriceCents: order.upgradeFromPriceCentsSnapshot,
       entitlementGrant: order.entitlementGrant
@@ -202,6 +207,7 @@ export class OrderQueryService {
               product: { select: { id: true, name: true, kind: true } },
             },
           },
+          refundAttempt: true,
         },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip,
@@ -345,14 +351,57 @@ export class OrderQueryService {
       '商品类型',
     );
     const status = this.enumValue(query.status, EpayPaymentStatus, '支付状态');
-    return {
-      status: status ?? {
-        in: [
-          EpayPaymentStatus.PENDING,
-          EpayPaymentStatus.EXPIRED,
-          EpayPaymentStatus.FAILED,
+    const and: Prisma.EpayPaymentAttemptWhereInput[] = [];
+    if (!status) {
+      and.push({
+        OR: [
+          {
+            status: {
+              in: [
+                EpayPaymentStatus.PENDING,
+                EpayPaymentStatus.EXPIRED,
+                EpayPaymentStatus.FAILED,
+              ],
+            },
+          },
+          {
+            fulfillmentStatus: {
+              in: [
+                PaymentFulfillmentStatus.RETRYING,
+                PaymentFulfillmentStatus.REFUND_PENDING,
+                PaymentFulfillmentStatus.MANUAL_REVIEW,
+              ],
+            },
+          },
+          {
+            refundAttempt: {
+              is: {
+                status: {
+                  in: [
+                    EpayRefundStatus.PENDING,
+                    EpayRefundStatus.SUBMITTED,
+                    EpayRefundStatus.FAILED,
+                  ],
+                },
+              },
+            },
+          },
         ],
-      },
+      });
+    }
+    if (q) {
+      and.push({
+        OR: [
+          { merchantOrderNo: { contains: q, mode: 'insensitive' } },
+          { gatewayTradeNo: { contains: q, mode: 'insensitive' } },
+          { productNameSnapshot: { contains: q, mode: 'insensitive' } },
+          { user: { email: { contains: q, mode: 'insensitive' } } },
+          { user: { displayName: { contains: q, mode: 'insensitive' } } },
+        ],
+      });
+    }
+    return {
+      status,
       paymentType,
       createdAt: this.dateRange(query.from, query.to),
       offer:
@@ -362,15 +411,7 @@ export class OrderQueryService {
               product: productKind ? { kind: productKind } : undefined,
             }
           : undefined,
-      OR: q
-        ? [
-            { merchantOrderNo: { contains: q, mode: 'insensitive' } },
-            { gatewayTradeNo: { contains: q, mode: 'insensitive' } },
-            { productNameSnapshot: { contains: q, mode: 'insensitive' } },
-            { user: { email: { contains: q, mode: 'insensitive' } } },
-            { user: { displayName: { contains: q, mode: 'insensitive' } } },
-          ]
-        : undefined,
+      AND: and.length ? and : undefined,
     };
   }
 
@@ -444,6 +485,11 @@ export class OrderQueryService {
         : null,
       source: order.source.toLowerCase(),
       fulfillmentStatus: order.status.toLowerCase(),
+      paymentFulfillmentStatus:
+        order.epayPaymentAttempt?.fulfillmentStatus.toLowerCase() ?? null,
+      refundStatus:
+        order.epayPaymentAttempt?.refundAttempt?.status.toLowerCase() ?? null,
+      reasonCode: order.epayPaymentAttempt?.refundAttempt?.reasonCode ?? null,
       paymentStatus,
       paymentType: order.epayPaymentAttempt?.paymentType ?? null,
       amountCents: order.amountCents,
@@ -463,6 +509,7 @@ export class OrderQueryService {
     merchantOrderNo: string;
     gatewayTradeNo: string | null;
     status: EpayPaymentStatus;
+    fulfillmentStatus: PaymentFulfillmentStatus;
     paymentType: string;
     amountCents: number;
     productNameSnapshot: string;
@@ -478,19 +525,52 @@ export class OrderQueryService {
     failedAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
+    refundAttempt?: {
+      id: string;
+      status: EpayRefundStatus;
+      reasonCode: string | null;
+      requestCount: number;
+      lastError: string | null;
+      gatewayMessage: string | null;
+      submittedAt: Date | null;
+      confirmedAt: Date | null;
+    } | null;
   }) {
+    const refundStatus = attempt.refundAttempt?.status ?? null;
+    const fulfillmentPending =
+      attempt.settlementFailureCount > 0 &&
+      attempt.fulfillmentStatus !== PaymentFulfillmentStatus.APPLIED &&
+      attempt.fulfillmentStatus !== PaymentFulfillmentStatus.REFUNDED;
     return {
       id: attempt.id,
       orderId: attempt.orderId,
       merchantOrderNo: attempt.merchantOrderNo,
       gatewayTradeNo: attempt.gatewayTradeNo,
       status: attempt.status.toLowerCase(),
+      fulfillmentStatus: attempt.fulfillmentStatus.toLowerCase(),
       paymentType: attempt.paymentType,
       amountCents: attempt.amountCents,
       productName: attempt.productNameSnapshot,
-      fulfillmentPending:
-        attempt.status !== EpayPaymentStatus.SETTLED &&
-        attempt.settlementFailureCount > 0,
+      fulfillmentPending,
+      requiresAttention:
+        fulfillmentPending ||
+        refundStatus === EpayRefundStatus.PENDING ||
+        refundStatus === EpayRefundStatus.SUBMITTED ||
+        refundStatus === EpayRefundStatus.FAILED,
+      refundAttempt: attempt.refundAttempt
+        ? {
+            id: attempt.refundAttempt.id,
+            status: attempt.refundAttempt.status.toLowerCase(),
+            reasonCode: attempt.refundAttempt.reasonCode,
+            requestCount: attempt.refundAttempt.requestCount,
+            lastError: attempt.refundAttempt.lastError,
+            gatewayMessage: attempt.refundAttempt.gatewayMessage,
+            submittedAt:
+              attempt.refundAttempt.submittedAt?.toISOString() ?? null,
+            confirmedAt:
+              attempt.refundAttempt.confirmedAt?.toISOString() ?? null,
+          }
+        : null,
       settlementFailureCount: attempt.settlementFailureCount,
       lastSettlementError: attempt.lastSettlementError,
       lastSettlementFailedAt:

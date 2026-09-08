@@ -50,9 +50,7 @@ export class PortalService {
   }
 
   async getSubscription(userId: string) {
-    const overview = (await this.hasV2Entitlements(userId))
-      ? await this.getV2SubscriptionOverview(userId)
-      : await this.store.getPortalOverview(userId);
+    const overview = await this.getUnifiedSubscriptionOverview(userId);
     const membership = await this.getMembershipJourney(userId, overview);
     return {
       ...overview,
@@ -70,11 +68,26 @@ export class PortalService {
   }
 
   async getUsage(userId: string) {
-    const legacyUsage = await this.store.getUsageForUser(userId);
-    if (!(await this.hasV2Entitlements(userId))) return legacyUsage;
+    if (!this.entitlements || !this.prisma) {
+      return this.store.getUsageForUser(userId);
+    }
+    const [legacyUsage, v2Usage] = await Promise.all([
+      this.store.getUsageForUser(userId, true, { unlinkedOnly: true }),
+      this.getV2QuotaUsage(userId),
+    ]);
     return {
       ...legacyUsage,
-      ...(await this.getV2QuotaUsage(userId)),
+      subscriptionId:
+        v2Usage.baseRemainingBytes > 0
+          ? v2Usage.subscriptionId
+          : (legacyUsage.subscriptionId ?? v2Usage.subscriptionId),
+      consumedBytes: legacyUsage.consumedBytes + v2Usage.consumedBytes,
+      baseRemainingBytes:
+        legacyUsage.baseRemainingBytes + v2Usage.baseRemainingBytes,
+      packRemainingBytes:
+        legacyUsage.packRemainingBytes + v2Usage.packRemainingBytes,
+      totalRemainingBytes:
+        legacyUsage.totalRemainingBytes + v2Usage.totalRemainingBytes,
     };
   }
 
@@ -176,11 +189,42 @@ export class PortalService {
     }
   }
 
-  private async hasV2Entitlements(userId: string) {
-    if (!this.entitlements || !this.prisma) return false;
-    return (
-      (await this.prisma.entitlementGrant.count({ where: { userId } })) > 0
-    );
+  private async optionalEntitlement<T>(fn: () => Promise<T>) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (error instanceof NotFoundException) return null;
+      throw error;
+    }
+  }
+
+  private async getUnifiedSubscriptionOverview(userId: string) {
+    if (!this.entitlements || !this.prisma) {
+      return this.store.getPortalOverview(userId);
+    }
+    const [v2, legacy] = await Promise.all([
+      this.optionalEntitlement(() => this.getV2SubscriptionOverview(userId)),
+      this.optionalEntitlement(() =>
+        this.store.getPortalOverview(userId, { unlinkedOnly: true }),
+      ),
+    ]);
+    if (!v2 && !legacy) {
+      throw new NotFoundException('No active access entitlement');
+    }
+    if (!v2) return legacy!;
+    if (!legacy) return v2;
+
+    const v2HasPlan = v2.subscription.includedTrafficBytes > 0;
+    const legacyHasPlan = legacy.subscription.planId !== 'traffic_pack';
+    const primary = !v2HasPlan && legacyHasPlan ? legacy : v2;
+    return {
+      ...primary,
+      user: v2.user,
+      balanceCents: v2.balanceCents,
+      remainingBytes: v2.remainingBytes + legacy.remainingBytes,
+      online: Math.max(v2.online, legacy.online),
+      packs: [...v2.packs, ...legacy.packs],
+    };
   }
 
   private async getMembershipJourney(
@@ -406,10 +450,7 @@ export class PortalService {
   }
 
   async getAccess(userId: string) {
-    const hasV2 = await this.hasV2Entitlements(userId);
-    const bundle = hasV2
-      ? await this.getV2AccessBundle(userId)
-      : await this.store.getAccessBundle(userId);
+    const bundle = await this.getUnifiedAccessBundle(userId);
     const uri = this.buildNodeUri(bundle.token, bundle.node);
     const nodes = bundle.nodes.map((node) => ({
       id: node.id,
@@ -513,10 +554,69 @@ export class PortalService {
       subscription: {
         speedUpMbpsSnapshot: access.speedUpMbps ?? 0,
         speedDownMbpsSnapshot: access.speedDownMbps ?? 0,
+        deviceLimitSnapshot: access.deviceLimit ?? 1,
         consumedTrafficBytes: access.consumedBytes ?? 0,
         endsAt,
       },
       trafficRemaining: access.remainingBytes ?? 0,
+    };
+  }
+
+  private async getUnifiedAccessBundle(
+    userId: string,
+    preferredToken?: { token: string; vlessUuid: string },
+  ) {
+    if (!this.entitlements || !this.prisma) {
+      const legacy = await this.store.getAccessBundle(userId);
+      return preferredToken ? { ...legacy, token: preferredToken } : legacy;
+    }
+    const [v2, legacy] = await Promise.all([
+      this.optionalEntitlement(() =>
+        this.getV2AccessBundle(userId, preferredToken),
+      ),
+      this.optionalEntitlement(() =>
+        this.store.getAccessBundle(userId, { unlinkedOnly: true }),
+      ),
+    ]);
+    if (!v2 && !legacy) {
+      throw new NotFoundException('No active access entitlement');
+    }
+    if (!v2) {
+      return preferredToken ? { ...legacy!, token: preferredToken } : legacy!;
+    }
+    if (!legacy) return v2;
+
+    const nodeMap = new Map(
+      [...v2.nodes, ...legacy.nodes].map((node) => [node.id, node] as const),
+    );
+    const nodes = [...nodeMap.values()];
+    const endsAt = [v2.subscription.endsAt, legacy.subscription.endsAt]
+      .map((value) => new Date(value))
+      .reduce((latest, value) => (value > latest ? value : latest))
+      .toISOString();
+    return {
+      token: preferredToken ?? v2.token,
+      node: nodes[0],
+      nodes,
+      subscription: {
+        speedUpMbpsSnapshot: Math.max(
+          v2.subscription.speedUpMbpsSnapshot,
+          legacy.subscription.speedUpMbpsSnapshot,
+        ),
+        speedDownMbpsSnapshot: Math.max(
+          v2.subscription.speedDownMbpsSnapshot,
+          legacy.subscription.speedDownMbpsSnapshot,
+        ),
+        deviceLimitSnapshot: Math.max(
+          v2.subscription.deviceLimitSnapshot ?? 1,
+          legacy.subscription.deviceLimitSnapshot,
+        ),
+        consumedTrafficBytes:
+          this.getConsumedBytes(v2.subscription) +
+          this.getConsumedBytes(legacy.subscription),
+        endsAt,
+      },
+      trafficRemaining: v2.trafficRemaining + legacy.trafficRemaining,
     };
   }
 
@@ -646,11 +746,7 @@ export class PortalService {
       if (!token || token.revokedAt) {
         throw new NotFoundException('Subscription not found');
       }
-      const hasV2 =
-        (await this.prisma.entitlementGrant.count({
-          where: { userId: token.userId },
-        })) > 0;
-      if (hasV2) return this.getV2AccessBundle(token.userId, token);
+      return this.getUnifiedAccessBundle(token.userId, token);
     }
 
     return this.store.getAccessBundleByToken(tokenValue);

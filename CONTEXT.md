@@ -20,6 +20,18 @@
   email registration. It is pending until the invitee's first qualifying paid
   plan purchase through a plan CDK or Epay grants a plan, then it is rewarded
   or conservatively reversed after a refund.
+- A `WalletLedgerEntry` is the immutable source of truth for balance movement.
+  Feature modules call the wallet posting API and never update a balance or
+  create compatibility wallet rows themselves.
+- `EntitlementService` owns every grant, quota bucket, quota adjustment,
+  revocation, and access-snapshot mutation. Check-in, group-buy, referrals,
+  commerce, catalog, and customer administration call this boundary.
+- Paid fulfillment has an explicit state separate from gateway payment state.
+  Retryable failures stay in reconciliation; non-retryable failures enter
+  compensation refund, and missing credential snapshots require manual review.
+- Wallet plan checkout does not earn referral cashback. Partial refunds recover
+  cashback proportionally; full refunds also revoke unused linked entitlement
+  and bonus traffic without rewriting usage history.
 
 ## Compatibility rules
 
@@ -30,6 +42,8 @@
 - Legacy plan, offer, product store URL, and tutorial setting fields remain
   readable during the expand-contract migration window.
 - Local development changes must not connect to or mutate production nodes.
+- Full-site restore accepts only a backup whose manifest and restored
+  `_prisma_migrations` version exactly match the running release.
 - Node access lifecycle and runtime service state are separate. Runtime start,
   stop, and status requests are durable worker-owned commands; API requests do
   not call systemd or node agents directly.

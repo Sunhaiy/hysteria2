@@ -14,6 +14,7 @@ import { CurrentPrincipal } from '../common/current-principal.decorator';
 import type { SessionPrincipal } from '../common/auth.types';
 import { ManualCreditDto, UpdateManualOrderDto } from '../contracts/http.dto';
 import { ControlPlaneStoreService } from '../domain/control-plane.store';
+import { EpayReconciliationService } from '../epay/epay-reconciliation.service';
 import {
   OrderQueryService,
   type AdminOrderQuery,
@@ -26,6 +27,7 @@ export class OrdersController {
   constructor(
     private readonly store: ControlPlaneStoreService,
     private readonly orderQuery: OrderQueryService,
+    private readonly epayReconciliation: EpayReconciliationService,
   ) {}
 
   @Get()
@@ -41,6 +43,11 @@ export class OrdersController {
   @Get('payment-attempts')
   paymentAttempts(@Query() query: PaymentAttemptQuery) {
     return this.orderQuery.paymentAttempts(query);
+  }
+
+  @Post('payment-attempts/:id/reconcile')
+  reconcilePaymentAttempt(@Param('id') id: string) {
+    return this.epayReconciliation.reconcilePaymentAttempt(id);
   }
 
   @Get(':id')

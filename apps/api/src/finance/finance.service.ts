@@ -9,6 +9,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { pageResponse, parsePage } from '../common/pagination';
 import { ReferralService } from '../referrals/referral.service';
 import { EntitlementService } from '../entitlement/entitlement.service';
+import { GroupBuyService } from '../group-buy/group-buy.service';
+import { postWalletEntry } from '../wallet/wallet-ledger';
 import type {
   CreateNodeCostDto,
   CreateRefundDto,
@@ -38,6 +40,7 @@ export class FinanceService {
     private readonly prisma: PrismaService,
     @Optional() private readonly referrals?: ReferralService,
     @Optional() private readonly entitlements?: EntitlementService,
+    @Optional() private readonly groupBuys?: GroupBuyService,
   ) {}
 
   async summary(query: FinanceQuery) {
@@ -55,7 +58,10 @@ export class FinanceService {
           where: {
             status: RefundStatus.APPLIED,
             processedAt: { gte: range.from, lt: range.to },
-            order: query.userId ? { userId: query.userId } : undefined,
+            order: {
+              source: 'PAYMENT',
+              userId: query.userId || undefined,
+            },
           },
           _sum: { amountCents: true },
         }),
@@ -101,16 +107,16 @@ export class FinanceService {
       fulfilled
         .filter((group) => sources.includes(group.source))
         .reduce((sum, group) => sum + (group._sum.amountCents ?? 0), 0);
-    const walletRevenueCents = revenueFor('WALLET', 'PAYMENT');
-    const manualRevenueCents = revenueFor('ADMIN', 'LEGACY');
+    const fulfilledGrossRevenueCents = revenueFor('PAYMENT');
+    const walletRevenueCents = 0;
+    const manualRevenueCents = 0;
     const cdkRevenueCents = revenueFor('CDK');
     const refundCents = refunds._sum.amountCents ?? 0;
+    const fulfilledNetRevenueCents = fulfilledGrossRevenueCents - refundCents;
     const amortizedNodeCostCents = costs.reduce(
       (sum, cost) => sum + Number(cost.amortizedCents),
       0,
     );
-    const fulfilledNetRevenueCents =
-      walletRevenueCents + manualRevenueCents + cdkRevenueCents;
     return {
       timezone: 'Asia/Shanghai',
       currency: 'CNY',
@@ -123,8 +129,7 @@ export class FinanceService {
       cdkEntitlementValueCents: cdkRevenueCents,
       refundCents,
       amortizedNodeCostCents,
-      grossProfitCents:
-        fulfilledNetRevenueCents - refundCents - amortizedNodeCostCents,
+      grossProfitCents: fulfilledNetRevenueCents - amortizedNodeCostCents,
       walletLiabilityCents: walletLiability._sum.balanceCents ?? 0,
       appliedOrders: fulfilled.reduce(
         (sum, group) => sum + group._count._all,
@@ -307,33 +312,14 @@ export class FinanceService {
               },
             });
             if (input.method === 'wallet') {
-              const before = order.user.balanceCents;
-              const after = before + input.amountCents;
-              await tx.user.update({
-                where: { id: order.userId },
-                data: { balanceCents: after },
-              });
-              const legacy = await tx.walletTransaction.create({
-                data: {
-                  userId: order.userId,
-                  amountCents: input.amountCents,
-                  kind: 'REFUND',
-                  note: input.reason,
-                },
-              });
-              await tx.walletLedgerEntry.create({
-                data: {
-                  legacyTransactionId: legacy.id,
-                  userId: order.userId,
-                  actorId,
-                  orderId,
-                  amountCents: input.amountCents,
-                  beforeBalanceCents: before,
-                  afterBalanceCents: after,
-                  kind: 'REFUND',
-                  idempotencyKey: `refund:${refund.id}`,
-                  note: input.reason,
-                },
+              await postWalletEntry(tx, {
+                userId: order.userId,
+                actorId,
+                orderId,
+                amountCents: input.amountCents,
+                kind: 'REFUND',
+                idempotencyKey: `refund:${refund.id}`,
+                note: input.reason,
               });
             }
             if (this.referrals) {
@@ -342,13 +328,22 @@ export class FinanceService {
                 orderId,
                 actorId,
                 refund.id,
+                {
+                  cumulativeRefundedCents: refunded + input.amountCents,
+                  orderAmountCents: order.amountCents,
+                  fullRefund:
+                    refunded + input.amountCents === order.amountCents,
+                },
               );
             }
-            if (
-              this.entitlements &&
-              refunded + input.amountCents === order.amountCents
-            ) {
-              await this.entitlements.reverseUltraForFullRefund(
+            if (refunded + input.amountCents === order.amountCents) {
+              await this.entitlements?.reverseOrderForFullRefund(
+                tx,
+                orderId,
+                actorId,
+                refund.id,
+              );
+              await this.groupBuys?.reverseBonusForRefund(
                 tx,
                 orderId,
                 actorId,

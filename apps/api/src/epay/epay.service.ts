@@ -10,14 +10,18 @@ import {
 import { randomBytes } from 'node:crypto';
 import {
   type EpayGatewayTestAttempt,
+  type EpayPaymentAttempt,
   EpayPaymentStatus,
+  PaymentFulfillmentStatus,
   Prisma,
 } from '@prisma/client';
 import { CommerceService } from '../commerce/commerce.service';
+import { isPaymentFulfillmentRejectedError } from '../commerce/payment-fulfillment.error';
 import { PrismaService } from '../prisma/prisma.service';
 import { SecretCipherService } from '../security/secret-cipher.service';
-import { SettingsService, type EpayConfig } from '../settings/settings.service';
+import { SettingsService } from '../settings/settings.service';
 import { apiPublicUrl } from '../common/public-url';
+import { GroupBuyService } from '../group-buy/group-buy.service';
 import {
   catalogOfferSnapshotInclude,
   parseCatalogOfferSnapshot,
@@ -32,6 +36,10 @@ import {
   type EpayParameters,
 } from './epay-signature';
 import { EpayCheckoutService } from './epay-checkout.service';
+import {
+  EpayCredentialSnapshotError,
+  readEpayCredentialSnapshot,
+} from './epay-credentials';
 
 const PAYMENT_TTL_MS = 30 * 60 * 1000;
 const GATEWAY_TEST_AMOUNT_CENTS = 1;
@@ -50,6 +58,7 @@ export class EpayService {
     private readonly commerce: CommerceService,
     private readonly cipher: SecretCipherService,
     @Optional() private readonly checkout?: EpayCheckoutService,
+    @Optional() private readonly groupBuys?: GroupBuyService,
   ) {}
 
   async createPayment(
@@ -94,16 +103,7 @@ export class EpayService {
     try {
       const attempt = await this.prisma.$transaction(
         async (tx) => {
-          await tx.epayPaymentAttempt.updateMany({
-            where: {
-              status: EpayPaymentStatus.PENDING,
-              expiresAt: { lte: now },
-            },
-            data: {
-              status: EpayPaymentStatus.EXPIRED,
-              activeKey: null,
-            },
-          });
+          await this.expirePendingPayments(tx, now, userId);
 
           const replay = await tx.epayPaymentAttempt.findUnique({
             where: {
@@ -182,14 +182,21 @@ export class EpayService {
                 resetCycleStartsAt: quote.resetCycleStartsAt,
                 resetCycleEndsAt: quote.resetCycleEndsAt,
                 resetTrafficBytes: quote.resetTrafficBytes,
+                resetCreditBytes:
+                  quote.resetCreditBytes == null
+                    ? null
+                    : String(quote.resetCreditBytes),
               }) as unknown as Prisma.InputJsonValue,
-              expiresAt: new Date(now.getTime() + PAYMENT_TTL_MS),
+              expiresAt: this.paymentExpiry(
+                now,
+                purchaseAction === 'plan_reset' ? quote.resetCycleEndsAt : null,
+              ),
             },
           });
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
-      return this.presentAttempt(attempt, config);
+      return this.presentAttempt(attempt);
     } catch (error) {
       if (!this.isUniqueConflict(error)) throw error;
       const replay = await this.prisma.epayPaymentAttempt.findFirst({
@@ -210,16 +217,162 @@ export class EpayService {
           '该商品已有一笔其他规格或支付方式的待支付订单',
         );
       }
-      return this.presentAttempt(replay, config);
+      return this.presentAttempt(replay);
     }
   }
 
   async getPayment(userId: string, attemptId: string) {
-    const attempt = await this.prisma.epayPaymentAttempt.findFirst({
-      where: { id: attemptId, userId },
+    return this.prisma.$transaction(async (tx) => {
+      let attempt = await tx.epayPaymentAttempt.findFirst({
+        where: { id: attemptId, userId },
+      });
+      if (!attempt) throw new NotFoundException('支付订单不存在');
+      if (
+        attempt.status === EpayPaymentStatus.PENDING &&
+        attempt.expiresAt <= new Date()
+      ) {
+        const expired = await tx.epayPaymentAttempt.updateMany({
+          where: { id: attempt.id, status: EpayPaymentStatus.PENDING },
+          data: { status: EpayPaymentStatus.EXPIRED, activeKey: null },
+        });
+        if (expired.count > 0) {
+          await this.groupBuys?.closePayment(tx, attempt.id);
+          attempt = {
+            ...attempt,
+            status: EpayPaymentStatus.EXPIRED,
+            activeKey: null,
+          };
+        }
+      }
+      return this.presentStatus(attempt);
     });
-    if (!attempt) throw new NotFoundException('支付订单不存在');
-    return this.presentStatus(attempt);
+  }
+
+  async createGroupBuyPayment(
+    userId: string,
+    input:
+      | { kind: 'create'; campaignId: string }
+      | { kind: 'join'; groupId: string },
+    paymentType: 'alipay' | 'wxpay' | 'balance',
+    idempotencyKey: string,
+  ) {
+    if (!this.groupBuys) {
+      throw new ServiceUnavailableException('拼团模块当前不可用');
+    }
+    const normalizedKey = idempotencyKey.trim();
+    if (!normalizedKey || normalizedKey.length > 120) {
+      throw new BadRequestException('A valid Idempotency-Key is required');
+    }
+    if (paymentType === 'balance') {
+      return this.groupBuys.purchaseWithWallet(userId, input, normalizedKey);
+    }
+    const config = await this.requireConfiguredEpay(true);
+    const now = new Date();
+    let attempt: EpayPaymentAttempt | null = null;
+    for (let retry = 0; retry < 3; retry += 1) {
+      try {
+        attempt = await this.prisma.$transaction(
+          async (tx) => {
+            await this.expirePendingPayments(tx, now, userId);
+            const replay = await tx.epayPaymentAttempt.findUnique({
+              where: {
+                userId_idempotencyKey: {
+                  userId,
+                  idempotencyKey: normalizedKey,
+                },
+              },
+            });
+            if (replay) {
+              const replaySnapshot = parseCatalogOfferSnapshot(
+                replay.entitlementSnapshot,
+              );
+              const replayGroupId = replaySnapshot?.groupBuyId;
+              const replayGroup =
+                input.kind === 'create' && replayGroupId
+                  ? await tx.groupBuy.findUnique({
+                      where: { id: replayGroupId },
+                      select: { campaignId: true },
+                    })
+                  : null;
+              if (
+                replay.paymentType !== paymentType ||
+                replaySnapshot?.purchaseMode !== 'group_buy' ||
+                (input.kind === 'join' &&
+                  replaySnapshot.groupBuyId !== input.groupId) ||
+                (input.kind === 'create' &&
+                  replayGroup?.campaignId !== input.campaignId)
+              ) {
+                throw new ConflictException(
+                  'Idempotency-Key was already used for another purchase',
+                );
+              }
+              return replay;
+            }
+            const prepared = await this.groupBuys!.preparePayment(
+              tx,
+              userId,
+              input,
+              now,
+            );
+            if (prepared.existingAttempt) {
+              if (prepared.existingAttempt.paymentType !== paymentType) {
+                throw new ConflictException(
+                  '该拼团已有其他支付方式的待支付订单',
+                );
+              }
+              return prepared.existingAttempt;
+            }
+            if (
+              prepared.member.orderId ||
+              prepared.member.walletIdempotencyKey
+            ) {
+              throw new ConflictException('该拼团成员已经完成余额支付');
+            }
+            const created = await tx.epayPaymentAttempt.create({
+              data: {
+                userId,
+                offerId: prepared.group.offerIdSnapshot,
+                merchantOrderNo: this.createMerchantOrderNo(now, 'EPG'),
+                idempotencyKey: normalizedKey,
+                activeKey: `group-buy:${prepared.member.id}`,
+                paymentType,
+                gatewayUrlSnapshot: config.gatewayUrl,
+                merchantIdSnapshot: config.merchantId,
+                merchantKeyCiphertext: this.cipher.encrypt(config.merchantKey!),
+                amountCents:
+                  prepared.snapshot.groupBuySettlementMode ===
+                  'ORIGINAL_PRICE_BALANCE_REBATE'
+                    ? (prepared.snapshot.groupBuyOriginalPriceCents ??
+                      prepared.group.priceCentsSnapshot)
+                    : prepared.group.priceCentsSnapshot,
+                basePriceCents:
+                  prepared.snapshot.groupBuyOriginalPriceCents ??
+                  prepared.group.priceCentsSnapshot,
+                currency: prepared.group.currencySnapshot,
+                productNameSnapshot: `${prepared.offer.product.name} · ${prepared.offer.name} · 拼团`,
+                entitlementSnapshot: prepared.snapshot,
+                expiresAt: this.paymentExpiry(now, prepared.group.expiresAt),
+              },
+            });
+            await this.groupBuys!.attachPayment(
+              tx,
+              prepared.member.id,
+              created.id,
+            );
+            return created;
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+        break;
+      } catch (error) {
+        if (this.isRetryableTransactionError(error) && retry < 2) continue;
+        throw error;
+      }
+    }
+    if (!attempt) {
+      throw new ConflictException('拼团支付创建冲突，请重试');
+    }
+    return this.presentAttempt(attempt);
   }
 
   async createGatewayTest(
@@ -443,26 +596,24 @@ export class EpayService {
     });
     if (!attempt) return { accepted: false, status: 'failed' };
 
-    const currentConfig =
-      attempt.merchantIdSnapshot && attempt.merchantKeyCiphertext
-        ? null
-        : await this.requireConfiguredEpay(false).catch(() => null);
-    const merchantId = attempt.merchantIdSnapshot ?? currentConfig?.merchantId;
-    let merchantKey: string | undefined;
+    let credentials;
     try {
-      merchantKey = attempt.merchantKeyCiphertext
-        ? this.cipher.decrypt(attempt.merchantKeyCiphertext)
-        : currentConfig?.merchantKey;
-    } catch {
+      credentials = readEpayCredentialSnapshot(
+        attempt,
+        (ciphertext) => this.cipher.decrypt(ciphertext),
+        '易支付回调订单',
+      );
+    } catch (error) {
+      if (error instanceof EpayCredentialSnapshotError) {
+        await this.markCredentialSnapshotForManualReview(attempt.id, error);
+      }
       return { accepted: false, status: 'failed' };
     }
     if (
       parameters.sign_type?.toUpperCase() !== 'MD5' ||
-      !merchantId ||
-      !merchantKey ||
-      parameters.pid !== merchantId ||
+      parameters.pid !== credentials.merchantId ||
       parameters.trade_status !== 'TRADE_SUCCESS' ||
-      !verifyEpaySignature(parameters, merchantKey)
+      !verifyEpaySignature(parameters, credentials.merchantKey)
     ) {
       return { accepted: false, status: 'failed' };
     }
@@ -554,10 +705,35 @@ export class EpayService {
             ) {
               return null;
             }
+            const snapshot = parseCatalogOfferSnapshot(
+              attempt.entitlementSnapshot,
+            );
             if (attempt.status === EpayPaymentStatus.SETTLED) {
               return attempt.gatewayTradeNo === input.gatewayTradeNo
                 ? attempt
                 : null;
+            }
+
+            if (snapshot?.purchaseMode === 'group_buy') {
+              if (!this.groupBuys) {
+                throw new ServiceUnavailableException('拼团模块当前不可用');
+              }
+              return this.groupBuys.settleVerifiedPayment(
+                tx,
+                attempt,
+                {
+                  attemptId: attempt.id,
+                  userId: attempt.userId,
+                  offerId: attempt.offerId,
+                  merchantOrderNo: input.merchantOrderNo,
+                  gatewayTradeNo: input.gatewayTradeNo,
+                  amountCents: input.amountCents,
+                  basePriceCents: attempt.basePriceCents,
+                  entitlementSnapshot: attempt.entitlementSnapshot,
+                  paidAt: input.paidAt,
+                },
+                snapshot,
+              );
             }
 
             const order = await this.commerce.fulfillEpayPayment(tx, {
@@ -577,6 +753,7 @@ export class EpayService {
                 orderId: order.orderId,
                 gatewayTradeNo: input.gatewayTradeNo,
                 status: EpayPaymentStatus.SETTLED,
+                fulfillmentStatus: PaymentFulfillmentStatus.APPLIED,
                 activeKey: null,
                 settledAt: input.paidAt,
                 failedAt: null,
@@ -594,7 +771,18 @@ export class EpayService {
           : { accepted: false, status: 'failed' };
       } catch (error) {
         if (this.isRetryableTransactionError(error) && retry < 2) continue;
-        await this.recordSettlementFailure(input.merchantOrderNo, error);
+        const compensated = await this.recordSettlementFailure(
+          input.merchantOrderNo,
+          error,
+          input,
+        );
+        if (compensated) {
+          return {
+            accepted: true,
+            attemptId: input.attemptId,
+            status: 'success',
+          };
+        }
         return {
           accepted: false,
           attemptId: input.attemptId,
@@ -603,6 +791,48 @@ export class EpayService {
       }
     }
     return { accepted: false, status: 'failed' };
+  }
+
+  private async expirePendingPayments(
+    tx: Prisma.TransactionClient,
+    now: Date,
+    userId: string,
+  ) {
+    const where = {
+      userId,
+      status: EpayPaymentStatus.PENDING,
+      expiresAt: { lte: now },
+    } satisfies Prisma.EpayPaymentAttemptWhereInput;
+    const groupPayments = this.groupBuys
+      ? await tx.epayPaymentAttempt.findMany({
+          where: {
+            ...where,
+            entitlementSnapshot: {
+              path: ['purchaseMode'],
+              equals: 'group_buy',
+            },
+          },
+          select: { id: true },
+        })
+      : [];
+    await tx.epayPaymentAttempt.updateMany({
+      where,
+      data: { status: EpayPaymentStatus.EXPIRED, activeKey: null },
+    });
+    for (const payment of groupPayments) {
+      await this.groupBuys?.closePayment(tx, payment.id);
+    }
+  }
+
+  private paymentExpiry(now: Date, upperBound?: string | Date | null) {
+    const ttl = new Date(now.getTime() + PAYMENT_TTL_MS);
+    if (!upperBound) return ttl;
+    const bound =
+      upperBound instanceof Date ? upperBound : new Date(upperBound);
+    if (Number.isNaN(bound.getTime()) || bound <= now) {
+      throw new ConflictException('支付关联的权益周期已经结束');
+    }
+    return bound < ttl ? bound : ttl;
   }
 
   private async requireConfiguredEpay(requireEnabled: boolean) {
@@ -616,35 +846,39 @@ export class EpayService {
     return config;
   }
 
-  private async presentAttempt(
-    attempt: {
-      id: string;
-      merchantOrderNo: string;
-      status: EpayPaymentStatus;
-      paymentType: string;
-      gatewayUrlSnapshot: string | null;
-      merchantIdSnapshot: string | null;
-      merchantKeyCiphertext: string | null;
-      amountCents: number;
-      productNameSnapshot: string;
-      expiresAt: Date;
-      orderId: string | null;
-      settlementFailureCount: number;
-    },
-    config: EpayConfig,
-  ) {
+  private async presentAttempt(attempt: {
+    id: string;
+    merchantOrderNo: string;
+    status: EpayPaymentStatus;
+    fulfillmentStatus: PaymentFulfillmentStatus;
+    paymentType: string;
+    gatewayUrlSnapshot: string | null;
+    merchantIdSnapshot: string | null;
+    merchantKeyCiphertext: string | null;
+    amountCents: number;
+    productNameSnapshot: string;
+    expiresAt: Date;
+    orderId: string | null;
+    settlementFailureCount: number;
+  }) {
     const status = this.presentStatus(attempt);
     if (attempt.status !== EpayPaymentStatus.PENDING) return status;
-    const gatewayUrl = attempt.gatewayUrlSnapshot ?? config.gatewayUrl;
-    const merchantId = attempt.merchantIdSnapshot ?? config.merchantId;
-    const merchantKey = attempt.merchantKeyCiphertext
-      ? this.cipher.decrypt(attempt.merchantKeyCiphertext)
-      : config.merchantKey;
-    if (!gatewayUrl || !merchantId || !merchantKey) {
-      throw new ServiceUnavailableException('易支付尚未完成配置');
+    let credentials;
+    try {
+      credentials = readEpayCredentialSnapshot(attempt, (ciphertext) =>
+        this.cipher.decrypt(ciphertext),
+      );
+    } catch (error) {
+      if (error instanceof EpayCredentialSnapshotError) {
+        await this.markCredentialSnapshotForManualReview(attempt.id, error);
+        throw new ConflictException(
+          '历史支付订单缺少完整凭据快照，请重新发起支付',
+        );
+      }
+      throw error;
     }
     const fields: EpayParameters = {
-      pid: merchantId,
+      pid: credentials.merchantId,
       type: attempt.paymentType,
       out_trade_no: attempt.merchantOrderNo,
       notify_url: `${apiPublicUrl()}/api/payments/epay/notify`,
@@ -653,9 +887,9 @@ export class EpayService {
       money: formatEpayAmount(attempt.amountCents),
       sign_type: 'MD5',
     };
-    fields.sign = createEpaySignature(fields, merchantKey);
+    fields.sign = createEpaySignature(fields, credentials.merchantKey);
     const gateway = {
-      url: this.submitUrl(gatewayUrl),
+      url: this.submitUrl(credentials.gatewayUrl),
       method: 'POST' as const,
       fields,
     };
@@ -713,43 +947,95 @@ export class EpayService {
   private presentStatus(attempt: {
     id: string;
     status: EpayPaymentStatus;
+    fulfillmentStatus?: PaymentFulfillmentStatus;
     amountCents: number;
     productNameSnapshot: string;
     expiresAt: Date;
     orderId: string | null;
     settlementFailureCount: number;
   }) {
+    const fulfillmentStatus =
+      attempt.fulfillmentStatus ??
+      (attempt.orderId
+        ? PaymentFulfillmentStatus.APPLIED
+        : PaymentFulfillmentStatus.PENDING);
     return {
       id: attempt.id,
       status: attempt.status.toLowerCase(),
+      fulfillmentStatus: fulfillmentStatus.toLowerCase(),
       amountCents: attempt.amountCents,
       productName: attempt.productNameSnapshot,
       expiresAt: attempt.expiresAt.toISOString(),
       orderId: attempt.orderId,
       fulfillmentPending:
-        attempt.status !== EpayPaymentStatus.SETTLED &&
-        attempt.settlementFailureCount > 0,
+        attempt.settlementFailureCount > 0 &&
+        fulfillmentStatus !== PaymentFulfillmentStatus.APPLIED &&
+        fulfillmentStatus !== PaymentFulfillmentStatus.REFUNDED,
     };
   }
 
   private async recordSettlementFailure(
     merchantOrderNo: string,
     error: unknown,
+    payment?: {
+      gatewayTradeNo: string;
+      paidAt: Date;
+    },
   ) {
     const message = this.describeSettlementError(error);
-    await this.prisma.$transaction(async (tx) => {
+    const nonRetryable = isPaymentFulfillmentRejectedError(error);
+    return this.prisma.$transaction(async (tx) => {
+      if (nonRetryable && payment) {
+        const attempt = await tx.epayPaymentAttempt.findUnique({
+          where: { merchantOrderNo },
+        });
+        if (!attempt) return false;
+        if (attempt.orderId) return false;
+        await tx.epayPaymentAttempt.update({
+          where: { id: attempt.id },
+          data: {
+            gatewayTradeNo: payment.gatewayTradeNo,
+            status: EpayPaymentStatus.SETTLED,
+            fulfillmentStatus: PaymentFulfillmentStatus.REFUND_PENDING,
+            activeKey: null,
+            settledAt: payment.paidAt,
+            settlementFailureCount: { increment: 1 },
+            lastSettlementError: message,
+            lastSettlementFailedAt: new Date(),
+          },
+        });
+        await tx.epayRefundAttempt.upsert({
+          where: { paymentAttemptId: attempt.id },
+          create: {
+            paymentAttemptId: attempt.id,
+            amountCents: attempt.amountCents,
+            reasonCode: error.reasonCode,
+          },
+          update: {},
+        });
+        await tx.auditLog.create({
+          data: {
+            action: 'EPAY_FULFILLMENT_COMPENSATION_QUEUED',
+            targetType: 'EpayPaymentAttempt',
+            targetId: attempt.id,
+            metadata: { reasonCode: error.reasonCode, reason: message },
+          },
+        });
+        return true;
+      }
       const updated = await tx.epayPaymentAttempt.updateMany({
         where: {
           merchantOrderNo,
           status: { not: EpayPaymentStatus.SETTLED },
         },
         data: {
+          fulfillmentStatus: PaymentFulfillmentStatus.RETRYING,
           settlementFailureCount: { increment: 1 },
           lastSettlementError: message,
           lastSettlementFailedAt: new Date(),
         },
       });
-      if (updated.count === 0) return;
+      if (updated.count === 0) return false;
       await tx.auditLog.create({
         data: {
           action: 'EPAY_SETTLEMENT_FAILED',
@@ -758,6 +1044,27 @@ export class EpayService {
           metadata: { reason: message },
         },
       });
+      return false;
+    });
+  }
+
+  private markCredentialSnapshotForManualReview(
+    attemptId: string,
+    error: EpayCredentialSnapshotError,
+  ) {
+    const now = new Date();
+    return this.prisma.epayPaymentAttempt.updateMany({
+      where: {
+        id: attemptId,
+        orderId: null,
+        fulfillmentStatus: { not: PaymentFulfillmentStatus.APPLIED },
+      },
+      data: {
+        activeKey: null,
+        fulfillmentStatus: PaymentFulfillmentStatus.MANUAL_REVIEW,
+        lastSettlementError: error.message.slice(0, 500),
+        lastSettlementFailedAt: now,
+      },
     });
   }
 

@@ -1,4 +1,5 @@
 import { CatalogService } from './catalog.service';
+import { EntitlementService } from '../entitlement/entitlement.service';
 
 describe('CatalogService publishing rules', () => {
   const profile = {
@@ -19,7 +20,11 @@ describe('CatalogService publishing rules', () => {
         operation(tx),
       ),
     };
-    return new CatalogService(prisma as never, cache as never);
+    return new CatalogService(
+      prisma as never,
+      cache as never,
+      new EntitlementService(prisma as never),
+    );
   }
 
   it('rejects a catalog product without any offers', async () => {
@@ -594,6 +599,7 @@ describe('CatalogService publishing rules', () => {
         get: jest.fn().mockResolvedValue(null),
         set: jest.fn().mockResolvedValue(undefined),
       } as never,
+      {} as never,
     );
 
     const catalog = await service.getPortalCatalog();
@@ -616,6 +622,7 @@ describe('CatalogService publishing rules', () => {
         node: { findMany: jest.fn().mockResolvedValue([]) },
         catalogProduct: { findMany },
       } as never,
+      {} as never,
       {} as never,
     );
 
@@ -670,7 +677,11 @@ describe('CatalogService publishing rules', () => {
         count: jest.fn().mockResolvedValue(1),
       },
     };
-    const service = new CatalogService(prisma as never, cache as never);
+    const service = new CatalogService(
+      prisma as never,
+      cache as never,
+      {} as never,
+    );
 
     await service.archiveOffer('offer_1');
 

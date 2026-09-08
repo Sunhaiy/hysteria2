@@ -1,10 +1,17 @@
 import {
+  databaseCompatibilitySql,
   isSafeArchivePath,
   localDateKey,
+  parseBackupManifest,
   scheduledBackupsToDelete,
   shouldCreateDailyBackup,
 } from './backup-utils';
-import type { BackupMetadata } from './backup.types';
+import {
+  BACKUP_FORMAT,
+  BACKUP_FORMAT_VERSION,
+  CURRENT_DATABASE_SCHEMA_VERSION,
+  type BackupMetadata,
+} from './backup.types';
 
 function backup(
   id: string,
@@ -23,6 +30,38 @@ function backup(
 }
 
 describe('backup utilities', () => {
+  it('requires the current migration and every stateful business domain', () => {
+    const sql = databaseCompatibilitySql();
+
+    expect(sql).toContain(
+      `"migration_name" = '${CURRENT_DATABASE_SCHEMA_VERSION}'`,
+    );
+    expect(sql).toContain('"WalletLedgerEntry"');
+    expect(sql).toContain('"EntitlementGrant"');
+    expect(sql).toContain('"GroupBuy"');
+    expect(sql).toContain('"DailyCheckIn"');
+    expect(sql).toContain('"rolled_back_at" IS NULL');
+  });
+
+  it('rejects archives that do not declare a compatible database schema', () => {
+    expect(() =>
+      parseBackupManifest({
+        format: BACKUP_FORMAT,
+        formatVersion: BACKUP_FORMAT_VERSION,
+        createdAt: '2026-09-07T00:00:00.000Z',
+        appVersion: 'legacy',
+        source: 'manual',
+        database: {
+          path: 'database.dump',
+          size: 1,
+          sha256: 'a'.repeat(64),
+          format: 'postgres-custom',
+        },
+        files: [],
+      }),
+    ).toThrow('数据库结构版本');
+  });
+
   it('rejects archive traversal, absolute paths, backslashes, and links outside known roots', () => {
     expect(isSafeArchivePath('manifest.json')).toBe(true);
     expect(isSafeArchivePath('files/tutorial-images/one.webp')).toBe(true);

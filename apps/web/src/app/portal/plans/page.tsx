@@ -382,7 +382,7 @@ export default function PortalPlansPage() {
           await load();
           return;
         }
-        if (payment.status === "expired" || payment.status === "failed") {
+        if (payment.status === "failed") {
           setPendingPaymentId(null);
           setError("支付未完成或订单已过期，请重新发起购买。");
           return;
@@ -402,8 +402,8 @@ export default function PortalPlansPage() {
   async function fetchQuote(
     offer: Offer,
     purchaseAction: "purchase" | "plan_reset" = "purchase",
-  ) {
-    if (!token) return;
+  ): Promise<Quote | null> {
+    if (!token) return null;
     setBusy(true);
     setError(null);
     try {
@@ -413,9 +413,11 @@ export default function PortalPlansPage() {
         body: { offerId: offer.id, purchaseAction },
       });
       setQuote(nextQuote);
+      return nextQuote;
     } catch (cause) {
       setQuote(null);
       setError(cause instanceof ApiError ? cause.message : "报价失败。");
+      return null;
     } finally {
       setBusy(false);
     }
@@ -453,7 +455,9 @@ export default function PortalPlansPage() {
     if (branding.checkoutMode === "epay") void fetchQuote(offer, "purchase");
   }
 
-  function selectPurchaseAction(purchaseAction: "purchase" | "plan_reset") {
+  async function selectPurchaseAction(
+    purchaseAction: "purchase" | "plan_reset",
+  ) {
     if (!checkout || checkout.purchaseAction === purchaseAction) return;
     const offer =
       purchaseAction === "plan_reset"
@@ -465,11 +469,12 @@ export default function PortalPlansPage() {
       setError("当前套餐没有可用于流量重置的月付规格。");
       return;
     }
-    setCheckout({ product: checkout.product, offer, purchaseAction });
     setQuote(null);
     setError(null);
     setIdempotencyKey(crypto.randomUUID());
-    void fetchQuote(offer, purchaseAction);
+    const nextQuote = await fetchQuote(offer, purchaseAction);
+    if (!nextQuote) return;
+    setCheckout({ product: checkout.product, offer, purchaseAction });
   }
 
   function closeCheckout() {
@@ -525,6 +530,17 @@ export default function PortalPlansPage() {
         setCheckout(null);
         setFeedback("订单已经支付并到账。");
         await load();
+        return;
+      }
+      if (payment.status === "expired") {
+        paymentWindow.close();
+        setPendingPaymentId(payment.id);
+        setFeedback("支付窗口已过期，正在向支付网关核对最终结果。");
+        return;
+      }
+      if (payment.status === "failed") {
+        paymentWindow.close();
+        setError("支付订单已关闭，请重新发起购买。");
         return;
       }
       setPendingPaymentId(payment.id);
@@ -907,6 +923,7 @@ export default function PortalPlansPage() {
                       checkout.purchaseAction === "purchase" ? "selected" : ""
                     }
                     type="button"
+                    disabled={busy}
                     role="radio"
                     aria-checked={checkout.purchaseAction === "purchase"}
                     onClick={() => selectPurchaseAction("purchase")}
@@ -922,6 +939,7 @@ export default function PortalPlansPage() {
                       checkout.purchaseAction === "plan_reset" ? "selected" : ""
                     }
                     type="button"
+                    disabled={busy}
                     role="radio"
                     aria-checked={checkout.purchaseAction === "plan_reset"}
                     onClick={() => selectPurchaseAction("plan_reset")}

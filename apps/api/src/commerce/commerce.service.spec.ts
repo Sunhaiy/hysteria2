@@ -182,7 +182,18 @@ describe('CommerceService checkout', () => {
       paymentRecord: { create: jest.fn().mockResolvedValue({}) },
       auditLog: { create: jest.fn().mockResolvedValue({}) },
     };
-    const service = new CommerceService({} as never, {} as never);
+    const entitlements = {
+      creditQuotaBucket: jest.fn().mockResolvedValue({
+        adjustmentId: 'adjustment_reset',
+        bucketId: 'bucket_prime',
+        subscriptionCycleId: 'cycle_prime',
+      }),
+    };
+    const service = new CommerceService(
+      {} as never,
+      {} as never,
+      entitlements as never,
+    );
 
     await expect(
       service.fulfillEpayPayment(tx as never, {
@@ -244,21 +255,248 @@ describe('CommerceService checkout', () => {
       entitlementGrantId: 'grant_prime',
       note: 'PLAN_QUOTA_RESET',
     });
-    expect(tx.quotaBucket.update).toHaveBeenCalledWith({
-      where: { id: 'bucket_prime' },
-      data: { grantedBytes: { increment: 345n } },
+    expect(entitlements.creditQuotaBucket).toHaveBeenCalledWith(tx, {
+      bucketId: 'bucket_prime',
+      bytes: 345n,
+      at: paidAt,
+      idempotencyKey: 'plan-reset:order_reset',
+      reason: '用户购买本期流量重置',
     });
-    expect(tx.subscriptionCycle.update).toHaveBeenCalledWith({
-      where: { id: 'cycle_prime' },
-      data: { adjustmentBytes: { increment: 345n } },
+  });
+
+  it('rejects a paid plan reset after the quoted cycle rolls over', async () => {
+    const paidAt = new Date('2026-10-02T08:00:00.000Z');
+    const oldStartsAt = new Date('2026-09-01T00:00:00.000Z');
+    const oldEndsAt = new Date('2026-10-01T00:00:00.000Z');
+    const currentStartsAt = oldEndsAt;
+    const currentEndsAt = new Date('2026-11-01T00:00:00.000Z');
+    const grant = {
+      id: 'grant_prime',
+      userId: 'user_1',
+      productId: 'product_prime',
+      accessAccountId: 'account_1',
+      accessProfileId: 'profile_prime',
+      legacySubscriptionId: 'subscription_prime',
+      speedUpMbpsSnapshot: 220,
+      speedDownMbpsSnapshot: 220,
+      deviceLimitSnapshot: 999,
+      trafficMultiplierBasisPointsSnapshot: 10_000,
+      startsAt: new Date('2026-09-01T00:00:00.000Z'),
+      endsAt: new Date('2027-09-01T00:00:00.000Z'),
+    };
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest
+          .fn()
+          .mockImplementation(({ data }) =>
+            Promise.resolve({ id: 'order_reset_late', ...data }),
+          ),
+      },
+      entitlementGrant: { findFirst: jest.fn().mockResolvedValue(grant) },
+      quotaBucket: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'bucket_old',
+          grantId: grant.id,
+          startsAt: oldStartsAt,
+          endsAt: oldEndsAt,
+          grantedBytes: 350n,
+          consumedBytes: 345n,
+        }),
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'bucket_current',
+          grantId: grant.id,
+          startsAt: currentStartsAt,
+          endsAt: currentEndsAt,
+          grantedBytes: 350n,
+          consumedBytes: 0n,
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      subscriptionCycle: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'cycle_current' }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      quotaAdjustment: { create: jest.fn().mockResolvedValue({}) },
+      paymentRecord: { create: jest.fn().mockResolvedValue({}) },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const entitlements = {
+      creditQuotaBucket: jest.fn().mockResolvedValue({
+        adjustmentId: 'adjustment_reset_duplicate',
+        bucketId: 'bucket_prime',
+        subscriptionCycleId: 'cycle_prime',
+      }),
+    };
+    const service = new CommerceService(
+      {} as never,
+      {} as never,
+      entitlements as never,
+    );
+
+    await expect(
+      service.fulfillEpayPayment(tx as never, {
+        attemptId: 'attempt_reset_late',
+        userId: 'user_1',
+        offerId: 'offer_prime_monthly',
+        merchantOrderNo: 'EP-RESET-LATE',
+        gatewayTradeNo: 'gateway-reset-late',
+        amountCents: 2_303,
+        basePriceCents: 3_290,
+        paidAt,
+        entitlementSnapshot: {
+          version: 2,
+          offerId: 'offer_prime_monthly',
+          offerSlug: 'prime-monthly',
+          offerName: 'Monthly',
+          productId: 'product_prime',
+          productSlug: 'prime',
+          productName: 'Prime',
+          productKind: 'PLAN',
+          productSeries: 'STANDARD',
+          quotaCadence: 'MONTHLY_RESET',
+          billingPeriod: 'MONTHLY',
+          intervalMonths: 1,
+          legacyDurationDays: null,
+          trafficBytes: '350',
+          currency: 'CNY',
+          accessProfileId: 'profile_prime',
+          speedUpMbps: 220,
+          speedDownMbps: 220,
+          deviceLimit: 999,
+          trafficMultiplierBasisPoints: 10_000,
+          requiresActivePlan: false,
+          purchaseLimitPerUser: null,
+          purchaseLimitKey: null,
+          legacyPlanId: 'plan_prime',
+          legacyPlanOfferId: 'plan_offer_prime',
+          legacyTrafficPackProductId: null,
+          purchaseMode: 'plan_reset',
+          resetGrantId: grant.id,
+          resetBucketId: 'bucket_old',
+          resetCycleStartsAt: oldStartsAt.toISOString(),
+          resetCycleEndsAt: oldEndsAt.toISOString(),
+          resetTrafficBytes: '350',
+          resetCreditBytes: '345',
+        },
+      }),
+    ).rejects.toThrow('流量重置订单已超过原套餐周期');
+    expect(tx.quotaBucket.update).not.toHaveBeenCalled();
+    expect(tx.manualOrder.create).not.toHaveBeenCalled();
+  });
+
+  it('honors each verified reset payment even if another reset already refilled the cycle', async () => {
+    const paidAt = new Date('2026-09-08T08:00:00.000Z');
+    const startsAt = new Date('2026-09-01T00:00:00.000Z');
+    const endsAt = new Date('2026-10-01T00:00:00.000Z');
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest
+          .fn()
+          .mockImplementation(({ data }) =>
+            Promise.resolve({ id: 'order_reset_duplicate', ...data }),
+          ),
+      },
+      entitlementGrant: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'grant_prime',
+          userId: 'user_1',
+          productId: 'product_prime',
+          accessAccountId: 'account_1',
+          accessProfileId: 'profile_prime',
+          legacySubscriptionId: 'subscription_prime',
+          speedUpMbpsSnapshot: 220,
+          speedDownMbpsSnapshot: 220,
+          deviceLimitSnapshot: 999,
+          trafficMultiplierBasisPointsSnapshot: 10_000,
+        }),
+      },
+      quotaBucket: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'bucket_prime',
+          grantId: 'grant_prime',
+          startsAt,
+          endsAt,
+          grantedBytes: 700n,
+          consumedBytes: 350n,
+        }),
+        findFirst: jest.fn(),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      subscriptionCycle: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'cycle_prime' }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      quotaAdjustment: { create: jest.fn().mockResolvedValue({}) },
+      paymentRecord: { create: jest.fn().mockResolvedValue({}) },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const entitlements = {
+      creditQuotaBucket: jest.fn().mockResolvedValue({
+        adjustmentId: 'adjustment_reset_duplicate',
+        bucketId: 'bucket_prime',
+        subscriptionCycleId: 'cycle_prime',
+      }),
+    };
+    const service = new CommerceService(
+      {} as never,
+      {} as never,
+      entitlements as never,
+    );
+
+    await service.fulfillEpayPayment(tx as never, {
+      attemptId: 'attempt_reset_duplicate',
+      userId: 'user_1',
+      offerId: 'offer_prime_monthly',
+      merchantOrderNo: 'EP-RESET-DUPLICATE',
+      gatewayTradeNo: 'gateway-reset-duplicate',
+      amountCents: 2_303,
+      basePriceCents: 3_290,
+      paidAt,
+      entitlementSnapshot: {
+        version: 2,
+        offerId: 'offer_prime_monthly',
+        offerSlug: 'prime-monthly',
+        offerName: 'Monthly',
+        productId: 'product_prime',
+        productSlug: 'prime',
+        productName: 'Prime',
+        productKind: 'PLAN',
+        productSeries: 'STANDARD',
+        quotaCadence: 'MONTHLY_RESET',
+        billingPeriod: 'MONTHLY',
+        intervalMonths: 1,
+        legacyDurationDays: null,
+        trafficBytes: '350',
+        currency: 'CNY',
+        accessProfileId: 'profile_prime',
+        speedUpMbps: 220,
+        speedDownMbps: 220,
+        deviceLimit: 999,
+        trafficMultiplierBasisPoints: 10_000,
+        requiresActivePlan: false,
+        purchaseLimitPerUser: null,
+        purchaseLimitKey: null,
+        legacyPlanId: 'plan_prime',
+        legacyPlanOfferId: 'plan_offer_prime',
+        legacyTrafficPackProductId: null,
+        purchaseMode: 'plan_reset',
+        resetGrantId: 'grant_prime',
+        resetBucketId: 'bucket_prime',
+        resetCycleStartsAt: startsAt.toISOString(),
+        resetCycleEndsAt: endsAt.toISOString(),
+        resetTrafficBytes: '350',
+        resetCreditBytes: '345',
+      },
     });
-    const [adjustmentCreate] = tx.quotaAdjustment.create.mock
-      .calls[0] as unknown as [{ data: Record<string, unknown> }];
-    expect(adjustmentCreate.data).toMatchObject({
-      quotaBucketId: 'bucket_prime',
-      deltaBytes: 345n,
-      beforeRemainingBytes: 5n,
-      afterRemainingBytes: 350n,
+
+    expect(entitlements.creditQuotaBucket).toHaveBeenCalledWith(tx, {
+      bucketId: 'bucket_prime',
+      bytes: 345n,
+      at: paidAt,
+      idempotencyKey: 'plan-reset:order_reset_duplicate',
+      reason: '用户购买本期流量重置',
     });
   });
 
@@ -377,7 +615,11 @@ describe('CommerceService checkout', () => {
     await service.redeem('invitee_1', 'PLAN-CDK');
 
     expect(entitlements.grantFromOrder).toHaveBeenCalledWith(
-      { orderId: 'order_plan_cdk', subscriptionId: 'subscription_1' },
+      {
+        orderId: 'order_plan_cdk',
+        replacePlan: false,
+        subscriptionId: 'subscription_1',
+      },
       tx,
     );
     expect(referrals.settlePlanPurchaseReward).toHaveBeenCalledWith(
@@ -555,6 +797,11 @@ describe('CommerceService checkout', () => {
         findUnique: jest.fn().mockResolvedValue({
           id: 'user_1',
           status: 'ACTIVE',
+          balanceCents: 5000,
+        }),
+        update: jest.fn().mockResolvedValue({
+          balanceCents: 5000,
+          deletedAt: null,
         }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
@@ -582,7 +829,14 @@ describe('CommerceService checkout', () => {
         }),
       },
       redemptionCode: { findUnique: jest.fn() },
-      walletTransaction: { create: jest.fn().mockResolvedValue({}) },
+      walletTransaction: {
+        create: jest.fn().mockResolvedValue({ id: 'wallet_pack_1' }),
+      },
+      walletLedgerEntry: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'ledger_pack_1' }),
+      },
+      paymentRecord: { create: jest.fn().mockResolvedValue({}) },
       accessAccount: {
         upsert: jest.fn().mockResolvedValue({ id: 'account_1' }),
       },
@@ -608,6 +862,26 @@ describe('CommerceService checkout', () => {
       productName: '100 GB booster',
       chargedCents: 1000,
       entitlementExpiresAt: packEndsAt.toISOString(),
+    });
+    const [packLedgerWrite] = tx.walletLedgerEntry.create.mock
+      .calls[0] as unknown as [{ data: Record<string, unknown> }];
+    expect(packLedgerWrite.data).toMatchObject({
+      legacyTransactionId: 'wallet_pack_1',
+      orderId: 'order_2',
+      userId: 'user_1',
+      amountCents: -1000,
+      beforeBalanceCents: 5000,
+      afterBalanceCents: 4000,
+      idempotencyKey: 'checkout-2',
+    });
+    const [packPaymentWrite] = tx.paymentRecord.create.mock
+      .calls[0] as unknown as [{ data: Record<string, unknown> }];
+    expect(packPaymentWrite.data).toMatchObject({
+      orderId: 'order_2',
+      userId: 'user_1',
+      source: 'WALLET',
+      status: 'SETTLED',
+      amountCents: 1000,
     });
     jest.useRealTimers();
   });
@@ -697,8 +971,13 @@ describe('CommerceService checkout', () => {
         findUnique: jest.fn().mockResolvedValue({
           id: 'user_1',
           status: 'ACTIVE',
+          balanceCents: 5000,
         }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        update: jest.fn().mockResolvedValue({
+          balanceCents: 5000,
+          deletedAt: null,
+        }),
       },
       plan: {
         findUnique: jest.fn().mockResolvedValue({
@@ -740,7 +1019,14 @@ describe('CommerceService checkout', () => {
         create: jest.fn().mockResolvedValue({}),
       },
       redemptionCode: { findUnique: jest.fn() },
-      walletTransaction: { create: jest.fn().mockResolvedValue({}) },
+      walletTransaction: {
+        create: jest.fn().mockResolvedValue({ id: 'wallet_plan_1' }),
+      },
+      walletLedgerEntry: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'ledger_plan_1' }),
+      },
+      paymentRecord: { create: jest.fn().mockResolvedValue({}) },
       accessAccount: {
         upsert: jest.fn().mockResolvedValue({ id: 'account_1' }),
       },
@@ -765,6 +1051,26 @@ describe('CommerceService checkout', () => {
       productName: 'Core 200 · 30 天',
       chargedCents: 1800,
       entitlementExpiresAt: '2026-09-13T00:00:00.000Z',
+    });
+    const [planLedgerWrite] = tx.walletLedgerEntry.create.mock
+      .calls[0] as unknown as [{ data: Record<string, unknown> }];
+    expect(planLedgerWrite.data).toMatchObject({
+      legacyTransactionId: 'wallet_plan_1',
+      orderId: 'order_plan',
+      userId: 'user_1',
+      amountCents: -1800,
+      beforeBalanceCents: 5000,
+      afterBalanceCents: 3200,
+      idempotencyKey: 'checkout-plan',
+    });
+    const [planPaymentWrite] = tx.paymentRecord.create.mock
+      .calls[0] as unknown as [{ data: Record<string, unknown> }];
+    expect(planPaymentWrite.data).toMatchObject({
+      orderId: 'order_plan',
+      userId: 'user_1',
+      source: 'WALLET',
+      status: 'SETTLED',
+      amountCents: 1800,
     });
     jest.useRealTimers();
   });
@@ -819,6 +1125,10 @@ describe('CommerceService checkout', () => {
           balanceCents: 5000,
         }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        update: jest.fn().mockResolvedValue({
+          balanceCents: 5000,
+          deletedAt: null,
+        }),
       },
       catalogOffer: {
         findUnique: jest.fn().mockResolvedValue({
@@ -865,7 +1175,10 @@ describe('CommerceService checkout', () => {
       walletTransaction: {
         create: jest.fn().mockResolvedValue({ id: 'wallet_1' }),
       },
-      walletLedgerEntry: { create: jest.fn().mockResolvedValue({}) },
+      walletLedgerEntry: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'ledger_1' }),
+      },
       paymentRecord: { create: jest.fn().mockResolvedValue({}) },
       redemptionUse: { create: jest.fn() },
     };
@@ -999,7 +1312,10 @@ describe('CommerceService checkout', () => {
       walletTransaction: {
         create: jest.fn().mockResolvedValue({ id: 'wallet_2' }),
       },
-      walletLedgerEntry: { create: jest.fn().mockResolvedValue({}) },
+      walletLedgerEntry: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'ledger_legacy' }),
+      },
       paymentRecord: { create: jest.fn().mockResolvedValue({}) },
       redemptionUse: { create: jest.fn() },
       auditLog: { create: jest.fn().mockResolvedValue({}) },
@@ -1229,6 +1545,10 @@ describe('CommerceService checkout', () => {
           status: 'ACTIVE',
           balanceCents: 5000,
         }),
+        update: jest.fn().mockResolvedValue({
+          balanceCents: 5000,
+          deletedAt: null,
+        }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       catalogOffer: {
@@ -1280,7 +1600,10 @@ describe('CommerceService checkout', () => {
       walletTransaction: {
         create: jest.fn().mockResolvedValue({ id: 'wallet_legacy' }),
       },
-      walletLedgerEntry: { create: jest.fn().mockResolvedValue({}) },
+      walletLedgerEntry: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'ledger_legacy' }),
+      },
       paymentRecord: { create: jest.fn().mockResolvedValue({}) },
       redemptionUse: { create: jest.fn() },
     };

@@ -23,6 +23,7 @@ import type {
   UpdatePlanOfferDto,
   SaveCatalogProductDto,
 } from './catalog.dto';
+import { EntitlementService } from '../entitlement/entitlement.service';
 
 const portalCatalogCacheKey = 'catalog:portal:v3';
 const ultraAccessProfileId = 'catalog-ultra-shared';
@@ -32,6 +33,7 @@ export class CatalogService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly cache: CacheService,
+    private readonly entitlements: EntitlementService,
   ) {}
 
   async getAdminCatalog() {
@@ -631,18 +633,13 @@ export class CatalogService {
         });
       }
       if (series !== CatalogProductSeries.ULTRA) {
-        await tx.entitlementGrant.updateMany({
-          where: {
-            productId: id,
-            status: 'ACTIVE',
-            endsAt: { gt: new Date() },
-          },
-          data: {
-            accessProfileId: profile.id,
-            speedUpMbpsSnapshot: input.speedUpMbps,
-            speedDownMbpsSnapshot: input.speedDownMbps,
-            deviceLimitSnapshot: profile.deviceLimit,
-          },
+        await this.entitlements.updateActiveProductAccessSnapshots(tx, {
+          productId: id,
+          accessProfileId: profile.id,
+          speedUpMbps: input.speedUpMbps,
+          speedDownMbps: input.speedDownMbps,
+          deviceLimit: profile.deviceLimit,
+          at: new Date(),
         });
       }
       if (kind === CatalogProductKind.PLAN) {

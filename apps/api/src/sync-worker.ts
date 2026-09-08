@@ -7,6 +7,7 @@ import { NodeRuntimeCommandService } from './node-ops/node-runtime-command.servi
 import { NodeTrafficGuardService } from './node-ops/node-traffic-guard.service';
 import { BackupService } from './backups/backup.service';
 import { EpayReconciliationService } from './epay/epay-reconciliation.service';
+import { GroupBuyReconciliationService } from './group-buy/group-buy-reconciliation.service';
 
 const logger = new Logger('UsageSyncWorker');
 const minimumIntervalMs = 10_000;
@@ -106,6 +107,7 @@ async function bootstrap() {
   const trafficGuard = app.get(NodeTrafficGuardService);
   const backups = app.get(BackupService);
   const epayReconciliation = app.get(EpayReconciliationService);
+  const groupBuyReconciliation = app.get(GroupBuyReconciliationService);
   restoreInProgress = () => backups.isMaintenanceMode();
   const syncIntervalMs = intervalFromEnv(
     'NODE_SYNC_INTERVAL_MS',
@@ -157,6 +159,11 @@ async function bootstrap() {
     15_000,
     5_000,
   );
+  const groupBuyReconciliationIntervalMs = intervalFromEnv(
+    'GROUP_BUY_RECONCILIATION_INTERVAL_MS',
+    30_000,
+    10_000,
+  );
   let stopping = false;
   const tasks: RecurringTask[] = [];
   const syncEnabled =
@@ -167,6 +174,8 @@ async function bootstrap() {
     process.env.NODE_RUNTIME_CONTROL_ENABLED !== 'false';
   const epayReconciliationEnabled =
     process.env.EPAY_RECONCILIATION_ENABLED === 'true';
+  const groupBuyReconciliationEnabled =
+    process.env.GROUP_BUY_RECONCILIATION_ENABLED !== 'false';
 
   const interruptedRestore = await backups.recoverInterruptedRestore();
   if (interruptedRestore) {
@@ -218,6 +227,26 @@ async function bootstrap() {
     );
   } else {
     logger.warn('易支付 active-query reconciliation is disabled');
+  }
+
+  if (groupBuyReconciliationEnabled) {
+    tasks.push(
+      new RecurringTask(
+        'Group-buy expiry and refund reconciliation',
+        groupBuyReconciliationIntervalMs,
+        2 * 60_000,
+        async () => {
+          const result = await groupBuyReconciliation.reconcileDueRefunds();
+          if (result.expiredGroups > 0 || result.checked > 0) {
+            logger.log(
+              `Reconciled ${result.expiredGroups} expired groups and ${result.checked} refunds: ${result.refunded} refunded, ${result.fallbackFulfilled} fallback fulfilled, ${result.exceptions} exceptions`,
+            );
+          }
+        },
+      ),
+    );
+  } else {
+    logger.warn('Group-buy expiry and refund reconciliation is disabled');
   }
 
   if (syncEnabled) {

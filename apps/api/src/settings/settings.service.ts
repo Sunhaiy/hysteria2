@@ -293,6 +293,19 @@ export class SettingsService {
     return (await this.get('referral.enabled')) === 'true';
   }
 
+  async getDailyCheckInConfig() {
+    const values = await this.all();
+    const rewardBytes = Number.parseInt(
+      values.get('dailyCheckIn.rewardBytes') ?? '0',
+      10,
+    );
+    return {
+      enabled: values.get('dailyCheckIn.enabled') === 'true',
+      rewardBytes:
+        Number.isSafeInteger(rewardBytes) && rewardBytes > 0 ? rewardBytes : 0,
+    };
+  }
+
   async getReferralConfig(client?: Prisma.TransactionClient) {
     const values = client
       ? new Map(

@@ -13,6 +13,9 @@ test("member overview keeps plan, entitlements, and both usage charts above the 
   ]);
 
   assert.match(page, /portal-entitlement-row/);
+  assert.match(page, /portal-check-in-summary/);
+  assert.doesNotMatch(page, /portal-presence-summary/);
+  assert.doesNotMatch(page, /连接状态/);
   assert.match(page, /portal-plan-facts/);
   assert.match(page, /portal-pack-summary-panel/);
   assert.ok(
@@ -62,9 +65,11 @@ test("member overview keeps plan, entitlements, and both usage charts above the 
   );
   const usageRequest = page.indexOf("const usageRequest");
   const overviewReady = page.indexOf("setOverview(nextOverview)");
-  const usageAwait = page.indexOf("await usageRequest");
+  const secondaryDataAwait = page.indexOf(
+    "const [usageResult, checkInResult] = await Promise.all",
+  );
   assert.ok(usageRequest >= 0 && usageRequest < overviewReady);
-  assert.ok(overviewReady >= 0 && overviewReady < usageAwait);
+  assert.ok(overviewReady >= 0 && overviewReady < secondaryDataAwait);
   assert.match(page, /const \[usageError, setUsageError\]/);
   assert.match(page, /流量数据加载失败/);
   assert.doesNotMatch(page, /\.catch\(\(\) => null\)/);

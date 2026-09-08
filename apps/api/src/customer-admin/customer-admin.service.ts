@@ -1,15 +1,14 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { hash } from 'bcryptjs';
 import {
-  EntitlementGrantStatus,
   EpayPaymentStatus,
   Prisma,
-  QuotaAdjustmentMode,
   SubscriptionStatus,
   TrafficPackStatus,
   UserRole,
@@ -23,6 +22,9 @@ import {
   CustomerTrafficService,
   type DailyTrafficQuery,
 } from './customer-traffic.service';
+import { postWalletEntry } from '../wallet/wallet-ledger';
+import { EntitlementService } from '../entitlement/entitlement.service';
+import { closeGroupBuyParticipationForAccountDeletion } from '../group-buy/group-buy-account-cleanup';
 
 export interface CustomerQuery extends PageQuery {
   q?: string;
@@ -55,6 +57,7 @@ export class CustomerAdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly customerTraffic: CustomerTrafficService,
+    private readonly entitlements: EntitlementService,
   ) {}
 
   async searchOptions(query: Pick<CustomerQuery, 'q' | 'pageSize'>) {
@@ -175,7 +178,11 @@ export class CustomerAdminService {
           },
           accessAccount: true,
           subscriptions: {
-            where: { status: SubscriptionStatus.ACTIVE, endsAt: { gt: now } },
+            where: {
+              entitlementGrant: null,
+              status: SubscriptionStatus.ACTIVE,
+              endsAt: { gt: now },
+            },
             include: {
               plan: true,
               cycles: {
@@ -186,8 +193,12 @@ export class CustomerAdminService {
           },
           trafficPacks: {
             where: {
+              entitlementGrant: null,
               status: TrafficPackStatus.ACTIVE,
               OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+            },
+            include: {
+              trafficPackProduct: { include: { catalogProduct: true } },
             },
           },
           entitlementGrants: {
@@ -225,20 +236,24 @@ export class CustomerAdminService {
     const presented = rows.map((user) => {
       const planRemaining = user.subscriptions.reduce((total, subscription) => {
         const cycle = subscription.cycles[0];
-        if (!cycle) return total;
         return (
           total +
-          this.remaining(
-            cycle.grantedBytes + cycle.adjustmentBytes,
-            cycle.consumedBytes,
-          )
+          (cycle
+            ? this.remaining(
+                cycle.grantedBytes + cycle.adjustmentBytes,
+                cycle.consumedBytes,
+              )
+            : this.remaining(
+                subscription.includedTrafficBytes +
+                  subscription.bonusTrafficBytes,
+                subscription.consumedTrafficBytes,
+              ))
         );
       }, 0);
       const packRemaining = user.trafficPacks.reduce(
         (total, pack) => total + Number(pack.remainingBytes),
         0,
       );
-      const hasV2Entitlements = user.entitlementGrants.length > 0;
       const v2Remaining = user.entitlementGrants.reduce(
         (grantTotal, grant) =>
           grantTotal +
@@ -250,9 +265,7 @@ export class CustomerAdminService {
           ),
         0,
       );
-      const remainingBytes = hasV2Entitlements
-        ? v2Remaining
-        : planRemaining + packRemaining;
+      const remainingBytes = v2Remaining + planRemaining + packRemaining;
       const entitlementMultiplierBasisPoints = Math.max(
         user.accessAccount?.trafficMultiplierBasisPoints ?? 10_000,
         ...user.entitlementGrants.flatMap((grant) =>
@@ -265,21 +278,27 @@ export class CustomerAdminService {
                 10_000,
             ),
         ),
+        ...user.trafficPacks
+          .filter((pack) => pack.remainingBytes > BigInt(0))
+          .map(
+            (pack) =>
+              pack.trafficPackProduct?.catalogProduct
+                ?.defaultTrafficMultiplierBasisPoints ??
+              user.accessAccount?.trafficMultiplierBasisPoints ??
+              10_000,
+          ),
       );
-      const activePlanNames = hasV2Entitlements
-        ? [
-            ...new Set(
-              user.entitlementGrants
-                .filter((grant) => grant.kind === 'PLAN')
-                .map((grant) => grant.product.name),
-            ),
-          ]
-        : user.subscriptions.map((item) => item.plan.name);
-      const activeTrafficPackCount = hasV2Entitlements
-        ? user.entitlementGrants.filter(
-            (grant) => grant.kind === 'TRAFFIC_PACK',
-          ).length
-        : user.trafficPacks.length;
+      const activePlanNames = [
+        ...new Set([
+          ...user.entitlementGrants
+            .filter((grant) => grant.kind === 'PLAN')
+            .map((grant) => grant.product.name),
+          ...user.subscriptions.map((item) => item.plan.name),
+        ]),
+      ];
+      const activeTrafficPackCount =
+        user.entitlementGrants.filter((grant) => grant.kind === 'TRAFFIC_PACK')
+          .length + user.trafficPacks.length;
       return {
         id: user.id,
         email: user.email,
@@ -428,7 +447,11 @@ export class CustomerAdminService {
         include: {
           accessAccount: true,
           entitlementGrants: {
-            where: { status: 'ACTIVE', endsAt: { gt: now } },
+            where: {
+              status: 'ACTIVE',
+              startsAt: { lte: now },
+              endsAt: { gt: now },
+            },
             include: {
               quotaBuckets: {
                 where: { startsAt: { lte: now }, endsAt: { gt: now } },
@@ -438,6 +461,31 @@ export class CustomerAdminService {
                   trafficMultiplierBasisPointsSnapshot: true,
                 },
               },
+            },
+          },
+          subscriptions: {
+            where: {
+              entitlementGrant: null,
+              status: SubscriptionStatus.ACTIVE,
+              startsAt: { lte: now },
+              endsAt: { gt: now },
+            },
+            include: {
+              cycles: {
+                where: { startsAt: { lte: now }, endsAt: { gt: now } },
+                take: 1,
+              },
+            },
+          },
+          trafficPacks: {
+            where: {
+              entitlementGrant: null,
+              status: TrafficPackStatus.ACTIVE,
+              remainingBytes: { gt: BigInt(0) },
+              OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+            },
+            include: {
+              trafficPackProduct: { include: { catalogProduct: true } },
             },
           },
           onlinePresence: {
@@ -454,15 +502,38 @@ export class CustomerAdminService {
     if (!user || user.deletedAt) {
       throw new NotFoundException('Customer not found');
     }
-    const quota = user.entitlementGrants.flatMap((grant) =>
+    const v2Quota = user.entitlementGrants.flatMap((grant) =>
       grant.quotaBuckets.map((bucket) => ({
-        ...bucket,
+        grantedBytes: bucket.grantedBytes,
+        consumedBytes: bucket.consumedBytes,
         trafficMultiplierBasisPointsSnapshot:
           bucket.trafficMultiplierBasisPointsSnapshot ??
           grant.trafficMultiplierBasisPointsSnapshot ??
           10_000,
       })),
     );
+    const legacySubscriptionQuota = user.subscriptions.map((subscription) => {
+      const cycle = subscription.cycles[0];
+      return {
+        grantedBytes: cycle
+          ? cycle.grantedBytes + cycle.adjustmentBytes
+          : subscription.includedTrafficBytes + subscription.bonusTrafficBytes,
+        consumedBytes:
+          cycle?.consumedBytes ?? subscription.consumedTrafficBytes,
+        trafficMultiplierBasisPointsSnapshot:
+          user.accessAccount?.trafficMultiplierBasisPoints ?? 10_000,
+      };
+    });
+    const legacyPackQuota = user.trafficPacks.map((pack) => ({
+      grantedBytes: pack.totalBytes,
+      consumedBytes: pack.totalBytes - pack.remainingBytes,
+      trafficMultiplierBasisPointsSnapshot:
+        pack.trafficPackProduct?.catalogProduct
+          ?.defaultTrafficMultiplierBasisPoints ??
+        user.accessAccount?.trafficMultiplierBasisPoints ??
+        10_000,
+    }));
+    const quota = [...v2Quota, ...legacySubscriptionQuota, ...legacyPackQuota];
     const grantedBytes = quota.reduce(
       (total, bucket) => total + Number(bucket.grantedBytes),
       0,
@@ -471,7 +542,11 @@ export class CustomerAdminService {
       (total, bucket) => total + Number(bucket.consumedBytes),
       0,
     );
-    const remainingBytes = Math.max(grantedBytes - consumedBytes, 0);
+    const remainingBytes = quota.reduce(
+      (total, item) =>
+        total + Math.max(Number(item.grantedBytes - item.consumedBytes), 0),
+      0,
+    );
     const entitlementMultiplierBasisPoints = Math.max(
       user.accessAccount?.trafficMultiplierBasisPoints ?? 10_000,
       ...quota
@@ -497,7 +572,10 @@ export class CustomerAdminService {
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),
       summary: {
-        activeGrantCount: user.entitlementGrants.length,
+        activeGrantCount:
+          user.entitlementGrants.length +
+          user.subscriptions.length +
+          user.trafficPacks.length,
         grantedBytes,
         consumedBytes,
         remainingBytes,
@@ -866,6 +944,7 @@ export class CustomerAdminService {
             email: true,
             displayName: true,
             role: true,
+            balanceCents: true,
             deletedAt: true,
           },
         });
@@ -880,41 +959,43 @@ export class CustomerAdminService {
         }
 
         const deletedAt = new Date();
-        const [tokens, grants, subscriptions, trafficPacks, paymentAttempts] =
-          await Promise.all([
-            tx.accessToken.updateMany({
-              where: { userId: id, revokedAt: null },
-              data: { revokedAt: deletedAt },
-            }),
-            tx.entitlementGrant.updateMany({
-              where: { userId: id, status: EntitlementGrantStatus.ACTIVE },
-              data: {
-                status: EntitlementGrantStatus.CANCELED,
-                endsAt: deletedAt,
-              },
-            }),
-            tx.subscription.updateMany({
-              where: {
-                userId: id,
-                status: {
-                  in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED],
-                },
-              },
-              data: { status: SubscriptionStatus.CANCELED, endsAt: deletedAt },
-            }),
-            tx.trafficPack.updateMany({
-              where: { userId: id, status: TrafficPackStatus.ACTIVE },
-              data: { status: TrafficPackStatus.EXPIRED, expiresAt: deletedAt },
-            }),
-            tx.epayPaymentAttempt.updateMany({
-              where: { userId: id, status: EpayPaymentStatus.PENDING },
-              data: {
-                status: EpayPaymentStatus.EXPIRED,
-                activeKey: null,
-                closedAt: deletedAt,
-              },
-            }),
-          ]);
+        const groupCleanup = await closeGroupBuyParticipationForAccountDeletion(
+          tx,
+          id,
+          deletedAt,
+        );
+
+        if (user.balanceCents > 0) {
+          await postWalletEntry(tx, {
+            userId: id,
+            actorId,
+            amountCents: -user.balanceCents,
+            kind: 'ADJUST',
+            idempotencyKey: `account-deletion:${id}`,
+            note: '账户删除余额核销',
+          });
+        }
+        const revokedEntitlements =
+          await this.entitlements.revokeUserEntitlements(tx, {
+            userId: id,
+            at: deletedAt,
+            actorId,
+            reason: '账户删除',
+          });
+        const [tokens, paymentAttempts] = await Promise.all([
+          tx.accessToken.updateMany({
+            where: { userId: id, revokedAt: null },
+            data: { revokedAt: deletedAt },
+          }),
+          tx.epayPaymentAttempt.updateMany({
+            where: { userId: id, status: EpayPaymentStatus.PENDING },
+            data: {
+              status: EpayPaymentStatus.EXPIRED,
+              activeKey: null,
+              closedAt: deletedAt,
+            },
+          }),
+        ]);
 
         await tx.onlinePresence.deleteMany({ where: { userId: id } });
         await tx.passwordResetToken.updateMany({
@@ -954,10 +1035,13 @@ export class CustomerAdminService {
             targetId: id,
             metadata: {
               revokedAccessTokens: tokens.count,
-              canceledEntitlements: grants.count,
-              canceledSubscriptions: subscriptions.count,
-              expiredTrafficPacks: trafficPacks.count,
+              canceledEntitlements: revokedEntitlements.grants,
+              canceledSubscriptions: revokedEntitlements.subscriptions,
+              expiredTrafficPacks: revokedEntitlements.trafficPacks,
               expiredPaymentAttempts: paymentAttempts.count,
+              closedGroupMemberships: groupCleanup.closedMemberships,
+              queuedLegacyGroupRefunds: groupCleanup.queuedLegacyRefunds,
+              forfeitedBalanceCents: user.balanceCents,
             },
           },
         });
@@ -983,57 +1067,64 @@ export class CustomerAdminService {
     if (!Number.isSafeInteger(deltaCents) || deltaCents === 0) {
       throw new BadRequestException('deltaCents must be a non-zero integer');
     }
+    const normalizedKey = idempotencyKey.trim();
+    if (!normalizedKey || normalizedKey.length > 120) {
+      throw new BadRequestException('A valid Idempotency-Key is required');
+    }
     const auditNote = note?.trim() || '管理员即时调整';
-    return this.prisma.$transaction(async (tx) => {
-      const replay = await tx.walletLedgerEntry.findUnique({
-        where: { userId_idempotencyKey: { userId: id, idempotencyKey } },
-      });
-      if (replay) return replay;
-      const user = await tx.user.findUnique({ where: { id } });
-      if (!user || user.deletedAt) {
-        throw new NotFoundException('Customer not found');
-      }
-      const after = user.balanceCents + deltaCents;
-      if (after < 0)
-        throw new BadRequestException('Balance cannot be negative');
-      await tx.user.update({ where: { id }, data: { balanceCents: after } });
-      const legacy = await tx.walletTransaction.create({
-        data: {
-          userId: id,
-          amountCents: deltaCents,
-          kind: 'ADJUST',
-          note: auditNote,
-        },
-      });
-      const ledger = await tx.walletLedgerEntry.create({
-        data: {
-          legacyTransactionId: legacy.id,
-          userId: id,
-          actorId,
-          amountCents: deltaCents,
-          beforeBalanceCents: user.balanceCents,
-          afterBalanceCents: after,
-          kind: 'ADJUST',
-          idempotencyKey,
-          note: auditNote,
-        },
-      });
-      await tx.auditLog.create({
-        data: {
-          actorId,
-          action: 'CUSTOMER_BALANCE_ADJUSTED',
-          targetType: 'User',
-          targetId: id,
-          metadata: {
-            deltaCents,
-            before: user.balanceCents,
-            after,
-            note: auditNote,
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await this.prisma.$transaction(
+          async (tx) => {
+            const posting = await postWalletEntry(tx, {
+              userId: id,
+              actorId,
+              amountCents: deltaCents,
+              kind: 'ADJUST',
+              idempotencyKey: normalizedKey,
+              note: auditNote,
+            });
+            if (posting.replayed) {
+              return { id: posting.ledgerId, ...posting };
+            }
+            await tx.auditLog.create({
+              data: {
+                actorId,
+                action: 'CUSTOMER_BALANCE_ADJUSTED',
+                targetType: 'User',
+                targetId: id,
+                metadata: {
+                  deltaCents,
+                  before: posting.beforeBalanceCents,
+                  after: posting.afterBalanceCents,
+                  note: auditNote,
+                },
+              },
+            });
+            return { id: posting.ledgerId, ...posting };
           },
-        },
-      });
-      return ledger;
-    });
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+      } catch (error) {
+        const retryable =
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          (error.code === 'P2034' || error.code === 'P2002');
+        if (!retryable) throw error;
+        const replay = await this.prisma.walletLedgerEntry.findUnique({
+          where: {
+            userId_idempotencyKey: {
+              userId: id,
+              idempotencyKey: normalizedKey,
+            },
+          },
+        });
+        if (replay) return replay;
+        if (attempt === 2) {
+          throw new ConflictException('余额调整发生并发冲突，请重试');
+        }
+      }
+    }
+    throw new ConflictException('余额调整发生并发冲突，请重试');
   }
 
   async adjustQuotaBucket(
@@ -1042,47 +1133,12 @@ export class CustomerAdminService {
     reason: string | undefined,
     actorId: string,
   ) {
-    if (!Number.isSafeInteger(remainingBytes) || remainingBytes < 0) {
-      throw new BadRequestException(
-        'remainingBytes must be a non-negative integer',
-      );
-    }
-    const auditReason = reason?.trim() || '管理员即时调整';
-    return this.prisma.$transaction(async (tx) => {
-      const bucket = await tx.quotaBucket.findUnique({
-        where: { id: bucketId },
-        include: { grant: true },
-      });
-      if (!bucket) throw new NotFoundException('Quota bucket not found');
-      const remaining = BigInt(remainingBytes);
-      const grantedBytes = remaining + bucket.consumedBytes;
-      const updated = await tx.quotaBucket.update({
-        where: { id: bucketId },
-        data: { grantedBytes },
-      });
-      await tx.auditLog.create({
-        data: {
-          actorId,
-          action: 'QUOTA_BUCKET_ADJUSTED',
-          targetType: 'QuotaBucket',
-          targetId: bucketId,
-          metadata: {
-            userId: bucket.grant.userId,
-            beforeRemainingBytes: Number(
-              bucket.grantedBytes - bucket.consumedBytes,
-            ),
-            afterRemainingBytes: remainingBytes,
-            reason: auditReason,
-          },
-        },
-      });
-      return {
-        id: updated.id,
-        grantedBytes: Number(updated.grantedBytes),
-        consumedBytes: Number(updated.consumedBytes),
-        remainingBytes,
-      };
-    });
+    return this.entitlements.adjustQuotaBucketRemaining(
+      bucketId,
+      remainingBytes,
+      reason,
+      actorId,
+    );
   }
 
   async setTrafficMultiplier(
@@ -1090,51 +1146,13 @@ export class CustomerAdminService {
     multiplier: number,
     actorId: string,
   ) {
-    const basisPoints = Math.round(multiplier * 10_000);
-    if (
-      !Number.isFinite(multiplier) ||
-      basisPoints < 1_000 ||
-      basisPoints > 1_000_000
-    ) {
-      throw new BadRequestException('Traffic multiplier must be 0.1 to 100');
-    }
-    return this.prisma.$transaction(async (tx) => {
-      const user = await tx.user.findUnique({ where: { id: userId } });
-      if (!user || user.role !== UserRole.MEMBER || user.deletedAt) {
-        throw new NotFoundException('Customer not found');
-      }
-      const before = await tx.accessAccount.findUnique({ where: { userId } });
-      const account = await tx.accessAccount.upsert({
-        where: { userId },
-        create: {
-          userId,
-          trafficMultiplierOverrideBasisPoints: basisPoints,
-        },
-        update: {
-          trafficMultiplierOverrideBasisPoints: basisPoints,
-        },
-      });
-      await tx.auditLog.create({
-        data: {
-          actorId,
-          action: 'CUSTOMER_TRAFFIC_MULTIPLIER_CHANGED',
-          targetType: 'AccessAccount',
-          targetId: account.id,
-          metadata: {
-            userId,
-            before:
-              (before?.trafficMultiplierOverrideBasisPoints ?? 10_000) / 10_000,
-            after: basisPoints / 10_000,
-          },
-        },
-      });
-      return {
+    return this.entitlements
+      .updateTrafficMultiplier(userId, multiplier, actorId)
+      .then((result) => ({
         userId,
-        trafficMultiplier: basisPoints / 10_000,
-        effectiveTrafficMultiplier:
-          Math.max(account.trafficMultiplierBasisPoints, basisPoints) / 10_000,
-      };
-    });
+        trafficMultiplier: result.userTrafficMultiplier,
+        effectiveTrafficMultiplier: result.trafficMultiplier,
+      }));
   }
 
   async adjustAvailableQuota(
@@ -1142,173 +1160,59 @@ export class CustomerAdminService {
     input: CustomerQuotaOperationDto,
     actorId: string,
   ) {
-    const auditReason = input.reason?.trim() || '管理员即时调整';
-    return this.prisma.$transaction(async (tx) => {
-      const account = await tx.accessAccount.findUnique({ where: { userId } });
-      if (!account)
-        throw new NotFoundException('Customer access account not found');
-      const now = new Date();
-      const buckets = await tx.quotaBucket.findMany({
-        where: {
-          grant: {
-            userId,
-            status: 'ACTIVE',
-            endsAt: { gt: now },
-            ...(input.grantId ? { id: input.grantId } : {}),
-          },
-          startsAt: { lte: now },
-          endsAt: { gt: now },
-        },
-        include: { grant: { select: { id: true, productId: true } } },
-        orderBy: [{ endsAt: 'asc' }, { id: 'asc' }],
-      });
-      if (!buckets.length) {
-        throw new BadRequestException('Customer has no active quota bucket');
-      }
-      const totalBefore = buckets.reduce(
-        (sum, bucket) =>
-          sum +
-          (bucket.grantedBytes > bucket.consumedBytes
-            ? bucket.grantedBytes - bucket.consumedBytes
-            : BigInt(0)),
-        BigInt(0),
-      );
-      let delta: bigint;
-      if (input.mode === 'delta') {
-        if (input.bytes === undefined || !Number.isSafeInteger(input.bytes)) {
-          throw new BadRequestException(
-            'bytes is required for delta adjustment',
-          );
-        }
-        delta = BigInt(input.bytes);
-      } else {
-        if (
-          input.remainingBytes === undefined ||
-          !Number.isSafeInteger(input.remainingBytes) ||
-          input.remainingBytes < 0
-        ) {
-          throw new BadRequestException(
-            'remainingBytes is required for set_remaining adjustment',
-          );
-        }
-        delta = BigInt(input.remainingBytes) - totalBefore;
-      }
-      if (totalBefore + delta < BigInt(0)) {
-        throw new BadRequestException('Adjustment would make quota negative');
-      }
-
-      const adjustments: Array<{
-        bucketId: string;
-        beforeRemainingBytes: number;
-        afterRemainingBytes: number;
-      }> = [];
-      if (delta >= BigInt(0)) {
-        const bucket = buckets[0];
-        const before = bucket.grantedBytes - bucket.consumedBytes;
-        const after = before + delta;
-        await tx.quotaBucket.update({
-          where: { id: bucket.id },
-          data: { grantedBytes: bucket.consumedBytes + after },
-        });
-        await tx.quotaAdjustment.create({
-          data: {
-            accessAccountId: account.id,
-            quotaBucketId: bucket.id,
-            actorId,
-            mode:
-              input.mode === 'delta'
-                ? QuotaAdjustmentMode.DELTA
-                : QuotaAdjustmentMode.SET_REMAINING,
-            deltaBytes: delta,
-            beforeRemainingBytes: before,
-            afterRemainingBytes: after,
-            reason: auditReason,
-          },
-        });
-        adjustments.push({
-          bucketId: bucket.id,
-          beforeRemainingBytes: Number(before),
-          afterRemainingBytes: Number(after),
-        });
-      } else {
-        let remainingReduction = -delta;
-        for (const bucket of buckets) {
-          if (remainingReduction === BigInt(0)) break;
-          const before =
-            bucket.grantedBytes > bucket.consumedBytes
-              ? bucket.grantedBytes - bucket.consumedBytes
-              : BigInt(0);
-          const reduction =
-            before < remainingReduction ? before : remainingReduction;
-          if (reduction === BigInt(0)) continue;
-          const after = before - reduction;
-          await tx.quotaBucket.update({
-            where: { id: bucket.id },
-            data: { grantedBytes: bucket.consumedBytes + after },
-          });
-          await tx.quotaAdjustment.create({
-            data: {
-              accessAccountId: account.id,
-              quotaBucketId: bucket.id,
-              actorId,
-              mode:
-                input.mode === 'delta'
-                  ? QuotaAdjustmentMode.DELTA
-                  : QuotaAdjustmentMode.SET_REMAINING,
-              deltaBytes: -reduction,
-              beforeRemainingBytes: before,
-              afterRemainingBytes: after,
-              reason: auditReason,
-            },
-          });
-          adjustments.push({
-            bucketId: bucket.id,
-            beforeRemainingBytes: Number(before),
-            afterRemainingBytes: Number(after),
-          });
-          remainingReduction -= reduction;
-        }
-      }
-
-      const totalAfter = totalBefore + delta;
-      await tx.auditLog.create({
-        data: {
-          actorId,
-          action: 'CUSTOMER_AVAILABLE_QUOTA_ADJUSTED',
-          targetType: 'AccessAccount',
-          targetId: account.id,
-          metadata: {
-            userId,
-            grantId: input.grantId ?? null,
-            beforeRemainingBytes: Number(totalBefore),
-            afterRemainingBytes: Number(totalAfter),
-            reason: auditReason,
-          },
-        },
-      });
-      return {
-        userId,
-        grantId: input.grantId ?? null,
-        beforeRemainingBytes: Number(totalBefore),
-        remainingBytes: Number(totalAfter),
-        adjustments,
-      };
-    });
+    return this.entitlements.adjustAvailableQuota(userId, input, actorId);
   }
 
   private async userIdsForQuotaState(state: string, now: Date) {
     const predicate = this.quotaPredicate(state);
     const rows = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-      WITH quota AS (
+      WITH quota_parts AS (
         SELECT grant_record."userId" AS "userId",
-          COALESCE(SUM(GREATEST(bucket."grantedBytes" - bucket."consumedBytes", 0)), 0)::bigint AS remaining
+          GREATEST(bucket."grantedBytes" - bucket."consumedBytes", 0)::bigint AS remaining
         FROM "EntitlementGrant" grant_record
         JOIN "QuotaBucket" bucket ON bucket."grantId" = grant_record."id"
         WHERE grant_record."status" = 'ACTIVE'
+          AND grant_record."startsAt" <= ${now}
           AND grant_record."endsAt" > ${now}
           AND bucket."startsAt" <= ${now}
           AND bucket."endsAt" > ${now}
-        GROUP BY grant_record."userId"
+        UNION ALL
+        SELECT subscription."userId" AS "userId",
+          CASE
+            WHEN cycle."id" IS NULL THEN GREATEST(
+              subscription."includedTrafficBytes" + subscription."bonusTrafficBytes" - subscription."consumedTrafficBytes",
+              0
+            )
+            ELSE GREATEST(
+              cycle."grantedBytes" + cycle."adjustmentBytes" - cycle."consumedBytes",
+              0
+            )
+          END::bigint AS remaining
+        FROM "Subscription" subscription
+        LEFT JOIN "SubscriptionCycle" cycle
+          ON cycle."subscriptionId" = subscription."id"
+          AND cycle."startsAt" <= ${now}
+          AND cycle."endsAt" > ${now}
+        LEFT JOIN "EntitlementGrant" linked_subscription
+          ON linked_subscription."legacySubscriptionId" = subscription."id"
+        WHERE subscription."status" = 'ACTIVE'
+          AND subscription."startsAt" <= ${now}
+          AND subscription."endsAt" > ${now}
+          AND linked_subscription."legacySubscriptionId" IS NULL
+        UNION ALL
+        SELECT pack."userId" AS "userId",
+          GREATEST(pack."remainingBytes", 0)::bigint AS remaining
+        FROM "TrafficPack" pack
+        LEFT JOIN "EntitlementGrant" linked_pack
+          ON linked_pack."legacyTrafficPackId" = pack."id"
+        WHERE pack."status" = 'ACTIVE'
+          AND pack."remainingBytes" > 0
+          AND (pack."expiresAt" IS NULL OR pack."expiresAt" > ${now})
+          AND linked_pack."legacyTrafficPackId" IS NULL
+      ), quota AS (
+        SELECT "userId", COALESCE(SUM(remaining), 0)::bigint AS remaining
+        FROM quota_parts
+        GROUP BY "userId"
       )
       SELECT member."id"
       FROM "User" member

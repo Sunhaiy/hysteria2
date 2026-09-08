@@ -3,9 +3,10 @@ import { FinanceController } from './finance.controller';
 import { FinanceService } from './finance.service';
 import { ReferralModule } from '../referrals/referral.module';
 import { EntitlementModule } from '../entitlement/entitlement.module';
+import { GroupBuyModule } from '../group-buy/group-buy.module';
 
 @Module({
-  imports: [ReferralModule, EntitlementModule],
+  imports: [ReferralModule, EntitlementModule, GroupBuyModule],
   controllers: [FinanceController],
   providers: [FinanceService],
   exports: [FinanceService],

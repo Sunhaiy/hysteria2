@@ -2,6 +2,7 @@ import { isAbsolute, posix } from 'node:path';
 import {
   BACKUP_FORMAT,
   BACKUP_FORMAT_VERSION,
+  CURRENT_DATABASE_SCHEMA_VERSION,
   type BackupManifest,
   type BackupManifestFile,
   type BackupMetadata,
@@ -58,6 +59,7 @@ export function parseBackupManifest(value: unknown): BackupManifest {
     typeof manifest.createdAt !== 'string' ||
     !Number.isFinite(Date.parse(manifest.createdAt)) ||
     typeof manifest.appVersion !== 'string' ||
+    manifest.databaseSchemaVersion !== CURRENT_DATABASE_SCHEMA_VERSION ||
     !['scheduled', 'manual', 'imported', 'pre_restore'].includes(
       String(manifest.source),
     ) ||
@@ -67,6 +69,9 @@ export function parseBackupManifest(value: unknown): BackupManifest {
     !Array.isArray(manifest.files) ||
     !manifest.files.every(isManifestFile)
   ) {
+    if (manifest.databaseSchemaVersion !== CURRENT_DATABASE_SCHEMA_VERSION) {
+      throw new Error('备份数据库结构版本与当前系统不兼容。');
+    }
     throw new Error('备份清单版本或字段无效。');
   }
   const paths = [
@@ -77,6 +82,23 @@ export function parseBackupManifest(value: unknown): BackupManifest {
     throw new Error('备份清单包含重复文件。');
   }
   return manifest as unknown as BackupManifest;
+}
+
+export function databaseCompatibilitySql() {
+  return `SELECT CASE WHEN
+    to_regclass('public."User"') IS NOT NULL
+    AND to_regclass('public."Setting"') IS NOT NULL
+    AND to_regclass('public."WalletLedgerEntry"') IS NOT NULL
+    AND to_regclass('public."EntitlementGrant"') IS NOT NULL
+    AND to_regclass('public."GroupBuy"') IS NOT NULL
+    AND to_regclass('public."DailyCheckIn"') IS NOT NULL
+    AND EXISTS (
+      SELECT 1 FROM "_prisma_migrations"
+      WHERE "migration_name" = '${CURRENT_DATABASE_SCHEMA_VERSION}'
+        AND "finished_at" IS NOT NULL
+        AND "rolled_back_at" IS NULL
+    )
+  THEN 1 ELSE 0 END`;
 }
 
 export function scheduledBackupsToDelete(

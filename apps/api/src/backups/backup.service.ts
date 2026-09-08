@@ -1,9 +1,11 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -24,6 +26,7 @@ import {
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import * as tar from 'tar';
 import {
+  databaseCompatibilitySql,
   isSafeArchivePath,
   parseBackupManifest,
   scheduledBackupsToDelete,
@@ -32,12 +35,17 @@ import {
 import {
   BACKUP_FORMAT,
   BACKUP_FORMAT_VERSION,
+  CURRENT_DATABASE_SCHEMA_VERSION,
   type BackupManifest,
   type BackupManifestFile,
   type BackupMetadata,
   type BackupSource,
   type RestoreRequest,
 } from './backup.types';
+import {
+  BACKUP_RECOVERY_PORT,
+  type BackupRecoveryPort,
+} from './backup-recovery.port';
 
 const ARCHIVE_EXTENSION = '.h2backup';
 const METADATA_EXTENSION = '.meta.json';
@@ -91,6 +99,12 @@ function cleanError(error: unknown) {
 export class BackupService {
   private readonly logger = new Logger(BackupService.name);
 
+  constructor(
+    @Optional()
+    @Inject(BACKUP_RECOVERY_PORT)
+    private readonly recovery?: BackupRecoveryPort,
+  ) {}
+
   async overview() {
     const items = await this.listBackups();
     return {
@@ -143,91 +157,94 @@ export class BackupService {
   }
 
   async createBackup(source: BackupSource) {
+    return this.withLock(() => this.createBackupUnlocked(source));
+  }
+
+  private async createBackupUnlocked(source: BackupSource) {
     const databaseUrl = process.env.DATABASE_URL;
     if (!databaseUrl) {
       throw new BadRequestException(
         'DATABASE_URL 未配置，无法创建数据库备份。',
       );
     }
-    return this.withLock(async () => {
-      const id = `hysteria2-${source.replaceAll('_', '-')}-${timestamp()}-${randomUUID().slice(0, 8)}`;
-      const root = backupRootDirectory();
-      const work = join(root, '.work', id);
-      const archive = this.archivePath(id);
-      const temporaryArchive = `${archive}.partial`;
-      await mkdir(join(work, 'files', 'tutorial-images'), { recursive: true });
-      await mkdir(join(work, 'files', 'tutorial-assets'), { recursive: true });
+    const id = `hysteria2-${source.replaceAll('_', '-')}-${timestamp()}-${randomUUID().slice(0, 8)}`;
+    const root = backupRootDirectory();
+    const work = join(root, '.work', id);
+    const archive = this.archivePath(id);
+    const temporaryArchive = `${archive}.partial`;
+    await mkdir(join(work, 'files', 'tutorial-images'), { recursive: true });
+    await mkdir(join(work, 'files', 'tutorial-assets'), { recursive: true });
 
-      try {
-        await this.copySiteFiles(work);
-        await this.executeCommand(
-          process.env.PG_DUMP_BINARY || 'pg_dump',
-          [
-            '--format=custom',
-            '--no-owner',
-            '--no-privileges',
-            `--file=${join(work, 'database.dump')}`,
-            databaseUrl,
-          ],
-          this.commandTimeoutMs(),
-        );
-        // A second pass keeps files created or replaced while pg_dump was
-        // running. Extra unreferenced files are harmless; missing referenced
-        // assets would make a restore incomplete.
-        await this.copySiteFiles(work);
+    try {
+      await this.copySiteFiles(work);
+      await this.executeCommand(
+        process.env.PG_DUMP_BINARY || 'pg_dump',
+        [
+          '--format=custom',
+          '--no-owner',
+          '--no-privileges',
+          `--file=${join(work, 'database.dump')}`,
+          databaseUrl,
+        ],
+        this.commandTimeoutMs(),
+      );
+      // A second pass keeps files created or replaced while pg_dump was
+      // running. Extra unreferenced files are harmless; missing referenced
+      // assets would make a restore incomplete.
+      await this.copySiteFiles(work);
 
-        const database = await this.manifestFile(work, 'database.dump');
-        const files = await this.manifestFiles(work, join(work, 'files'));
-        const manifest: BackupManifest = {
-          format: BACKUP_FORMAT,
-          formatVersion: BACKUP_FORMAT_VERSION,
-          createdAt: new Date().toISOString(),
-          appVersion:
-            process.env.RELEASE_VERSION ||
-            process.env.GIT_COMMIT ||
-            process.env.npm_package_version ||
-            'unknown',
-          source,
-          database: { ...database, format: 'postgres-custom' },
-          files,
-        };
-        await writeFile(
-          join(work, 'manifest.json'),
-          `${JSON.stringify(manifest, null, 2)}\n`,
-          'utf8',
-        );
-        await tar.c(
-          {
-            cwd: work,
-            file: temporaryArchive,
-            gzip: true,
-            portable: true,
-            strict: true,
-          },
-          ['manifest.json', 'database.dump', 'files'],
-        );
-        await rename(temporaryArchive, archive);
-        const archiveStat = await stat(archive);
-        const metadata: BackupMetadata = {
-          id,
-          filename: `${id}${ARCHIVE_EXTENSION}`,
-          createdAt: manifest.createdAt,
-          source,
-          size: archiveStat.size,
-          sha256: await this.sha256(archive),
-          appVersion: manifest.appVersion,
-        };
-        await this.writeJsonAtomic(this.metadataPath(id), metadata);
-        if (source === 'scheduled') await this.applyRetention();
-        return metadata;
-      } catch (error) {
-        await rm(temporaryArchive, { force: true }).catch(() => undefined);
-        await rm(archive, { force: true }).catch(() => undefined);
-        throw error;
-      } finally {
-        await rm(work, { recursive: true, force: true }).catch(() => undefined);
-      }
-    });
+      const database = await this.manifestFile(work, 'database.dump');
+      const files = await this.manifestFiles(work, join(work, 'files'));
+      const manifest: BackupManifest = {
+        format: BACKUP_FORMAT,
+        formatVersion: BACKUP_FORMAT_VERSION,
+        createdAt: new Date().toISOString(),
+        appVersion:
+          process.env.RELEASE_VERSION ||
+          process.env.GIT_COMMIT ||
+          process.env.npm_package_version ||
+          'unknown',
+        databaseSchemaVersion: CURRENT_DATABASE_SCHEMA_VERSION,
+        source,
+        database: { ...database, format: 'postgres-custom' },
+        files,
+      };
+      await writeFile(
+        join(work, 'manifest.json'),
+        `${JSON.stringify(manifest, null, 2)}\n`,
+        'utf8',
+      );
+      await tar.c(
+        {
+          cwd: work,
+          file: temporaryArchive,
+          gzip: true,
+          portable: true,
+          strict: true,
+        },
+        ['manifest.json', 'database.dump', 'files'],
+      );
+      await rename(temporaryArchive, archive);
+      const archiveStat = await stat(archive);
+      const metadata: BackupMetadata = {
+        id,
+        filename: `${id}${ARCHIVE_EXTENSION}`,
+        createdAt: manifest.createdAt,
+        source,
+        size: archiveStat.size,
+        sha256: await this.sha256(archive),
+        appVersion: manifest.appVersion,
+      };
+      await this.writeJsonAtomic(this.metadataPath(id), metadata);
+      if (source === 'scheduled') await this.applyRetention();
+      return metadata;
+    } catch (error) {
+      await rm(temporaryArchive, { force: true }).catch(() => undefined);
+      await rm(archive, { force: true }).catch(() => undefined);
+      throw error;
+    } finally {
+      await rm(work, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
 
   async importArchive(file?: Express.Multer.File) {
@@ -343,15 +360,22 @@ export class BackupService {
     });
     if (!running) return null;
     try {
-      await this.restoreBackup(running.backupId);
+      await this.performRestore(running.backupId);
       const succeeded: RestoreRequest = {
         ...running,
         status: 'succeeded',
         completedAt: new Date().toISOString(),
       };
       await this.writeJsonAtomic(this.restoreRequestPath(), succeeded);
+      await rm(this.maintenancePath(), { force: true });
       return succeeded;
     } catch (error) {
+      if (this.isMaintenanceMode()) {
+        this.logger.error(
+          `Restore ${running.backupId} failed after entering maintenance mode; rolling back the safety backup: ${cleanError(error)}`,
+        );
+        return this.recoverInterruptedRestore();
+      }
       const failed: RestoreRequest = {
         ...running,
         status: 'failed',
@@ -361,40 +385,92 @@ export class BackupService {
       await this.writeJsonAtomic(this.restoreRequestPath(), failed);
       this.logger.error(`Restore ${running.backupId} failed: ${failed.error}`);
       return failed;
-    } finally {
-      await rm(this.maintenancePath(), { force: true }).catch(() => undefined);
     }
   }
 
   async recoverInterruptedRestore() {
     const request = await this.readRestoreRequest();
-    if (request?.status !== 'running' && !this.isMaintenanceMode()) return null;
+    if (request?.status !== 'running' && !this.isMaintenanceMode()) {
+      try {
+        await this.withLock(() => this.cleanupTransientFiles());
+      } catch (error) {
+        if (!(error instanceof ConflictException)) throw error;
+      }
+      return null;
+    }
+    const maintenance = await this.readMaintenanceState();
+    if (!maintenance?.safetyBackupId) {
+      throw new Error(
+        '检测到中断的整站恢复，但保护备份信息缺失；维护模式已保留。',
+      );
+    }
+    if (maintenance.phase === 'completed') {
+      const succeeded: RestoreRequest | null = request
+        ? {
+            ...request,
+            status: 'succeeded',
+            completedAt: request.completedAt ?? new Date().toISOString(),
+            error: undefined,
+          }
+        : null;
+      if (succeeded) {
+        await this.writeJsonAtomic(this.restoreRequestPath(), succeeded);
+      }
+      await this.withLock(async () => {
+        await rm(this.maintenancePath(), { force: true });
+        await this.cleanupTransientFiles();
+      });
+      return succeeded;
+    }
+    try {
+      await this.withLock(() =>
+        this.performSafetyRestore(maintenance.safetyBackupId),
+      );
+    } catch (error) {
+      const failed = request
+        ? {
+            ...request,
+            status: 'failed' as const,
+            completedAt: new Date().toISOString(),
+            error: `恢复 worker 曾中断，自动回滚保护备份失败：${cleanError(error)}`,
+          }
+        : null;
+      if (failed) await this.writeJsonAtomic(this.restoreRequestPath(), failed);
+      throw new Error(
+        `中断恢复无法自动回滚，维护模式已保留：${cleanError(error)}`,
+      );
+    }
     const failed: RestoreRequest | null = request
       ? {
           ...request,
           status: 'failed',
           completedAt: new Date().toISOString(),
-          error: '恢复 worker 曾中断，未自动重试；请核对保护备份后重新提交。',
+          error: '恢复 worker 曾中断，已自动回滚到保护备份；请核对后重新提交。',
         }
       : null;
     if (failed) await this.writeJsonAtomic(this.restoreRequestPath(), failed);
-    await rm(this.maintenancePath(), { force: true });
+    await this.withLock(async () => {
+      await rm(this.maintenancePath(), { force: true });
+      await this.cleanupTransientFiles();
+    });
     return failed;
   }
 
   async runDailyBackupIfDue(now = new Date()) {
-    const backups = await this.listMetadata();
-    if (
-      !shouldCreateDailyBackup({
-        now,
-        timeZone: this.timeZone(),
-        hour: this.dailyHour(),
-        backups,
-      })
-    ) {
-      return null;
-    }
-    return this.createBackup('scheduled');
+    return this.withLock(async () => {
+      const backups = await this.listMetadata();
+      if (
+        !shouldCreateDailyBackup({
+          now,
+          timeZone: this.timeZone(),
+          hour: this.dailyHour(),
+          backups,
+        })
+      ) {
+        return null;
+      }
+      return this.createBackupUnlocked('scheduled');
+    });
   }
 
   isMaintenanceMode() {
@@ -474,11 +550,13 @@ export class BackupService {
     try {
       await this.validateDatabaseDump(join(work, 'database.dump'));
       const safetyBackup = await this.createBackup('pre_restore');
-      await this.writeJsonAtomic(this.maintenancePath(), {
+      const maintenance = {
         backupId: id,
         safetyBackupId: safetyBackup.id,
         startedAt: new Date().toISOString(),
-      });
+        phase: 'prepared' as const,
+      };
+      await this.writeJsonAtomic(this.maintenancePath(), maintenance);
       await new Promise((resolvePromise) =>
         setTimeout(
           resolvePromise,
@@ -522,9 +600,17 @@ export class BackupService {
         }
         await rm(rollbackRoot, { recursive: true, force: true });
       });
+      await this.writeJsonAtomic(this.maintenancePath(), {
+        ...maintenance,
+        phase: 'completed',
+      });
     } finally {
       await rm(work, { recursive: true, force: true }).catch(() => undefined);
     }
+  }
+
+  private performRestore(id: string) {
+    return this.recovery?.restoreBackup(id) ?? this.restoreBackup(id);
   }
 
   private async validateDatabaseDump(dump: string) {
@@ -564,12 +650,12 @@ export class BackupService {
           '-v',
           'ON_ERROR_STOP=1',
           '-tAc',
-          `SELECT CASE WHEN to_regclass('public."User"') IS NOT NULL AND to_regclass('public."Setting"') IS NOT NULL THEN 1 ELSE 0 END`,
+          databaseCompatibilitySql(),
         ],
         this.commandTimeoutMs(),
       );
       if (result.stdout.trim() !== '1') {
-        throw new Error('隔离恢复库缺少关键业务表。');
+        throw new Error('隔离恢复库的业务表或数据库结构版本不兼容。');
       }
     } finally {
       if (created) {
@@ -607,6 +693,44 @@ export class BackupService {
       ],
       this.commandTimeoutMs(),
     );
+  }
+
+  private async restoreSafetyBackup(id: string) {
+    this.assertBackupId(id);
+    await this.readMetadata(id);
+    const validation = await this.validateArchive(this.archivePath(id));
+    const work = validation.extractedDirectory;
+    try {
+      const dump = join(work, 'database.dump');
+      await this.validateDatabaseDump(dump);
+      await this.restoreDatabase(dump);
+      await this.replaceDirectoryFromBackup(
+        join(work, 'files', 'tutorial-images'),
+        tutorialImageDirectory(),
+      );
+      await this.replaceDirectoryFromBackup(
+        join(work, 'files', 'tutorial-assets'),
+        tutorialAssetDirectory(),
+      );
+    } finally {
+      await rm(work, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  private performSafetyRestore(id: string) {
+    return (
+      this.recovery?.restoreSafetyBackup(id) ?? this.restoreSafetyBackup(id)
+    );
+  }
+
+  private async replaceDirectoryFromBackup(source: string, target: string) {
+    await rm(target, { recursive: true, force: true });
+    await mkdir(dirname(target), { recursive: true });
+    await cp(source, target, {
+      recursive: true,
+      force: true,
+      dereference: false,
+    });
   }
 
   private maintenanceDatabaseUrl() {
@@ -675,6 +799,52 @@ export class BackupService {
     } catch {
       return null;
     }
+  }
+
+  private async readMaintenanceState() {
+    try {
+      const value = JSON.parse(
+        await readFile(this.maintenancePath(), 'utf8'),
+      ) as Record<string, unknown>;
+      if (
+        typeof value.backupId !== 'string' ||
+        typeof value.safetyBackupId !== 'string' ||
+        typeof value.startedAt !== 'string'
+      ) {
+        return null;
+      }
+      this.assertBackupId(value.backupId);
+      this.assertBackupId(value.safetyBackupId);
+      return {
+        backupId: value.backupId,
+        safetyBackupId: value.safetyBackupId,
+        startedAt: value.startedAt,
+        phase:
+          value.phase === 'completed'
+            ? ('completed' as const)
+            : ('prepared' as const),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private async cleanupTransientFiles() {
+    const root = backupRootDirectory();
+    await mkdir(root, { recursive: true });
+    await rm(join(root, '.work'), { recursive: true, force: true }).catch(
+      () => undefined,
+    );
+    const entries = await readdir(root, { withFileTypes: true });
+    await Promise.all(
+      entries
+        .filter(
+          (entry) =>
+            entry.isFile() &&
+            (entry.name.endsWith('.partial') || entry.name.endsWith('.tmp')),
+        )
+        .map((entry) => rm(join(root, entry.name), { force: true })),
+    );
   }
 
   private assertBackupId(id: string) {

@@ -71,28 +71,24 @@ const referralMetrics = [
     label: "已邀请",
     footnote: "完成邮箱注册",
     icon: "group",
-    tone: "info",
   },
   {
     key: "pending",
     label: "待成交",
     footnote: "等待套餐 CDK",
     icon: "schedule",
-    tone: "pending",
   },
   {
     key: "rewarded",
     label: "成功奖励",
     footnote: "奖励当前有效",
     icon: "redeem",
-    tone: "success",
   },
   {
     key: "reward",
     label: "当前奖励",
     footnote: "可用余额奖励",
     icon: "payments",
-    tone: "reward",
   },
 ] as const;
 
@@ -194,7 +190,6 @@ export default function PortalReferralsPage() {
       {error ? <div className="feedback error">{error}</div> : null}
       <div className="referral-page-heading">
         <div>
-          <span className="referral-page-kicker">邀请奖励</span>
           <h2>分享邀请，双方都有奖励</h2>
           <p>好友完成邮箱注册并首次兑换套餐 CDK 后，奖励自动到账。</p>
         </div>
@@ -216,10 +211,7 @@ export default function PortalReferralsPage() {
               ? `累计发放 ${formatMoney(summary.cumulativeRewardCents)}`
               : metric.footnote;
           return (
-            <article
-              className={`referral-metric ${metric.tone}`}
-              key={metric.key}
-            >
+            <article className="referral-metric" key={metric.key}>
               <div className="referral-metric-head">
                 <span>{metric.label}</span>
                 <Icon name={metric.icon} />

@@ -102,4 +102,8 @@ test("admin order center unifies revenue, order filters, and payment exceptions"
   assert.match(orders, /支付异常/);
   assert.match(orders, /paymentType/);
   assert.match(orders, /productKind/);
+  assert.match(orders, /paymentFulfillmentStatus/);
+  assert.match(orders, /补偿退款中/);
+  assert.match(orders, /需人工处理/);
+  assert.match(orders, /重试补偿退款/);
 });

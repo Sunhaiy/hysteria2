@@ -1,13 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 import {
   type EpayGatewayTestAttempt,
   type EpayPaymentAttempt,
   EpayPaymentStatus,
+  PaymentFulfillmentStatus,
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SecretCipherService } from '../security/secret-cipher.service';
-import { SettingsService } from '../settings/settings.service';
 import {
   buildEpayQueryUrl,
   createEpayQueryParameters,
@@ -15,6 +15,11 @@ import {
   type EpayQueryOutcome,
 } from './epay-query';
 import { EpayService } from './epay.service';
+import { GroupBuyService } from '../group-buy/group-buy.service';
+import {
+  EpayCredentialSnapshotError,
+  readEpayCredentialSnapshot,
+} from './epay-credentials';
 
 const RESPONSE_LIMIT_BYTES = 64 * 1024;
 
@@ -33,7 +38,7 @@ export class EpayReconciliationService {
     private readonly prisma: PrismaService,
     private readonly epay: EpayService,
     private readonly cipher: SecretCipherService,
-    private readonly settings: SettingsService,
+    @Optional() private readonly groupBuys?: GroupBuyService,
   ) {}
 
   async reconcileDueAttempts() {
@@ -56,12 +61,6 @@ export class EpayReconciliationService {
       5_000,
       60 * 60_000,
     );
-    const lookbackHours = this.integerFromEnv(
-      'EPAY_RECONCILIATION_LOOKBACK_HOURS',
-      24,
-      1,
-      24 * 7,
-    );
     const dueWhere = {
       status: {
         in: [
@@ -72,7 +71,6 @@ export class EpayReconciliationService {
       },
       closedAt: null,
       createdAt: {
-        gte: new Date(now.getTime() - lookbackHours * 60 * 60_000),
         lte: new Date(now.getTime() - minAgeMs),
       },
       OR: [
@@ -83,13 +81,25 @@ export class EpayReconciliationService {
 
     const [payments, tests] = await Promise.all([
       this.prisma.epayPaymentAttempt.findMany({
-        where: { ...dueWhere, orderId: null },
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        where: {
+          ...dueWhere,
+          orderId: null,
+          fulfillmentStatus: { not: PaymentFulfillmentStatus.MANUAL_REVIEW },
+        },
+        orderBy: [
+          { lastQueryAt: { sort: 'asc', nulls: 'first' } },
+          { createdAt: 'asc' },
+          { id: 'asc' },
+        ],
         take: batchSize,
       }),
       this.prisma.epayGatewayTestAttempt.findMany({
         where: dueWhere,
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        orderBy: [
+          { lastQueryAt: { sort: 'asc', nulls: 'first' } },
+          { createdAt: 'asc' },
+          { id: 'asc' },
+        ],
         take: batchSize,
       }),
     ]);
@@ -115,15 +125,31 @@ export class EpayReconciliationService {
     return summary;
   }
 
+  async reconcilePaymentAttempt(id: string) {
+    const attempt = await this.prisma.epayPaymentAttempt.findUnique({
+      where: { id },
+    });
+    if (!attempt) throw new NotFoundException('支付尝试不存在');
+    if (attempt.status === EpayPaymentStatus.SETTLED) {
+      return { attemptId: attempt.id, outcome: 'settled' as const };
+    }
+    const outcome = await this.reconcilePayment(attempt);
+    return { attemptId: attempt.id, outcome };
+  }
+
   private async reconcilePayment(
     attempt: QueryablePaymentAttempt,
   ): Promise<'settled' | 'pending' | 'closed' | 'notFound' | 'failed'> {
     try {
-      const credentials = await this.paymentCredentials(attempt);
+      const credentials = this.paymentCredentials(attempt);
       const outcome = await this.query(attempt, credentials);
       return await this.applyPaymentOutcome(attempt, outcome);
     } catch (error) {
-      await this.recordPaymentQueryFailure(attempt.id, error);
+      if (error instanceof EpayCredentialSnapshotError) {
+        await this.recordPaymentCredentialFailure(attempt.id, error);
+      } else {
+        await this.recordPaymentQueryFailure(attempt.id, error);
+      }
       return 'failed';
     }
   }
@@ -167,11 +193,17 @@ export class EpayReconciliationService {
         await this.closePayment(attempt);
         return 'closed' as const;
       case 'not_found':
+        if (attempt.expiresAt <= new Date()) {
+          await this.closePayment(attempt);
+          return 'closed' as const;
+        }
         await this.recordPaymentQueryFailure(
           attempt.id,
           new Error('易支付网关未找到订单'),
         );
         return 'notFound' as const;
+      case 'refunded':
+        throw new Error('未发起退款的支付订单被网关标记为已退款');
     }
   }
 
@@ -205,6 +237,8 @@ export class EpayReconciliationService {
           new Error('易支付网关未找到测试订单'),
         );
         return 'notFound' as const;
+      case 'refunded':
+        throw new Error('易支付测试单不应处于已退款状态');
     }
   }
 
@@ -268,39 +302,10 @@ export class EpayReconciliationService {
     );
   }
 
-  private async paymentCredentials(attempt: QueryablePaymentAttempt) {
-    const snapshots = [
-      attempt.gatewayUrlSnapshot,
-      attempt.merchantIdSnapshot,
-      attempt.merchantKeyCiphertext,
-    ];
-    if (snapshots.some(Boolean)) {
-      if (!snapshots.every(Boolean)) {
-        throw new Error('易支付订单查单配置快照不完整');
-      }
-      let merchantKey: string | undefined;
-      try {
-        merchantKey = this.cipher.decrypt(attempt.merchantKeyCiphertext);
-      } catch {
-        throw new Error('易支付订单密钥快照无法解密');
-      }
-      if (!merchantKey) throw new Error('易支付订单密钥快照为空');
-      return {
-        gatewayUrl: attempt.gatewayUrlSnapshot!,
-        merchantId: attempt.merchantIdSnapshot!,
-        merchantKey,
-      };
-    }
-
-    const current = await this.settings.getEpayConfig();
-    if (!current.gatewayUrl || !current.merchantId || !current.merchantKey) {
-      throw new Error('旧易支付订单缺少当前查单配置');
-    }
-    return {
-      gatewayUrl: current.gatewayUrl,
-      merchantId: current.merchantId,
-      merchantKey: current.merchantKey,
-    };
+  private paymentCredentials(attempt: QueryablePaymentAttempt) {
+    return readEpayCredentialSnapshot(attempt, (ciphertext) =>
+      this.cipher.decrypt(ciphertext),
+    );
   }
 
   private testCredentials(attempt: QueryableGatewayTestAttempt) {
@@ -347,6 +352,7 @@ export class EpayReconciliationService {
         },
       });
       if (updated.count > 0) {
+        await this.groupBuys?.closePayment(tx, attempt.id);
         await tx.auditLog.create({
           data: {
             action: 'EPAY_QUERY_CLOSED',
@@ -392,6 +398,22 @@ export class EpayReconciliationService {
         lastQueryAt: new Date(),
         queryFailureCount: { increment: 1 },
         lastQueryError: this.describeQueryError(error),
+      },
+    });
+  }
+
+  private recordPaymentCredentialFailure(
+    id: string,
+    error: EpayCredentialSnapshotError,
+  ) {
+    return this.prisma.epayPaymentAttempt.updateMany({
+      where: { id, orderId: null },
+      data: {
+        activeKey: null,
+        fulfillmentStatus: PaymentFulfillmentStatus.MANUAL_REVIEW,
+        lastQueryAt: new Date(),
+        queryFailureCount: { increment: 1 },
+        lastQueryError: error.message.slice(0, 500),
       },
     });
   }

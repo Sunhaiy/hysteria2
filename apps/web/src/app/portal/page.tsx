@@ -6,7 +6,6 @@ import type { EChartsOption } from "echarts";
 import { ConsoleShell } from "@/components/console-shell";
 import { EChart } from "@/components/echart";
 import { Icon } from "@/components/icon";
-import { MetricCard } from "@/components/metric-card";
 import { Panel } from "@/components/panel";
 import { PageSkeleton } from "@/components/skeleton";
 import { useAuth } from "@/components/auth-provider";
@@ -15,7 +14,11 @@ import { apiRequest, ApiError } from "@/lib/api";
 import { portalNav } from "@/lib/copy";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import { buildNodeUsage, buildSevenDayUsage } from "@/lib/portal-usage";
-import type { PortalOverviewResponse, PortalUsageResponse } from "@/lib/types";
+import type {
+  DailyCheckInStatus,
+  PortalOverviewResponse,
+  PortalUsageResponse,
+} from "@/lib/types";
 
 const UNLIMITED_TRAFFIC = Number.MAX_SAFE_INTEGER;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -29,6 +32,9 @@ export default function PortalPage() {
   const [usage, setUsage] = useState<PortalUsageResponse | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
   const [usageError, setUsageError] = useState<string | null>(null);
+  const [checkIn, setCheckIn] = useState<DailyCheckInStatus | null>(null);
+  const [checkInClaiming, setCheckInClaiming] = useState(false);
+  const [checkInError, setCheckInError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [emptyState, setEmptyState] = useState(false);
 
@@ -51,15 +57,33 @@ export default function PortalPage() {
               : "流量数据加载失败，请稍后重试。",
         }),
       );
+      const checkInRequest = apiRequest<DailyCheckInStatus>(
+        "/api/portal/check-ins/today",
+        { token },
+      ).then(
+        (data) => ({ data, message: null }),
+        (cause: unknown) => ({
+          data: null,
+          message:
+            cause instanceof ApiError
+              ? cause.message
+              : "签到状态加载失败，请稍后重试。",
+        }),
+      );
       const nextOverview = await apiRequest<PortalOverviewResponse>(
         "/api/portal/subscription",
         { token },
       );
       setOverview(nextOverview);
       setEmptyState(false);
-      const usageResult = await usageRequest;
+      const [usageResult, checkInResult] = await Promise.all([
+        usageRequest,
+        checkInRequest,
+      ]);
       if (usageResult.data) setUsage(usageResult.data);
       setUsageError(usageResult.message);
+      if (checkInResult.data) setCheckIn(checkInResult.data);
+      setCheckInError(checkInResult.message);
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 404) {
         setOverview(null);
@@ -79,6 +103,28 @@ export default function PortalPage() {
     const timeoutId = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timeoutId);
   }, [load]);
+
+  async function claimCheckIn() {
+    if (!token || !checkIn?.claimable || checkInClaiming) return;
+    setCheckInClaiming(true);
+    setCheckInError(null);
+    try {
+      const response = await apiRequest<DailyCheckInStatus>(
+        "/api/portal/check-ins/claim",
+        { method: "POST", token },
+      );
+      setCheckIn(response);
+      await load();
+    } catch (cause) {
+      setCheckInError(
+        cause instanceof ApiError
+          ? cause.message
+          : "签到领取失败，请稍后重试。",
+      );
+    } finally {
+      setCheckInClaiming(false);
+    }
+  }
 
   const chartData = useMemo(
     () => buildSevenDayUsage(usage?.recent ?? []),
@@ -365,11 +411,49 @@ export default function PortalPage() {
                     </span>
                   </div>
                 </article>
-                <MetricCard
-                  label="连接状态"
-                  value={overview.online > 0 ? "在线" : "离线"}
-                  footnote={`${overview.online} 条活跃连接`}
-                />
+                {checkIn?.enabled && checkIn.eligible ? (
+                  <button
+                    className={`portal-check-in-summary${checkIn.claimed ? " claimed" : ""}`}
+                    type="button"
+                    disabled={!checkIn.claimable || checkInClaiming}
+                    title={checkInError ?? undefined}
+                    onClick={() => void claimCheckIn()}
+                  >
+                    <span className="portal-check-in-mark">
+                      <Icon name={checkIn.claimed ? "check" : "gift"} />
+                    </span>
+                    <span className="portal-check-in-content">
+                      <span className="metric-label">每日签到</span>
+                      <strong>
+                        {checkInClaiming
+                          ? "正在领取"
+                          : checkIn.claimed
+                            ? "今日已签到"
+                            : `签到领 ${formatBytes(checkIn.rewardBytes)}`}
+                      </strong>
+                      <small>
+                        {checkIn.claimed ? "明天再来" : "今日流量立即到账"}
+                      </small>
+                    </span>
+                  </button>
+                ) : (
+                  <article className="portal-check-in-summary unavailable">
+                    <span className="portal-check-in-mark">
+                      <Icon name="gift" />
+                    </span>
+                    <span className="portal-check-in-content">
+                      <span className="metric-label">每日签到</span>
+                      <strong>
+                        {checkInError
+                          ? "签到暂不可用"
+                          : checkIn
+                            ? "活动未开启"
+                            : "正在加载"}
+                      </strong>
+                      <small>{checkInError ?? "每日签到领取赠送流量"}</small>
+                    </span>
+                  </article>
+                )}
                 <article className="portal-membership-summary">
                   <div className="portal-membership-heading">
                     <span className="metric-label">会员套餐</span>

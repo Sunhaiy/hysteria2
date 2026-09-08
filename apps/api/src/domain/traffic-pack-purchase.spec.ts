@@ -8,13 +8,14 @@ describe('ControlPlaneStoreService traffic pack purchases', () => {
 
   afterEach(() => jest.useRealTimers());
 
-  function createFixture(debitCount = 1) {
+  function createFixture(balanceCents = 5000) {
     const tx = {
       user: {
-        findUnique: jest
+        findUnique: jest.fn().mockResolvedValue({ id: 'user_1', balanceCents }),
+        update: jest
           .fn()
-          .mockResolvedValue({ id: 'user_1', balanceCents: 5000 }),
-        updateMany: jest.fn().mockResolvedValue({ count: debitCount }),
+          .mockResolvedValueOnce({ balanceCents, deletedAt: null })
+          .mockResolvedValueOnce({ balanceCents: balanceCents - 1000 }),
       },
       trafficPackProduct: {
         findUnique: jest.fn().mockResolvedValue({
@@ -40,6 +41,10 @@ describe('ControlPlaneStoreService traffic pack purchases', () => {
         }),
       },
       walletTransaction: { create: jest.fn().mockResolvedValue({}) },
+      walletLedgerEntry: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'ledger_1' }),
+      },
       manualOrder: { create: jest.fn().mockResolvedValue({ id: 'order_1' }) },
       accessAccount: {
         upsert: jest.fn().mockResolvedValue({ id: 'account_1' }),
@@ -73,9 +78,9 @@ describe('ControlPlaneStoreService traffic pack purchases', () => {
 
     await service.purchaseTrafficPackWithBalance('user_1', 'pack_100g');
 
-    expect(tx.user.updateMany).toHaveBeenCalledWith({
-      where: { id: 'user_1', balanceCents: { gte: 1000 } },
-      data: { balanceCents: { decrement: 1000 } },
+    expect(tx.user.update).toHaveBeenNthCalledWith(2, {
+      where: { id: 'user_1' },
+      data: { balanceCents: 4000 },
     });
     expect(tx.trafficPack.create).toHaveBeenCalledWith({
       data: {
@@ -101,7 +106,7 @@ describe('ControlPlaneStoreService traffic pack purchases', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
 
     expect(tx.walletTransaction.create).not.toHaveBeenCalled();
-    expect(tx.manualOrder.create).not.toHaveBeenCalled();
+    expect(tx.walletLedgerEntry.create).not.toHaveBeenCalled();
     expect(tx.trafficPack.create).not.toHaveBeenCalled();
   });
 });

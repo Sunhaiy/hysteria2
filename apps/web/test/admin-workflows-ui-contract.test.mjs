@@ -43,6 +43,7 @@ test("public homepage follows the PPanel landing structure with backend-selected
   assert.doesNotMatch(catalog, /商城推荐及首页展示/);
   assert.match(lottie, /@lottiefiles\/dotlottie-react/);
   assert.match(lottie, /IntersectionObserver/);
+  assert.match(lottie, /playerRef\.current\?\.destroy\(\)/);
   assert.match(hoverButton, /radial-gradient/);
   assert.match(styles, /\.ppanel-home\s*\{/);
   assert.match(styles, /--ppanel-primary:\s*var\(--accent-500\)/);

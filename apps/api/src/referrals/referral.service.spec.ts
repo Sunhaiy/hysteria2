@@ -60,7 +60,11 @@ describe('ReferralService member code', () => {
     const settings = {
       isReferralEnabled: jest.fn().mockResolvedValue(true),
     };
-    const service = new ReferralService(prisma as never, settings as never);
+    const service = new ReferralService(
+      prisma as never,
+      settings as never,
+      {} as never,
+    );
 
     const first = await service.getOrCreateCode('user_1');
     const second = await service.getOrCreateCode('user_1');
@@ -77,7 +81,11 @@ describe('ReferralService member code', () => {
     const settings = {
       isReferralEnabled: jest.fn().mockResolvedValue(false),
     };
-    const service = new ReferralService(prisma as never, settings as never);
+    const service = new ReferralService(
+      prisma as never,
+      settings as never,
+      {} as never,
+    );
 
     await expect(service.getOrCreateCode('user_1')).rejects.toBeInstanceOf(
       BadRequestException,
@@ -136,17 +144,31 @@ describe('ReferralService plan purchase settlement', () => {
         create: jest.fn().mockResolvedValue({ id: 'bonus_bucket_1' }),
       },
       user: {
-        update: jest.fn().mockResolvedValue({ balanceCents: 1500 }),
+        update: jest
+          .fn()
+          .mockResolvedValueOnce({ balanceCents: 1346, deletedAt: null })
+          .mockResolvedValueOnce({ balanceCents: 1500 }),
       },
       walletTransaction: {
         create: jest.fn().mockResolvedValue({ id: 'wallet_legacy_1' }),
       },
       walletLedgerEntry: {
+        findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: 'wallet_ledger_1' }),
       },
       auditLog: { create: jest.fn().mockResolvedValue({}) },
     };
-    const service = new ReferralService({} as never, {} as never);
+    const entitlements = {
+      createBonusTrafficGrantFromOrder: jest.fn().mockResolvedValue({
+        grantId: 'bonus_grant_1',
+        bucketId: 'bonus_bucket_1',
+      }),
+    };
+    const service = new ReferralService(
+      {} as never,
+      {} as never,
+      entitlements as never,
+    );
 
     const first = await service.settlePlanPurchaseReward(
       tx as never,
@@ -163,11 +185,15 @@ describe('ReferralService plan purchase settlement', () => {
 
     expect(first).toEqual({ settled: true, attributionId: 'attribution_1' });
     expect(second).toEqual({ settled: false });
-    expect(tx.user.update).toHaveBeenCalledTimes(1);
-    expect(tx.user.update).toHaveBeenCalledWith({
+    expect(tx.user.update).toHaveBeenCalledTimes(2);
+    expect(tx.user.update).toHaveBeenNthCalledWith(1, {
       where: { id: 'inviter_1' },
-      data: { balanceCents: { increment: 154 } },
-      select: { balanceCents: true },
+      data: { balanceCents: { increment: 0 } },
+      select: { balanceCents: true, deletedAt: true },
+    });
+    expect(tx.user.update).toHaveBeenNthCalledWith(2, {
+      where: { id: 'inviter_1' },
+      data: { balanceCents: 1500 },
     });
     expect(tx.referralAttribution.updateMany).toHaveBeenNthCalledWith(1, {
       where: { id: 'attribution_1', status: 'PENDING' },
@@ -178,30 +204,16 @@ describe('ReferralService plan purchase settlement', () => {
         rewardedAt,
       },
     });
-    expect(tx.entitlementGrant.create).toHaveBeenCalledWith({
-      data: {
+    expect(entitlements.createBonusTrafficGrantFromOrder).toHaveBeenCalledWith(
+      tx,
+      {
+        orderId: 'order_1',
         userId: 'invitee_1',
-        accessAccountId: 'account_1',
         productId: 'system_referral_traffic_bonus',
-        kind: 'TRAFFIC_PACK',
-        status: 'ACTIVE',
         startsAt: rewardedAt,
-        endsAt: new Date('2028-01-31T00:00:00.000Z'),
-        accessProfileId: 'profile_1',
-        speedUpMbpsSnapshot: 100,
-        speedDownMbpsSnapshot: 500,
-        deviceLimitSnapshot: 3,
+        bytes: 21474836480n,
       },
-    });
-    expect(tx.quotaBucket.create).toHaveBeenCalledWith({
-      data: {
-        grantId: 'bonus_grant_1',
-        kind: 'TRAFFIC_PACK',
-        startsAt: rewardedAt,
-        endsAt: new Date('2028-01-31T00:00:00.000Z'),
-        grantedBytes: 21474836480n,
-      },
-    });
+    );
     jest.useRealTimers();
   });
 
@@ -224,7 +236,7 @@ describe('ReferralService plan purchase settlement', () => {
         }),
       },
     };
-    const service = new ReferralService({} as never, {} as never);
+    const service = new ReferralService({} as never, {} as never, {} as never);
 
     await expect(
       service.settlePlanPurchaseReward(
@@ -267,7 +279,11 @@ describe('ReferralService plan purchase settlement', () => {
           }),
         },
       };
-      const service = new ReferralService({} as never, {} as never);
+      const service = new ReferralService(
+        {} as never,
+        {} as never,
+        {} as never,
+      );
 
       await expect(
         service.settlePlanPurchaseReward(
@@ -283,6 +299,74 @@ describe('ReferralService plan purchase settlement', () => {
 });
 
 describe('ReferralService refund reversal', () => {
+  it('recovers referral cashback proportionally across partial refunds', async () => {
+    const tx = {
+      referralAttribution: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'attribution_1',
+          inviterId: 'inviter_1',
+          status: 'REWARDED',
+          inviterRewardCents: 400,
+          recoveredCents: 0,
+          unrecoveredCents: 0,
+          bonusEntitlementGrantId: 'bonus_grant_1',
+          bonusEntitlementGrant: { quotaBuckets: [] },
+        }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      user: {
+        update: jest
+          .fn()
+          .mockResolvedValueOnce({ balanceCents: 400 })
+          .mockResolvedValueOnce({ balanceCents: 300 }),
+      },
+      walletTransaction: {
+        create: jest.fn().mockResolvedValue({ id: 'wallet-partial' }),
+      },
+      walletLedgerEntry: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'ledger-partial' }),
+      },
+      entitlementGrant: { update: jest.fn() },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const service = new ReferralService({} as never, {} as never, {} as never);
+
+    await (
+      service.reverseForRefund as unknown as (
+        tx: unknown,
+        orderId: string,
+        actorId: string,
+        refundId: string,
+        refund: {
+          cumulativeRefundedCents: number;
+          orderAmountCents: number;
+          fullRefund: boolean;
+        },
+      ) => Promise<unknown>
+    )(tx, 'order_1', 'admin_1', 'refund_1', {
+      cumulativeRefundedCents: 250,
+      orderAmountCents: 1000,
+      fullRefund: false,
+    });
+
+    const [walletWrite] = tx.walletTransaction.create.mock
+      .calls[0] as unknown as [{ data: Record<string, unknown> }];
+    expect(walletWrite.data).toMatchObject({ amountCents: -100 });
+    expect(tx.entitlementGrant.update).not.toHaveBeenCalled();
+    const [attributionWrite] = tx.referralAttribution.update.mock
+      .calls[0] as unknown as [
+      { where: Record<string, unknown>; data: Record<string, unknown> },
+    ];
+    expect(attributionWrite.where).toEqual({ id: 'attribution_1' });
+    expect(attributionWrite.data).toMatchObject({
+      status: 'REWARDED',
+      recoveredCents: 100,
+      unrecoveredCents: 0,
+    });
+  });
+
   it.each([
     ['full wallet recovery', 800, 500, 0, true],
     ['partial wallet recovery', 200, 200, 300, true],
@@ -317,12 +401,23 @@ describe('ReferralService refund reversal', () => {
           create: jest.fn().mockResolvedValue({ id: 'wallet_reverse_legacy' }),
         },
         walletLedgerEntry: {
+          findUnique: jest.fn().mockResolvedValue(null),
           create: jest.fn().mockResolvedValue({ id: 'wallet_reverse_ledger' }),
         },
         entitlementGrant: { update: jest.fn().mockResolvedValue({}) },
         auditLog: { create: jest.fn().mockResolvedValue({}) },
       };
-      const service = new ReferralService({} as never, {} as never);
+      const entitlements = {
+        revokeGrant: jest.fn().mockResolvedValue({
+          revoked: true,
+          revokedUnusedBytes: 16106127360n,
+        }),
+      };
+      const service = new ReferralService(
+        {} as never,
+        {} as never,
+        entitlements as never,
+      );
 
       const result = await service.reverseForRefund(
         tx as never,
@@ -340,23 +435,35 @@ describe('ReferralService refund reversal', () => {
       expect(tx.user.update).toHaveBeenNthCalledWith(1, {
         where: { id: 'inviter_1' },
         data: { balanceCents: { increment: 0 } },
-        select: { balanceCents: true },
+        select: { balanceCents: true, deletedAt: true },
       });
       expect(tx.walletLedgerEntry.create).toHaveBeenCalledTimes(
         writesLedger ? 1 : 0,
       );
-      expect(tx.entitlementGrant.update).toHaveBeenCalledWith({
-        where: { id: 'bonus_grant_1' },
-        data: { status: 'CANCELED' },
+      const [revokeClient, revokeInput] = entitlements.revokeGrant.mock
+        .calls[0] as unknown as [
+        unknown,
+        { grantId: string; actorId: string; reason: string },
+      ];
+      expect(revokeClient).toBe(tx);
+      expect(revokeInput).toMatchObject({
+        grantId: 'bonus_grant_1',
+        actorId: 'admin_1',
       });
-      expect(tx.referralAttribution.update).toHaveBeenCalledWith({
-        where: { id: 'attribution_1' },
-        data: {
-          recoveredCents: recovered,
-          unrecoveredCents: unrecovered,
-          revokedUnusedBytes: 16106127360n,
-          reversalWalletLedgerId: writesLedger ? 'wallet_reverse_ledger' : null,
-        },
+      expect(revokeInput.reason).toContain('refund_1');
+      const [attributionWrite] = tx.referralAttribution.update.mock
+        .calls[0] as unknown as [
+        { where: Record<string, unknown>; data: Record<string, unknown> },
+      ];
+      expect(attributionWrite.where).toEqual({ id: 'attribution_1' });
+      expect(attributionWrite.data).toMatchObject({
+        status: 'REVERSED',
+        recoveredCents: recovered,
+        unrecoveredCents: unrecovered,
+        revokedUnusedBytes: 16106127360n,
+        reversalWalletLedgerId: writesLedger
+          ? 'wallet_reverse_ledger'
+          : undefined,
       });
     },
   );
@@ -372,7 +479,7 @@ describe('ReferralService refund reversal', () => {
       },
       user: { update: jest.fn() },
     };
-    const service = new ReferralService({} as never, {} as never);
+    const service = new ReferralService({} as never, {} as never, {} as never);
 
     await expect(
       service.reverseForRefund(tx as never, 'order_1', 'admin_1', 'refund_2'),
@@ -401,7 +508,11 @@ describe('ReferralService read models', () => {
         count: jest.fn().mockResolvedValue(1),
       },
     };
-    const service = new ReferralService(prisma as never, {} as never);
+    const service = new ReferralService(
+      prisma as never,
+      {} as never,
+      {} as never,
+    );
 
     const result = await service.listMemberReferrals('inviter_1', {
       page: '1',
@@ -431,7 +542,11 @@ describe('ReferralService read models', () => {
         count: jest.fn().mockResolvedValue(0),
       },
     };
-    const service = new ReferralService(prisma as never, {} as never);
+    const service = new ReferralService(
+      prisma as never,
+      {} as never,
+      {} as never,
+    );
 
     await service.listAdminReferrals({
       inviter: 'owner@example.com',

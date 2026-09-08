@@ -43,6 +43,13 @@ export const adminNav: NavItem[] = [
     group: "客户与支持",
   },
   {
+    href: "/admin/activities",
+    label: "活动中心",
+    icon: "gift",
+    meta: "EVENT",
+    group: "客户与支持",
+  },
+  {
     href: "/admin/catalog",
     label: "商品中心",
     icon: "stacks",
@@ -107,6 +114,12 @@ export const portalNav: NavItem[] = [
     label: "套餐与流量包",
     icon: "portal_plans",
     meta: "SHOP",
+  },
+  {
+    href: "/portal/group-buys",
+    label: "双人拼团",
+    icon: "group_add",
+    meta: "GROUP",
   },
   { href: "/portal/redeem", label: "兑换中心", icon: "redeem", meta: "CDK" },
   {
