@@ -6,12 +6,14 @@ import { Drawer } from "./drawer";
 import { Icon } from "./icon";
 import { useAuth } from "./auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
+import { copyToClipboard } from "@/lib/clipboard";
 import { portalNav } from "@/lib/copy";
 import { formatBytes, formatDateTime, formatMoney } from "@/lib/format";
 import type {
   GroupBuyCampaignRecord,
   GroupBuyRecord,
   PaginatedResponse,
+  PortalOverviewResponse,
 } from "@/lib/types";
 
 type EpayPayment = {
@@ -21,6 +23,13 @@ type EpayPayment = {
   productName: string;
   expiresAt: string;
   orderId: string | null;
+  planActivationMode?:
+    | "initial"
+    | "renewal"
+    | "scheduled_switch"
+    | "immediate_switch"
+    | null;
+  planEffectiveAt?: string | null;
   gateway?: {
     url: string;
     method: "GET" | "POST";
@@ -50,7 +59,6 @@ const periodNames: Record<string, string> = {
 
 const statusNames: Record<string, string> = {
   pending_payment: "等待发起支付",
-  open: "等待另一位成员",
   fulfilling: "正在发放",
   succeeded: "拼团成功",
   refunding: "退款处理中",
@@ -59,6 +67,13 @@ const statusNames: Record<string, string> = {
   exception: "需要人工处理",
   canceled: "已取消",
 };
+
+function groupStatusLabel(group: GroupBuyRecord) {
+  if (group.status === "open") {
+    return `差 ${Math.max(group.requiredMembers - group.paidMembers, 0)} 人成团`;
+  }
+  return statusNames[group.status] ?? group.status;
+}
 
 function submitGateway(
   payment: EpayPayment,
@@ -111,6 +126,22 @@ function savedCents(originalPriceCents: number, priceCents: number) {
   return Math.max(0, originalPriceCents - priceCents);
 }
 
+function paymentActivationMessage(payment: EpayPayment) {
+  if (
+    payment.planActivationMode === "scheduled_switch" &&
+    payment.planEffectiveAt
+  ) {
+    return `套餐已到账，将于 ${formatDateTime(payment.planEffectiveAt)} 自动生效`;
+  }
+  if (payment.planActivationMode === "renewal") {
+    return "套餐续费已到账，当前流量不会清空";
+  }
+  if (payment.planActivationMode === "immediate_switch") {
+    return "新套餐已立即生效";
+  }
+  return "套餐已立即开通";
+}
+
 export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
   const { token, session, refresh } = useAuth();
   const [campaigns, setCampaigns] = useState<GroupBuyCampaignRecord[]>([]);
@@ -126,16 +157,27 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
   const [pendingPaymentId, setPendingPaymentId] = useState<string | null>(null);
   const [pendingKind, setPendingKind] = useState<Checkout["kind"] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [cancelingGroupId, setCancelingGroupId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [now, setNow] = useState(0);
+  const [currentPlan, setCurrentPlan] = useState<{
+    id: string;
+    name: string;
+    endsAt: string;
+  } | null>(null);
+  const [immediateSwitchConfirmed, setImmediateSwitchConfirmed] =
+    useState(false);
+  const [planActivation, setPlanActivation] = useState<
+    "scheduled_switch" | "immediate_switch"
+  >("scheduled_switch");
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
       if (!token) return;
       try {
-        const [nextCampaigns, nextOpen, nextMine, nextShared] =
+        const [nextCampaigns, nextOpen, nextMine, nextShared, overview] =
           await Promise.all([
             apiRequest<GroupBuyCampaignRecord[]>(
               "/api/portal/group-buys/campaigns",
@@ -161,11 +203,26 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
                   },
                 )
               : Promise.resolve(null),
+            apiRequest<PortalOverviewResponse>("/api/portal/subscription", {
+              token,
+              signal,
+            }).catch(() => null),
           ]);
         setCampaigns(nextCampaigns);
         setOpenGroups(nextOpen);
         setMyGroups(nextMine);
         setSharedGroup(nextShared);
+        setCurrentPlan(
+          overview &&
+            overview.plan.id !== "traffic_pack" &&
+            overview.subscription.includedTrafficBytes > 0
+            ? {
+                id: overview.plan.id,
+                name: overview.plan.name,
+                endsAt: overview.subscription.endsAt,
+              }
+            : null,
+        );
         setError(null);
       } catch (cause) {
         if (cause instanceof DOMException && cause.name === "AbortError")
@@ -214,8 +271,8 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
           setCheckout(null);
           setFeedback(
             pendingKind === "create"
-              ? "付款已确认，拼团已开启，分享链接邀请另一位成员即可。"
-              : "付款已确认，正在完成两位成员的套餐与赠送流量发放。",
+              ? `${paymentActivationMessage(payment)}；拼团已开启，分享链接邀请另一位成员即可。`
+              : `${paymentActivationMessage(payment)}；拼团成功奖励正在到账。`,
           );
           await load();
           return;
@@ -249,6 +306,7 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
           discountPercent: checkout.campaign.discountPercent,
           bonusBytes: checkout.campaign.bonusTrafficBytes,
           settlementMode: checkout.campaign.settlementMode,
+          productId: checkout.campaign.productId,
         }
       : {
           name: checkout.group.productName,
@@ -258,6 +316,7 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
           discountPercent: checkout.group.discountPercent,
           bonusBytes: checkout.group.bonusTrafficBytes,
           settlementMode: checkout.group.settlementMode,
+          productId: checkout.group.productId,
         };
   }, [checkout]);
   const balanceRebateCheckout =
@@ -265,6 +324,12 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
   const checkoutAmountCents = balanceRebateCheckout
     ? (selected?.originalPriceCents ?? 0)
     : (selected?.priceCents ?? 0);
+  const switchesCurrentPlan = Boolean(
+    selected?.productId && currentPlan && selected.productId !== currentPlan.id,
+  );
+  const renewsCurrentPlan = Boolean(
+    selected?.productId && currentPlan && selected.productId === currentPlan.id,
+  );
 
   function openCheckout(next: Checkout) {
     setCheckout(next);
@@ -272,10 +337,20 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
     setIdempotencyKey(crypto.randomUUID());
     setError(null);
     setFeedback(null);
+    setImmediateSwitchConfirmed(false);
+    setPlanActivation("scheduled_switch");
   }
 
   async function confirmPayment() {
     if (!token || !checkout) return;
+    if (
+      switchesCurrentPlan &&
+      planActivation === "immediate_switch" &&
+      !immediateSwitchConfirmed
+    ) {
+      setError("请先确认立即切换套餐的影响。");
+      return;
+    }
     const targetName = `epay-group-${idempotencyKey.replace(/[^A-Za-z0-9_-]/g, "")}`;
     const paymentWindow =
       paymentType === "balance" ? null : window.open("about:blank", targetName);
@@ -297,8 +372,15 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
           : `/api/portal/group-buys/${checkout.group.id}/join`;
       const body =
         checkout.kind === "create"
-          ? { campaignId: checkout.campaign.id, paymentType }
-          : { paymentType };
+          ? {
+              campaignId: checkout.campaign.id,
+              paymentType,
+              planActivation: switchesCurrentPlan ? planActivation : undefined,
+            }
+          : {
+              paymentType,
+              planActivation: switchesCurrentPlan ? planActivation : undefined,
+            };
       const payment = await apiRequest<EpayPayment>(path, {
         method: "POST",
         token,
@@ -311,8 +393,8 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
         setCheckout(null);
         setFeedback(
           checkout.kind === "create"
-            ? "套餐已开通，拼团已开启；成团后返余额并赠送流量。"
-            : "套餐已开通，拼团成功奖励正在到账。",
+            ? `${paymentActivationMessage(payment)}；拼团已开启，成团后返余额并赠送流量。`
+            : `${paymentActivationMessage(payment)}；拼团成功奖励正在到账。`,
         );
         await refresh();
         await load();
@@ -341,8 +423,38 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
   }
 
   async function copyShare(group: GroupBuyRecord) {
-    await navigator.clipboard.writeText(group.shareUrl);
-    setFeedback("拼团链接已复制，可以发给另一位成员。 ");
+    try {
+      await copyToClipboard(group.shareUrl);
+      setFeedback("拼团链接已复制，可以发给另一位成员。");
+    } catch {
+      setError("复制失败，请稍后重试。");
+    }
+  }
+
+  async function cancelGroup(group: GroupBuyRecord) {
+    if (!token || !group.canCancel) return;
+    const confirmed = window.confirm(
+      "取消后已开通套餐保持有效，但不会获得成团返余额和赠送流量。确认取消拼团？",
+    );
+    if (!confirmed) return;
+    setCancelingGroupId(group.id);
+    setError(null);
+    setFeedback(null);
+    try {
+      const canceled = await apiRequest<GroupBuyRecord>(
+        `/api/portal/group-buys/${group.id}/cancel`,
+        { method: "POST", token },
+      );
+      if (sharedGroup?.id === group.id) setSharedGroup(canceled);
+      await load();
+      setFeedback("拼团已取消，已开通套餐保持有效，本次不返余额、不赠流量。");
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError ? cause.message : "取消拼团失败，请重试。",
+      );
+    } finally {
+      setCancelingGroupId(null);
+    }
   }
 
   const visibleGroups = tab === "open" ? openGroups.items : myGroups.items;
@@ -393,7 +505,7 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
                       ? sharedGroup.originalPriceCents
                       : sharedGroup.priceCents,
                   )} 加入`
-                : statusNames[sharedGroup.status]}
+                : groupStatusLabel(sharedGroup)}
             </button>
           </section>
         ) : null}
@@ -505,97 +617,124 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
               {tab === "open" ? openGroups.total : myGroups.total} 个拼团
             </span>
           </div>
-          <div className="group-buy-list">
-            {visibleGroups.map((group) => (
-              <article className="group-buy-row" key={group.id}>
-                <div className="group-buy-row-plan">
-                  <div className="group-buy-row-title">
-                    <strong>
-                      {group.productName} · {group.offerName}
-                    </strong>
-                    <span
-                      className={`badge ${group.status === "succeeded" ? "success" : group.status === "exception" ? "danger" : "neutral"}`}
-                    >
-                      {statusNames[group.status] ?? group.status}
-                    </span>
+          <div className="group-buy-results-shell">
+            <div className="group-buy-list-stage" key={tab}>
+              <div className="group-buy-list">
+                {visibleGroups.map((group) => (
+                  <article className="group-buy-row" key={group.id}>
+                    <div className="group-buy-row-plan">
+                      <div className="group-buy-row-title">
+                        <strong>
+                          {group.productName} · {group.offerName}
+                        </strong>
+                        <span
+                          className={`badge group-buy-status-badge ${group.status} ${group.status === "succeeded" ? "success" : group.status === "exception" ? "danger" : "neutral"}`}
+                        >
+                          {groupStatusLabel(group)}
+                        </span>
+                      </div>
+                      <small>团号 {group.shareCode}</small>
+                    </div>
+                    <div className="group-buy-row-meta">
+                      <span>
+                        还差{" "}
+                        {Math.max(group.requiredMembers - group.paidMembers, 0)}{" "}
+                        人 · 剩余 {remainingLabel(group.expiresAt, now)}
+                      </span>
+                      <span
+                        className="group-buy-progress"
+                        aria-label="成团进度"
+                      >
+                        <i
+                          style={{
+                            width: `${Math.min((group.paidMembers / group.requiredMembers) * 100, 100)}%`,
+                          }}
+                        />
+                      </span>
+                      <strong>
+                        {formatMoney(
+                          group.settlementMode ===
+                            "original_price_balance_rebate"
+                            ? group.originalPriceCents
+                            : group.priceCents,
+                        )}{" "}
+                        / 人 ·{" "}
+                        {group.settlementMode ===
+                        "original_price_balance_rebate"
+                          ? "原价付款"
+                          : discountLabel(group.discountPercent)}
+                      </strong>
+                      <small>
+                        {group.settlementMode ===
+                        "original_price_balance_rebate"
+                          ? "成团返余额 "
+                          : "立省 "}
+                        {formatMoney(
+                          savedCents(
+                            group.originalPriceCents,
+                            group.priceCents,
+                          ),
+                        )}{" "}
+                        · 成团再得 {formatBytes(group.bonusTrafficBytes)}
+                      </small>
+                    </div>
+                    <div className="group-buy-row-actions">
+                      {group.canJoin ? (
+                        <button
+                          className="action-button compact"
+                          type="button"
+                          onClick={() => openCheckout({ kind: "join", group })}
+                        >
+                          <Icon name="group_add" />
+                          {formatMoney(
+                            group.settlementMode ===
+                              "original_price_balance_rebate"
+                              ? group.originalPriceCents
+                              : group.priceCents,
+                          )}{" "}
+                          立即参团
+                        </button>
+                      ) : null}
+                      {group.viewerMemberId && group.status === "open" ? (
+                        <button
+                          className="ghost-button compact"
+                          type="button"
+                          onClick={() => void copyShare(group)}
+                        >
+                          <Icon name="content_copy" />
+                          分享链接
+                        </button>
+                      ) : null}
+                      {group.canCancel ? (
+                        <button
+                          className="ghost-button compact"
+                          type="button"
+                          disabled={cancelingGroupId === group.id}
+                          onClick={() => void cancelGroup(group)}
+                        >
+                          <Icon name="close" />
+                          {cancelingGroupId === group.id
+                            ? "取消中..."
+                            : "取消拼团"}
+                        </button>
+                      ) : null}
+                      {group.completedAt ? (
+                        <small>{formatDateTime(group.completedAt)}</small>
+                      ) : null}
+                    </div>
+                  </article>
+                ))}
+                {!loading && visibleGroups.length === 0 ? (
+                  <div className="empty-state group-buy-empty">
+                    <div className="empty-state-title">
+                      {tab === "open"
+                        ? "暂时没有等待成员的拼团"
+                        : "您还没有参与拼团"}
+                    </div>
                   </div>
-                  <small>团号 {group.shareCode}</small>
-                </div>
-                <div className="group-buy-row-meta">
-                  <span>
-                    还差{" "}
-                    {Math.max(group.requiredMembers - group.paidMembers, 0)} 人
-                    · 剩余 {remainingLabel(group.expiresAt, now)}
-                  </span>
-                  <span className="group-buy-progress" aria-label="成团进度">
-                    <i
-                      style={{
-                        width: `${Math.min((group.paidMembers / group.requiredMembers) * 100, 100)}%`,
-                      }}
-                    />
-                  </span>
-                  <strong>
-                    {formatMoney(
-                      group.settlementMode === "original_price_balance_rebate"
-                        ? group.originalPriceCents
-                        : group.priceCents,
-                    )}{" "}
-                    / 人 ·{" "}
-                    {group.settlementMode === "original_price_balance_rebate"
-                      ? "原价付款"
-                      : discountLabel(group.discountPercent)}
-                  </strong>
-                  <small>
-                    {group.settlementMode === "original_price_balance_rebate"
-                      ? "成团返余额 "
-                      : "立省 "}
-                    {formatMoney(
-                      savedCents(group.originalPriceCents, group.priceCents),
-                    )}{" "}
-                    · 成团再得 {formatBytes(group.bonusTrafficBytes)}
-                  </small>
-                </div>
-                <div className="group-buy-row-actions">
-                  {group.canJoin ? (
-                    <button
-                      className="action-button compact"
-                      type="button"
-                      onClick={() => openCheckout({ kind: "join", group })}
-                    >
-                      <Icon name="group_add" />
-                      {formatMoney(
-                        group.settlementMode === "original_price_balance_rebate"
-                          ? group.originalPriceCents
-                          : group.priceCents,
-                      )}{" "}
-                      立即参团
-                    </button>
-                  ) : null}
-                  {group.viewerMemberId && group.status === "open" ? (
-                    <button
-                      className="ghost-button compact"
-                      type="button"
-                      onClick={() => void copyShare(group)}
-                    >
-                      <Icon name="content_copy" />
-                      分享
-                    </button>
-                  ) : null}
-                  {group.completedAt ? (
-                    <small>{formatDateTime(group.completedAt)}</small>
-                  ) : null}
-                </div>
-              </article>
-            ))}
-            {!loading && visibleGroups.length === 0 ? (
-              <div className="empty-state group-buy-empty">
-                <div className="empty-state-title">
-                  {tab === "open"
-                    ? "暂时没有等待成员的拼团"
-                    : "您还没有参与拼团"}
-                </div>
+                ) : null}
               </div>
-            ) : null}
+            </div>
           </div>
         </section>
       </div>
@@ -614,7 +753,12 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
             <button
               className="action-button"
               type="button"
-              disabled={busy}
+              disabled={
+                busy ||
+                (switchesCurrentPlan &&
+                  planActivation === "immediate_switch" &&
+                  !immediateSwitchConfirmed)
+              }
               onClick={() => void confirmPayment()}
             >
               <Icon name="payments" />
@@ -656,9 +800,23 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
                   小时内两人付款成功后统一发放套餐。
                 </p>
               )}
-              <div className="group-buy-checkout-saving">
+            </section>
+            <section
+              className="group-buy-checkout-saving"
+              aria-label="成团双重奖励"
+            >
+              <div className="group-buy-checkout-saving-head">
+                <Icon name="gift" />
                 <span>
-                  {balanceRebateCheckout ? "成团返余额 " : "立省 "}
+                  <strong>成团双重奖励</strong>
+                  <small>两人均付款后自动到账</small>
+                </span>
+              </div>
+              <div className="group-buy-checkout-rewards">
+                <span>
+                  <small>
+                    {balanceRebateCheckout ? "返还余额" : "节省金额"}
+                  </small>
                   <strong>
                     {formatMoney(
                       savedCents(
@@ -669,18 +827,100 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
                   </strong>
                 </span>
                 <span>
-                  成团加送 <strong>{formatBytes(selected.bonusBytes)}</strong>
+                  <small>额外流量</small>
+                  <strong>+{formatBytes(selected.bonusBytes)}</strong>
                 </span>
               </div>
+              <small>仅成团成功发放 · 赠送流量随购买套餐到期</small>
             </section>
-            <section className="group-buy-bonus-summary">
-              <Icon name="gift" />
-              <div>
-                <span>成团奖励</span>
-                <strong>每人 +{formatBytes(selected.bonusBytes)}</strong>
-              </div>
-              <small>仅成团成功发放 · 随购买套餐到期</small>
-            </section>
+            {!currentPlan ? (
+              <section className="group-buy-plan-activation-summary">
+                <Icon name="bolt" />
+                <span>
+                  <strong>付款后立即开通</strong>
+                  <small>支付确认后套餐立即到账并可以使用</small>
+                </span>
+              </section>
+            ) : renewsCurrentPlan ? (
+              <section className="group-buy-plan-activation-summary">
+                <Icon name="schedule" />
+                <span>
+                  <strong>续费当前套餐</strong>
+                  <small>
+                    从 {formatDateTime(currentPlan.endsAt)}{" "}
+                    起延长有效期，当前流量不会清空
+                  </small>
+                </span>
+              </section>
+            ) : switchesCurrentPlan ? (
+              <section className="checkout-option-section">
+                <div className="checkout-section-heading">
+                  <strong>选择生效方式</strong>
+                  <span>默认保留当前套餐剩余时间</span>
+                </div>
+                <div
+                  className="checkout-purchase-action-options"
+                  role="radiogroup"
+                  aria-label="拼团套餐生效方式"
+                >
+                  <button
+                    type="button"
+                    className={
+                      planActivation === "scheduled_switch" ? "selected" : ""
+                    }
+                    role="radio"
+                    aria-checked={planActivation === "scheduled_switch"}
+                    onClick={() => {
+                      setPlanActivation("scheduled_switch");
+                      setImmediateSwitchConfirmed(false);
+                    }}
+                  >
+                    <Icon name="schedule" />
+                    <span>
+                      <strong>到期后切换</strong>
+                      <small>
+                        {currentPlan.name} 保留至{" "}
+                        {formatDateTime(currentPlan.endsAt)}
+                        ，届时自动启用新套餐
+                      </small>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      planActivation === "immediate_switch" ? "selected" : ""
+                    }
+                    role="radio"
+                    aria-checked={planActivation === "immediate_switch"}
+                    onClick={() => {
+                      setPlanActivation("immediate_switch");
+                      setImmediateSwitchConfirmed(false);
+                    }}
+                  >
+                    <Icon name="bolt" />
+                    <span>
+                      <strong>立即切换</strong>
+                      <small>支付确认后立即使用新套餐</small>
+                    </span>
+                  </button>
+                </div>
+                {planActivation === "immediate_switch" ? (
+                  <label className="checkout-switch-confirmation">
+                    <input
+                      type="checkbox"
+                      checked={immediateSwitchConfirmed}
+                      onChange={(event) =>
+                        setImmediateSwitchConfirmed(event.target.checked)
+                      }
+                    />
+                    <span>
+                      我确认立即切换套餐，当前 {currentPlan.name}
+                      的剩余有效期和流量将不折现、不顺延。
+                    </span>
+                  </label>
+                ) : null}
+              </section>
+            ) : null}
             <section className="checkout-option-section">
               <div className="checkout-section-heading">
                 <strong>选择支付方式</strong>

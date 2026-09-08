@@ -57,7 +57,7 @@ test("toast actions remain stable when used by data-loading effects", async () =
   );
 });
 
-test("member catalog uses store links or 易支付 without wallet checkout", async () => {
+test("member catalog keeps store and 易支付 channels alongside wallet checkout", async () => {
   const plans = await source("app/portal/plans/page.tsx");
 
   assert.match(plans, /branding\.checkoutMode === "store"/);
@@ -84,8 +84,11 @@ test("member catalog uses store links or 易支付 without wallet checkout", asy
   );
   assert.doesNotMatch(plans, /window\.location\.assign\(storeUrl\)/);
   assert.doesNotMatch(plans, /href=\{purchaseStoreUrl\}/);
-  assert.doesNotMatch(plans, /\/api\/portal\/commerce\/checkout/);
-  assert.doesNotMatch(plans, /钱包余额/);
+  assert.match(plans, /\/api\/portal\/commerce\/checkout/);
+  assert.match(plans, /paymentType === "balance"/);
+  assert.match(plans, /余额支付/);
+  assert.match(plans, /quote\?\.balanceCents/);
+  assert.match(plans, /quote\.sufficient/);
 });
 
 test("admin order center unifies revenue, order filters, and payment exceptions", async () => {

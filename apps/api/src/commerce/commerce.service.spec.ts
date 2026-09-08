@@ -130,12 +130,81 @@ describe('CommerceService checkout', () => {
       resetGrantId: 'grant_prime',
       resetBucketId: 'bucket_prime',
       resetCurrentRemainingBytes: 5,
-      resetCreditBytes: 345,
+      resetCreditBytes: 350,
       resetExpiresAt: cycleEndsAt.toISOString(),
     });
   });
 
-  it('settles a paid plan reset by topping the current cycle up to its cap', async () => {
+  it('allows another current-cycle reset even when the plan quota is still full', async () => {
+    const cycleEndsAt = new Date('2026-10-05T08:00:00.000Z');
+    const offer = {
+      id: 'offer_prime_monthly',
+      productId: 'product_prime',
+      slug: 'prime-monthly',
+      name: '月付',
+      archivedAt: null,
+      active: true,
+      billingPeriod: 'MONTHLY',
+      priceCents: 3_290,
+      trafficBytes: 350n,
+      product: {
+        id: 'product_prime',
+        name: 'Prime',
+        kind: 'PLAN',
+        series: 'STANDARD',
+        status: 'ACTIVE',
+        accessProfileId: 'profile_prime',
+        purchaseLimitPerUser: null,
+        purchaseLimitKey: null,
+        requiresActivePlan: false,
+        accessProfile: {
+          active: true,
+          nodeBindings: [{ nodeId: 'node_prime' }],
+        },
+      },
+    };
+    const prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'user_1',
+          status: 'ACTIVE',
+          balanceCents: 10_000,
+        }),
+      },
+      catalogOffer: { findUnique: jest.fn().mockResolvedValue(offer) },
+      entitlementGrant: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'grant_prime',
+          trafficBytesSnapshot: 350n,
+          quotaBuckets: [
+            {
+              id: 'bucket_prime',
+              startsAt: new Date('2026-09-05T08:00:00.000Z'),
+              endsAt: cycleEndsAt,
+              grantedBytes: 350n,
+              consumedBytes: 0n,
+            },
+          ],
+        }),
+      },
+    };
+    const service = new CommerceService(prisma as never, {} as never);
+
+    await expect(
+      service.quoteCheckout('user_1', {
+        offerId: 'offer_prime_monthly',
+        purchaseAction: 'plan_reset',
+      }),
+    ).resolves.toMatchObject({
+      purchaseMode: 'plan_reset',
+      finalPriceCents: 2_303,
+      resetCurrentRemainingBytes: 350,
+      resetCreditBytes: 350,
+      resetExpiresAt: cycleEndsAt.toISOString(),
+    });
+  });
+
+  it('settles a legacy plan reset snapshot by topping the current cycle up to its cap', async () => {
     const paidAt = new Date('2026-09-08T08:00:00.000Z');
     const cycleStartsAt = new Date('2026-09-05T08:00:00.000Z');
     const cycleEndsAt = new Date('2026-10-05T08:00:00.000Z');
@@ -487,13 +556,13 @@ describe('CommerceService checkout', () => {
         resetCycleStartsAt: startsAt.toISOString(),
         resetCycleEndsAt: endsAt.toISOString(),
         resetTrafficBytes: '350',
-        resetCreditBytes: '345',
+        resetCreditBytes: '350',
       },
     });
 
     expect(entitlements.creditQuotaBucket).toHaveBeenCalledWith(tx, {
       bucketId: 'bucket_prime',
-      bytes: 345n,
+      bytes: 350n,
       at: paidAt,
       idempotencyKey: 'plan-reset:order_reset_duplicate',
       reason: '用户购买本期流量重置',
@@ -741,6 +810,342 @@ describe('CommerceService checkout', () => {
       'invitee_1',
       'order_plan_payment',
       'plan_grant_1',
+    );
+  });
+
+  it('schedules a different paid plan without canceling the current entitlement', async () => {
+    const paidAt = new Date('2027-02-01T00:00:00.000Z');
+    const effectiveAt = new Date('2027-03-10T00:00:00.000Z');
+    const scheduledEndsAt = new Date('2027-04-10T00:00:00.000Z');
+    const currentSubscription = {
+      id: 'subscription_start',
+      planId: 'plan_start',
+      startsAt: new Date('2027-01-10T00:00:00.000Z'),
+      endsAt: effectiveAt,
+    };
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest
+          .fn()
+          .mockImplementation(({ data }) =>
+            Promise.resolve({ id: 'order_scheduled_pro', ...data }),
+          ),
+      },
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'user_1',
+          status: 'ACTIVE',
+          balanceCents: 0,
+        }),
+      },
+      catalogOffer: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'offer_pro_monthly',
+          slug: 'pro-monthly',
+          name: '月付',
+          billingPeriod: 'MONTHLY',
+          intervalMonths: 1,
+          trafficBytes: 120n,
+          priceCents: 1290,
+          currency: 'CNY',
+          active: true,
+          archivedAt: null,
+          legacyPlanOfferId: 'legacy_offer_pro_monthly',
+          legacyPlanOffer: null,
+          product: {
+            id: 'product_pro',
+            name: 'Pro',
+            kind: 'PLAN',
+            series: 'STANDARD',
+            quotaCadence: 'MONTHLY_RESET',
+            status: 'ACTIVE',
+            accessProfileId: 'profile_pro',
+            legacyPlanId: 'plan_pro',
+            legacyTrafficPackProductId: null,
+            purchaseLimitPerUser: null,
+            purchaseLimitKey: null,
+            requiresActivePlan: false,
+            defaultTrafficMultiplierBasisPoints: 10_000,
+            legacyPlan: { id: 'plan_pro' },
+            accessProfile: {
+              active: true,
+              speedUpMbps: 100,
+              speedDownMbps: 500,
+              deviceLimit: 999,
+            },
+          },
+        }),
+      },
+      accessProfile: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'profile_pro',
+          speedUpMbps: 100,
+          speedDownMbps: 500,
+          deviceLimit: 999,
+        }),
+      },
+      accessProfileNode: {
+        findFirst: jest.fn().mockResolvedValue({ nodeId: 'node_pro' }),
+      },
+      accessAccount: {
+        upsert: jest.fn().mockResolvedValue({ id: 'account_1' }),
+      },
+      subscription: {
+        findFirst: jest.fn().mockResolvedValue(currentSubscription),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        create: jest
+          .fn()
+          .mockResolvedValue({ id: 'subscription_scheduled_pro' }),
+        findUniqueOrThrow: jest
+          .fn()
+          .mockResolvedValue({ endsAt: scheduledEndsAt }),
+      },
+      paymentRecord: { create: jest.fn().mockResolvedValue({}) },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const entitlements = {
+      grantFromOrder: jest.fn().mockResolvedValue({ id: 'grant_pro' }),
+    };
+    const service = new CommerceService(
+      {} as never,
+      {} as never,
+      entitlements as never,
+    );
+
+    await service.fulfillEpayPayment(tx as never, {
+      attemptId: 'attempt_scheduled_pro',
+      userId: 'user_1',
+      offerId: 'offer_pro_monthly',
+      merchantOrderNo: 'EP-SCHEDULED-PRO',
+      gatewayTradeNo: 'gateway-scheduled-pro',
+      amountCents: 1290,
+      basePriceCents: 1290,
+      paidAt,
+      entitlementSnapshot: {
+        version: 2,
+        offerId: 'offer_pro_monthly',
+        offerSlug: 'pro-monthly',
+        offerName: '月付',
+        productId: 'product_pro',
+        productSlug: 'pro',
+        productName: 'Pro',
+        productKind: 'PLAN',
+        productSeries: 'STANDARD',
+        quotaCadence: 'MONTHLY_RESET',
+        billingPeriod: 'MONTHLY',
+        intervalMonths: 1,
+        legacyDurationDays: null,
+        trafficBytes: '120',
+        currency: 'CNY',
+        accessProfileId: 'profile_pro',
+        speedUpMbps: 100,
+        speedDownMbps: 500,
+        deviceLimit: 999,
+        trafficMultiplierBasisPoints: 10_000,
+        requiresActivePlan: false,
+        purchaseLimitPerUser: null,
+        purchaseLimitKey: null,
+        legacyPlanId: 'plan_pro',
+        legacyPlanOfferId: 'legacy_offer_pro_monthly',
+        legacyTrafficPackProductId: null,
+        purchaseMode: 'initial',
+        planActivationPreference: 'scheduled_switch',
+        planActivationMode: 'scheduled_switch',
+        planEffectiveAt: effectiveAt.toISOString(),
+      },
+    });
+
+    expect(tx.subscription.updateMany).not.toHaveBeenCalled();
+    const [subscriptionCreate] = tx.subscription.create.mock
+      .calls[0] as unknown as [{ data: { startsAt: Date; endsAt: Date } }];
+    expect(subscriptionCreate.data).toMatchObject({
+      startsAt: effectiveAt,
+      endsAt: scheduledEndsAt,
+    });
+    expect(entitlements.grantFromOrder).toHaveBeenCalledWith(
+      {
+        orderId: 'order_scheduled_pro',
+        subscriptionId: 'subscription_scheduled_pro',
+        trafficPackId: undefined,
+        startsAt: effectiveAt,
+        preserveExistingPlan: true,
+      },
+      tx,
+    );
+  });
+
+  it('renews the same group-buy plan from its expiry without resetting consumed traffic', async () => {
+    const paidAt = new Date('2027-09-01T00:00:00.000Z');
+    const currentEndsAt = new Date('2027-09-15T00:00:00.000Z');
+    const renewedEndsAt = new Date('2027-10-15T00:00:00.000Z');
+    const currentSubscription = {
+      id: 'subscription_start',
+      planId: 'plan_start',
+      startsAt: new Date('2027-08-15T00:00:00.000Z'),
+      endsAt: currentEndsAt,
+      consumedTrafficBytes: 47n,
+      bonusTrafficBytes: 11n,
+    };
+    const offer = {
+      id: 'offer_start_monthly',
+      slug: 'start-monthly',
+      name: '月付',
+      billingPeriod: 'MONTHLY',
+      intervalMonths: 1,
+      legacyDurationDays: null,
+      trafficBytes: 120n,
+      priceCents: 1_290,
+      currency: 'CNY',
+      active: true,
+      archivedAt: null,
+      legacyPlanOfferId: 'legacy_offer_start_monthly',
+      legacyPlanOffer: null,
+      product: {
+        id: 'product_start',
+        name: 'Start',
+        kind: 'PLAN',
+        series: 'STANDARD',
+        quotaCadence: 'MONTHLY_RESET',
+        status: 'ACTIVE',
+        accessProfileId: 'profile_start',
+        legacyPlanId: 'plan_start',
+        legacyTrafficPackProductId: null,
+        purchaseLimitPerUser: null,
+        purchaseLimitKey: null,
+        requiresActivePlan: false,
+        defaultTrafficMultiplierBasisPoints: 10_000,
+        legacyPlan: { id: 'plan_start' },
+        accessProfile: {
+          active: true,
+          speedUpMbps: 100,
+          speedDownMbps: 500,
+          deviceLimit: 999,
+        },
+      },
+    };
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest
+          .fn()
+          .mockImplementation(({ data }) =>
+            Promise.resolve({ id: 'order_group_renewal', ...data }),
+          ),
+      },
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'user_1',
+          status: 'ACTIVE',
+          balanceCents: 0,
+        }),
+      },
+      catalogOffer: { findUnique: jest.fn().mockResolvedValue(offer) },
+      accessProfile: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'profile_start',
+          speedUpMbps: 100,
+          speedDownMbps: 500,
+          deviceLimit: 999,
+        }),
+      },
+      accessProfileNode: {
+        findFirst: jest.fn().mockResolvedValue({ nodeId: 'node_start' }),
+      },
+      accessAccount: {
+        upsert: jest.fn().mockResolvedValue({ id: 'account_1' }),
+      },
+      subscription: {
+        findFirst: jest.fn().mockResolvedValue(currentSubscription),
+        update: jest.fn(({ data }) =>
+          Promise.resolve({
+            ...currentSubscription,
+            ...data,
+            endsAt: renewedEndsAt,
+          }),
+        ),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findUniqueOrThrow: jest
+          .fn()
+          .mockResolvedValue({ endsAt: renewedEndsAt }),
+      },
+      paymentRecord: { create: jest.fn().mockResolvedValue({}) },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const entitlements = {
+      grantFromOrder: jest.fn().mockResolvedValue({ id: 'grant_start' }),
+    };
+    const service = new CommerceService(
+      {} as never,
+      {} as never,
+      entitlements as never,
+    );
+
+    await service.fulfillEpayPayment(tx as never, {
+      attemptId: 'attempt_group_renewal',
+      userId: 'user_1',
+      offerId: offer.id,
+      merchantOrderNo: 'EP-GROUP-RENEWAL',
+      gatewayTradeNo: 'gateway-group-renewal',
+      amountCents: 1_290,
+      basePriceCents: 1_290,
+      paidAt,
+      entitlementSnapshot: {
+        version: 2,
+        offerId: offer.id,
+        offerSlug: offer.slug,
+        offerName: offer.name,
+        productId: offer.product.id,
+        productSlug: 'start',
+        productName: offer.product.name,
+        productKind: 'PLAN',
+        productSeries: 'STANDARD',
+        quotaCadence: 'MONTHLY_RESET',
+        billingPeriod: 'MONTHLY',
+        intervalMonths: 1,
+        legacyDurationDays: null,
+        trafficBytes: '120',
+        currency: 'CNY',
+        accessProfileId: 'profile_start',
+        speedUpMbps: 100,
+        speedDownMbps: 500,
+        deviceLimit: 999,
+        trafficMultiplierBasisPoints: 10_000,
+        requiresActivePlan: false,
+        purchaseLimitPerUser: null,
+        purchaseLimitKey: null,
+        legacyPlanId: 'plan_start',
+        legacyPlanOfferId: 'legacy_offer_start_monthly',
+        legacyTrafficPackProductId: null,
+        purchaseMode: 'group_buy',
+        groupBuyId: 'group_1',
+        groupBuyMemberId: 'member_1',
+        groupBuyBonusBytes: '20',
+        groupBuyOriginalPriceCents: 1_290,
+        groupBuyPriceCents: 1_032,
+        groupBuyDiscountBasisPoints: 8_000,
+        groupBuySettlementMode: 'ORIGINAL_PRICE_BALANCE_REBATE',
+        planActivationPreference: null,
+        planActivationMode: 'renewal',
+        planEffectiveAt: currentEndsAt.toISOString(),
+      },
+    });
+
+    expect(tx.subscription.updateMany).not.toHaveBeenCalled();
+    const [renewalWrite] = tx.subscription.update.mock.calls[0] as unknown as [
+      { data: Record<string, unknown> },
+    ];
+    expect(renewalWrite.data.endsAt).toEqual(renewedEndsAt);
+    expect(renewalWrite.data.startsAt).toBeUndefined();
+    expect(renewalWrite.data.consumedTrafficBytes).toBeUndefined();
+    expect(renewalWrite.data.bonusTrafficBytes).toBeUndefined();
+    expect(entitlements.grantFromOrder).toHaveBeenCalledWith(
+      {
+        orderId: 'order_group_renewal',
+        subscriptionId: currentSubscription.id,
+        trafficPackId: undefined,
+      },
+      tx,
     );
   });
 

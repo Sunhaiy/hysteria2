@@ -562,6 +562,7 @@ export interface GroupBuyRecord {
     | "fallback_fulfilled"
     | "exception"
     | "canceled";
+  productId: string | null;
   productName: string;
   offerName: string;
   originalPriceCents: number;
@@ -578,6 +579,7 @@ export interface GroupBuyRecord {
   expiresAt: string | null;
   completedAt: string | null;
   canJoin: boolean;
+  canCancel: boolean;
   viewerMemberId: string | null;
   members: Array<{
     id: string;

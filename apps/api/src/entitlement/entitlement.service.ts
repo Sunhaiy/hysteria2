@@ -164,18 +164,44 @@ export class EntitlementService {
       where: { id: input.orderId },
       include: { entitlementGrant: true },
     });
-    const planGrant = order?.entitlementGrant;
+    const originalPlanGrant = order?.entitlementGrant;
+    const bonusStartsAt = originalPlanGrant
+      ? new Date(
+          Math.max(
+            input.startsAt.getTime(),
+            originalPlanGrant.startsAt.getTime(),
+          ),
+        )
+      : input.startsAt;
     if (
       !order ||
       order.userId !== input.userId ||
-      !planGrant ||
-      planGrant.userId !== input.userId ||
-      planGrant.status !== EntitlementGrantStatus.ACTIVE ||
+      !originalPlanGrant ||
+      originalPlanGrant.userId !== input.userId ||
       !order.entitlementExpiresAt ||
-      order.entitlementExpiresAt <= input.startsAt
+      order.entitlementExpiresAt <= bonusStartsAt
     ) {
       throw new ConflictException('Plan entitlement for bonus is unavailable');
     }
+    const originalStillActive =
+      originalPlanGrant.status === EntitlementGrantStatus.ACTIVE &&
+      originalPlanGrant.startsAt <= bonusStartsAt &&
+      originalPlanGrant.endsAt > bonusStartsAt;
+    const currentPlanGrant = originalStillActive
+      ? null
+      : await client.entitlementGrant.findFirst({
+          where: {
+            userId: input.userId,
+            kind: EntitlementGrantKind.PLAN,
+            status: EntitlementGrantStatus.ACTIVE,
+            startsAt: { lte: bonusStartsAt },
+            endsAt: { gt: bonusStartsAt },
+          },
+          orderBy: [{ endsAt: 'desc' }, { createdAt: 'desc' }],
+        });
+    const planGrant = originalStillActive
+      ? originalPlanGrant
+      : (currentPlanGrant ?? originalPlanGrant);
     const grant = await client.entitlementGrant.create({
       data: {
         userId: input.userId,
@@ -183,7 +209,7 @@ export class EntitlementService {
         productId: input.productId,
         kind: EntitlementGrantKind.TRAFFIC_PACK,
         status: EntitlementGrantStatus.ACTIVE,
-        startsAt: input.startsAt,
+        startsAt: bonusStartsAt,
         endsAt: order.entitlementExpiresAt,
         accessProfileId: planGrant.accessProfileId,
         speedUpMbpsSnapshot: planGrant.speedUpMbpsSnapshot,
@@ -199,7 +225,7 @@ export class EntitlementService {
       data: {
         grantId: grant.id,
         kind: QuotaBucketKind.TRAFFIC_PACK,
-        startsAt: input.startsAt,
+        startsAt: bonusStartsAt,
         endsAt: order.entitlementExpiresAt,
         grantedBytes: input.bytes,
         trafficMultiplierBasisPointsSnapshot:
@@ -555,6 +581,8 @@ export class EntitlementService {
       subscriptionId?: string;
       trafficPackId?: string;
       replacePlan?: boolean;
+      startsAt?: Date;
+      preserveExistingPlan?: boolean;
     },
     client: DbClient = this.prisma,
   ) {
@@ -650,7 +678,11 @@ export class EntitlementService {
     const trafficMultiplierBasisPointsSnapshot =
       order.trafficMultiplierBasisPointsSnapshot ??
       product.defaultTrafficMultiplierBasisPoints;
-    if (kind === EntitlementGrantKind.PLAN) {
+    const startsAt = input.startsAt ?? order.processedAt ?? order.createdAt;
+    if (
+      kind === EntitlementGrantKind.PLAN &&
+      input.preserveExistingPlan !== true
+    ) {
       await client.accessAccount.update({
         where: { id: account.id },
         data: {
@@ -658,9 +690,11 @@ export class EntitlementService {
         },
       });
     }
-    const startsAt = order.processedAt ?? order.createdAt;
 
-    if (kind === EntitlementGrantKind.PLAN) {
+    if (
+      kind === EntitlementGrantKind.PLAN &&
+      input.preserveExistingPlan !== true
+    ) {
       await client.entitlementGrant.updateMany({
         where: {
           userId: order.userId,

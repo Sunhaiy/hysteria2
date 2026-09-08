@@ -1,4 +1,4 @@
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { App } from 'supertest/types';
@@ -45,6 +45,13 @@ describe('Health (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        transform: true,
+        forbidNonWhitelisted: true,
+      }),
+    );
     await app.init();
     const prisma = app.get(PrismaService);
     originalCoreState = await prisma.node.findUnique({
@@ -425,6 +432,12 @@ describe('Health (e2e)', () => {
       orderId: (switched.body as { orderId: string }).orderId,
       replayed: true,
     });
+    await memberAgent
+      .get('/api/portal/subscription')
+      .expect(200)
+      .expect(({ body }) => {
+        expect((body as { plan: { name: string } }).plan.name).toBe('Core 200');
+      });
 
     const entitlements = await adminAgent
       .get(`/api/admin/customers/${userId}/entitlements?pageSize=100`)
@@ -435,21 +448,23 @@ describe('Health (e2e)', () => {
             kind: string;
             status: string;
             productName: string;
+            startsAt: string;
+            endsAt: string;
           }>;
         };
         const activePlans = customer.items.filter(
           (grant) => grant.kind === 'plan' && grant.status === 'active',
         );
-        expect(activePlans).toHaveLength(1);
-        expect(activePlans[0]?.productName).toBe('Pro 500');
-        expect(
-          customer.items.some(
-            (grant) =>
-              grant.kind === 'plan' &&
-              grant.productName === 'Core 200' &&
-              grant.status === 'canceled',
-          ),
-        ).toBe(true);
+        expect(activePlans).toHaveLength(2);
+        const currentPlan = activePlans.find(
+          (grant) => grant.productName === 'Core 200',
+        );
+        const scheduledPlan = activePlans.find(
+          (grant) => grant.productName === 'Pro 500',
+        );
+        expect(currentPlan).toBeDefined();
+        expect(scheduledPlan).toBeDefined();
+        expect(scheduledPlan?.startsAt).toBe(currentPlan?.endsAt);
         expect(
           customer.items.some(
             (grant) =>
@@ -466,6 +481,599 @@ describe('Health (e2e)', () => {
       .expect(({ body }) => {
         expect((body as { items: unknown[] }).items).toHaveLength(3);
       });
+  });
+
+  it('uses wallet checkout for a plan, renewal, quota reset, and traffic pack', async () => {
+    const unique = Date.now();
+    const adminAgent = request.agent(app.getHttpServer());
+    const adminCsrf = await login(
+      adminAgent,
+      'ops@hysteria.local',
+      'admin123!',
+    );
+    const created = await adminAgent
+      .post('/api/admin/users')
+      .set('X-CSRF-Token', adminCsrf)
+      .send({
+        email: `wallet-commerce.e2e.${unique}@example.com`,
+        displayName: `Wallet Commerce E2E ${unique}`,
+        password: 'member123!',
+        role: 'member',
+        status: 'active',
+      })
+      .expect(201);
+    const userId = (created.body as { id: string }).id;
+    await adminAgent
+      .post(`/api/admin/customers/${userId}/balance-adjustments`)
+      .set('X-CSRF-Token', adminCsrf)
+      .set('Idempotency-Key', `wallet-commerce-funding-${unique}`)
+      .send({ deltaCents: 20_000, note: 'Wallet commerce E2E funding' })
+      .expect(201);
+
+    const memberAgent = request.agent(app.getHttpServer());
+    const memberCsrf = await login(
+      memberAgent,
+      `wallet-commerce.e2e.${unique}@example.com`,
+      'member123!',
+    );
+    const checkout = (
+      offerId: string,
+      key: string,
+      purchaseAction: 'purchase' | 'plan_reset' = 'purchase',
+    ) =>
+      memberAgent
+        .post('/api/portal/commerce/checkout')
+        .set('X-CSRF-Token', memberCsrf)
+        .set('Idempotency-Key', key)
+        .send({ offerId, purchaseAction });
+
+    await checkout('catalog_offer_core_monthly', `wallet-plan-${unique}`)
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          kind: 'plan_offer',
+          chargedCents: 1_800,
+        });
+      });
+    const beforeRenewal = await memberAgent
+      .get('/api/portal/subscription')
+      .expect(200);
+
+    const grants = await adminAgent
+      .get(`/api/admin/customers/${userId}/entitlements?pageSize=100`)
+      .expect(200);
+    const planGrant = (
+      grants.body as {
+        items: Array<{
+          kind: string;
+          productName: string;
+          buckets: Array<{ id: string; grantedBytes: number }>;
+        }>;
+      }
+    ).items.find(
+      (grant) => grant.kind === 'plan' && grant.productName === 'Core 200',
+    );
+    const bucket = planGrant?.buckets[0];
+    expect(bucket).toBeDefined();
+    const remainingBeforeReset = 1;
+    await adminAgent
+      .post(
+        `/api/admin/customers/${userId}/quota-buckets/${bucket!.id}/adjustments`,
+      )
+      .set('X-CSRF-Token', adminCsrf)
+      .send({
+        remainingBytes: remainingBeforeReset,
+        reason: 'Wallet reset E2E usage',
+      })
+      .expect(201);
+
+    await memberAgent
+      .post('/api/portal/commerce/quote')
+      .set('X-CSRF-Token', memberCsrf)
+      .send({
+        offerId: 'catalog_offer_core_monthly',
+        purchaseAction: 'plan_reset',
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          purchaseMode: 'plan_reset',
+          finalPriceCents: 1_260,
+          sufficient: true,
+        });
+      });
+    await checkout(
+      'catalog_offer_core_monthly',
+      `wallet-reset-${unique}`,
+      'plan_reset',
+    )
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          kind: 'plan_offer',
+          chargedCents: 1_260,
+        });
+      });
+
+    await checkout('catalog_offer_core_quarterly', `wallet-renewal-${unique}`)
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          kind: 'plan_offer',
+          chargedCents: 5_000,
+        });
+      });
+    const afterRenewal = await memberAgent
+      .get('/api/portal/subscription')
+      .expect(200);
+    expect(
+      Date.parse(
+        (afterRenewal.body as { subscription: { endsAt: string } }).subscription
+          .endsAt,
+      ),
+    ).toBeGreaterThan(
+      Date.parse(
+        (beforeRenewal.body as { subscription: { endsAt: string } })
+          .subscription.endsAt,
+      ),
+    );
+
+    await checkout('catalog_offer_pack_quarterly', `wallet-pack-${unique}`)
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          kind: 'traffic_pack',
+          chargedCents: 3_200,
+        });
+      });
+    const overview = await memberAgent
+      .get('/api/portal/subscription')
+      .expect(200);
+    expect(
+      (overview.body as { packs: Array<{ status: string }> }).packs,
+    ).toEqual(
+      expect.arrayContaining([expect.objectContaining({ status: 'active' })]),
+    );
+
+    const wallet = await memberAgent.get('/api/portal/wallet').expect(200);
+    expect((wallet.body as { balanceCents: number }).balanceCents).toBe(8_740);
+    const updatedGrants = await adminAgent
+      .get(`/api/admin/customers/${userId}/entitlements?pageSize=100`)
+      .expect(200);
+    const updatedPlan = (
+      updatedGrants.body as {
+        items: Array<{
+          kind: string;
+          productName: string;
+          buckets: Array<{ id: string; remainingBytes: number }>;
+        }>;
+      }
+    ).items.find(
+      (grant) => grant.kind === 'plan' && grant.productName === 'Core 200',
+    );
+    expect(
+      updatedPlan?.buckets.find((item) => item.id === bucket!.id),
+    ).toMatchObject({
+      remainingBytes: remainingBeforeReset + bucket!.grantedBytes,
+    });
+  });
+
+  it('lets two logged-in members pay with wallet and complete a group buy', async () => {
+    const unique = Date.now();
+    const adminAgent = request.agent(app.getHttpServer());
+    const adminCsrf = await login(
+      adminAgent,
+      'ops@hysteria.local',
+      'admin123!',
+    );
+    const originalSettingsResponse = await adminAgent
+      .get('/api/admin/group-buys/campaigns')
+      .expect(200);
+    const originalSettings = originalSettingsResponse.body as {
+      discountPercent: number;
+      bonusTrafficGiB: number;
+      offers: Array<{
+        offerId: string;
+        productName: string;
+        offerName: string;
+        enabled: boolean;
+      }>;
+    };
+    const targetOffer = originalSettings.offers.find(
+      (offer) => offer.offerId === 'catalog_offer_core_monthly',
+    );
+    expect(targetOffer).toBeDefined();
+
+    try {
+      const configuredResponse = await adminAgent
+        .put('/api/admin/group-buys/campaigns')
+        .set('X-CSRF-Token', adminCsrf)
+        .send({
+          offerIds: [targetOffer!.offerId],
+          discountPercent: 80,
+          bonusTrafficGiB: 5,
+        })
+        .expect(200);
+      const configured = configuredResponse.body as {
+        offers: Array<{
+          offerId: string;
+          productName: string;
+          offerName: string;
+          originalPriceCents: number;
+          priceCents: number;
+          campaignId: string | null;
+        }>;
+      };
+      const campaignOffer = configured.offers.find(
+        (offer) => offer.offerId === targetOffer!.offerId,
+      );
+      expect(typeof campaignOffer?.campaignId).toBe('string');
+      expect(campaignOffer?.priceCents).toBe(
+        Math.round((campaignOffer?.originalPriceCents ?? 0) * 0.8),
+      );
+      const campaignId = campaignOffer?.campaignId;
+      if (!campaignId) throw new Error('Group-buy campaign was not enabled');
+
+      const initialBalanceCents = 10_000;
+      const provisionMember = async (role: string) => {
+        const email = `group-buy-${role}.${unique}@example.com`;
+        const created = await adminAgent
+          .post('/api/admin/users')
+          .set('X-CSRF-Token', adminCsrf)
+          .send({
+            email,
+            displayName: `Group Buy ${role} ${unique}`,
+            password: 'member123!',
+            role: 'member',
+            status: 'active',
+          })
+          .expect(201);
+        const userId = (created.body as { id: string }).id;
+        await adminAgent
+          .post(`/api/admin/customers/${userId}/balance-adjustments`)
+          .set('X-CSRF-Token', adminCsrf)
+          .set('Idempotency-Key', `group-buy-funding-${role}-${unique}`)
+          .send({
+            deltaCents: initialBalanceCents,
+            note: 'Two-member group-buy E2E funding',
+          })
+          .expect(201);
+        const agent = request.agent(app.getHttpServer());
+        const csrf = await login(agent, email, 'member123!');
+        return { agent, csrf, userId };
+      };
+      const creator = await provisionMember('creator');
+      const joiner = await provisionMember('joiner');
+      const members = [creator, joiner];
+
+      await creator.agent
+        .post('/api/portal/group-buys')
+        .set('X-CSRF-Token', creator.csrf)
+        .set('Idempotency-Key', `group-buy-invalid-activation-${unique}`)
+        .send({
+          campaignId,
+          paymentType: 'balance',
+          planActivation: 'replace_silently',
+        })
+        .expect(400);
+
+      const creatorPayment = await creator.agent
+        .post('/api/portal/group-buys')
+        .set('X-CSRF-Token', creator.csrf)
+        .set('Idempotency-Key', `group-buy-create-${unique}`)
+        .send({ campaignId, paymentType: 'balance' })
+        .expect(201);
+      const creatorPaymentBody = creatorPayment.body as {
+        status: string;
+        paymentType: string;
+        amountCents: number;
+        orderId: unknown;
+        planActivationMode: string | null;
+        planEffectiveAt: string | null;
+      };
+      expect(creatorPaymentBody).toMatchObject({
+        status: 'settled',
+        paymentType: 'balance',
+        amountCents: campaignOffer.originalPriceCents,
+        planActivationMode: 'initial',
+      });
+      expect(typeof creatorPaymentBody.orderId).toBe('string');
+      expect(
+        Number.isNaN(Date.parse(creatorPaymentBody.planEffectiveAt!)),
+      ).toBe(false);
+      if (typeof creatorPaymentBody.orderId !== 'string') {
+        throw new Error('Creator wallet payment did not return an order');
+      }
+
+      const creatorGroups = await creator.agent
+        .get('/api/portal/group-buys?scope=mine&pageSize=30')
+        .expect(200);
+      const openGroup = (
+        creatorGroups.body as {
+          items: Array<{
+            id: string;
+            shareCode: string;
+            status: string;
+            productName: string;
+            paidMembers: number;
+            canCancel: boolean;
+          }>;
+        }
+      ).items.find((group) => group.productName === campaignOffer.productName);
+      expect(openGroup).toMatchObject({
+        status: 'open',
+        paidMembers: 1,
+        canCancel: true,
+      });
+      if (!openGroup) throw new Error('Creator group was not listed');
+
+      const sharedBeforeJoin = await joiner.agent
+        .get(`/api/portal/group-buys/${openGroup.shareCode}`)
+        .expect(200);
+      expect(sharedBeforeJoin.body).toMatchObject({
+        id: openGroup.id,
+        shareCode: openGroup.shareCode,
+        status: 'open',
+        canJoin: true,
+        canCancel: false,
+      });
+      await joiner.agent
+        .post(`/api/portal/group-buys/${openGroup.id}/cancel`)
+        .set('X-CSRF-Token', joiner.csrf)
+        .expect(403);
+
+      const creatorBeforeCompletion = await adminAgent
+        .get(`/api/admin/customers/${creator.userId}/entitlements?pageSize=100`)
+        .expect(200);
+      const creatorInitialGrants = (
+        creatorBeforeCompletion.body as {
+          items: Array<{ kind: string; productId: string; status: string }>;
+        }
+      ).items;
+      expect(
+        creatorInitialGrants.some(
+          (grant) =>
+            grant.kind === 'plan' &&
+            grant.status === 'active' &&
+            grant.productId !== 'system_group_buy_traffic_bonus',
+        ),
+      ).toBe(true);
+      expect(
+        creatorInitialGrants.some(
+          (grant) => grant.productId === 'system_group_buy_traffic_bonus',
+        ),
+      ).toBe(false);
+
+      const joinerPayment = await joiner.agent
+        .post(`/api/portal/group-buys/${openGroup.id}/join`)
+        .set('X-CSRF-Token', joiner.csrf)
+        .set('Idempotency-Key', `group-buy-join-${unique}`)
+        .send({ paymentType: 'balance' })
+        .expect(201);
+      const joinerPaymentBody = joinerPayment.body as {
+        status: string;
+        paymentType: string;
+        amountCents: number;
+        orderId: unknown;
+        planActivationMode: string | null;
+        planEffectiveAt: string | null;
+      };
+      expect(joinerPaymentBody).toMatchObject({
+        status: 'settled',
+        paymentType: 'balance',
+        amountCents: campaignOffer.originalPriceCents,
+        planActivationMode: 'initial',
+      });
+      expect(typeof joinerPaymentBody.orderId).toBe('string');
+      expect(Number.isNaN(Date.parse(joinerPaymentBody.planEffectiveAt!))).toBe(
+        false,
+      );
+      if (typeof joinerPaymentBody.orderId !== 'string') {
+        throw new Error('Joiner wallet payment did not return an order');
+      }
+
+      for (const member of members) {
+        const completed = await member.agent
+          .get(`/api/portal/group-buys/${openGroup.id}`)
+          .expect(200);
+        const completedBody = completed.body as {
+          status: string;
+          paidMembers: number;
+          requiredMembers: number;
+          members: Array<{ status: string }>;
+        };
+        expect(completedBody).toMatchObject({
+          status: 'succeeded',
+          paidMembers: 2,
+          requiredMembers: 2,
+        });
+        expect(completedBody.members).toHaveLength(2);
+        expect(
+          completedBody.members.every((item) => item.status === 'fulfilled'),
+        ).toBe(true);
+
+        const wallet = await member.agent.get('/api/portal/wallet').expect(200);
+        expect((wallet.body as { balanceCents: number }).balanceCents).toBe(
+          initialBalanceCents - campaignOffer.priceCents,
+        );
+
+        const grantsResponse = await adminAgent
+          .get(
+            `/api/admin/customers/${member.userId}/entitlements?pageSize=100`,
+          )
+          .expect(200);
+        const grants = (
+          grantsResponse.body as {
+            items: Array<{
+              kind: string;
+              productId: string;
+              productName: string;
+              status: string;
+              buckets: Array<{ grantedBytes: number }>;
+            }>;
+          }
+        ).items;
+        expect(
+          grants.some(
+            (grant) =>
+              grant.kind === 'plan' &&
+              grant.productName === campaignOffer.productName &&
+              grant.status === 'active',
+          ),
+        ).toBe(true);
+        expect(
+          grants.find(
+            (grant) => grant.productId === 'system_group_buy_traffic_bonus',
+          ),
+        ).toMatchObject({
+          kind: 'traffic_pack',
+          status: 'active',
+          buckets: [expect.objectContaining({ grantedBytes: 5 * 1024 ** 3 })],
+        });
+      }
+
+      for (const orderId of [
+        creatorPaymentBody.orderId,
+        joinerPaymentBody.orderId,
+      ]) {
+        const order = await adminAgent
+          .get(`/api/admin/orders/${orderId}`)
+          .expect(200);
+        expect(order.body).toMatchObject({
+          source: 'wallet',
+          fulfillmentStatus: 'applied',
+          entitlementGrant: { status: 'active' },
+          payments: [
+            expect.objectContaining({
+              source: 'wallet',
+              status: 'settled',
+              amountCents: campaignOffer.originalPriceCents,
+            }),
+          ],
+        });
+      }
+
+      await creator.agent
+        .post(`/api/portal/group-buys/${openGroup.id}/cancel`)
+        .set('X-CSRF-Token', creator.csrf)
+        .expect(409);
+
+      const cancelCreator = await provisionMember('cancel-creator');
+      const cancelViewer = await provisionMember('cancel-viewer');
+      await cancelCreator.agent
+        .post('/api/portal/group-buys')
+        .set('X-CSRF-Token', cancelCreator.csrf)
+        .set('Idempotency-Key', `group-buy-cancel-create-${unique}`)
+        .send({ campaignId, paymentType: 'balance' })
+        .expect(201);
+      const cancelCreatorGroups = await cancelCreator.agent
+        .get('/api/portal/group-buys?scope=mine&pageSize=30')
+        .expect(200);
+      const cancelableGroup = (
+        cancelCreatorGroups.body as {
+          items: Array<{
+            id: string;
+            shareCode: string;
+            status: string;
+            canCancel: boolean;
+          }>;
+        }
+      ).items.find((group) => group.status === 'open');
+      expect(cancelableGroup).toMatchObject({
+        status: 'open',
+        canCancel: true,
+      });
+      if (!cancelableGroup) throw new Error('Cancelable group was not listed');
+
+      await cancelViewer.agent
+        .get(`/api/portal/group-buys/${cancelableGroup.shareCode}`)
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body).toMatchObject({
+            id: cancelableGroup.id,
+            status: 'open',
+            canJoin: true,
+          });
+        });
+      await cancelViewer.agent
+        .post(`/api/portal/group-buys/${cancelableGroup.id}/cancel`)
+        .set('X-CSRF-Token', cancelViewer.csrf)
+        .expect(403);
+
+      await cancelCreator.agent
+        .post(`/api/portal/group-buys/${cancelableGroup.id}/cancel`)
+        .set('X-CSRF-Token', cancelCreator.csrf)
+        .expect(201)
+        .expect(({ body }) => {
+          expect(body).toMatchObject({
+            id: cancelableGroup.id,
+            status: 'canceled',
+            canJoin: false,
+            canCancel: false,
+          });
+        });
+      await cancelCreator.agent
+        .get('/api/portal/group-buys?scope=mine&pageSize=30')
+        .expect(200)
+        .expect(({ body }) => {
+          expect(
+            (
+              body as {
+                items: Array<{ id: string }>;
+              }
+            ).items,
+          ).not.toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ id: cancelableGroup.id }),
+            ]),
+          );
+        });
+      await cancelViewer.agent
+        .post(`/api/portal/group-buys/${cancelableGroup.id}/join`)
+        .set('X-CSRF-Token', cancelViewer.csrf)
+        .set('Idempotency-Key', `group-buy-canceled-join-${unique}`)
+        .send({ paymentType: 'balance' })
+        .expect(400);
+
+      const canceledCreatorWallet = await cancelCreator.agent
+        .get('/api/portal/wallet')
+        .expect(200);
+      expect(
+        (canceledCreatorWallet.body as { balanceCents: number }).balanceCents,
+      ).toBe(initialBalanceCents - campaignOffer.originalPriceCents);
+      const canceledCreatorGrants = await adminAgent
+        .get(
+          `/api/admin/customers/${cancelCreator.userId}/entitlements?pageSize=100`,
+        )
+        .expect(200);
+      const retainedGrants = (
+        canceledCreatorGrants.body as {
+          items: Array<{ kind: string; productId: string; status: string }>;
+        }
+      ).items;
+      expect(
+        retainedGrants.some(
+          (grant) => grant.kind === 'plan' && grant.status === 'active',
+        ),
+      ).toBe(true);
+      expect(
+        retainedGrants.some(
+          (grant) => grant.productId === 'system_group_buy_traffic_bonus',
+        ),
+      ).toBe(false);
+    } finally {
+      await adminAgent
+        .put('/api/admin/group-buys/campaigns')
+        .set('X-CSRF-Token', adminCsrf)
+        .send({
+          offerIds: originalSettings.offers
+            .filter((offer) => offer.enabled)
+            .map((offer) => offer.offerId),
+          discountPercent: originalSettings.discountPercent,
+          bonusTrafficGiB: originalSettings.bonusTrafficGiB,
+        })
+        .expect(200);
+    }
   });
 
   it('allows admins to read reporting and export order terms', async () => {

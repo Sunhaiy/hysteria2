@@ -12,6 +12,10 @@ export class CheckoutDto {
   purchaseAction?: 'purchase' | 'plan_reset';
 
   @IsOptional()
+  @IsIn(['scheduled_switch', 'immediate_switch'])
+  planActivation?: 'scheduled_switch' | 'immediate_switch';
+
+  @IsOptional()
   @IsIn(['plan', 'plan_offer', 'traffic_pack'])
   kind?: 'plan' | 'plan_offer' | 'traffic_pack';
 

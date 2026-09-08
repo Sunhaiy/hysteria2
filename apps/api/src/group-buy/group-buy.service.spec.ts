@@ -1,4 +1,8 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import {
   BillingPeriod,
   CatalogProductKind,
@@ -56,8 +60,11 @@ describe('GroupBuyService', () => {
         requiresActivePlan: false,
         purchaseLimitPerUser: null,
         purchaseLimitKey: null,
-        legacyPlanId: null,
-        legacyPlan: null,
+        legacyPlanId: `plan-${slug}`,
+        legacyPlan: {
+          id: `plan-${slug}`,
+          name: slug === 'go' ? 'Go' : 'Start',
+        },
         legacyTrafficPackProductId: null,
       },
     };
@@ -222,6 +229,172 @@ describe('GroupBuyService', () => {
     });
   });
 
+  it('lets the creator cancel an open balance-rebate group without revoking the activated plan', async () => {
+    const canceledAt = new Date('2026-09-07T06:00:00.000Z');
+    const creator = {
+      id: 'member-creator',
+      userId: 'creator-1',
+      isCreator: true,
+      status: GroupBuyMemberStatus.FULFILLED,
+      activeSlot: 'standard-plan:creator-1',
+      orderId: 'order-creator',
+      paidAt: new Date('2026-09-07T02:00:00.000Z'),
+      user: { displayName: 'Creator' },
+      paymentAttempt: null,
+    };
+    const currentGroup = {
+      ...group(offer(), {
+        settlementMode: GroupBuySettlementMode.ORIGINAL_PRICE_BALANCE_REBATE,
+      }),
+      creatorId: creator.userId,
+      members: [creator],
+    };
+    const canceledGroup = {
+      ...currentGroup,
+      status: GroupBuyStatus.CANCELED,
+      completedAt: canceledAt,
+      members: [{ ...creator, activeSlot: null }],
+    };
+    const tx = {
+      groupBuy: {
+        findUnique: jest.fn().mockResolvedValue(currentGroup),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findUniqueOrThrow: jest.fn().mockResolvedValue(canceledGroup),
+      },
+      groupBuyMember: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      $transaction: jest.fn((operation: (client: typeof tx) => unknown) =>
+        operation(tx),
+      ),
+    };
+
+    await expect(
+      service(prisma).cancelForCreator(
+        creator.userId,
+        currentGroup.id,
+        canceledAt,
+      ),
+    ).resolves.toMatchObject({
+      id: currentGroup.id,
+      status: 'canceled',
+      canCancel: false,
+      viewerMemberId: creator.id,
+    });
+
+    expect(tx.groupBuy.updateMany).toHaveBeenCalledWith({
+      where: { id: currentGroup.id, status: GroupBuyStatus.OPEN },
+      data: { status: GroupBuyStatus.CANCELED, completedAt: canceledAt },
+    });
+    expect(tx.groupBuyMember.updateMany).toHaveBeenCalledWith({
+      where: {
+        groupId: currentGroup.id,
+        userId: creator.userId,
+        isCreator: true,
+        activeSlot: { not: null },
+      },
+      data: { activeSlot: null },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        actorId: creator.userId,
+        action: 'group_buy.canceled',
+        targetType: 'group_buy',
+        targetId: currentGroup.id,
+        metadata: {
+          retainedOrderId: creator.orderId,
+          retainedEntitlement: true,
+          rewardsGranted: false,
+        },
+      },
+    });
+  });
+
+  it('rejects cancellation by another member or after a second member starts joining', async () => {
+    const creator = {
+      id: 'member-creator',
+      userId: 'creator-1',
+      isCreator: true,
+      status: GroupBuyMemberStatus.FULFILLED,
+      activeSlot: 'standard-plan:creator-1',
+      orderId: 'order-creator',
+      paidAt: new Date('2026-09-07T02:00:00.000Z'),
+      user: { displayName: 'Creator' },
+      paymentAttempt: null,
+    };
+    const joiningMember = {
+      ...creator,
+      id: 'member-joiner',
+      userId: 'user-2',
+      isCreator: false,
+      status: GroupBuyMemberStatus.PAYMENT_PENDING,
+      activeSlot: 'standard-plan:user-2',
+      orderId: null,
+      paidAt: null,
+      user: { displayName: 'Joiner' },
+    };
+    const currentGroup = {
+      ...group(offer(), {
+        settlementMode: GroupBuySettlementMode.ORIGINAL_PRICE_BALANCE_REBATE,
+      }),
+      members: [creator],
+    };
+    const groupBuy = {
+      findUnique: jest
+        .fn()
+        .mockResolvedValueOnce(currentGroup)
+        .mockResolvedValueOnce({
+          ...currentGroup,
+          members: [creator, joiningMember],
+        }),
+      updateMany: jest.fn(),
+    };
+    const tx = {
+      groupBuy,
+      groupBuyMember: { updateMany: jest.fn() },
+      auditLog: { create: jest.fn() },
+    };
+    const prisma = {
+      $transaction: jest.fn((operation: (client: typeof tx) => unknown) =>
+        operation(tx),
+      ),
+    };
+    const groupBuys = service(prisma);
+    const beforeExpiry = new Date('2026-09-07T06:00:00.000Z');
+
+    await expect(
+      groupBuys.cancelForCreator('user-2', currentGroup.id, beforeExpiry),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      groupBuys.cancelForCreator('creator-1', currentGroup.id, beforeExpiry),
+    ).rejects.toThrow('已有成员正在参团，不能取消');
+    expect(groupBuy.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects cancellation after the group has completed', async () => {
+    const currentGroup = {
+      ...group(offer(), {
+        settlementMode: GroupBuySettlementMode.ORIGINAL_PRICE_BALANCE_REBATE,
+      }),
+      status: GroupBuyStatus.SUCCEEDED,
+      completedAt: new Date('2026-09-07T03:00:00.000Z'),
+      members: [],
+    };
+    const tx = {
+      groupBuy: { findUnique: jest.fn().mockResolvedValue(currentGroup) },
+    };
+    const prisma = {
+      $transaction: jest.fn((operation: (client: typeof tx) => unknown) =>
+        operation(tx),
+      ),
+    };
+
+    await expect(
+      service(prisma).cancelForCreator('creator-1', currentGroup.id),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
   it('filters and exposes unrecovered group rebate debt for administrators', async () => {
     const currentGroup = {
       ...group(),
@@ -281,7 +454,7 @@ describe('GroupBuyService', () => {
         findUnique: jest.fn().mockResolvedValue(campaign(catalogOffer)),
       },
       groupBuyMember: {
-        findUnique: jest.fn().mockResolvedValue(null),
+        findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
           createdMembers.push(data);
           return Promise.resolve({
@@ -300,6 +473,8 @@ describe('GroupBuyService', () => {
           });
         }),
       },
+      subscription: { findFirst: jest.fn().mockResolvedValue(null) },
+      epayPaymentAttempt: { findUnique: jest.fn().mockResolvedValue(null) },
     };
 
     const result = await service({}).preparePayment(
@@ -323,10 +498,13 @@ describe('GroupBuyService', () => {
     expect(createdMembers[0]).toMatchObject({
       userId: 'creator-1',
       isCreator: true,
-      activeSlot: 'campaign-1:creator-1',
+      activeSlot: 'standard-plan:creator-1',
     });
     expect(result.snapshot).toMatchObject({
       purchaseMode: 'group_buy',
+      planActivationPreference: null,
+      planActivationMode: 'initial',
+      planEffectiveAt: '2026-09-07T00:00:00.000Z',
       productSlug: 'start',
       groupBuyBonusBytes: GROUP_BONUS_BYTES.toString(),
       groupBuyOriginalPriceCents: 1290,
@@ -337,6 +515,228 @@ describe('GroupBuyService', () => {
     });
     expect(typeof result.snapshot.groupBuyId).toBe('string');
     expect(typeof result.snapshot.groupBuyMemberId).toBe('string');
+    expect(
+      (createdGroups[0]?.entitlementSnapshot as Record<string, unknown>)
+        .planActivationMode,
+    ).toBeNull();
+    expect(
+      (createdMembers[0]?.entitlementSnapshot as Record<string, unknown>)
+        .planActivationMode,
+    ).toBe('initial');
+  });
+
+  it('forces a same-plan group purchase to renew without clearing current usage', async () => {
+    const now = new Date('2026-09-08T08:00:00.000Z');
+    const endsAt = new Date('2026-10-08T08:00:00.000Z');
+    const catalogOffer = offer();
+    const createdMembers: Array<Record<string, unknown>> = [];
+    const currentPlan = {
+      id: 'subscription-start',
+      planId: 'plan-start',
+      startsAt: new Date('2026-08-08T08:00:00.000Z'),
+      endsAt,
+      plan: {
+        id: 'plan-start',
+        name: 'Start',
+        catalogProduct: { id: 'product-start', name: 'Start' },
+      },
+    };
+    const tx = {
+      user: { findUnique: jest.fn().mockResolvedValue({ status: 'ACTIVE' }) },
+      groupBuyCampaign: {
+        findUnique: jest.fn().mockResolvedValue(campaign(catalogOffer)),
+      },
+      groupBuyMember: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
+          createdMembers.push(data);
+          return Promise.resolve({
+            ...data,
+            status: GroupBuyMemberStatus.PAYMENT_PENDING,
+            paymentAttempt: null,
+          });
+        }),
+      },
+      groupBuy: {
+        create: jest.fn(({ data }) =>
+          Promise.resolve({
+            ...data,
+            status: GroupBuyStatus.PENDING_PAYMENT,
+          }),
+        ),
+      },
+      subscription: {
+        findFirst: jest.fn(
+          ({ where }: { where: { startsAt?: { lte?: Date } } }) =>
+            Promise.resolve(where.startsAt?.lte ? currentPlan : null),
+        ),
+      },
+      epayPaymentAttempt: { findUnique: jest.fn().mockResolvedValue(null) },
+    };
+
+    const result = await service({}).preparePayment(
+      tx as never,
+      'creator-1',
+      { kind: 'create', campaignId: 'campaign-1' },
+      now,
+      'immediate_switch',
+    );
+
+    expect(result.snapshot).toMatchObject({
+      planActivationPreference: null,
+      planActivationMode: 'renewal',
+      planEffectiveAt: endsAt.toISOString(),
+      currentPlanProductId: 'product-start',
+      currentPlanName: 'Start',
+      currentPlanEndsAt: endsAt.toISOString(),
+    });
+    expect(
+      (createdMembers[0]?.entitlementSnapshot as Record<string, unknown>)
+        .planActivationMode,
+    ).toBe('renewal');
+  });
+
+  it('blocks another group purchase when a future plan is already scheduled', async () => {
+    const now = new Date('2026-09-08T08:00:00.000Z');
+    const catalogOffer = offer();
+    const tx = {
+      user: { findUnique: jest.fn().mockResolvedValue({ status: 'ACTIVE' }) },
+      groupBuyCampaign: {
+        findUnique: jest.fn().mockResolvedValue(campaign(catalogOffer)),
+      },
+      groupBuyMember: { findFirst: jest.fn().mockResolvedValue(null) },
+      subscription: {
+        findFirst: jest.fn(
+          ({ where }: { where: { startsAt?: { gt?: Date } } }) =>
+            Promise.resolve(
+              where.startsAt?.gt
+                ? { id: 'scheduled-subscription' }
+                : {
+                    id: 'current-subscription',
+                    planId: 'plan-start',
+                    startsAt: new Date('2026-08-08T08:00:00.000Z'),
+                    endsAt: new Date('2026-10-08T08:00:00.000Z'),
+                    plan: {
+                      id: 'plan-start',
+                      name: 'Start',
+                      catalogProduct: { id: 'product-start', name: 'Start' },
+                    },
+                  },
+            ),
+        ),
+      },
+      epayPaymentAttempt: { findUnique: jest.fn().mockResolvedValue(null) },
+      groupBuy: { create: jest.fn() },
+    };
+
+    await expect(
+      service({}).preparePayment(
+        tx as never,
+        'creator-1',
+        { kind: 'create', campaignId: 'campaign-1' },
+        now,
+      ),
+    ).rejects.toThrow('当前仅可重置本期流量');
+    expect(tx.groupBuy.create).not.toHaveBeenCalled();
+  });
+
+  it('calculates a joining member switch independently from the creator snapshot', async () => {
+    const now = new Date('2026-09-08T08:00:00.000Z');
+    const currentEndsAt = new Date('2026-10-08T08:00:00.000Z');
+    const targetOffer = offer();
+    const creatorSnapshot = snapshotCatalogOffer(targetOffer as never, {
+      purchaseMode: 'group_buy',
+      groupBuyId: 'group-1',
+      groupBuyMemberId: 'member-creator',
+      groupBuyBonusBytes: GROUP_BONUS_BYTES.toString(),
+      groupBuyOriginalPriceCents: targetOffer.priceCents,
+      groupBuyPriceCents: targetOffer.priceCents,
+      groupBuyDiscountBasisPoints: GROUP_DISCOUNT_BASIS_POINTS,
+      groupBuySettlementMode:
+        GroupBuySettlementMode.ORIGINAL_PRICE_BALANCE_REBATE,
+      planActivationPreference: 'immediate_switch',
+      planActivationMode: 'immediate_switch',
+      planEffectiveAt: now.toISOString(),
+    });
+    const currentGroup = {
+      ...group(targetOffer, {
+        settlementMode: GroupBuySettlementMode.ORIGINAL_PRICE_BALANCE_REBATE,
+      }),
+      entitlementSnapshot: creatorSnapshot,
+      expiresAt: new Date('2026-09-09T08:00:00.000Z'),
+      members: [
+        {
+          id: 'member-creator',
+          userId: 'creator-1',
+          status: GroupBuyMemberStatus.FULFILLED,
+        },
+      ],
+    };
+    const currentPlan = {
+      id: 'subscription-pro',
+      planId: 'plan-pro',
+      startsAt: new Date('2026-08-08T08:00:00.000Z'),
+      endsAt: currentEndsAt,
+      plan: {
+        id: 'plan-pro',
+        name: 'Pro',
+        catalogProduct: { id: 'product-pro', name: 'Pro' },
+      },
+    };
+    const createTx = () => ({
+      user: { findUnique: jest.fn().mockResolvedValue({ status: 'ACTIVE' }) },
+      groupBuy: { findUnique: jest.fn().mockResolvedValue(currentGroup) },
+      groupBuyMember: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn(({ data }) =>
+          Promise.resolve({
+            ...data,
+            status: GroupBuyMemberStatus.PAYMENT_PENDING,
+            paymentAttempt: null,
+          }),
+        ),
+      },
+      catalogOffer: { findUnique: jest.fn().mockResolvedValue(targetOffer) },
+      subscription: {
+        findFirst: jest.fn(
+          ({ where }: { where: { startsAt?: { lte?: Date } } }) =>
+            Promise.resolve(where.startsAt?.lte ? currentPlan : null),
+        ),
+      },
+      epayPaymentAttempt: { findUnique: jest.fn().mockResolvedValue(null) },
+    });
+
+    const scheduled = await service({}).preparePayment(
+      createTx() as never,
+      'joiner-scheduled',
+      { kind: 'join', groupId: currentGroup.id },
+      now,
+    );
+    const immediate = await service({}).preparePayment(
+      createTx() as never,
+      'joiner-immediate',
+      { kind: 'join', groupId: currentGroup.id },
+      now,
+      'immediate_switch',
+    );
+
+    expect(scheduled.snapshot).toMatchObject({
+      planActivationPreference: 'scheduled_switch',
+      planActivationMode: 'scheduled_switch',
+      planEffectiveAt: currentEndsAt.toISOString(),
+      currentPlanProductId: 'product-pro',
+    });
+    expect(immediate.snapshot).toMatchObject({
+      planActivationPreference: 'immediate_switch',
+      planActivationMode: 'immediate_switch',
+      planEffectiveAt: now.toISOString(),
+      currentPlanProductId: 'product-pro',
+    });
+    expect(typeof scheduled.snapshot.groupBuyMemberId).toBe('string');
+    expect(typeof immediate.snapshot.groupBuyMemberId).toBe('string');
+    expect(scheduled.snapshot.groupBuyMemberId).not.toBe(
+      creatorSnapshot.groupBuyMemberId,
+    );
   });
 
   it('snapshots the configured discount and per-member traffic bonus', async () => {
@@ -353,7 +753,7 @@ describe('GroupBuyService', () => {
         findUnique: jest.fn().mockResolvedValue(configuredCampaign),
       },
       groupBuyMember: {
-        findUnique: jest.fn().mockResolvedValue(null),
+        findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn(({ data }) =>
           Promise.resolve({
             ...data,
@@ -371,6 +771,8 @@ describe('GroupBuyService', () => {
           });
         }),
       },
+      subscription: { findFirst: jest.fn().mockResolvedValue(null) },
+      epayPaymentAttempt: { findUnique: jest.fn().mockResolvedValue(null) },
     };
 
     const result = await service({}).preparePayment(tx as never, 'creator-1', {
@@ -393,6 +795,33 @@ describe('GroupBuyService', () => {
       groupBuySettlementMode:
         GroupBuySettlementMode.ORIGINAL_PRICE_BALANCE_REBATE,
     });
+  });
+
+  it('rejects a second campaign while the account has an active plan group', async () => {
+    const catalogOffer = offer();
+    const activeMember = {
+      id: 'member-existing',
+      userId: 'creator-1',
+      status: GroupBuyMemberStatus.FULFILLED,
+      group: { ...group(), campaignId: 'campaign-other' },
+      paymentAttempt: null,
+    };
+    const tx = {
+      user: { findUnique: jest.fn().mockResolvedValue({ status: 'ACTIVE' }) },
+      groupBuyCampaign: {
+        findUnique: jest.fn().mockResolvedValue(campaign(catalogOffer)),
+      },
+      groupBuyMember: {
+        findFirst: jest.fn().mockResolvedValue(activeMember),
+      },
+    };
+
+    await expect(
+      service({}).preparePayment(tx as never, 'creator-1', {
+        kind: 'create',
+        campaignId: 'campaign-1',
+      }),
+    ).rejects.toThrow('你已有进行中的套餐拼团');
   });
 
   it('rejects Go and expired groups', async () => {
@@ -710,7 +1139,9 @@ describe('GroupBuyService', () => {
     const tx = {
       user: { findUnique: jest.fn().mockResolvedValue({ status: 'ACTIVE' }) },
       groupBuy: { findUnique: jest.fn().mockResolvedValue(currentGroup) },
-      groupBuyMember: { findUnique: jest.fn().mockResolvedValue(null) },
+      groupBuyMember: { findFirst: jest.fn().mockResolvedValue(null) },
+      subscription: { findFirst: jest.fn().mockResolvedValue(null) },
+      epayPaymentAttempt: { findUnique: jest.fn().mockResolvedValue(null) },
     };
 
     await expect(

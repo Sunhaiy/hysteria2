@@ -98,7 +98,7 @@ test("all interface icons use Hugeicons with an admin-controlled stroke width", 
       .match(/const iconMotions:[\s\S]*?= \{([\s\S]*?)\n\};/)?.[1]
       ?.matchAll(/^  \w+: \{$/gm) ?? []),
   ];
-  assert.equal(motions.length, 62);
+  assert.equal(motions.length, 63);
   assert.match(icon, /Suit01Icon/);
   assert.match(icon, /brand_logo:\s*Suit01Icon/);
   assert.match(icon, /settings:\s*\{\s*cue: "turn",\s*accentPart: 1/);
@@ -128,20 +128,24 @@ test("all interface icons use Hugeicons with an admin-controlled stroke width", 
 });
 
 test("the Suit 01 Hugeicon is used as the visible brand mark", async () => {
-  const [home, authShell, consoleShell, styles, layout, siteProvider] = await Promise.all([
-    source("app/page.tsx"),
-    source("components/auth-shell.tsx"),
-    source("components/console-shell.tsx"),
-    source("app/globals.scss"),
-    source("app/layout.tsx"),
-    source("components/site-provider.tsx"),
-  ]);
+  const [home, authShell, consoleShell, styles, layout, siteProvider] =
+    await Promise.all([
+      source("app/page.tsx"),
+      source("components/auth-shell.tsx"),
+      source("components/console-shell.tsx"),
+      source("app/globals.scss"),
+      source("app/layout.tsx"),
+      source("components/site-provider.tsx"),
+    ]);
 
   assert.match(home, /ppanel-brand-mark[\s\S]*?<Icon name="brand_logo"/);
   assert.doesNotMatch(home, /src=\{site\.iconUrl\}/);
   assert.match(authShell, /lp-logo[\s\S]*?<Icon name="brand_logo"/);
   assert.doesNotMatch(authShell, /<svg/);
-  assert.match(consoleShell, /sidebar-brand-mark[\s\S]*?<Icon name="brand_logo"/);
+  assert.match(
+    consoleShell,
+    /sidebar-brand-mark[\s\S]*?<Icon name="brand_logo"/,
+  );
   const sidebarBrandMark = styles.match(
     /\.sidebar-brand-mark\s*\{([\s\S]*?)\n\}/,
   )?.[1];

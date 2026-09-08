@@ -6,6 +6,10 @@ import {
   Prisma,
   QuotaCadence,
 } from '@prisma/client';
+import type {
+  PlanActivationMode,
+  PlanActivationPreference,
+} from './plan-purchase-policy';
 
 export const catalogOfferSnapshotInclude =
   Prisma.validator<Prisma.CatalogOfferInclude>()({
@@ -67,6 +71,12 @@ export interface CatalogOfferSnapshot {
   groupBuyPriceCents?: number | null;
   groupBuyDiscountBasisPoints?: number | null;
   groupBuySettlementMode?: GroupBuySettlementMode | null;
+  planActivationPreference?: PlanActivationPreference | null;
+  planActivationMode?: PlanActivationMode | null;
+  planEffectiveAt?: string | null;
+  currentPlanProductId?: string | null;
+  currentPlanName?: string | null;
+  currentPlanEndsAt?: string | null;
 }
 
 export interface CatalogOfferPurchaseContext {
@@ -88,6 +98,12 @@ export interface CatalogOfferPurchaseContext {
   groupBuyPriceCents?: number | null;
   groupBuyDiscountBasisPoints?: number | null;
   groupBuySettlementMode?: GroupBuySettlementMode | null;
+  planActivationPreference?: PlanActivationPreference | null;
+  planActivationMode?: PlanActivationMode | null;
+  planEffectiveAt?: string | null;
+  currentPlanProductId?: string | null;
+  currentPlanName?: string | null;
+  currentPlanEndsAt?: string | null;
 }
 
 export function snapshotCatalogOffer(
@@ -151,6 +167,12 @@ export function snapshotCatalogOffer(
     groupBuyDiscountBasisPoints:
       purchaseContext?.groupBuyDiscountBasisPoints ?? null,
     groupBuySettlementMode: purchaseContext?.groupBuySettlementMode ?? null,
+    planActivationPreference: purchaseContext?.planActivationPreference ?? null,
+    planActivationMode: purchaseContext?.planActivationMode ?? null,
+    planEffectiveAt: purchaseContext?.planEffectiveAt ?? null,
+    currentPlanProductId: purchaseContext?.currentPlanProductId ?? null,
+    currentPlanName: purchaseContext?.currentPlanName ?? null,
+    currentPlanEndsAt: purchaseContext?.currentPlanEndsAt ?? null,
   };
 }
 
@@ -210,6 +232,17 @@ export function parseCatalogOfferSnapshot(
         )))
   ) {
     throw new Error('易支付拼团快照无效');
+  }
+  if (
+    candidate.planActivationMode != null &&
+    (typeof candidate.planActivationMode !== 'string' ||
+      !['initial', 'renewal', 'scheduled_switch', 'immediate_switch'].includes(
+        candidate.planActivationMode,
+      ) ||
+      typeof candidate.planEffectiveAt !== 'string' ||
+      Number.isNaN(Date.parse(candidate.planEffectiveAt)))
+  ) {
+    throw new Error('易支付套餐生效策略快照无效');
   }
   return candidate as unknown as CatalogOfferSnapshot;
 }

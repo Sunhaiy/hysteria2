@@ -9,6 +9,8 @@ import {
 } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import {
+  CatalogProductKind,
+  CatalogProductSeries,
   type EpayGatewayTestAttempt,
   type EpayPaymentAttempt,
   EpayPaymentStatus,
@@ -27,6 +29,10 @@ import {
   parseCatalogOfferSnapshot,
   snapshotCatalogOffer,
 } from '../commerce/catalog-offer-snapshot';
+import {
+  standardPlanPurchaseKey,
+  type PlanActivationPreference,
+} from '../commerce/plan-purchase-policy';
 import {
   createEpaySignature,
   formatEpayAmount,
@@ -68,6 +74,7 @@ export class EpayService {
     discountCode: string | undefined,
     paymentType: 'alipay' | 'wxpay',
     purchaseAction: 'purchase' | 'plan_reset' = 'purchase',
+    planActivation?: PlanActivationPreference,
   ) {
     const normalizedKey = idempotencyKey.trim();
     if (!normalizedKey || normalizedKey.length > 120) {
@@ -80,7 +87,11 @@ export class EpayService {
     const config = await this.requireConfiguredEpay(true);
     const selectedPaymentType = paymentType;
     const [quote, offer] = await Promise.all([
-      this.commerce.quoteCheckout(userId, { offerId, purchaseAction }),
+      this.commerce.quoteCheckout(userId, {
+        offerId,
+        purchaseAction,
+        planActivation,
+      }),
       this.prisma.catalogOffer.findUnique({
         where: { id: offerId },
         include: { product: true },
@@ -95,11 +106,20 @@ export class EpayService {
     if (quote.basePriceCents !== offer.priceCents) {
       throw new ConflictException('商品价格已变化，请刷新后重试');
     }
+    const resolvedPlanActivation = this.resolvedPlanActivation(
+      quote.planActivationMode,
+    );
 
     const now = new Date();
-    const activeKey = `${userId}:${offer.product.purchaseLimitKey ?? offer.productId}${
-      purchaseAction === 'plan_reset' ? ':plan_reset' : ''
-    }`;
+    const standardPlan =
+      purchaseAction === 'purchase' &&
+      offer.product.kind === CatalogProductKind.PLAN &&
+      offer.product.series === CatalogProductSeries.STANDARD;
+    const activeKey = standardPlan
+      ? standardPlanPurchaseKey(userId)
+      : `${userId}:${offer.product.purchaseLimitKey ?? offer.productId}${
+          purchaseAction === 'plan_reset' ? ':plan_reset' : ''
+        }`;
     try {
       const attempt = await this.prisma.$transaction(
         async (tx) => {
@@ -118,7 +138,9 @@ export class EpayService {
               replay.offerId !== offerId ||
               replay.paymentType !== selectedPaymentType ||
               this.paymentPurchaseAction(replay.entitlementSnapshot) !==
-                purchaseAction
+                purchaseAction ||
+              this.paymentPlanActivation(replay.entitlementSnapshot) !==
+                resolvedPlanActivation
             ) {
               throw new ConflictException(
                 'Idempotency-Key was already used for another purchase',
@@ -135,7 +157,9 @@ export class EpayService {
               active.offerId !== offerId ||
               active.paymentType !== selectedPaymentType ||
               this.paymentPurchaseAction(active.entitlementSnapshot) !==
-                purchaseAction
+                purchaseAction ||
+              this.paymentPlanActivation(active.entitlementSnapshot) !==
+                resolvedPlanActivation
             ) {
               throw new ConflictException(
                 '该商品已有一笔其他规格或支付方式的待支付订单',
@@ -186,6 +210,12 @@ export class EpayService {
                   quote.resetCreditBytes == null
                     ? null
                     : String(quote.resetCreditBytes),
+                planActivationPreference: resolvedPlanActivation,
+                planActivationMode: quote.planActivationMode,
+                planEffectiveAt: quote.planEffectiveAt,
+                currentPlanProductId: quote.currentPlanProductId,
+                currentPlanName: quote.currentPlanName,
+                currentPlanEndsAt: quote.currentPlanEndsAt,
               }) as unknown as Prisma.InputJsonValue,
               expiresAt: this.paymentExpiry(
                 now,
@@ -211,7 +241,9 @@ export class EpayService {
         replay.offerId !== offerId ||
         replay.paymentType !== selectedPaymentType ||
         this.paymentPurchaseAction(replay.entitlementSnapshot) !==
-          purchaseAction
+          purchaseAction ||
+        this.paymentPlanActivation(replay.entitlementSnapshot) !==
+          resolvedPlanActivation
       ) {
         throw new ConflictException(
           '该商品已有一笔其他规格或支付方式的待支付订单',
@@ -255,6 +287,7 @@ export class EpayService {
       | { kind: 'join'; groupId: string },
     paymentType: 'alipay' | 'wxpay' | 'balance',
     idempotencyKey: string,
+    planActivation?: PlanActivationPreference,
   ) {
     if (!this.groupBuys) {
       throw new ServiceUnavailableException('拼团模块当前不可用');
@@ -264,7 +297,12 @@ export class EpayService {
       throw new BadRequestException('A valid Idempotency-Key is required');
     }
     if (paymentType === 'balance') {
-      return this.groupBuys.purchaseWithWallet(userId, input, normalizedKey);
+      return this.groupBuys.purchaseWithWallet(
+        userId,
+        input,
+        normalizedKey,
+        planActivation,
+      );
     }
     const config = await this.requireConfiguredEpay(true);
     const now = new Date();
@@ -297,6 +335,10 @@ export class EpayService {
               if (
                 replay.paymentType !== paymentType ||
                 replaySnapshot?.purchaseMode !== 'group_buy' ||
+                !this.groupPaymentActivationMatches(
+                  replay.entitlementSnapshot,
+                  planActivation,
+                ) ||
                 (input.kind === 'join' &&
                   replaySnapshot.groupBuyId !== input.groupId) ||
                 (input.kind === 'create' &&
@@ -313,6 +355,7 @@ export class EpayService {
               userId,
               input,
               now,
+              planActivation,
             );
             if (prepared.existingAttempt) {
               if (prepared.existingAttempt.paymentType !== paymentType) {
@@ -334,7 +377,7 @@ export class EpayService {
                 offerId: prepared.group.offerIdSnapshot,
                 merchantOrderNo: this.createMerchantOrderNo(now, 'EPG'),
                 idempotencyKey: normalizedKey,
-                activeKey: `group-buy:${prepared.member.id}`,
+                activeKey: standardPlanPurchaseKey(userId),
                 paymentType,
                 gatewayUrlSnapshot: config.gatewayUrl,
                 merchantIdSnapshot: config.merchantId,
@@ -953,12 +996,19 @@ export class EpayService {
     expiresAt: Date;
     orderId: string | null;
     settlementFailureCount: number;
+    entitlementSnapshot?: Prisma.JsonValue | null;
   }) {
     const fulfillmentStatus =
       attempt.fulfillmentStatus ??
       (attempt.orderId
         ? PaymentFulfillmentStatus.APPLIED
         : PaymentFulfillmentStatus.PENDING);
+    let snapshot: ReturnType<typeof parseCatalogOfferSnapshot> = null;
+    try {
+      snapshot = parseCatalogOfferSnapshot(attempt.entitlementSnapshot ?? null);
+    } catch {
+      snapshot = null;
+    }
     return {
       id: attempt.id,
       status: attempt.status.toLowerCase(),
@@ -971,6 +1021,8 @@ export class EpayService {
         attempt.settlementFailureCount > 0 &&
         fulfillmentStatus !== PaymentFulfillmentStatus.APPLIED &&
         fulfillmentStatus !== PaymentFulfillmentStatus.REFUNDED,
+      planActivationMode: snapshot?.planActivationMode ?? null,
+      planEffectiveAt: snapshot?.planEffectiveAt ?? null,
     };
   }
 
@@ -1111,6 +1163,43 @@ export class EpayService {
         : ('purchase' as const);
     } catch {
       return 'purchase' as const;
+    }
+  }
+
+  private paymentPlanActivation(value: Prisma.JsonValue | null) {
+    try {
+      return parseCatalogOfferSnapshot(value)?.planActivationPreference ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private resolvedPlanActivation(
+    mode: string | null | undefined,
+  ): PlanActivationPreference | null {
+    if (mode === 'scheduled_switch') return 'scheduled_switch';
+    if (mode === 'immediate_switch') return 'immediate_switch';
+    return null;
+  }
+
+  private groupPaymentActivationMatches(
+    value: Prisma.JsonValue | null,
+    preference?: PlanActivationPreference,
+  ) {
+    try {
+      const snapshot = parseCatalogOfferSnapshot(value);
+      if (!snapshot) return false;
+      if (
+        snapshot.planActivationMode !== 'scheduled_switch' &&
+        snapshot.planActivationMode !== 'immediate_switch'
+      ) {
+        return true;
+      }
+      return (
+        snapshot.planActivationPreference === (preference ?? 'scheduled_switch')
+      );
+    } catch {
+      return false;
     }
   }
 

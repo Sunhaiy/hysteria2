@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
+import { CheckInSuccessDialog } from "@/components/check-in-success-dialog";
 import { CustomerLink } from "@/components/customer-link";
 import { DataTable } from "@/components/data-table";
 import { Icon } from "@/components/icon";
@@ -135,6 +136,7 @@ export default function AdminActivitiesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [checkInPreviewOpen, setCheckInPreviewOpen] = useState(false);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -328,6 +330,18 @@ export default function AdminActivitiesPage() {
             <Panel
               title="签到设置"
               copy="有效普通套餐或 Ultra 用户可领取，奖励加入当前周期并随周期到期。"
+              action={
+                checkInSettings ? (
+                  <button
+                    className="toolbar-button compact"
+                    type="button"
+                    onClick={() => setCheckInPreviewOpen(true)}
+                  >
+                    <Icon name="refresh" />
+                    预览成功动画
+                  </button>
+                ) : null
+              }
             >
               {checkInSettings ? (
                 <div className="activity-settings-row">
@@ -590,13 +604,15 @@ export default function AdminActivitiesPage() {
                       {member.rebateUnrecoveredCents > 0
                         ? `待追缴 ${formatMoney(member.rebateUnrecoveredCents)}`
                         : member.rebateCents > 0
-                        ? `已返 ${formatMoney(member.rebateCents)}`
-                        : (member.refundStatus ?? "-")}
+                          ? `已返 ${formatMoney(member.rebateCents)}`
+                          : (member.refundStatus ?? "-")}
                     </strong>
                     <small>
                       {member.rebateUnrecoveredCents > 0
                         ? `已追回 ${formatMoney(member.rebateRecoveredCents)}`
-                        : (member.refundError ?? member.refundGatewayMessage ?? "")}
+                        : (member.refundError ??
+                          member.refundGatewayMessage ??
+                          "")}
                     </small>
                   </div>,
                   <div className="table-actions" key={`${member.id}-actions`}>
@@ -639,6 +655,13 @@ export default function AdminActivitiesPage() {
           </>
         )}
       </div>
+      {checkInPreviewOpen && checkInSettings ? (
+        <CheckInSuccessDialog
+          preview
+          rewardBytes={Math.round(checkInSettings.rewardGiB * 1024 ** 3)}
+          onClose={() => setCheckInPreviewOpen(false)}
+        />
+      ) : null}
     </ConsoleShell>
   );
 }

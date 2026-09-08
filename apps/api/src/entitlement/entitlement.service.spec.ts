@@ -1760,6 +1760,8 @@ describe('EntitlementService V2', () => {
             id: 'plan_grant_1',
             userId: 'user_1',
             status: 'ACTIVE',
+            startsAt,
+            endsAt,
             accessAccountId: 'account_1',
             accessProfileId: 'profile_1',
             speedUpMbpsSnapshot: 100,
@@ -1812,6 +1814,131 @@ describe('EntitlementService V2', () => {
       grantedBytes: 20n,
       trafficMultiplierBasisPointsSnapshot: 21_000,
     });
+  });
+
+  it('uses the current plan access snapshot when the purchased plan was switched later', async () => {
+    const startsAt = new Date('2026-09-07T08:00:00.000Z');
+    const endsAt = new Date('2026-10-07T08:00:00.000Z');
+    const originalGrant = {
+      id: 'plan_grant_original',
+      userId: 'user_1',
+      status: 'CANCELED',
+      startsAt: new Date('2026-08-07T08:00:00.000Z'),
+      endsAt: new Date('2026-09-06T08:00:00.000Z'),
+      accessAccountId: 'account_1',
+      accessProfileId: 'profile_old',
+      speedUpMbpsSnapshot: 100,
+      speedDownMbpsSnapshot: 300,
+      deviceLimitSnapshot: 5,
+      trafficMultiplierBasisPointsSnapshot: 10_000,
+    };
+    const currentGrant = {
+      ...originalGrant,
+      id: 'plan_grant_current',
+      status: 'ACTIVE',
+      startsAt: new Date('2026-09-06T08:00:00.000Z'),
+      endsAt,
+      accessProfileId: 'profile_current',
+      speedDownMbpsSnapshot: 500,
+    };
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'order_1',
+          userId: 'user_1',
+          entitlementExpiresAt: endsAt,
+          entitlementGrant: originalGrant,
+        }),
+      },
+      entitlementGrant: {
+        findFirst: jest.fn().mockResolvedValue(currentGrant),
+        create: jest.fn().mockResolvedValue({ id: 'bonus_grant_2' }),
+      },
+      quotaBucket: {
+        create: jest.fn().mockResolvedValue({ id: 'bonus_bucket_2' }),
+      },
+    };
+    const service = new EntitlementService({} as never);
+
+    await service.createBonusTrafficGrantFromOrder(tx as never, {
+      orderId: 'order_1',
+      userId: 'user_1',
+      productId: 'system_bonus',
+      startsAt,
+      bytes: 20n,
+    });
+
+    const [grantCreate] = tx.entitlementGrant.create.mock
+      .calls[0] as unknown as [
+      {
+        data: {
+          accessProfileId: string;
+          speedDownMbpsSnapshot: number;
+          endsAt: Date;
+        };
+      },
+    ];
+    expect(grantCreate.data).toMatchObject({
+      accessProfileId: 'profile_current',
+      speedDownMbpsSnapshot: 500,
+      endsAt,
+    });
+  });
+
+  it('starts a scheduled-plan group bonus with the target plan and its access profile', async () => {
+    const groupCompletedAt = new Date('2026-09-08T08:00:00.000Z');
+    const planStartsAt = new Date('2026-10-08T08:00:00.000Z');
+    const planEndsAt = new Date('2026-11-08T08:00:00.000Z');
+    const targetGrant = {
+      id: 'scheduled_plan_grant',
+      userId: 'user_1',
+      status: 'ACTIVE',
+      startsAt: planStartsAt,
+      endsAt: planEndsAt,
+      accessAccountId: 'account_1',
+      accessProfileId: 'profile_target',
+      speedUpMbpsSnapshot: 200,
+      speedDownMbpsSnapshot: 500,
+      deviceLimitSnapshot: 8,
+      trafficMultiplierBasisPointsSnapshot: 18_000,
+    };
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'order_scheduled',
+          userId: 'user_1',
+          entitlementExpiresAt: planEndsAt,
+          entitlementGrant: targetGrant,
+        }),
+      },
+      entitlementGrant: {
+        findFirst: jest.fn(),
+        create: jest.fn().mockResolvedValue({ id: 'bonus_scheduled' }),
+      },
+      quotaBucket: {
+        create: jest.fn().mockResolvedValue({ id: 'bucket_scheduled' }),
+      },
+    };
+    const service = new EntitlementService({} as never);
+
+    await service.createBonusTrafficGrantFromOrder(tx as never, {
+      orderId: 'order_scheduled',
+      userId: 'user_1',
+      productId: 'system_bonus',
+      startsAt: groupCompletedAt,
+      bytes: 20n,
+    });
+
+    const [grantCreate] = tx.entitlementGrant.create.mock
+      .calls[0] as unknown as [{ data: Record<string, unknown> }];
+    expect(grantCreate.data).toMatchObject({
+      startsAt: planStartsAt,
+      endsAt: planEndsAt,
+      accessProfileId: 'profile_target',
+      speedDownMbpsSnapshot: 500,
+      trafficMultiplierBasisPointsSnapshot: 18_000,
+    });
+    expect(tx.entitlementGrant.findFirst).not.toHaveBeenCalled();
   });
 
   it('revokes only unused quota while retaining immutable usage history', async () => {

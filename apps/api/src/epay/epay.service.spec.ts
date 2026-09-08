@@ -204,6 +204,120 @@ describe('EpayService callbacks', () => {
     expect(expirationUpdate.data).toMatchObject({ activeKey: null });
   });
 
+  it('ignores an activation preference when the server resolves a same-plan renewal', async () => {
+    const offer = {
+      id: 'offer_start_monthly',
+      priceCents: 1_290,
+      currency: 'CNY',
+      archivedAt: null,
+      productId: 'product_start',
+      product: {
+        kind: CatalogProductKind.PLAN,
+        series: 'STANDARD',
+        purchaseLimitKey: null,
+      },
+    };
+    const entitlementSnapshot = {
+      version: 2,
+      offerId: offer.id,
+      offerSlug: 'start-monthly',
+      offerName: '月付',
+      productId: 'product_start',
+      productSlug: 'start',
+      productName: 'Start',
+      productKind: CatalogProductKind.PLAN,
+      productSeries: 'STANDARD',
+      quotaCadence: 'MONTHLY_RESET',
+      billingPeriod: BillingPeriod.MONTHLY,
+      intervalMonths: 1,
+      legacyDurationDays: null,
+      trafficBytes: String(100 * 1024 ** 3),
+      currency: 'CNY',
+      accessProfileId: 'profile_start',
+      speedUpMbps: 20,
+      speedDownMbps: 120,
+      deviceLimit: 100,
+      trafficMultiplierBasisPoints: 10_000,
+      requiresActivePlan: false,
+      purchaseLimitPerUser: null,
+      purchaseLimitKey: null,
+      legacyPlanId: 'plan_start',
+      legacyPlanOfferId: 'plan_offer_start_monthly',
+      legacyTrafficPackProductId: null,
+      purchaseMode: 'initial',
+      planActivationPreference: null,
+      planActivationMode: 'renewal',
+      planEffectiveAt: '2026-10-07T00:00:00.000Z',
+    };
+    const replay = {
+      id: 'attempt-renewal',
+      offerId: offer.id,
+      paymentType: 'alipay',
+      merchantOrderNo: 'EP-RENEWAL',
+      status: EpayPaymentStatus.SETTLED,
+      fulfillmentStatus: 'APPLIED',
+      gatewayUrlSnapshot: config.gatewayUrl,
+      merchantIdSnapshot: config.merchantId,
+      merchantKeyCiphertext: 'enc:merchant-secret',
+      amountCents: 1_290,
+      productNameSnapshot: 'Start · 月付',
+      expiresAt: new Date('2026-09-07T01:00:00.000Z'),
+      orderId: 'order-renewal',
+      settlementFailureCount: 0,
+      entitlementSnapshot,
+    };
+    const tx = {
+      epayPaymentAttempt: {
+        findMany: jest.fn().mockResolvedValue([]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findUnique: jest.fn().mockResolvedValue(replay),
+      },
+    };
+    const prisma = {
+      catalogOffer: { findUnique: jest.fn().mockResolvedValue(offer) },
+      epayPaymentAttempt: { findFirst: jest.fn() },
+      $transaction: jest.fn((work: (client: typeof tx) => Promise<unknown>) =>
+        work(tx),
+      ),
+    };
+    const service = new EpayService(
+      prisma as never,
+      {
+        getEpayConfig: jest.fn().mockResolvedValue({
+          ...config,
+          checkoutMode: 'epay',
+        }),
+      } as never,
+      {
+        quoteCheckout: jest.fn().mockResolvedValue({
+          productName: 'Start · 月付',
+          basePriceCents: 1_290,
+          finalPriceCents: 1_290,
+          purchaseMode: 'initial',
+          planActivationMode: 'renewal',
+          planEffectiveAt: '2026-10-07T00:00:00.000Z',
+        }),
+      } as never,
+      cipher as never,
+    );
+
+    await expect(
+      service.createPayment(
+        'user_1',
+        offer.id,
+        'renewal-key',
+        undefined,
+        'alipay',
+        'purchase',
+        'immediate_switch',
+      ),
+    ).resolves.toMatchObject({
+      id: replay.id,
+      status: 'settled',
+      planActivationMode: 'renewal',
+    });
+  });
+
   it('expires a stale payment and releases its group-buy slot when polled', async () => {
     const expiredAt = new Date('2026-09-07T04:00:00.000Z');
     jest.useFakeTimers().setSystemTime(new Date('2026-09-07T05:00:00.000Z'));
@@ -541,6 +655,92 @@ describe('EpayService callbacks', () => {
     ).rejects.toThrow('Idempotency-Key was already used for another purchase');
   });
 
+  it('rejects a group-buy replay when the frozen activation preference changes', async () => {
+    const replay = {
+      id: 'attempt-scheduled-switch',
+      userId: 'user-1',
+      paymentType: 'alipay',
+      entitlementSnapshot: {
+        version: 2,
+        offerId: 'offer-start',
+        offerSlug: 'start-monthly',
+        offerName: '月付',
+        productId: 'product-start',
+        productSlug: 'start',
+        productName: 'Start',
+        productKind: CatalogProductKind.PLAN,
+        billingPeriod: BillingPeriod.MONTHLY,
+        intervalMonths: 1,
+        legacyDurationDays: null,
+        trafficBytes: String(100 * 1024 ** 3),
+        currency: 'CNY',
+        accessProfileId: 'profile-start',
+        speedUpMbps: 20,
+        speedDownMbps: 120,
+        deviceLimit: 100,
+        trafficMultiplierBasisPoints: 10_000,
+        requiresActivePlan: false,
+        purchaseLimitPerUser: null,
+        purchaseLimitKey: null,
+        legacyPlanId: 'plan-start',
+        legacyPlanOfferId: 'plan-offer-start-monthly',
+        legacyTrafficPackProductId: null,
+        purchaseMode: 'group_buy',
+        groupBuyId: 'group-1',
+        groupBuyMemberId: 'member-1',
+        groupBuyBonusBytes: String(20 * 1024 ** 3),
+        groupBuyOriginalPriceCents: 1590,
+        groupBuyPriceCents: 1290,
+        groupBuyDiscountBasisPoints: 8113,
+        groupBuySettlementMode: 'ORIGINAL_PRICE_BALANCE_REBATE',
+        planActivationPreference: 'scheduled_switch',
+        planActivationMode: 'scheduled_switch',
+        planEffectiveAt: '2026-10-07T00:00:00.000Z',
+      },
+    };
+    const tx = {
+      epayPaymentAttempt: {
+        findMany: jest.fn().mockResolvedValue([]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findUnique: jest.fn().mockResolvedValue(replay),
+      },
+      groupBuy: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ id: 'group-1', campaignId: 'campaign-1' }),
+      },
+    };
+    const prisma = {
+      $transaction: jest.fn((work: (client: typeof tx) => Promise<unknown>) =>
+        work(tx),
+      ),
+    };
+    const service = new EpayService(
+      prisma as never,
+      {
+        getEpayConfig: jest.fn().mockResolvedValue({
+          ...config,
+          checkoutMode: 'epay',
+        }),
+      } as never,
+      {} as never,
+      cipher as never,
+      undefined,
+      { preparePayment: jest.fn(), closePayment: jest.fn() } as never,
+    );
+
+    await expect(
+      service.createGroupBuyPayment(
+        'user-1',
+        { kind: 'create', campaignId: 'campaign-1' },
+        'alipay',
+        'reused-key',
+        'immediate_switch',
+      ),
+    ).rejects.toThrow('Idempotency-Key was already used for another purchase');
+    expect(tx.groupBuy.findUnique).toHaveBeenCalledTimes(1);
+  });
+
   it('delegates group-buy balance payment before loading 易支付 configuration', async () => {
     const settings = { getEpayConfig: jest.fn() };
     const groupBuys = {
@@ -567,12 +767,14 @@ describe('EpayService callbacks', () => {
         { kind: 'create', campaignId: 'campaign-1' },
         'balance',
         'balance-request-1',
+        'immediate_switch',
       ),
     ).resolves.toMatchObject({ status: 'settled', paymentType: 'balance' });
     expect(groupBuys.purchaseWithWallet).toHaveBeenCalledWith(
       'user-1',
       { kind: 'create', campaignId: 'campaign-1' },
       'balance-request-1',
+      'immediate_switch',
     );
     expect(settings.getEpayConfig).not.toHaveBeenCalled();
   });

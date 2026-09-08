@@ -60,6 +60,7 @@ import {
   UserCircleIcon,
   UserGroupIcon,
   UserShield01Icon,
+  Wallet02Icon,
   WindowsNewIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
@@ -79,6 +80,7 @@ type IconName =
   | "qr_code_2"
   | "network_node"
   | "payments"
+  | "wallet"
   | "redeem"
   | "menu"
   | "close"
@@ -171,6 +173,7 @@ const icons: Record<IconName, IconSvgElement> = {
   qr_code_2: QrCode01Icon,
   network_node: Share08Icon,
   payments: Payment02Icon,
+  wallet: Wallet02Icon,
   redeem: GiftIcon,
   menu: Menu01Icon,
   close: Cancel01Icon,
@@ -342,6 +345,15 @@ const iconMotions: Record<IconName, IconMotion> = {
     angle: 3,
     duration: 640,
     delay: 10,
+  },
+  wallet: {
+    cue: "open",
+    accentPart: 1,
+    secondaryPart: 2,
+    distance: 0.7,
+    angle: 3,
+    duration: 660,
+    delay: 12,
   },
   redeem: {
     cue: "lift",

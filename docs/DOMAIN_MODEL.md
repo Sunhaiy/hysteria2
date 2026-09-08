@@ -135,10 +135,15 @@ online collection, health probing, and manual-check consumption.
   active Standard or Ultra entitlement. Its quota credit is posted by
   `EntitlementService` and recorded as a quota adjustment.
 - **GroupBuy** snapshots its offer, member count, duration, discount or balance
-  rebate, and bonus traffic. Every member pays independently and receives a
-  normal order. The first valid payment for a member fulfills; a later valid
-  duplicate enters compensation refund. Successful groups post rebates through
-  the wallet ledger and bonuses through `EntitlementService`.
+  rebate, and bonus traffic. Each member also owns an immutable entitlement
+  snapshot because activation depends on that member's current plan. Payment
+  immediately creates the member's normal order: no plan starts now, the same
+  plan renews without resetting current usage, and a different plan defaults to
+  the current plan's expiry unless immediate switching was explicitly selected.
+  The first valid payment for a member fulfills; a later valid duplicate enters
+  compensation refund. Successful groups post rebates through the wallet ledger
+  and bonuses through `EntitlementService`; a scheduled-plan bonus starts with
+  the purchased target plan and uses its access profile.
 - Unrecovered group-buy rebate debt is stored in structured member fields and
   indexed for the administrator exception view; it is never hidden only in an
   audit JSON blob.

@@ -40,6 +40,7 @@ export class EpayController {
       body.discountCode,
       body.paymentType,
       body.purchaseAction,
+      body.planActivation,
     );
   }
 
@@ -64,6 +65,7 @@ export class EpayController {
       { kind: 'create', campaignId: body.campaignId },
       body.paymentType,
       idempotencyKey,
+      body.planActivation,
     );
   }
 
@@ -80,6 +82,7 @@ export class EpayController {
       { kind: 'join', groupId },
       body.paymentType,
       idempotencyKey,
+      body.planActivation,
     );
   }
 

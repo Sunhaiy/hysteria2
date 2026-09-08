@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -34,6 +35,12 @@ import { PaymentFulfillmentRejectedError } from '../commerce/payment-fulfillment
 import { PrismaService } from '../prisma/prisma.service';
 import { postWalletEntry, recoverWalletCredit } from '../wallet/wallet-ledger';
 import { EntitlementService } from '../entitlement/entitlement.service';
+import {
+  decidePlanPurchasePolicy,
+  standardPlanPurchaseKey,
+  type PlanActivationPreference,
+  type PlanPurchasePolicy,
+} from '../commerce/plan-purchase-policy';
 
 const GROUP_SIZE = 2;
 const GROUP_DURATION_MS = 24 * 60 * 60 * 1000;
@@ -123,7 +130,10 @@ export class GroupBuyService {
     const now = new Date();
     const where: Prisma.GroupBuyWhereInput =
       query.scope === 'mine'
-        ? { members: { some: { userId } } }
+        ? {
+            status: { not: GroupBuyStatus.CANCELED },
+            members: { some: { userId } },
+          }
         : {
             status: GroupBuyStatus.OPEN,
             expiresAt: { gt: now },
@@ -179,6 +189,104 @@ export class GroupBuyService {
       throw new NotFoundException('拼团不存在');
     }
     return this.presentGroup(group, userId);
+  }
+
+  async cancelForCreator(userId: string, groupId: string, now = new Date()) {
+    for (let retry = 0; retry < 3; retry += 1) {
+      try {
+        return await this.prisma.$transaction(
+          async (tx) => {
+            const group = await tx.groupBuy.findUnique({
+              where: { id: groupId },
+              include: {
+                members: {
+                  include: {
+                    user: { select: { displayName: true } },
+                    paymentAttempt: { select: { status: true } },
+                  },
+                  orderBy: [{ isCreator: 'desc' }, { createdAt: 'asc' }],
+                },
+              },
+            });
+            if (!group) throw new NotFoundException('拼团不存在');
+            if (group.creatorId !== userId) {
+              throw new ForbiddenException('只有发起人可以取消拼团');
+            }
+            if (group.status !== GroupBuyStatus.OPEN) {
+              throw new ConflictException('该拼团当前不能取消');
+            }
+            if (group.expiresAt && group.expiresAt <= now) {
+              throw new ConflictException('拼团已到期，正在结算');
+            }
+            if (group.settlementModeSnapshot !== BALANCE_REBATE_MODE) {
+              throw new ConflictException('该历史拼团不支持主动取消');
+            }
+            const occupiedStatuses = new Set<GroupBuyMemberStatus>([
+              GroupBuyMemberStatus.PAYMENT_PENDING,
+              GroupBuyMemberStatus.PAID,
+              GroupBuyMemberStatus.FULFILLED,
+            ]);
+            if (
+              group.members.some(
+                (member) =>
+                  !member.isCreator && occupiedStatuses.has(member.status),
+              )
+            ) {
+              throw new ConflictException('已有成员正在参团，不能取消');
+            }
+
+            const canceled = await tx.groupBuy.updateMany({
+              where: { id: group.id, status: GroupBuyStatus.OPEN },
+              data: { status: GroupBuyStatus.CANCELED, completedAt: now },
+            });
+            if (canceled.count !== 1) {
+              throw new ConflictException('拼团状态已变化，请刷新后重试');
+            }
+            const creator = group.members.find((member) => member.isCreator);
+            await tx.groupBuyMember.updateMany({
+              where: {
+                groupId: group.id,
+                userId,
+                isCreator: true,
+                activeSlot: { not: null },
+              },
+              data: { activeSlot: null },
+            });
+            await tx.auditLog.create({
+              data: {
+                actorId: userId,
+                action: 'group_buy.canceled',
+                targetType: 'group_buy',
+                targetId: group.id,
+                metadata: {
+                  retainedOrderId: creator?.orderId ?? null,
+                  retainedEntitlement: true,
+                  rewardsGranted: false,
+                },
+              },
+            });
+            const result = await tx.groupBuy.findUniqueOrThrow({
+              where: { id: group.id },
+              include: {
+                members: {
+                  include: {
+                    user: { select: { displayName: true } },
+                    paymentAttempt: { select: { status: true } },
+                  },
+                  orderBy: [{ isCreator: 'desc' }, { createdAt: 'asc' }],
+                },
+              },
+            });
+            return this.presentGroup(result, userId);
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+      } catch (error) {
+        if (this.isRetryableTransactionError(error) && retry < 2) continue;
+        throw error;
+      }
+    }
+    throw new ConflictException('取消拼团冲突，请刷新后重试');
   }
 
   async getAdminCampaigns() {
@@ -433,6 +541,7 @@ export class GroupBuyService {
     userId: string,
     mode: GroupBuyPaymentMode,
     now = new Date(),
+    planActivation?: PlanActivationPreference,
   ) {
     const user = await tx.user.findUnique({ where: { id: userId } });
     if (!user || user.status !== 'ACTIVE') {
@@ -447,13 +556,44 @@ export class GroupBuyService {
         throw new BadRequestException('该拼团活动未开放');
       }
       this.assertOfferEligible(campaign.offer);
-      const activeSlot = `${campaign.id}:${userId}`;
-      const existing = await tx.groupBuyMember.findUnique({
-        where: { activeSlot },
+      const activeSlot = standardPlanPurchaseKey(userId);
+      const existing = await tx.groupBuyMember.findFirst({
+        where: {
+          userId,
+          activeSlot: { not: null },
+          status: {
+            in: [
+              GroupBuyMemberStatus.PAYMENT_PENDING,
+              GroupBuyMemberStatus.PAID,
+              GroupBuyMemberStatus.FULFILLED,
+            ],
+          },
+        },
         include: { group: true, paymentAttempt: true },
       });
-      if (existing)
-        return this.prepared(existing.group, existing, campaign.offer);
+      if (existing) {
+        if (existing.group.campaignId !== campaign.id) {
+          throw new ConflictException('你已有进行中的套餐拼团');
+        }
+        const prepared = this.prepared(
+          existing.group,
+          existing,
+          campaign.offer,
+        );
+        this.assertActivationPreference(
+          prepared.snapshot,
+          planActivation,
+          Boolean(existing.paymentAttempt),
+        );
+        return prepared;
+      }
+      const planPolicy = await this.resolveMemberPlanPurchasePolicy(
+        tx,
+        userId,
+        campaign.offer,
+        planActivation,
+        now,
+      );
 
       const groupId = randomUUID();
       const memberId = randomUUID();
@@ -462,9 +602,8 @@ export class GroupBuyService {
         campaign.discountBasisPoints,
       );
       const baseSnapshot = snapshotCatalogOffer(campaign.offer, {
-        purchaseMode: 'group_buy',
+        purchaseMode: 'initial',
         groupBuyId: groupId,
-        groupBuyMemberId: memberId,
         groupBuyBonusBytes: campaign.bonusTrafficBytes.toString(),
         groupBuyOriginalPriceCents: campaign.offer.priceCents,
         groupBuyPriceCents: priceCents,
@@ -496,6 +635,19 @@ export class GroupBuyService {
           userId,
           isCreator: true,
           activeSlot,
+          entitlementSnapshot: this.memberEntitlementSnapshot(
+            baseSnapshot,
+            {
+              id: groupId,
+              priceCentsSnapshot: priceCents,
+              discountBasisPointsSnapshot: campaign.discountBasisPoints,
+              bonusTrafficBytesSnapshot: campaign.bonusTrafficBytes,
+              settlementModeSnapshot: BALANCE_REBATE_MODE,
+            },
+            memberId,
+            planPolicy,
+            planActivation,
+          ) as unknown as Prisma.InputJsonValue,
         },
         include: { paymentAttempt: true },
       });
@@ -521,21 +673,64 @@ export class GroupBuyService {
       if (previousMember.status !== GroupBuyMemberStatus.PAYMENT_CLOSED) {
         throw new ConflictException('不能重复加入同一个拼团');
       }
+      const otherActive = await tx.groupBuyMember.findFirst({
+        where: {
+          userId,
+          id: { not: previousMember.id },
+          activeSlot: { not: null },
+          status: {
+            in: [
+              GroupBuyMemberStatus.PAYMENT_PENDING,
+              GroupBuyMemberStatus.PAID,
+              GroupBuyMemberStatus.FULFILLED,
+            ],
+          },
+        },
+      });
+      if (otherActive) {
+        throw new ConflictException('你已有进行中的套餐拼团');
+      }
+      const offer = await this.snapshotOffer(tx, group);
+      const planPolicy = await this.resolveMemberPlanPurchasePolicy(
+        tx,
+        userId,
+        offer,
+        planActivation,
+        now,
+      );
+      const entitlementSnapshot = this.memberEntitlementSnapshot(
+        parseCatalogOfferSnapshot(group.entitlementSnapshot),
+        group,
+        previousMember.id,
+        planPolicy,
+        planActivation,
+      );
       const reactivated = await tx.groupBuyMember.update({
         where: { id: previousMember.id },
         data: {
           status: GroupBuyMemberStatus.PAYMENT_PENDING,
-          activeSlot: `${group.campaignId}:${userId}`,
+          activeSlot: standardPlanPurchaseKey(userId),
           paymentAttemptId: null,
+          entitlementSnapshot:
+            entitlementSnapshot as unknown as Prisma.InputJsonValue,
         },
         include: { paymentAttempt: true },
       });
-      const offer = await this.snapshotOffer(tx, group);
       return this.prepared(group, reactivated, offer);
     }
-    const activeSlot = `${group.campaignId}:${userId}`;
-    const active = await tx.groupBuyMember.findUnique({
-      where: { activeSlot },
+    const activeSlot = standardPlanPurchaseKey(userId);
+    const active = await tx.groupBuyMember.findFirst({
+      where: {
+        userId,
+        activeSlot: { not: null },
+        status: {
+          in: [
+            GroupBuyMemberStatus.PAYMENT_PENDING,
+            GroupBuyMemberStatus.PAID,
+            GroupBuyMemberStatus.FULFILLED,
+          ],
+        },
+      },
       include: { group: true, paymentAttempt: true },
     });
     if (active) {
@@ -543,7 +738,13 @@ export class GroupBuyService {
         throw new ConflictException('你已参加该套餐的其他拼团');
       }
       const offer = await this.snapshotOffer(tx, active.group);
-      return this.prepared(active.group, active, offer);
+      const prepared = this.prepared(active.group, active, offer);
+      this.assertActivationPreference(
+        prepared.snapshot,
+        planActivation,
+        Boolean(active.paymentAttempt),
+      );
+      return prepared;
     }
     const occupiedStatuses = new Set<GroupBuyMemberStatus>([
       GroupBuyMemberStatus.PAYMENT_PENDING,
@@ -556,11 +757,31 @@ export class GroupBuyService {
     if (occupied >= group.requiredMembersSnapshot) {
       throw new ConflictException('该拼团已有成员正在付款');
     }
+    const offer = await this.snapshotOffer(tx, group);
+    const planPolicy = await this.resolveMemberPlanPurchasePolicy(
+      tx,
+      userId,
+      offer,
+      planActivation,
+      now,
+    );
+    const memberId = randomUUID();
     const member = await tx.groupBuyMember.create({
-      data: { groupId: group.id, userId, activeSlot },
+      data: {
+        id: memberId,
+        groupId: group.id,
+        userId,
+        activeSlot,
+        entitlementSnapshot: this.memberEntitlementSnapshot(
+          parseCatalogOfferSnapshot(group.entitlementSnapshot),
+          group,
+          memberId,
+          planPolicy,
+          planActivation,
+        ) as unknown as Prisma.InputJsonValue,
+      },
       include: { paymentAttempt: true },
     });
-    const offer = await this.snapshotOffer(tx, group);
     return this.prepared(group, member, offer);
   }
 
@@ -579,6 +800,7 @@ export class GroupBuyService {
     userId: string,
     mode: GroupBuyPaymentMode,
     idempotencyKey: string,
+    planActivation?: PlanActivationPreference,
   ) {
     const normalizedKey = idempotencyKey.trim();
     if (!normalizedKey || normalizedKey.length > 120) {
@@ -599,6 +821,11 @@ export class GroupBuyService {
             });
             if (replay) {
               this.assertWalletReplayMatches(replay.group, mode);
+              this.assertActivationPreference(
+                parseCatalogOfferSnapshot(replay.entitlementSnapshot),
+                planActivation,
+                true,
+              );
               if (!replay.order) {
                 throw new ConflictException('余额支付正在处理中，请稍后重试');
               }
@@ -610,7 +837,13 @@ export class GroupBuyService {
             }
 
             const now = new Date();
-            const prepared = await this.preparePayment(tx, userId, mode, now);
+            const prepared = await this.preparePayment(
+              tx,
+              userId,
+              mode,
+              now,
+              planActivation,
+            );
             if (prepared.group.settlementModeSnapshot !== BALANCE_REBATE_MODE) {
               throw new BadRequestException('该历史拼团不支持余额支付');
             }
@@ -1385,6 +1618,126 @@ export class GroupBuyService {
     });
   }
 
+  private async resolveMemberPlanPurchasePolicy(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    offer: Prisma.CatalogOfferGetPayload<{
+      include: typeof catalogOfferSnapshotInclude;
+    }>,
+    preference: PlanActivationPreference | undefined,
+    now: Date,
+  ): Promise<PlanPurchasePolicy> {
+    const legacyPlanId = offer.product.legacyPlanId;
+    if (!legacyPlanId) {
+      throw new BadRequestException('拼团套餐缺少兼容套餐配置');
+    }
+    const [currentPlan, scheduledPlan, pendingPayment] = await Promise.all([
+      tx.subscription.findFirst({
+        where: {
+          userId,
+          status: { in: ['ACTIVE', 'PAUSED'] },
+          startsAt: { lte: now },
+          endsAt: { gt: now },
+        },
+        include: { plan: { include: { catalogProduct: true } } },
+        orderBy: [{ endsAt: 'desc' }, { createdAt: 'desc' }],
+      }),
+      tx.subscription.findFirst({
+        where: {
+          userId,
+          status: { in: ['ACTIVE', 'PAUSED'] },
+          startsAt: { gt: now },
+          endsAt: { gt: now },
+        },
+        select: { id: true },
+      }),
+      tx.epayPaymentAttempt.findUnique({
+        where: { activeKey: standardPlanPurchaseKey(userId) },
+        select: { id: true },
+      }),
+    ]);
+    if (scheduledPlan) {
+      throw new ConflictException(
+        '已有预约生效的套餐，当前仅可重置本期流量，请等待切换后再续费、换套餐或参加拼团',
+      );
+    }
+    if (pendingPayment) {
+      throw new ConflictException('已有待支付的套餐订单，请先完成或关闭');
+    }
+    return decidePlanPurchasePolicy({
+      now,
+      targetProductId: offer.product.id,
+      targetLegacyPlanId: legacyPlanId,
+      preference,
+      currentPlan: currentPlan
+        ? {
+            productId: currentPlan.plan.catalogProduct?.id ?? null,
+            productName:
+              currentPlan.plan.catalogProduct?.name ?? currentPlan.plan.name,
+            legacyPlanId: currentPlan.planId,
+            startsAt: currentPlan.startsAt,
+            endsAt: currentPlan.endsAt,
+          }
+        : null,
+    });
+  }
+
+  private memberEntitlementSnapshot(
+    base: CatalogOfferSnapshot | null,
+    group: {
+      id: string;
+      priceCentsSnapshot: number;
+      discountBasisPointsSnapshot: number;
+      bonusTrafficBytesSnapshot: bigint;
+      settlementModeSnapshot: GroupBuySettlementMode;
+    },
+    memberId: string,
+    policy: PlanPurchasePolicy,
+    preference?: PlanActivationPreference,
+  ): CatalogOfferSnapshot {
+    if (!base) throw new ConflictException('拼团商品快照缺失');
+    const isSwitch =
+      policy.mode === 'scheduled_switch' || policy.mode === 'immediate_switch';
+    return {
+      ...base,
+      purchaseMode: 'group_buy',
+      groupBuyId: group.id,
+      groupBuyMemberId: memberId,
+      groupBuyBonusBytes: group.bonusTrafficBytesSnapshot.toString(),
+      groupBuyPriceCents: group.priceCentsSnapshot,
+      groupBuyDiscountBasisPoints: group.discountBasisPointsSnapshot,
+      groupBuySettlementMode: group.settlementModeSnapshot,
+      planActivationPreference: isSwitch
+        ? (preference ?? 'scheduled_switch')
+        : null,
+      planActivationMode: policy.mode,
+      planEffectiveAt: policy.effectiveAt.toISOString(),
+      currentPlanProductId: policy.currentPlan?.productId ?? null,
+      currentPlanName: policy.currentPlan?.productName ?? null,
+      currentPlanEndsAt: policy.currentPlan?.endsAt.toISOString() ?? null,
+    };
+  }
+
+  private assertActivationPreference(
+    snapshot: CatalogOfferSnapshot | null,
+    preference: PlanActivationPreference | undefined,
+    frozen: boolean,
+  ) {
+    if (!frozen || !snapshot) return;
+    if (
+      snapshot.planActivationMode !== 'scheduled_switch' &&
+      snapshot.planActivationMode !== 'immediate_switch'
+    ) {
+      return;
+    }
+    const requested = preference ?? 'scheduled_switch';
+    if (snapshot.planActivationPreference !== requested) {
+      throw new ConflictException(
+        '该拼团付款已锁定其他套餐生效方式，请完成或关闭原支付单后重试',
+      );
+    }
+  }
+
   private prepared(
     group: {
       id: string;
@@ -1402,13 +1755,18 @@ export class GroupBuyService {
       isCreator: boolean;
       orderId: string | null;
       walletIdempotencyKey: string | null;
+      entitlementSnapshot: Prisma.JsonValue | null;
       paymentAttempt: EpayPaymentAttempt | null;
     },
     offer: Prisma.CatalogOfferGetPayload<{
       include: typeof catalogOfferSnapshotInclude;
     }>,
   ) {
-    const base = parseCatalogOfferSnapshot(group.entitlementSnapshot);
+    const base = parseCatalogOfferSnapshot(
+      member.paymentAttempt?.entitlementSnapshot ??
+        member.entitlementSnapshot ??
+        group.entitlementSnapshot,
+    );
     if (!base) throw new ConflictException('拼团商品快照缺失');
     return {
       group,
@@ -1444,7 +1802,11 @@ export class GroupBuyService {
   }
 
   private presentWalletPayment(
-    member: { id: string; paidAt: Date | null },
+    member: {
+      id: string;
+      paidAt: Date | null;
+      entitlementSnapshot: Prisma.JsonValue | null;
+    },
     group: {
       productNameSnapshot: string;
       offerNameSnapshot: string;
@@ -1454,7 +1816,9 @@ export class GroupBuyService {
     },
     orderId: string,
   ) {
-    const snapshot = parseCatalogOfferSnapshot(group.entitlementSnapshot);
+    const snapshot = parseCatalogOfferSnapshot(
+      member.entitlementSnapshot ?? group.entitlementSnapshot,
+    );
     return {
       id: `balance:${member.id}`,
       status: 'settled' as const,
@@ -1464,6 +1828,8 @@ export class GroupBuyService {
       productName: `${group.productNameSnapshot} · ${group.offerNameSnapshot} · 拼团`,
       expiresAt: (group.expiresAt ?? member.paidAt ?? new Date()).toISOString(),
       orderId,
+      planActivationMode: snapshot?.planActivationMode ?? null,
+      planEffectiveAt: snapshot?.planEffectiveAt ?? null,
     };
   }
 
@@ -1507,6 +1873,7 @@ export class GroupBuyService {
   private presentGroup(
     group: {
       id: string;
+      creatorId: string;
       shareCode: string;
       status: GroupBuyStatus;
       productNameSnapshot: string;
@@ -1557,6 +1924,7 @@ export class GroupBuyService {
       shareCode: group.shareCode,
       shareUrl: `${webPublicUrl()}/portal/group-buys/${group.shareCode}`,
       status: group.status.toLowerCase(),
+      productId: snapshot?.productId ?? null,
       productName: group.productNameSnapshot,
       offerName: group.offerNameSnapshot,
       originalPriceCents:
@@ -1580,6 +1948,14 @@ export class GroupBuyService {
             member.status !== GroupBuyMemberStatus.PAYMENT_CLOSED,
         ) &&
         occupied < group.requiredMembersSnapshot,
+      canCancel:
+        group.status === GroupBuyStatus.OPEN &&
+        group.settlementModeSnapshot === BALANCE_REBATE_MODE &&
+        group.creatorId === viewerId &&
+        Boolean(group.expiresAt && group.expiresAt > now) &&
+        !group.members.some(
+          (member) => !member.isCreator && occupiedStatuses.has(member.status),
+        ),
       viewerMemberId:
         group.members.find((member) => member.userId === viewerId)?.id ?? null,
       members: group.members.map((member) => ({

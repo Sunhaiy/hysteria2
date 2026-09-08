@@ -100,13 +100,18 @@ export class CustomerAdminService {
         some: {
           planId: query.planId,
           status: SubscriptionStatus.ACTIVE,
+          startsAt: { lte: now },
           endsAt: { gt: now },
         },
       };
     }
     if (query.entitlementKind === 'plan' && !query.planId) {
       where.subscriptions = {
-        some: { status: SubscriptionStatus.ACTIVE, endsAt: { gt: now } },
+        some: {
+          status: SubscriptionStatus.ACTIVE,
+          startsAt: { lte: now },
+          endsAt: { gt: now },
+        },
       };
     } else if (query.entitlementKind === 'traffic_pack') {
       where.trafficPacks = {
@@ -181,6 +186,7 @@ export class CustomerAdminService {
             where: {
               entitlementGrant: null,
               status: SubscriptionStatus.ACTIVE,
+              startsAt: { lte: now },
               endsAt: { gt: now },
             },
             include: {

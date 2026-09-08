@@ -222,6 +222,7 @@ export class PortalController {
         offerId: body.offerId,
         discountCode: body.discountCode,
         purchaseAction: body.purchaseAction,
+        planActivation: body.planActivation,
       };
     }
     if (!body.kind || !body.productId) {

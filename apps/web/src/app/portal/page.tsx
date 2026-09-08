@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { EChartsOption } from "echarts";
 import { ConsoleShell } from "@/components/console-shell";
+import { CheckInSuccessDialog } from "@/components/check-in-success-dialog";
 import { EChart } from "@/components/echart";
 import { Icon } from "@/components/icon";
 import { Panel } from "@/components/panel";
@@ -34,6 +35,9 @@ export default function PortalPage() {
   const [usageError, setUsageError] = useState<string | null>(null);
   const [checkIn, setCheckIn] = useState<DailyCheckInStatus | null>(null);
   const [checkInClaiming, setCheckInClaiming] = useState(false);
+  const [checkInSuccessReward, setCheckInSuccessReward] = useState<
+    number | null
+  >(null);
   const [checkInError, setCheckInError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [emptyState, setEmptyState] = useState(false);
@@ -114,6 +118,7 @@ export default function PortalPage() {
         { method: "POST", token },
       );
       setCheckIn(response);
+      setCheckInSuccessReward(response.rewardBytes);
       await load();
     } catch (cause) {
       setCheckInError(
@@ -676,6 +681,12 @@ export default function PortalPage() {
             </Link>
           </div>
         </Panel>
+      ) : null}
+      {checkInSuccessReward !== null ? (
+        <CheckInSuccessDialog
+          rewardBytes={checkInSuccessReward}
+          onClose={() => setCheckInSuccessReward(null)}
+        />
       ) : null}
     </ConsoleShell>
   );

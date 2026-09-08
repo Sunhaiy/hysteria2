@@ -854,6 +854,7 @@ export class ControlPlaneStoreService {
       where: {
         userId,
         status: SubscriptionStatus.ACTIVE,
+        startsAt: { lte: new Date() },
         endsAt: { gt: new Date() },
       },
       orderBy: { endsAt: 'desc' },
@@ -1018,6 +1019,7 @@ export class ControlPlaneStoreService {
     const subscriptions = await this.prisma.subscription.findMany({
       where: {
         status: SubscriptionStatus.ACTIVE,
+        startsAt: { lte: now },
         endsAt: { gt: now },
         user: { status: UserStatus.ACTIVE },
         plan: { bindings: { some: { nodeId } } },
@@ -1076,6 +1078,7 @@ export class ControlPlaneStoreService {
         userId,
         entitlementGrant: options.unlinkedOnly ? null : undefined,
         status: SubscriptionStatus.ACTIVE,
+        startsAt: { lte: now },
         endsAt: { gt: now },
       },
       include: {
@@ -1194,6 +1197,7 @@ export class ControlPlaneStoreService {
         userId,
         entitlementGrant: options.unlinkedOnly ? null : undefined,
         status: SubscriptionStatus.ACTIVE,
+        startsAt: { lte: now },
         endsAt: { gt: now },
       },
       include: { user: true, plan: true, node: true, trafficPacks: true },
@@ -1314,6 +1318,7 @@ export class ControlPlaneStoreService {
         userId,
         entitlementGrant: options.unlinkedOnly ? null : undefined,
         status: SubscriptionStatus.ACTIVE,
+        startsAt: { lte: now },
         endsAt: { gt: now },
       },
       include: { plan: true, node: true, trafficPacks: true },
@@ -1939,6 +1944,7 @@ export class ControlPlaneStoreService {
       where: {
         userId,
         status: SubscriptionStatus.ACTIVE,
+        startsAt: { lte: new Date() },
         endsAt: { gt: new Date() },
       },
       orderBy: { endsAt: 'desc' },
@@ -2970,6 +2976,7 @@ export class ControlPlaneStoreService {
           where: {
             userId,
             status: SubscriptionStatus.ACTIVE,
+            startsAt: { lte: timestamp },
             endsAt: { gt: timestamp },
           },
           orderBy: { endsAt: 'desc' },
@@ -4108,6 +4115,7 @@ export class ControlPlaneStoreService {
       where: {
         userId,
         status: SubscriptionStatus.ACTIVE,
+        startsAt: { lte: now },
         endsAt: { gt: now },
       },
       orderBy: { endsAt: 'desc' },

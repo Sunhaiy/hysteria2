@@ -45,7 +45,19 @@ openssl rand -base64 32
   `PATCH /api/admin/check-ins/settings` provide paginated audit and
   configuration.
 - `GET /api/portal/group-buys/campaigns`, `GET /api/portal/group-buys`, and
-  `GET /api/portal/group-buys/:idOrCode` expose member group-buy state.
+  `GET /api/portal/group-buys/:idOrCode` expose member group-buy state and
+  share-code lookup. `POST /api/portal/group-buys/:id/cancel` lets only the
+  creator cancel an open balance-rebate group before another member starts
+  joining. Cancellation retains the already activated plan, releases the
+  creator's active group slot, and grants neither rebate nor bonus traffic.
+  `POST /api/portal/group-buys` and
+  `POST /api/portal/group-buys/:id/join` accept optional
+  `planActivation=scheduled_switch|immediate_switch`. The server ignores that
+  preference for first purchases and same-plan renewals; different plans
+  default to scheduled activation. Every member receives the base plan as soon
+  as payment settles, while rebate and bonus traffic still require the group to
+  complete. An account with an existing scheduled plan may only buy a current
+  cycle traffic reset until that plan starts.
   `GET /api/admin/group-buys`, `PUT /api/admin/group-buys/campaigns`,
   `POST /api/admin/group-buys/refunds/:id/retry`, and
   `POST /api/admin/group-buys/members/:id/retry-fulfillment` provide activity

@@ -3,6 +3,7 @@ import {
   IsArray,
   IsIn,
   IsNumber,
+  IsOptional,
   IsString,
   Max,
   Min,
@@ -14,11 +15,19 @@ export class CreateGroupBuyPaymentDto {
 
   @IsIn(['alipay', 'wxpay', 'balance'])
   paymentType!: 'alipay' | 'wxpay' | 'balance';
+
+  @IsOptional()
+  @IsIn(['scheduled_switch', 'immediate_switch'])
+  planActivation?: 'scheduled_switch' | 'immediate_switch';
 }
 
 export class JoinGroupBuyPaymentDto {
   @IsIn(['alipay', 'wxpay', 'balance'])
   paymentType!: 'alipay' | 'wxpay' | 'balance';
+
+  @IsOptional()
+  @IsIn(['scheduled_switch', 'immediate_switch'])
+  planActivation?: 'scheduled_switch' | 'immediate_switch';
 }
 
 export class UpdateGroupBuyCampaignsDto {

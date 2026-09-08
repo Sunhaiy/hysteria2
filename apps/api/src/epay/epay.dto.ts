@@ -22,6 +22,10 @@ export class CreateEpayPaymentDto {
   @IsOptional()
   @IsIn(['purchase', 'plan_reset'])
   purchaseAction?: 'purchase' | 'plan_reset';
+
+  @IsOptional()
+  @IsIn(['scheduled_switch', 'immediate_switch'])
+  planActivation?: 'scheduled_switch' | 'immediate_switch';
 }
 
 export class CreateEpayGatewayTestDto {

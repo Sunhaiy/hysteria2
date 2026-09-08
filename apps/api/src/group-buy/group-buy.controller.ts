@@ -45,6 +45,14 @@ export class PortalGroupBuyController {
   ) {
     return this.groupBuys.detailForMember(principal.sub, idOrCode);
   }
+
+  @Post(':id/cancel')
+  cancel(
+    @CurrentPrincipal() principal: SessionPrincipal,
+    @Param('id') groupId: string,
+  ) {
+    return this.groupBuys.cancelForCreator(principal.sub, groupId);
+  }
 }
 
 @Controller('api/admin/group-buys')

@@ -86,6 +86,17 @@ type Quote = {
   resetCurrentRemainingBytes?: number | null;
   resetCreditBytes?: number | null;
   resetExpiresAt?: string | null;
+  planActivationMode?:
+    | "initial"
+    | "renewal"
+    | "scheduled_switch"
+    | "immediate_switch"
+    | null;
+  planEffectiveAt?: string | null;
+  currentPlanProductId?: string | null;
+  currentPlanName?: string | null;
+  currentPlanEndsAt?: string | null;
+  forfeitedDays?: number;
 };
 type Branding = {
   purchaseMode: "balance" | "cdk";
@@ -112,11 +123,19 @@ type EpayPayment = {
   productName: string;
   expiresAt: string;
   orderId: string | null;
+  planActivationMode?: Quote["planActivationMode"];
+  planEffectiveAt?: string | null;
   gateway?: {
     url: string;
     method: "GET" | "POST";
     fields: Record<string, string>;
   };
+};
+type CheckoutPaymentType = "store" | "alipay" | "wxpay" | "balance";
+type WalletCheckout = {
+  orderId: string;
+  replayed: boolean;
+  chargedCents?: number;
 };
 
 const periodName = {
@@ -215,7 +234,13 @@ export default function PortalPlansPage() {
     offer: Offer;
     purchaseAction: "purchase" | "plan_reset";
   } | null>(null);
-  const [paymentType, setPaymentType] = useState<"alipay" | "wxpay">("alipay");
+  const [paymentType, setPaymentType] =
+    useState<CheckoutPaymentType>("balance");
+  const [planActivation, setPlanActivation] = useState<
+    "scheduled_switch" | "immediate_switch"
+  >("scheduled_switch");
+  const [immediateSwitchConfirmed, setImmediateSwitchConfirmed] =
+    useState(false);
   const [quote, setQuote] = useState<Quote | null>(null);
   const [idempotencyKey, setIdempotencyKey] = useState("");
   const [busy, setBusy] = useState(false);
@@ -318,12 +343,6 @@ export default function PortalPlansPage() {
     checkout.offer.intervalMonths > 1
       ? Math.round(checkoutFinalPriceCents / checkout.offer.intervalMonths)
       : null;
-  const checkoutNodeCount =
-    checkout?.product.access.servers.reduce(
-      (total, server) =>
-        total + server.nodes.filter((node) => node.serviceable).length,
-      0,
-    ) ?? 0;
   const checkoutIsCurrentPlan =
     checkout?.product.kind === "plan" &&
     checkout.product.name === currentPlanName;
@@ -378,7 +397,12 @@ export default function PortalPlansPage() {
           setPendingPaymentId(null);
           setCheckout(null);
           setQuote(null);
-          setFeedback("支付已确认，套餐或流量权益已经到账。");
+          setFeedback(
+            payment.planActivationMode === "scheduled_switch" &&
+              payment.planEffectiveAt
+              ? `支付已确认，新套餐将在 ${formatDateTime(payment.planEffectiveAt)} 自动生效。`
+              : "支付已确认，套餐或流量权益已经到账。",
+          );
           await load();
           return;
         }
@@ -402,6 +426,7 @@ export default function PortalPlansPage() {
   async function fetchQuote(
     offer: Offer,
     purchaseAction: "purchase" | "plan_reset" = "purchase",
+    activation: "scheduled_switch" | "immediate_switch" = planActivation,
   ): Promise<Quote | null> {
     if (!token) return null;
     setBusy(true);
@@ -410,7 +435,12 @@ export default function PortalPlansPage() {
       const nextQuote = await apiRequest<Quote>("/api/portal/commerce/quote", {
         method: "POST",
         token,
-        body: { offerId: offer.id, purchaseAction },
+        body: {
+          offerId: offer.id,
+          purchaseAction,
+          planActivation:
+            purchaseAction === "purchase" ? activation : undefined,
+        },
       });
       setQuote(nextQuote);
       return nextQuote;
@@ -437,9 +467,17 @@ export default function PortalPlansPage() {
     setCheckout({ product, offer, purchaseAction: "purchase" });
     setQuote(null);
     setError(null);
-    setPaymentType("alipay");
+    setPaymentType(
+      branding.checkoutMode === "store"
+        ? resolveStoreUrl(product, offer, branding)
+          ? "store"
+          : "balance"
+        : "alipay",
+    );
+    setPlanActivation("scheduled_switch");
+    setImmediateSwitchConfirmed(false);
     setIdempotencyKey(crypto.randomUUID());
-    if (branding.checkoutMode === "epay") void fetchQuote(offer, "purchase");
+    void fetchQuote(offer, "purchase", "scheduled_switch");
   }
 
   function selectCheckoutOffer(offer: Offer) {
@@ -451,8 +489,17 @@ export default function PortalPlansPage() {
     });
     setQuote(null);
     setError(null);
+    setPlanActivation("scheduled_switch");
+    setImmediateSwitchConfirmed(false);
     setIdempotencyKey(crypto.randomUUID());
-    if (branding.checkoutMode === "epay") void fetchQuote(offer, "purchase");
+    if (
+      branding.checkoutMode === "store" &&
+      paymentType === "store" &&
+      !resolveStoreUrl(checkout.product, offer, branding)
+    ) {
+      setPaymentType("balance");
+    }
+    void fetchQuote(offer, "purchase", "scheduled_switch");
   }
 
   async function selectPurchaseAction(
@@ -471,10 +518,28 @@ export default function PortalPlansPage() {
     }
     setQuote(null);
     setError(null);
+    setImmediateSwitchConfirmed(false);
     setIdempotencyKey(crypto.randomUUID());
+    if (purchaseAction === "plan_reset" && paymentType === "store") {
+      setPaymentType("balance");
+    }
     const nextQuote = await fetchQuote(offer, purchaseAction);
     if (!nextQuote) return;
     setCheckout({ product: checkout.product, offer, purchaseAction });
+  }
+
+  async function selectPlanActivation(
+    activation: "scheduled_switch" | "immediate_switch",
+  ) {
+    if (!checkout || planActivation === activation) return;
+    setImmediateSwitchConfirmed(false);
+    setIdempotencyKey(crypto.randomUUID());
+    const nextQuote = await fetchQuote(
+      checkout.offer,
+      checkout.purchaseAction,
+      activation,
+    );
+    if (nextQuote) setPlanActivation(activation);
   }
 
   function closeCheckout() {
@@ -482,11 +547,12 @@ export default function PortalPlansPage() {
     setCheckout(null);
     setQuote(null);
     setError(null);
+    setImmediateSwitchConfirmed(false);
   }
 
   async function confirm() {
     if (!checkout) return;
-    if (branding.checkoutMode === "store") {
+    if (paymentType === "store") {
       const storeUrl = resolveStoreUrl(
         checkout.product,
         checkout.offer,
@@ -500,6 +566,43 @@ export default function PortalPlansPage() {
       return;
     }
     if (!token) return;
+    if (paymentType === "balance") {
+      setBusy(true);
+      setError(null);
+      try {
+        await apiRequest<WalletCheckout>("/api/portal/commerce/checkout", {
+          method: "POST",
+          token,
+          headers: { "Idempotency-Key": idempotencyKey },
+          body: {
+            offerId: checkout.offer.id,
+            purchaseAction: checkout.purchaseAction,
+            planActivation:
+              checkout.purchaseAction === "purchase"
+                ? planActivation
+                : undefined,
+          },
+        });
+        setCheckout(null);
+        setQuote(null);
+        setFeedback(
+          quote?.planActivationMode === "scheduled_switch" &&
+            quote.planEffectiveAt
+            ? `余额支付成功，新套餐将在 ${formatDateTime(quote.planEffectiveAt)} 自动生效。`
+            : "余额支付成功，套餐或流量权益已经到账。",
+        );
+        await load();
+      } catch (cause) {
+        setError(
+          cause instanceof ApiError
+            ? cause.message
+            : "余额支付失败，请稍后重试。",
+        );
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     const targetName = `epay-${idempotencyKey.replace(/[^A-Za-z0-9_-]/g, "")}`;
     const paymentWindow = window.open("about:blank", targetName);
     if (!paymentWindow) {
@@ -522,13 +625,22 @@ export default function PortalPlansPage() {
             offerId: checkout.offer.id,
             paymentType,
             purchaseAction: checkout.purchaseAction,
+            planActivation:
+              checkout.purchaseAction === "purchase"
+                ? planActivation
+                : undefined,
           },
         },
       );
       if (payment.status === "settled") {
         paymentWindow.close();
         setCheckout(null);
-        setFeedback("订单已经支付并到账。");
+        setFeedback(
+          payment.planActivationMode === "scheduled_switch" &&
+            payment.planEffectiveAt
+            ? `订单已支付，新套餐将在 ${formatDateTime(payment.planEffectiveAt)} 自动生效。`
+            : "订单已经支付并到账。",
+        );
         await load();
         return;
       }
@@ -574,8 +686,7 @@ export default function PortalPlansPage() {
           isUltra &&
           product.purchaseEligibility?.currentProductId === product.id;
         const isUpgrade =
-          isUltra &&
-          product.purchaseEligibility?.purchaseMode === "upgrade";
+          isUltra && product.purchaseEligibility?.purchaseMode === "upgrade";
         const eligible = product.purchaseEligibility?.eligible !== false;
         const unavailableReason = product.purchaseEligibility?.reason;
         const useStore = branding.checkoutMode === "store";
@@ -715,16 +826,16 @@ export default function PortalPlansPage() {
                       ? "当前档位"
                       : isUpgrade && useStore
                         ? "升级需站内支付"
-                      : product.purchaseLimitPerUser
-                      ? "已体验"
-                      : "暂不可购买"
+                        : product.purchaseLimitPerUser
+                          ? "已体验"
+                          : "暂不可购买"
                     : !useStore && !branding.epayConfigured
                       ? "支付暂不可用"
                       : isUpgrade
                         ? `补差价 ${formatMoney(product.purchaseEligibility?.payablePriceCents ?? 0)} 升级`
                         : isCurrent
-                        ? "立即续费"
-                        : "立即购买"}
+                          ? "立即续费"
+                          : "立即购买"}
                 </button>
               </div>
             </div>
@@ -766,17 +877,6 @@ export default function PortalPlansPage() {
               9 档流量覆盖不同需求，月付、季付与年付均按月重置额度。
             </span>
           </div>
-          <div className="catalog-assurances" aria-label="套餐购买保障">
-            <span>
-              <Icon name="check" /> 季付 95 折
-            </span>
-            <span>
-              <Icon name="check" /> 年付 9 折
-            </span>
-            <span>
-              <Icon name="check" /> 已购权益按原订单履约
-            </span>
-          </div>
         </div>
         {loading ? (
           <CardGridSkeleton />
@@ -804,7 +904,7 @@ export default function PortalPlansPage() {
           </div>
         </div>
         {loading ? <CardGridSkeleton compact /> : renderProducts(groups.packs)}
-        {loading || groups.ultra.length ? (
+        {!loading && groups.ultra.length > 0 ? (
           <section className="ultra-shop-section" aria-labelledby="ultra-title">
             {branding.ultraPurchaseNotice.enabled &&
             branding.ultraPurchaseNotice.content.trim() ? (
@@ -828,11 +928,7 @@ export default function PortalPlansPage() {
                 </span>
               </div>
             </div>
-            {loading ? (
-              <CardGridSkeleton compact />
-            ) : (
-              renderProducts(groups.ultra)
-            )}
+            {renderProducts(groups.ultra)}
           </section>
         ) : null}
         {!loading && !catalog.products.length ? (
@@ -853,7 +949,7 @@ export default function PortalPlansPage() {
         }
         subtitle={
           checkout?.purchaseAction === "plan_reset"
-            ? "补足当前计费周期的套餐流量"
+            ? "为当前计费周期增加一份套餐流量"
             : "确认规格与商品信息后继续"
         }
         footer={
@@ -863,8 +959,13 @@ export default function PortalPlansPage() {
               disabled={
                 busy ||
                 !checkout ||
-                (branding.checkoutMode === "epay" && !quote) ||
-                (branding.checkoutMode === "store" &&
+                (paymentType !== "store" && !quote) ||
+                (paymentType === "balance" && quote?.sufficient !== true) ||
+                ((paymentType === "alipay" || paymentType === "wxpay") &&
+                  !branding.epayConfigured) ||
+                (quote?.planActivationMode === "immediate_switch" &&
+                  !immediateSwitchConfirmed) ||
+                (paymentType === "store" &&
                   checkout &&
                   !resolveStoreUrl(checkout.product, checkout.offer, branding))
               }
@@ -873,9 +974,15 @@ export default function PortalPlansPage() {
             >
               {busy
                 ? "处理中..."
-                : branding.checkoutMode === "store"
-                  ? `去购买 · ${formatMoney(checkout?.offer.priceCents ?? 0)}`
-                  : `前往支付 · ${formatMoney(quote?.finalPriceCents ?? checkout?.offer.priceCents ?? 0)}`}
+                : paymentType === "balance"
+                  ? `余额支付 · ${formatMoney(checkoutFinalPriceCents)}`
+                  : paymentType === "store"
+                    ? `去购买 · ${formatMoney(checkout?.offer.priceCents ?? 0)}`
+                    : quote?.planActivationMode === "scheduled_switch"
+                      ? `预约切换 · ${formatMoney(quote.finalPriceCents)}`
+                      : quote?.planActivationMode === "immediate_switch"
+                        ? `立即切换 · ${formatMoney(quote.finalPriceCents)}`
+                        : `前往支付 · ${formatMoney(quote?.finalPriceCents ?? checkout?.offer.priceCents ?? 0)}`}
             </button>
             <button
               className="ghost-button"
@@ -908,11 +1015,11 @@ export default function PortalPlansPage() {
                       : "一次购买永久有效，可直接使用商品绑定的节点。")}
               </p>
             </section>
-            {checkoutIsCurrentPlan && branding.checkoutMode === "epay" ? (
+            {checkoutIsCurrentPlan ? (
               <section className="checkout-option-section">
                 <div className="checkout-section-heading">
                   <strong>选择操作</strong>
-                  <span>续期延长时间，重置恢复本期额度</span>
+                  <span>续期延长时间，重置增加本期流量</span>
                 </div>
                 <div
                   className="checkout-purchase-action-options"
@@ -947,10 +1054,81 @@ export default function PortalPlansPage() {
                     <Icon name="refresh" />
                     <span>
                       <strong>重置本期流量</strong>
-                      <small>月付价 7 折，仅当前周期有效</small>
+                      <small>月付价 7 折，增加一份月度额度</small>
                     </span>
                   </button>
                 </div>
+              </section>
+            ) : null}
+            {checkout.purchaseAction === "purchase" &&
+            (quote?.planActivationMode === "scheduled_switch" ||
+              quote?.planActivationMode === "immediate_switch") ? (
+              <section className="checkout-option-section">
+                <div className="checkout-section-heading">
+                  <strong>选择生效方式</strong>
+                  <span>默认保留当前套餐剩余时间</span>
+                </div>
+                <div
+                  className="checkout-purchase-action-options"
+                  role="radiogroup"
+                  aria-label="套餐生效方式"
+                >
+                  <button
+                    className={
+                      planActivation === "scheduled_switch" ? "selected" : ""
+                    }
+                    type="button"
+                    disabled={busy}
+                    role="radio"
+                    aria-checked={planActivation === "scheduled_switch"}
+                    onClick={() =>
+                      void selectPlanActivation("scheduled_switch")
+                    }
+                  >
+                    <Icon name="schedule" />
+                    <span>
+                      <strong>到期后切换</strong>
+                      <small>
+                        {quote.currentPlanEndsAt
+                          ? `${formatDateTime(quote.currentPlanEndsAt)} 生效`
+                          : "当前套餐结束后自动生效"}
+                      </small>
+                    </span>
+                  </button>
+                  <button
+                    className={
+                      planActivation === "immediate_switch" ? "selected" : ""
+                    }
+                    type="button"
+                    disabled={busy}
+                    role="radio"
+                    aria-checked={planActivation === "immediate_switch"}
+                    onClick={() =>
+                      void selectPlanActivation("immediate_switch")
+                    }
+                  >
+                    <Icon name="bolt" />
+                    <span>
+                      <strong>立即切换</strong>
+                      <small>付款到账后立即使用新套餐</small>
+                    </span>
+                  </button>
+                </div>
+                {quote.planActivationMode === "immediate_switch" ? (
+                  <label className="checkout-switch-confirmation">
+                    <input
+                      type="checkbox"
+                      checked={immediateSwitchConfirmed}
+                      onChange={(event) =>
+                        setImmediateSwitchConfirmed(event.target.checked)
+                      }
+                    />
+                    <span>
+                      我确认立即切换，当前 {quote.currentPlanName ?? "套餐"}
+                      剩余约 {quote.forfeitedDays ?? 0} 天将不折现、不顺延。
+                    </span>
+                  </label>
+                ) : null}
               </section>
             ) : null}
             {checkout.purchaseAction === "purchase" ? (
@@ -970,18 +1148,13 @@ export default function PortalPlansPage() {
                       activeOffers(checkout.product),
                       offer,
                     );
-                    const available =
-                      branding.checkoutMode === "epay" ||
-                      Boolean(
-                        resolveStoreUrl(checkout.product, offer, branding),
-                      );
                     return (
                       <button
                         className={`checkout-offer-option${selected ? " selected" : ""}`}
                         type="button"
                         role="radio"
                         aria-checked={selected}
-                        disabled={busy || !available}
+                        disabled={busy}
                         onClick={() => selectCheckoutOffer(offer)}
                         key={offer.id}
                       >
@@ -990,7 +1163,6 @@ export default function PortalPlansPage() {
                             {checkout.product.kind === "traffic_pack"
                               ? "永久有效"
                               : offerPeriodName(offer)}
-                            {!available ? " · 未配置" : ""}
                           </span>
                           {savings ? <em>{savings.discountLabel}</em> : null}
                         </span>
@@ -1014,7 +1186,7 @@ export default function PortalPlansPage() {
               <section className="checkout-option-section checkout-reset-preview">
                 <div className="checkout-section-heading">
                   <strong>本期重置结果</strong>
-                  <span>支付到账后立即补足，不修改历史用量</span>
+                  <span>支付到账后立即增加，不修改历史用量</span>
                 </div>
                 <div>
                   <span>
@@ -1038,40 +1210,77 @@ export default function PortalPlansPage() {
                 </div>
               </section>
             )}
-            {branding.checkoutMode === "epay" ? (
-              <section className="checkout-option-section">
-                <div className="checkout-section-heading">
-                  <strong>选择支付方式</strong>
-                  <span>将在新页面完成安全支付</span>
-                </div>
-                <div className="checkout-payment-options" role="radiogroup">
+            <section className="checkout-option-section">
+              <div className="checkout-section-heading">
+                <strong>选择支付方式</strong>
+                <span>余额即时到账，外部支付将在新页面完成</span>
+              </div>
+              <div className="checkout-payment-options" role="radiogroup">
+                {branding.checkoutMode === "store" ? (
                   <button
-                    className={paymentType === "alipay" ? "selected" : ""}
+                    className={paymentType === "store" ? "selected" : ""}
                     type="button"
                     role="radio"
-                    aria-checked={paymentType === "alipay"}
-                    onClick={() => setPaymentType("alipay")}
+                    aria-checked={paymentType === "store"}
+                    disabled={
+                      !resolveStoreUrl(
+                        checkout.product,
+                        checkout.offer,
+                        branding,
+                      )
+                    }
+                    onClick={() => setPaymentType("store")}
                   >
                     <Icon name="payments" />
-                    <span>支付宝</span>
+                    <span>店铺购买</span>
                   </button>
-                  <button
-                    className={paymentType === "wxpay" ? "selected" : ""}
-                    type="button"
-                    role="radio"
-                    aria-checked={paymentType === "wxpay"}
-                    onClick={() => setPaymentType("wxpay")}
-                  >
-                    <Icon name="payments" />
-                    <span>微信支付</span>
-                  </button>
-                </div>
-              </section>
-            ) : null}
-            {branding.checkoutMode === "store" &&
+                ) : (
+                  <>
+                    <button
+                      className={paymentType === "alipay" ? "selected" : ""}
+                      type="button"
+                      role="radio"
+                      aria-checked={paymentType === "alipay"}
+                      onClick={() => setPaymentType("alipay")}
+                    >
+                      <Icon name="payments" />
+                      <span>支付宝</span>
+                    </button>
+                    <button
+                      className={paymentType === "wxpay" ? "selected" : ""}
+                      type="button"
+                      role="radio"
+                      aria-checked={paymentType === "wxpay"}
+                      onClick={() => setPaymentType("wxpay")}
+                    >
+                      <Icon name="payments" />
+                      <span>微信支付</span>
+                    </button>
+                  </>
+                )}
+                <button
+                  className={paymentType === "balance" ? "selected" : ""}
+                  type="button"
+                  role="radio"
+                  aria-checked={paymentType === "balance"}
+                  disabled={!quote || !quote.sufficient}
+                  onClick={() => setPaymentType("balance")}
+                >
+                  <Icon name="wallet" />
+                  <span className="checkout-payment-copy">
+                    <strong>余额支付</strong>
+                    <small>
+                      可用 {formatMoney(quote?.balanceCents ?? 0)}
+                      {quote && !quote.sufficient ? " · 余额不足" : ""}
+                    </small>
+                  </span>
+                </button>
+              </div>
+            </section>
+            {paymentType === "store" &&
             !resolveStoreUrl(checkout.product, checkout.offer, branding) ? (
               <div className="feedback warn">
-                该周期尚未配置店铺链接，请选择其他可购买周期或联系管理员。
+                该周期尚未配置店铺链接，可以改用余额支付。
               </div>
             ) : null}
             <div className="checkout-facts">
@@ -1079,7 +1288,7 @@ export default function PortalPlansPage() {
                 <span>流量规则</span>
                 <strong>
                   {checkout.purchaseAction === "plan_reset"
-                    ? `补发 ${formatTrafficLimit(quote?.resetCreditBytes ?? 0)}`
+                    ? `增加 ${formatTrafficLimit(quote?.resetCreditBytes ?? 0)}`
                     : checkout.product.kind === "plan" ||
                         checkout.product.series === "ultra"
                       ? `每月重置 ${formatTrafficLimit(checkout.offer.trafficBytes)}`
@@ -1111,34 +1320,9 @@ export default function PortalPlansPage() {
                 </strong>
               </div>
             </div>
-            {checkout.product.kind === "plan" ? (
-              <div
-                className="checkout-purchase-highlights"
-                aria-label="套餐购买亮点"
-              >
-                <span>
-                  <Icon name="check" />
-                  {checkout.purchaseAction === "plan_reset"
-                    ? "本期结束自动失效"
-                    : "每月额度独立重置"}
-                </span>
-                <span>
-                  <Icon name="check" />
-                  {checkout.purchaseAction === "plan_reset"
-                    ? "不延长套餐有效期"
-                    : `${checkoutNodeCount} 个可用节点`}
-                </span>
-                <span>
-                  <Icon name="check" />
-                  {checkout.purchaseAction === "plan_reset"
-                    ? "历史计费完整保留"
-                    : "不限设备"}
-                </span>
-              </div>
-            ) : null}
             {checkout.purchaseAction === "plan_reset" ? (
               <div className="feedback info">
-                本次只把当前套餐周期的剩余流量补到套餐上限；补发部分随本期结束失效，不结转到下个周期。
+                每次重置会增加一整份月度套餐流量，可反复购买；新增流量随本期结束失效，不结转到下个周期。
               </div>
             ) : checkout.product.series === "ultra" ? (
               <div className="feedback info">
@@ -1173,7 +1357,9 @@ export default function PortalPlansPage() {
                 </div>
                 <div>
                   <span>当前档位</span>
-                  <strong>{quote.upgradeFromProductName ?? "已有 Ultra"}</strong>
+                  <strong>
+                    {quote.upgradeFromProductName ?? "已有 Ultra"}
+                  </strong>
                 </div>
                 <div>
                   <span>应付差价</span>
@@ -1183,18 +1369,14 @@ export default function PortalPlansPage() {
             ) : (
               <div className="checkout-price-summary">
                 <div>
-                  <span>
-                    {checkoutSavings ? "按月购买原价" : "商品价格"}
-                  </span>
+                  <span>{checkoutSavings ? "按月购买原价" : "商品价格"}</span>
                   <strong>{formatMoney(checkoutListPriceCents)}</strong>
                 </div>
                 <div className={checkoutDiscountCents > 0 ? "saving" : ""}>
                   <span>周期优惠</span>
                   {checkoutDiscountCents > 0 ? (
                     <>
-                      <strong>
-                        -{formatMoney(checkoutDiscountCents)}
-                      </strong>
+                      <strong>-{formatMoney(checkoutDiscountCents)}</strong>
                       <small>
                         {checkoutSavings?.discountLabel ?? quote?.discountLabel}
                       </small>
