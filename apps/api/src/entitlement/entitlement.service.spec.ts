@@ -1027,6 +1027,43 @@ describe('EntitlementService V2', () => {
     expect(peakInFlight).toBeLessThanOrEqual(2);
   });
 
+  it('allows a production-sized traffic import to outlive the default interactive transaction timeout', async () => {
+    const tx = {
+      usageImportBatch: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'batch_db_slow' }),
+      },
+    };
+    const prisma = {
+      $transaction: jest.fn(
+        (
+          operation: (client: typeof tx) => unknown,
+          options?: { timeout?: number },
+        ) => {
+          if ((options?.timeout ?? 5_000) < 30_000) {
+            throw new Error(
+              'Transaction already closed: the 5000ms interactive transaction timeout expired',
+            );
+          }
+          return operation(tx);
+        },
+      ),
+    };
+    const service = new EntitlementService(prisma as never);
+
+    await expect(
+      service.applyUsageBatch('node_core', {
+        id: 'external_batch_slow',
+        claimedAt: '2027-03-30T08:00:00.000Z',
+        traffic: {},
+      }),
+    ).resolves.toEqual({ replayed: false, impactedUsers: [] });
+    expect(prisma.$transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ timeout: 30_000 }),
+    );
+  });
+
   it('spends plan quota before an earlier-expiring traffic pack', async () => {
     const early = {
       id: 'bucket_early',

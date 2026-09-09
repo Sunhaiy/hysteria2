@@ -23,6 +23,7 @@ import type { QuotaAdjustmentDto } from './entitlement.dto';
 
 const multiplierScale = BigInt(10_000);
 const nodeProvisioningAccessConcurrency = 2;
+const trafficImportTransactionTimeoutMs = 30_000;
 
 type DbClient = PrismaService | Prisma.TransactionClient;
 
@@ -1627,48 +1628,51 @@ export class EntitlementService {
     },
   ) {
     const claimedAt = this.validateTrafficBatch(batch);
-    return this.serializable(async (tx) => {
-      const existing = await tx.usageImportBatch.findUnique({
-        where: { nodeId_externalId: { nodeId, externalId: batch.id } },
-      });
-      if (existing) {
-        return { replayed: true, impactedUsers: Object.keys(batch.traffic) };
-      }
-      const values = Object.values(batch.traffic);
-      const imported = await tx.usageImportBatch.create({
-        data: {
-          nodeId,
-          externalId: batch.id,
-          claimedAt,
-          totalTxBytes: values.reduce(
-            (sum, item) => sum + BigInt(item.tx),
-            BigInt(0),
-          ),
-          totalRxBytes: values.reduce(
-            (sum, item) => sum + BigInt(item.rx),
-            BigInt(0),
-          ),
-          recordCount: values.length,
-        },
-      });
-
-      const impactedUsers: string[] = [];
-      for (const [userId, counters] of Object.entries(batch.traffic)) {
-        if (
-          await this.applyUserTraffic(
-            tx,
-            nodeId,
-            userId,
-            counters,
-            imported.id,
-            claimedAt,
-          )
-        ) {
-          impactedUsers.push(userId);
+    return this.serializable(
+      async (tx) => {
+        const existing = await tx.usageImportBatch.findUnique({
+          where: { nodeId_externalId: { nodeId, externalId: batch.id } },
+        });
+        if (existing) {
+          return { replayed: true, impactedUsers: Object.keys(batch.traffic) };
         }
-      }
-      return { replayed: false, impactedUsers };
-    });
+        const values = Object.values(batch.traffic);
+        const imported = await tx.usageImportBatch.create({
+          data: {
+            nodeId,
+            externalId: batch.id,
+            claimedAt,
+            totalTxBytes: values.reduce(
+              (sum, item) => sum + BigInt(item.tx),
+              BigInt(0),
+            ),
+            totalRxBytes: values.reduce(
+              (sum, item) => sum + BigInt(item.rx),
+              BigInt(0),
+            ),
+            recordCount: values.length,
+          },
+        });
+
+        const impactedUsers: string[] = [];
+        for (const [userId, counters] of Object.entries(batch.traffic)) {
+          if (
+            await this.applyUserTraffic(
+              tx,
+              nodeId,
+              userId,
+              counters,
+              imported.id,
+              claimedAt,
+            )
+          ) {
+            impactedUsers.push(userId);
+          }
+        }
+        return { replayed: false, impactedUsers };
+      },
+      { timeout: trafficImportTransactionTimeoutMs },
+    );
   }
 
   async getNodeAccess(userId: string, nodeId: string) {
@@ -2503,11 +2507,13 @@ export class EntitlementService {
 
   private async serializable<T>(
     operation: (tx: Prisma.TransactionClient) => Promise<T>,
+    options: { maxWait?: number; timeout?: number } = {},
   ) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         return await this.prisma.$transaction(operation, {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          ...options,
         });
       } catch (error) {
         const retryable =
