@@ -89,6 +89,11 @@ export class PortalController {
     return this.portalService.getUsage(principal.sub);
   }
 
+  @Get('node-status')
+  getNodeStatus(@CurrentPrincipal() principal: SessionPrincipal) {
+    return this.portalService.getNodeStatus(principal.sub);
+  }
+
   @Get('orders')
   getOrders(@CurrentPrincipal() principal: SessionPrincipal) {
     return this.portalService.getOrders(principal.sub);

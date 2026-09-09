@@ -641,6 +641,23 @@ export interface PortalUsageResponse {
   }>;
 }
 
+export interface PortalNodeStatusResponse {
+  generatedAt: string;
+  freshnessSeconds: number;
+  diagnosis: {
+    kind: "local_network_likely" | "service_issue" | "unknown" | "unavailable";
+    title: string;
+    message: string;
+  };
+  nodes: Array<{
+    id: string;
+    label: string;
+    status: "healthy" | "unhealthy" | "stale";
+    checkedAt: string | null;
+    latencyMs: number | null;
+  }>;
+}
+
 export interface PortalAccessResponse {
   token: string;
   uri: string;

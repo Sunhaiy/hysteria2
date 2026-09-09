@@ -35,6 +35,8 @@ type SubscriptionNode = {
   vlessFlow: string | null;
 };
 
+const NODE_HEALTH_FRESHNESS_MS = 3 * 60_000;
+
 @Injectable()
 export class PortalService {
   constructor(
@@ -88,6 +90,139 @@ export class PortalService {
         legacyUsage.packRemainingBytes + v2Usage.packRemainingBytes,
       totalRemainingBytes:
         legacyUsage.totalRemainingBytes + v2Usage.totalRemainingBytes,
+    };
+  }
+
+  async getNodeStatus(userId: string, now = new Date()) {
+    let bundle: Awaited<ReturnType<PortalService['getUnifiedAccessBundle']>>;
+    try {
+      bundle = await this.getUnifiedAccessBundle(userId);
+    } catch (error) {
+      if (!(error instanceof NotFoundException)) throw error;
+      return {
+        generatedAt: now.toISOString(),
+        freshnessSeconds: NODE_HEALTH_FRESHNESS_MS / 1000,
+        diagnosis: {
+          kind: 'unavailable' as const,
+          title: '暂无可检测节点',
+          message: '当前账号没有可用节点，请先检查套餐和流量权益。',
+        },
+        nodes: [],
+      };
+    }
+
+    const accessibleNodes = new Map(
+      bundle.nodes.map((node) => [node.id, { id: node.id, label: node.label }]),
+    );
+    const nodeIds = [...accessibleNodes.keys()];
+    if (!this.prisma || nodeIds.length === 0) {
+      return this.buildNodeStatusResponse(
+        [...accessibleNodes.values()].map((node) => ({
+          ...node,
+          healthSnapshots: [],
+        })),
+        now,
+      );
+    }
+
+    const healthRows = await this.prisma.node.findMany({
+      where: {
+        id: { in: nodeIds },
+        active: true,
+        lifecycleStatus: 'ACTIVE',
+        retiredAt: null,
+      },
+      select: {
+        id: true,
+        healthSnapshots: {
+          orderBy: { checkedAt: 'desc' },
+          take: 1,
+          select: { healthy: true, latencyMs: true, checkedAt: true },
+        },
+      },
+    });
+    const healthByNodeId = new Map(
+      healthRows
+        .filter((row) => accessibleNodes.has(row.id))
+        .map((row) => [row.id, row.healthSnapshots]),
+    );
+    return this.buildNodeStatusResponse(
+      [...accessibleNodes.values()].map((node) => ({
+        ...node,
+        healthSnapshots: healthByNodeId.get(node.id) ?? [],
+      })),
+      now,
+    );
+  }
+
+  private buildNodeStatusResponse(
+    rows: Array<{
+      id: string;
+      label: string;
+      healthSnapshots: Array<{
+        healthy: boolean;
+        latencyMs: number | null;
+        checkedAt: Date;
+      }>;
+    }>,
+    now: Date,
+  ) {
+    const nodes = rows.map((row) => {
+      const snapshot = row.healthSnapshots[0];
+      const stale =
+        !snapshot ||
+        now.getTime() - snapshot.checkedAt.getTime() > NODE_HEALTH_FRESHNESS_MS;
+      return {
+        id: row.id,
+        label: row.label,
+        status: stale
+          ? ('stale' as const)
+          : snapshot.healthy
+            ? ('healthy' as const)
+            : ('unhealthy' as const),
+        checkedAt: snapshot?.checkedAt.toISOString() ?? null,
+        latencyMs: stale ? null : (snapshot.latencyMs ?? null),
+      };
+    });
+    const unhealthyCount = nodes.filter(
+      (node) => node.status === 'unhealthy',
+    ).length;
+    const staleCount = nodes.filter((node) => node.status === 'stale').length;
+    const diagnosis =
+      unhealthyCount > 0
+        ? {
+            kind: 'service_issue' as const,
+            title:
+              unhealthyCount === nodes.length
+                ? '服务端节点异常'
+                : '部分节点异常',
+            message:
+              unhealthyCount === nodes.length
+                ? '当前可用节点均检测异常，更可能是服务端问题。'
+                : '检测到部分节点异常，请先切换到状态正常的节点。',
+          }
+        : staleCount > 0
+          ? {
+              kind: 'unknown' as const,
+              title: '暂时无法完整判断',
+              message: '部分节点状态超过 3 分钟未更新，请稍后再试。',
+            }
+          : nodes.length > 0
+            ? {
+                kind: 'local_network_likely' as const,
+                title: '服务端运行正常',
+                message: '若仍无法连接，请优先检查本地网络、客户端和订阅更新。',
+              }
+            : {
+                kind: 'unavailable' as const,
+                title: '暂无可检测节点',
+                message: '当前账号没有可用节点，请先检查套餐和流量权益。',
+              };
+    return {
+      generatedAt: now.toISOString(),
+      freshnessSeconds: NODE_HEALTH_FRESHNESS_MS / 1000,
+      diagnosis,
+      nodes,
     };
   }
 

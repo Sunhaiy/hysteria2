@@ -678,4 +678,176 @@ describe('PortalService VLESS + REALITY access', () => {
     );
     expect(access.configSnippet).toContain('hopInterval: 30s');
   });
+
+  it('only exposes health for accessible nodes and never returns connection secrets', async () => {
+    const now = new Date('2026-09-09T05:00:00.000Z');
+    const accessibleNodes = [
+      {
+        id: 'node_healthy',
+        label: '香港 A',
+        hostname: '203.0.113.10',
+        trafficApiSecret: 'must-not-leak',
+      },
+      {
+        id: 'node_unhealthy',
+        label: '美国 B',
+        hostname: '203.0.113.11',
+        trafficApiSecret: 'must-not-leak',
+      },
+      {
+        id: 'node_stale',
+        label: '日本 C',
+        hostname: '203.0.113.12',
+        trafficApiSecret: 'must-not-leak',
+      },
+    ];
+    const store = {
+      getAccessBundle: jest.fn().mockResolvedValue({
+        token: { token: 'secret-token', vlessUuid: 'secret-uuid' },
+        node: accessibleNodes[0],
+        nodes: accessibleNodes,
+        subscription: { endsAt: '2027-09-09T00:00:00.000Z' },
+        trafficRemaining: 1024,
+      }),
+    };
+    const prisma = {
+      node: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'node_healthy',
+            healthSnapshots: [
+              {
+                healthy: true,
+                latencyMs: 42,
+                checkedAt: new Date('2026-09-09T04:59:30.000Z'),
+              },
+            ],
+          },
+          {
+            id: 'node_unhealthy',
+            healthSnapshots: [
+              {
+                healthy: false,
+                latencyMs: null,
+                checkedAt: new Date('2026-09-09T04:59:00.000Z'),
+              },
+            ],
+          },
+          {
+            id: 'node_stale',
+            healthSnapshots: [
+              {
+                healthy: true,
+                latencyMs: 88,
+                checkedAt: new Date('2026-09-09T04:50:00.000Z'),
+              },
+            ],
+          },
+          {
+            id: 'node_hidden',
+            healthSnapshots: [
+              {
+                healthy: true,
+                latencyMs: 1,
+                checkedAt: now,
+              },
+            ],
+          },
+        ]),
+      },
+    };
+    const service = new PortalService(
+      store as never,
+      {} as never,
+      {} as never,
+      undefined,
+      prisma as never,
+    );
+
+    const status = await service.getNodeStatus('user_1', now);
+
+    expect(prisma.node.findMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: ['node_healthy', 'node_unhealthy', 'node_stale'] },
+        active: true,
+        lifecycleStatus: 'ACTIVE',
+        retiredAt: null,
+      },
+      select: {
+        id: true,
+        healthSnapshots: {
+          orderBy: { checkedAt: 'desc' },
+          take: 1,
+          select: { healthy: true, latencyMs: true, checkedAt: true },
+        },
+      },
+    });
+    expect(status.diagnosis.kind).toBe('service_issue');
+    expect(status.nodes).toEqual([
+      expect.objectContaining({
+        id: 'node_healthy',
+        label: '香港 A',
+        status: 'healthy',
+        latencyMs: 42,
+      }),
+      expect.objectContaining({
+        id: 'node_unhealthy',
+        label: '美国 B',
+        status: 'unhealthy',
+      }),
+      expect.objectContaining({
+        id: 'node_stale',
+        label: '日本 C',
+        status: 'stale',
+        latencyMs: null,
+      }),
+    ]);
+    const serialized = JSON.stringify(status);
+    expect(serialized).not.toContain('node_hidden');
+    expect(serialized).not.toContain('203.0.113');
+    expect(serialized).not.toContain('must-not-leak');
+    expect(serialized).not.toContain('secret-token');
+  });
+
+  it('points users to their local network when every accessible node is healthy', async () => {
+    const now = new Date('2026-09-09T05:00:00.000Z');
+    const store = {
+      getAccessBundle: jest.fn().mockResolvedValue({
+        token: { token: 'secret-token', vlessUuid: 'secret-uuid' },
+        node: { id: 'node_healthy', label: '香港 A' },
+        nodes: [{ id: 'node_healthy', label: '香港 A' }],
+        subscription: { endsAt: '2027-09-09T00:00:00.000Z' },
+        trafficRemaining: 1024,
+      }),
+    };
+    const prisma = {
+      node: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'node_healthy',
+            healthSnapshots: [
+              {
+                healthy: true,
+                latencyMs: 36,
+                checkedAt: new Date('2026-09-09T04:59:30.000Z'),
+              },
+            ],
+          },
+        ]),
+      },
+    };
+    const service = new PortalService(
+      store as never,
+      {} as never,
+      {} as never,
+      undefined,
+      prisma as never,
+    );
+
+    await expect(service.getNodeStatus('user_1', now)).resolves.toMatchObject({
+      freshnessSeconds: 180,
+      diagnosis: { kind: 'local_network_likely' },
+      nodes: [{ status: 'healthy', latencyMs: 36 }],
+    });
+  });
 });

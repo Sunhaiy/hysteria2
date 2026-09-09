@@ -1777,6 +1777,42 @@ details.field-section .field-section-body {
     width: 100%;
   }
 
+  .data-viewport
+    .admin-data-page.portal-usage-page
+    > .portal-usage-detail-layout {
+    display: grid;
+    flex: 1 1 0;
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr) minmax(270px, 310px);
+    gap: 12px;
+    overflow: hidden;
+  }
+
+  .data-viewport .portal-usage-detail-layout > .admin-data-panel {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+  }
+
+  .data-viewport
+    .portal-usage-detail-layout
+    > .admin-data-panel
+    > .panel-header {
+    flex: 0 0 auto;
+    padding: 11px 14px;
+  }
+
+  .data-viewport .portal-usage-detail-layout > .admin-data-panel > .panel-body {
+    display: flex;
+    flex: 1 1 0;
+    min-height: 0;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 14px;
+    overflow: hidden;
+  }
+
   .data-viewport .admin-data-panel .table-wrap {
     flex: 1 1 0;
     min-height: 0;
@@ -1873,6 +1909,159 @@ details.field-section .field-section-body {
 @media (min-width: 921px) and (max-width: 1180px) {
   .data-viewport .admin-compact-filters {
     flex-wrap: wrap;
+  }
+}
+
+.portal-usage-detail-layout {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.portal-node-status-panel .panel-header {
+  align-items: flex-start;
+}
+
+.portal-node-status-panel .panel-header > .badge,
+.portal-node-status-row .badge {
+  min-height: 22px;
+  height: 22px;
+  padding-inline: 8px;
+}
+
+.portal-node-diagnosis {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--border-default);
+  border-left-width: 3px;
+  border-radius: 7px;
+  background: var(--bg-panel-alt);
+}
+
+.portal-node-diagnosis > .icon-slot {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+}
+
+.portal-node-diagnosis.local_network_likely {
+  border-left-color: var(--status-success);
+}
+
+.portal-node-diagnosis.local_network_likely > .icon-slot {
+  color: var(--status-success);
+}
+
+.portal-node-diagnosis.service_issue {
+  border-left-color: var(--status-critical);
+}
+
+.portal-node-diagnosis.service_issue > .icon-slot {
+  color: var(--status-critical);
+}
+
+.portal-node-diagnosis.unknown,
+.portal-node-diagnosis.unavailable {
+  border-left-color: var(--status-redirect);
+}
+
+.portal-node-diagnosis.unknown > .icon-slot,
+.portal-node-diagnosis.unavailable > .icon-slot {
+  color: var(--status-redirect);
+}
+
+.portal-node-diagnosis strong,
+.portal-node-diagnosis p {
+  display: block;
+  margin: 0;
+}
+
+.portal-node-diagnosis strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.portal-node-diagnosis p {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.portal-node-status-list {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.portal-node-status-row {
+  display: grid;
+  gap: 7px;
+  padding: 11px 2px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.portal-node-status-row:first-child {
+  padding-top: 2px;
+}
+
+.portal-node-status-row:last-child {
+  padding-bottom: 2px;
+  border-bottom: 0;
+}
+
+.portal-node-status-heading,
+.portal-node-status-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.portal-node-status-heading strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.portal-node-status-meta {
+  align-items: flex-start;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.portal-node-status-meta span:last-child {
+  flex: 0 0 auto;
+}
+
+.portal-node-status-loading {
+  display: grid;
+  min-height: 120px;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+@media (max-width: 920px) {
+  .portal-node-status-panel {
+    grid-row: 1;
+  }
+
+  .portal-usage-history-panel {
+    grid-row: 2;
+  }
+
+  .portal-node-status-list {
+    max-height: 320px;
   }
 }
 
@@ -14566,7 +14755,8 @@ select.control {
   display: grid;
   gap: 10px;
   padding: 12px 13px;
-  border: 1px solid color-mix(in srgb, var(--accent-500) 26%, var(--border-default));
+  border: 1px solid
+    color-mix(in srgb, var(--accent-500) 26%, var(--border-default));
   border-radius: 7px;
   background: var(--bg-panel-alt);
   color: var(--text-secondary);
