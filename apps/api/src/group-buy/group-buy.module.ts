@@ -7,9 +7,10 @@ import {
 import { GroupBuyService } from './group-buy.service';
 import { GroupBuyReconciliationService } from './group-buy-reconciliation.service';
 import { EntitlementModule } from '../entitlement/entitlement.module';
+import { PaymentAttemptLifecycleModule } from '../payments/payment-attempt-lifecycle.module';
 
 @Module({
-  imports: [CommerceModule, EntitlementModule],
+  imports: [CommerceModule, EntitlementModule, PaymentAttemptLifecycleModule],
   controllers: [PortalGroupBuyController, AdminGroupBuyController],
   providers: [GroupBuyService, GroupBuyReconciliationService],
   exports: [GroupBuyService, GroupBuyReconciliationService],

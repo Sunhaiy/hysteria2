@@ -1385,6 +1385,8 @@ model EpayPaymentAttempt {
   queryFailureCount      Int                      @default(0)
   lastQueryError         String?
   closedAt               DateTime?
+  abandonedAt            DateTime?
+  abandonReason          String?
   expiresAt              DateTime
   settledAt              DateTime?
   failedAt               DateTime?
@@ -1403,6 +1405,7 @@ model EpayPaymentAttempt {
   @@index([paymentType, status, createdAt, id])
   @@index([status, lastQueryAt, createdAt, id])
   @@index([fulfillmentStatus, updatedAt, id])
+  @@index([abandonedAt])
 }
 
 model EpayGatewayTestAttempt {

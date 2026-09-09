@@ -9,8 +9,6 @@ import {
 } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import {
-  CatalogProductKind,
-  CatalogProductSeries,
   type EpayGatewayTestAttempt,
   type EpayPaymentAttempt,
   EpayPaymentStatus,
@@ -18,7 +16,10 @@ import {
   Prisma,
 } from '@prisma/client';
 import { CommerceService } from '../commerce/commerce.service';
-import { isPaymentFulfillmentRejectedError } from '../commerce/payment-fulfillment.error';
+import {
+  isPaymentFulfillmentRejectedError,
+  PaymentFulfillmentRejectedError,
+} from '../commerce/payment-fulfillment.error';
 import { PrismaService } from '../prisma/prisma.service';
 import { SecretCipherService } from '../security/secret-cipher.service';
 import { SettingsService } from '../settings/settings.service';
@@ -29,10 +30,7 @@ import {
   parseCatalogOfferSnapshot,
   snapshotCatalogOffer,
 } from '../commerce/catalog-offer-snapshot';
-import {
-  standardPlanPurchaseKey,
-  type PlanActivationPreference,
-} from '../commerce/plan-purchase-policy';
+import { type PlanActivationPreference } from '../commerce/plan-purchase-policy';
 import {
   createEpaySignature,
   formatEpayAmount,
@@ -46,6 +44,10 @@ import {
   EpayCredentialSnapshotError,
   readEpayCredentialSnapshot,
 } from './epay-credentials';
+import {
+  activeEpayCheckoutKey,
+  PaymentAttemptLifecycleService,
+} from '../payments/payment-attempt-lifecycle.service';
 
 const PAYMENT_TTL_MS = 30 * 60 * 1000;
 const GATEWAY_TEST_AMOUNT_CENTS = 1;
@@ -65,6 +67,8 @@ export class EpayService {
     private readonly cipher: SecretCipherService,
     @Optional() private readonly checkout?: EpayCheckoutService,
     @Optional() private readonly groupBuys?: GroupBuyService,
+    @Optional()
+    private readonly paymentAttempts?: PaymentAttemptLifecycleService,
   ) {}
 
   async createPayment(
@@ -111,21 +115,123 @@ export class EpayService {
     );
 
     const now = new Date();
-    const standardPlan =
-      purchaseAction === 'purchase' &&
-      offer.product.kind === CatalogProductKind.PLAN &&
-      offer.product.series === CatalogProductSeries.STANDARD;
-    const activeKey = standardPlan
-      ? standardPlanPurchaseKey(userId)
-      : `${userId}:${offer.product.purchaseLimitKey ?? offer.productId}${
-          purchaseAction === 'plan_reset' ? ':plan_reset' : ''
-        }`;
-    try {
-      const attempt = await this.prisma.$transaction(
-        async (tx) => {
-          await this.expirePendingPayments(tx, now, userId);
+    const activeKey = activeEpayCheckoutKey(userId);
+    for (let retry = 0; retry < 3; retry += 1) {
+      try {
+        const attempt = await this.prisma.$transaction(
+          async (tx) => {
+            await this.expirePendingPayments(tx, now, userId);
 
-          const replay = await tx.epayPaymentAttempt.findUnique({
+            const replay = await tx.epayPaymentAttempt.findUnique({
+              where: {
+                userId_idempotencyKey: {
+                  userId,
+                  idempotencyKey: normalizedKey,
+                },
+              },
+            });
+            if (replay) {
+              if (
+                replay.offerId !== offerId ||
+                replay.paymentType !== selectedPaymentType ||
+                this.paymentPurchaseAction(replay.entitlementSnapshot) !==
+                  purchaseAction ||
+                this.paymentPlanActivation(replay.entitlementSnapshot) !==
+                  resolvedPlanActivation
+              ) {
+                throw new ConflictException(
+                  'Idempotency-Key was already used for another purchase',
+                );
+              }
+              return replay;
+            }
+
+            await this.paymentAttempts?.abandonPendingPayments(tx, userId, now);
+
+            const active = await tx.epayPaymentAttempt.findUnique({
+              where: { activeKey },
+            });
+            if (active) {
+              if (
+                active.offerId !== offerId ||
+                active.paymentType !== selectedPaymentType ||
+                this.paymentPurchaseAction(active.entitlementSnapshot) !==
+                  purchaseAction ||
+                this.paymentPlanActivation(active.entitlementSnapshot) !==
+                  resolvedPlanActivation
+              ) {
+                throw new ConflictException(
+                  '该商品已有一笔其他规格或支付方式的待支付订单',
+                );
+              }
+              return active;
+            }
+
+            const currentOffer = await tx.catalogOffer.findUnique({
+              where: { id: offerId },
+              include: catalogOfferSnapshotInclude,
+            });
+            if (
+              !currentOffer ||
+              currentOffer.archivedAt ||
+              currentOffer.priceCents !== quote.basePriceCents
+            ) {
+              throw new ConflictException('商品已变化，请刷新后重试');
+            }
+
+            return tx.epayPaymentAttempt.create({
+              data: {
+                userId,
+                offerId,
+                merchantOrderNo: this.createMerchantOrderNo(now),
+                idempotencyKey: normalizedKey,
+                activeKey,
+                paymentType: selectedPaymentType,
+                gatewayUrlSnapshot: config.gatewayUrl,
+                merchantIdSnapshot: config.merchantId,
+                merchantKeyCiphertext: this.cipher.encrypt(config.merchantKey!),
+                amountCents: quote.finalPriceCents,
+                basePriceCents: quote.basePriceCents,
+                currency: offer.currency,
+                productNameSnapshot: quote.productName,
+                entitlementSnapshot: snapshotCatalogOffer(currentOffer, {
+                  purchaseMode: quote.purchaseMode,
+                  upgradeFromGrantId: quote.upgradeFromGrantId,
+                  upgradeFromProductId: quote.upgradeFromProductId,
+                  upgradeFromPriceCents: quote.upgradeFromPriceCents,
+                  resetAnchorAt: quote.resetAnchorAt,
+                  resetGrantId: quote.resetGrantId,
+                  resetBucketId: quote.resetBucketId,
+                  resetCycleStartsAt: quote.resetCycleStartsAt,
+                  resetCycleEndsAt: quote.resetCycleEndsAt,
+                  resetTrafficBytes: quote.resetTrafficBytes,
+                  resetCreditBytes:
+                    quote.resetCreditBytes == null
+                      ? null
+                      : String(quote.resetCreditBytes),
+                  planActivationPreference: resolvedPlanActivation,
+                  planActivationMode: quote.planActivationMode,
+                  planEffectiveAt: quote.planEffectiveAt,
+                  currentPlanProductId: quote.currentPlanProductId,
+                  currentPlanName: quote.currentPlanName,
+                  currentPlanEndsAt: quote.currentPlanEndsAt,
+                }) as unknown as Prisma.InputJsonValue,
+                expiresAt: this.paymentExpiry(
+                  now,
+                  purchaseAction === 'plan_reset'
+                    ? quote.resetCycleEndsAt
+                    : null,
+                ),
+              },
+            });
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+        return this.presentAttempt(attempt);
+      } catch (error) {
+        if (!this.isRetryableTransactionError(error)) throw error;
+        if (this.isUniqueConflict(error)) {
+          const replay = await this.prisma.epayPaymentAttempt.findUnique({
             where: {
               userId_idempotencyKey: {
                 userId,
@@ -146,111 +252,13 @@ export class EpayService {
                 'Idempotency-Key was already used for another purchase',
               );
             }
-            return replay;
+            return this.presentAttempt(replay);
           }
-
-          const active = await tx.epayPaymentAttempt.findUnique({
-            where: { activeKey },
-          });
-          if (active) {
-            if (
-              active.offerId !== offerId ||
-              active.paymentType !== selectedPaymentType ||
-              this.paymentPurchaseAction(active.entitlementSnapshot) !==
-                purchaseAction ||
-              this.paymentPlanActivation(active.entitlementSnapshot) !==
-                resolvedPlanActivation
-            ) {
-              throw new ConflictException(
-                '该商品已有一笔其他规格或支付方式的待支付订单',
-              );
-            }
-            return active;
-          }
-
-          const currentOffer = await tx.catalogOffer.findUnique({
-            where: { id: offerId },
-            include: catalogOfferSnapshotInclude,
-          });
-          if (
-            !currentOffer ||
-            currentOffer.archivedAt ||
-            currentOffer.priceCents !== quote.basePriceCents
-          ) {
-            throw new ConflictException('商品已变化，请刷新后重试');
-          }
-
-          return tx.epayPaymentAttempt.create({
-            data: {
-              userId,
-              offerId,
-              merchantOrderNo: this.createMerchantOrderNo(now),
-              idempotencyKey: normalizedKey,
-              activeKey,
-              paymentType: selectedPaymentType,
-              gatewayUrlSnapshot: config.gatewayUrl,
-              merchantIdSnapshot: config.merchantId,
-              merchantKeyCiphertext: this.cipher.encrypt(config.merchantKey!),
-              amountCents: quote.finalPriceCents,
-              basePriceCents: quote.basePriceCents,
-              currency: offer.currency,
-              productNameSnapshot: quote.productName,
-              entitlementSnapshot: snapshotCatalogOffer(currentOffer, {
-                purchaseMode: quote.purchaseMode,
-                upgradeFromGrantId: quote.upgradeFromGrantId,
-                upgradeFromProductId: quote.upgradeFromProductId,
-                upgradeFromPriceCents: quote.upgradeFromPriceCents,
-                resetAnchorAt: quote.resetAnchorAt,
-                resetGrantId: quote.resetGrantId,
-                resetBucketId: quote.resetBucketId,
-                resetCycleStartsAt: quote.resetCycleStartsAt,
-                resetCycleEndsAt: quote.resetCycleEndsAt,
-                resetTrafficBytes: quote.resetTrafficBytes,
-                resetCreditBytes:
-                  quote.resetCreditBytes == null
-                    ? null
-                    : String(quote.resetCreditBytes),
-                planActivationPreference: resolvedPlanActivation,
-                planActivationMode: quote.planActivationMode,
-                planEffectiveAt: quote.planEffectiveAt,
-                currentPlanProductId: quote.currentPlanProductId,
-                currentPlanName: quote.currentPlanName,
-                currentPlanEndsAt: quote.currentPlanEndsAt,
-              }) as unknown as Prisma.InputJsonValue,
-              expiresAt: this.paymentExpiry(
-                now,
-                purchaseAction === 'plan_reset' ? quote.resetCycleEndsAt : null,
-              ),
-            },
-          });
-        },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-      );
-      return this.presentAttempt(attempt);
-    } catch (error) {
-      if (!this.isUniqueConflict(error)) throw error;
-      const replay = await this.prisma.epayPaymentAttempt.findFirst({
-        where: {
-          userId,
-          OR: [{ idempotencyKey: normalizedKey }, { activeKey }],
-        },
-        orderBy: { createdAt: 'desc' },
-      });
-      if (!replay) throw error;
-      if (
-        replay.offerId !== offerId ||
-        replay.paymentType !== selectedPaymentType ||
-        this.paymentPurchaseAction(replay.entitlementSnapshot) !==
-          purchaseAction ||
-        this.paymentPlanActivation(replay.entitlementSnapshot) !==
-          resolvedPlanActivation
-      ) {
-        throw new ConflictException(
-          '该商品已有一笔其他规格或支付方式的待支付订单',
-        );
+        }
+        if (retry === 2) throw error;
       }
-      return this.presentAttempt(replay);
     }
+    throw new ConflictException('支付订单创建冲突，请重试');
   }
 
   async getPayment(userId: string, attemptId: string) {
@@ -350,6 +358,7 @@ export class EpayService {
               }
               return replay;
             }
+            await this.paymentAttempts?.abandonPendingPayments(tx, userId, now);
             const prepared = await this.groupBuys!.preparePayment(
               tx,
               userId,
@@ -377,7 +386,7 @@ export class EpayService {
                 offerId: prepared.group.offerIdSnapshot,
                 merchantOrderNo: this.createMerchantOrderNo(now, 'EPG'),
                 idempotencyKey: normalizedKey,
-                activeKey: standardPlanPurchaseKey(userId),
+                activeKey: activeEpayCheckoutKey(userId),
                 paymentType,
                 gatewayUrlSnapshot: config.gatewayUrl,
                 merchantIdSnapshot: config.merchantId,
@@ -755,6 +764,12 @@ export class EpayService {
               return attempt.gatewayTradeNo === input.gatewayTradeNo
                 ? attempt
                 : null;
+            }
+            if (attempt.abandonedAt) {
+              throw new PaymentFulfillmentRejectedError(
+                'SUPERSEDED_PAYMENT_PAID',
+                '该支付订单已被新的下单请求替代，迟到款项将自动原路退回',
+              );
             }
 
             if (snapshot?.purchaseMode === 'group_buy') {

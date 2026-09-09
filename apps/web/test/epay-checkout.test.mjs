@@ -72,6 +72,8 @@ test("member catalog keeps store and 易支付 channels alongside wallet checkou
   );
   assert.match(plans, /pendingPaymentId/);
   assert.match(plans, /paymentType/);
+  assert.match(plans, /function selectPaymentType\(next: CheckoutPaymentType\)/);
+  assert.match(plans, /setIdempotencyKey\(crypto\.randomUUID\(\)\)/);
   assert.match(plans, /"alipay"/);
   assert.match(plans, /"wxpay"/);
   assert.match(

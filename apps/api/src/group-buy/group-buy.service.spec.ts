@@ -167,11 +167,13 @@ describe('GroupBuyService', () => {
     prisma: object,
     commerce: object = {},
     entitlements?: object,
+    paymentAttempts?: object,
   ) {
     return new GroupBuyService(
       prisma as never,
       commerce as never,
       (entitlements ?? new EntitlementService(prisma as never)) as never,
+      paymentAttempts as never,
     );
   }
 
@@ -1079,7 +1081,10 @@ describe('GroupBuyService', () => {
         .fn()
         .mockResolvedValue({ orderId: 'order-wallet' }),
     };
-    const groupBuys = service(prisma, commerce);
+    const paymentAttempts = {
+      abandonPendingPayments: jest.fn().mockResolvedValue(['attempt-old']),
+    };
+    const groupBuys = service(prisma, commerce, undefined, paymentAttempts);
     jest.spyOn(groupBuys, 'preparePayment').mockResolvedValue({
       group: currentGroup,
       member,
@@ -1108,6 +1113,11 @@ describe('GroupBuyService', () => {
         amountCents: 1290,
         basePriceCents: 1290,
       }),
+    );
+    expect(paymentAttempts.abandonPendingPayments).toHaveBeenCalledWith(
+      tx,
+      'creator-1',
+      expect.any(Date),
     );
     const groupWrites = tx.groupBuy.update.mock.calls as unknown as Array<
       [{ where: { id: string }; data: { status: GroupBuyStatus } }]

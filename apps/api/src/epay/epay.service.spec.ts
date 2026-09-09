@@ -121,12 +121,19 @@ describe('EpayService callbacks', () => {
       },
       catalogOffer: { findUnique: jest.fn().mockResolvedValue(offer) },
     };
+    const serializationConflict = new Prisma.PrismaClientKnownRequestError(
+      'serialization conflict',
+      { code: 'P2034', clientVersion: '6.19.3' },
+    );
     const prisma = {
       catalogOffer: { findUnique: jest.fn().mockResolvedValue(offer) },
       epayPaymentAttempt: { findFirst: jest.fn() },
-      $transaction: jest.fn((work: (client: typeof tx) => Promise<unknown>) =>
-        work(tx),
-      ),
+      $transaction: jest
+        .fn()
+        .mockRejectedValueOnce(serializationConflict)
+        .mockImplementation((work: (client: typeof tx) => Promise<unknown>) =>
+          work(tx),
+        ),
     };
     const checkout = {
       prepare: jest.fn(
@@ -142,6 +149,9 @@ describe('EpayService callbacks', () => {
             fields: {},
           }),
       ),
+    };
+    const paymentAttempts = {
+      abandonPendingPayments: jest.fn().mockResolvedValue(['attempt-old']),
     };
     const service = new EpayService(
       prisma as never,
@@ -167,6 +177,8 @@ describe('EpayService callbacks', () => {
       } as never,
       cipher as never,
       checkout as never,
+      undefined,
+      paymentAttempts,
     );
 
     await expect(
@@ -185,10 +197,16 @@ describe('EpayService callbacks', () => {
       },
     });
     expect(checkout.prepare).toHaveBeenCalledTimes(1);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
     expect(checkout.prepare.mock.calls[0]?.[0].fields.type).toBe('wxpay');
     expect(createdData?.paymentType).toBe('wxpay');
-    expect(createdData?.activeKey).toBe('user_1:product_1:plan_reset');
+    expect(createdData?.activeKey).toBe('epay-checkout:user_1');
     expect(createdData?.amountCents).toBe(861);
+    expect(paymentAttempts.abandonPendingPayments).toHaveBeenCalledWith(
+      tx,
+      'user_1',
+      expect.any(Date),
+    );
     expect(createdData?.entitlementSnapshot).toMatchObject({
       purchaseMode: 'plan_reset',
       resetGrantId: 'grant_1',
@@ -280,6 +298,9 @@ describe('EpayService callbacks', () => {
         work(tx),
       ),
     };
+    const paymentAttempts = {
+      abandonPendingPayments: jest.fn(),
+    };
     const service = new EpayService(
       prisma as never,
       {
@@ -299,6 +320,9 @@ describe('EpayService callbacks', () => {
         }),
       } as never,
       cipher as never,
+      undefined,
+      undefined,
+      paymentAttempts,
     );
 
     await expect(
@@ -316,6 +340,7 @@ describe('EpayService callbacks', () => {
       status: 'settled',
       planActivationMode: 'renewal',
     });
+    expect(paymentAttempts.abandonPendingPayments).not.toHaveBeenCalled();
   });
 
   it('expires a stale payment and releases its group-buy slot when polled', async () => {
@@ -536,6 +561,9 @@ describe('EpayService callbacks', () => {
           (operation: (client: typeof tx) => Promise<unknown>) => operation(tx),
         ),
     };
+    const paymentAttempts = {
+      abandonPendingPayments: jest.fn().mockResolvedValue(['attempt-old']),
+    };
     const service = new EpayService(
       prisma as never,
       {
@@ -548,6 +576,7 @@ describe('EpayService callbacks', () => {
       cipher as never,
       undefined,
       groupBuys as never,
+      paymentAttempts,
     );
 
     await expect(
@@ -565,10 +594,16 @@ describe('EpayService callbacks', () => {
       'member-2',
       'attempt-group-1',
     );
+    expect(paymentAttempts.abandonPendingPayments).toHaveBeenCalledWith(
+      tx,
+      'user-2',
+      expect.any(Date),
+    );
     const groupAttemptInput = tx.epayPaymentAttempt.create.mock.calls[0][0] as {
       data: { amountCents: number; basePriceCents: number };
     };
     expect(groupAttemptInput.data).toMatchObject({
+      activeKey: 'epay-checkout:user-2',
       amountCents: 1590,
       basePriceCents: 1590,
     });
@@ -1219,6 +1254,81 @@ describe('EpayService callbacks', () => {
       paymentAttemptId: attempt.id,
       amountCents: attempt.amountCents,
       reasonCode: 'PLAN_RESET_CYCLE_ENDED',
+    });
+  });
+
+  it('refunds a late payment for an attempt abandoned by a newer checkout', async () => {
+    const abandonedAt = new Date('2026-09-09T08:00:00.000Z');
+    const attempt = {
+      id: 'attempt-abandoned',
+      userId: 'user-1',
+      offerId: 'offer-old',
+      orderId: null,
+      merchantOrderNo: 'EP-ABANDONED',
+      gatewayTradeNo: null,
+      status: EpayPaymentStatus.EXPIRED,
+      fulfillmentStatus: 'PENDING',
+      paymentType: 'alipay',
+      amountCents: 1_290,
+      basePriceCents: 1_290,
+      entitlementSnapshot: null,
+      abandonedAt,
+    };
+    const tx = {
+      epayPaymentAttempt: {
+        findUnique: jest.fn().mockResolvedValue(attempt),
+        update: jest.fn().mockResolvedValue({
+          ...attempt,
+          gatewayTradeNo: 'gateway-abandoned',
+          status: EpayPaymentStatus.SETTLED,
+          fulfillmentStatus: 'REFUND_PENDING',
+        }),
+      },
+      epayRefundAttempt: {
+        upsert: jest.fn().mockResolvedValue({ id: 'refund-abandoned' }),
+      },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      $transaction: jest.fn((work: (client: typeof tx) => Promise<unknown>) =>
+        work(tx),
+      ),
+    };
+    const commerce = { fulfillEpayPayment: jest.fn() };
+    const groupBuys = { settleVerifiedPayment: jest.fn() };
+    const service = new EpayService(
+      prisma as never,
+      {} as never,
+      commerce as never,
+      cipher as never,
+      undefined,
+      groupBuys as never,
+    );
+
+    await expect(
+      service.settleVerifiedPayment({
+        attemptId: attempt.id,
+        merchantOrderNo: attempt.merchantOrderNo,
+        gatewayTradeNo: 'gateway-abandoned',
+        amountCents: attempt.amountCents,
+        paymentType: attempt.paymentType,
+        paidAt: new Date('2026-09-09T08:05:00.000Z'),
+      }),
+    ).resolves.toMatchObject({
+      accepted: true,
+      attemptId: attempt.id,
+      status: 'success',
+    });
+    expect(commerce.fulfillEpayPayment).not.toHaveBeenCalled();
+    expect(groupBuys.settleVerifiedPayment).not.toHaveBeenCalled();
+    expect(tx.epayRefundAttempt.upsert).toHaveBeenCalledWith({
+      where: { paymentAttemptId: attempt.id },
+      create: {
+        paymentAttemptId: attempt.id,
+        amountCents: attempt.amountCents,
+        reasonCode: 'SUPERSEDED_PAYMENT_PAID',
+      },
+      update: {},
     });
   });
 });

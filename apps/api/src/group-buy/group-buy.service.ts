@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { randomBytes, randomUUID } from 'node:crypto';
 import {
@@ -35,6 +36,7 @@ import { PaymentFulfillmentRejectedError } from '../commerce/payment-fulfillment
 import { PrismaService } from '../prisma/prisma.service';
 import { postWalletEntry, recoverWalletCredit } from '../wallet/wallet-ledger';
 import { EntitlementService } from '../entitlement/entitlement.service';
+import { PaymentAttemptLifecycleService } from '../payments/payment-attempt-lifecycle.service';
 import {
   decidePlanPurchasePolicy,
   standardPlanPurchaseKey,
@@ -77,6 +79,8 @@ export class GroupBuyService {
     private readonly prisma: PrismaService,
     private readonly commerce: CommerceService,
     private readonly entitlements: EntitlementService,
+    @Optional()
+    private readonly paymentAttempts?: PaymentAttemptLifecycleService,
   ) {}
 
   async listCampaigns() {
@@ -837,6 +841,7 @@ export class GroupBuyService {
             }
 
             const now = new Date();
+            await this.paymentAttempts?.abandonPendingPayments(tx, userId, now);
             const prepared = await this.preparePayment(
               tx,
               userId,

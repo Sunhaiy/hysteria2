@@ -5,7 +5,7 @@ import { ConsoleShell } from "./console-shell";
 import { Drawer } from "./drawer";
 import { Icon } from "./icon";
 import { useAuth } from "./auth-provider";
-import { apiRequest, ApiError } from "@/lib/api";
+import { apiRequest } from "@/lib/api";
 import { copyToClipboard } from "@/lib/clipboard";
 import { portalNav } from "@/lib/copy";
 import { formatBytes, formatDateTime, formatMoney } from "@/lib/format";
@@ -126,6 +126,15 @@ function savedCents(originalPriceCents: number, priceCents: number) {
   return Math.max(0, originalPriceCents - priceCents);
 }
 
+function groupBuyErrorMessage(cause: unknown, fallback: string) {
+  const message = cause instanceof Error ? cause.message.trim() : "";
+  if (!message) return fallback;
+  if (/insufficient wallet balance/i.test(message)) {
+    return "余额不足，请更换支付方式或充值后重试。";
+  }
+  return /[\u3400-\u9fff]/u.test(message) ? message : fallback;
+}
+
 function paymentActivationMessage(payment: EpayPayment) {
   if (
     payment.planActivationMode === "scheduled_switch" &&
@@ -227,9 +236,7 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
       } catch (cause) {
         if (cause instanceof DOMException && cause.name === "AbortError")
           return;
-        setError(
-          cause instanceof ApiError ? cause.message : "拼团信息加载失败。",
-        );
+        setError(groupBuyErrorMessage(cause, "拼团信息加载失败，请稍后重试。"));
       } finally {
         if (!signal?.aborted) setLoading(false);
       }
@@ -341,6 +348,12 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
     setPlanActivation("scheduled_switch");
   }
 
+  function selectPaymentType(next: "alipay" | "wxpay" | "balance") {
+    if (next === paymentType) return;
+    setPaymentType(next);
+    setIdempotencyKey(crypto.randomUUID());
+  }
+
   async function confirmPayment() {
     if (!token || !checkout) return;
     if (
@@ -410,13 +423,7 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
     } catch (cause) {
       paymentWindow?.close();
       setPendingPaymentId(null);
-      setError(
-        cause instanceof ApiError
-          ? cause.message
-          : cause instanceof Error
-            ? cause.message
-            : "支付通道暂时无法打开。",
-      );
+      setError(groupBuyErrorMessage(cause, "支付暂时无法完成，请稍后重试。"));
     } finally {
       setBusy(false);
     }
@@ -449,9 +456,7 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
       await load();
       setFeedback("拼团已取消，已开通套餐保持有效，本次不返余额、不赠流量。");
     } catch (cause) {
-      setError(
-        cause instanceof ApiError ? cause.message : "取消拼团失败，请重试。",
-      );
+      setError(groupBuyErrorMessage(cause, "取消拼团失败，请稍后重试。"));
     } finally {
       setCancelingGroupId(null);
     }
@@ -468,7 +473,11 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
       requireRole="member"
     >
       <div className="group-buy-page">
-        {error ? <div className="feedback error">{error}</div> : null}
+        {error && !checkout ? (
+          <div className="feedback error" role="alert">
+            {error}
+          </div>
+        ) : null}
         {feedback ? <div className="feedback success">{feedback}</div> : null}
 
         {sharedGroup ? (
@@ -779,7 +788,17 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
       >
         {selected ? (
           <div className="checkout-dialog-content group-buy-checkout">
-            {error ? <div className="feedback error">{error}</div> : null}
+            <div
+              className={`group-buy-checkout-feedback${error ? " is-visible" : ""}`}
+              aria-live="polite"
+              aria-atomic="true"
+              aria-hidden={!error}
+            >
+              <div className="feedback error" role={error ? "alert" : undefined}>
+                <Icon name="warning" />
+                <span>{error ?? ""}</span>
+              </div>
+            </div>
             <section className="checkout-product-summary">
               <span>
                 {checkout?.kind === "join" ? "加入现有拼团" : "创建新拼团"}
@@ -939,7 +958,7 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
                   className={paymentType === "alipay" ? "selected" : ""}
                   role="radio"
                   aria-checked={paymentType === "alipay"}
-                  onClick={() => setPaymentType("alipay")}
+                  onClick={() => selectPaymentType("alipay")}
                 >
                   <Icon name="payments" />
                   <span>支付宝</span>
@@ -949,7 +968,7 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
                   className={paymentType === "wxpay" ? "selected" : ""}
                   role="radio"
                   aria-checked={paymentType === "wxpay"}
-                  onClick={() => setPaymentType("wxpay")}
+                  onClick={() => selectPaymentType("wxpay")}
                 >
                   <Icon name="payments" />
                   <span>微信支付</span>
@@ -960,7 +979,7 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
                     className={paymentType === "balance" ? "selected" : ""}
                     role="radio"
                     aria-checked={paymentType === "balance"}
-                    onClick={() => setPaymentType("balance")}
+                    onClick={() => selectPaymentType("balance")}
                   >
                     <Icon name="payments" />
                     <span className="group-buy-balance-option">

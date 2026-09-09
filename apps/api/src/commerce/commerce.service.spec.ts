@@ -1171,7 +1171,16 @@ describe('CommerceService checkout', () => {
         callback(tx),
       ),
     };
-    const service = new CommerceService(prisma as never, {} as never);
+    const replayPaymentAttempts = {
+      abandonPendingPayments: jest.fn().mockResolvedValue(['attempt-old']),
+    };
+    const service = new CommerceService(
+      prisma as never,
+      {} as never,
+      undefined,
+      undefined,
+      replayPaymentAttempts,
+    );
 
     const result = await service.checkout(
       'user_1',
@@ -1183,6 +1192,7 @@ describe('CommerceService checkout', () => {
     expect(tx.user.updateMany).not.toHaveBeenCalled();
     expect(tx.manualOrder.create).not.toHaveBeenCalled();
     expect(tx.trafficPack.create).not.toHaveBeenCalled();
+    expect(replayPaymentAttempts.abandonPendingPayments).not.toHaveBeenCalled();
   });
 
   it('checks out a traffic pack with an immutable order snapshot', async () => {
@@ -1252,7 +1262,16 @@ describe('CommerceService checkout', () => {
         callback(tx),
       ),
     };
-    const service = new CommerceService(prisma as never, {} as never);
+    const paymentAttempts = {
+      abandonPendingPayments: jest.fn().mockResolvedValue(['attempt-old']),
+    };
+    const service = new CommerceService(
+      prisma as never,
+      {} as never,
+      undefined,
+      undefined,
+      paymentAttempts,
+    );
 
     const result = await service.checkout(
       'user_1',
@@ -1268,6 +1287,11 @@ describe('CommerceService checkout', () => {
       chargedCents: 1000,
       entitlementExpiresAt: packEndsAt.toISOString(),
     });
+    expect(paymentAttempts.abandonPendingPayments).toHaveBeenCalledWith(
+      tx,
+      'user_1',
+      expect.any(Date),
+    );
     const [packLedgerWrite] = tx.walletLedgerEntry.create.mock
       .calls[0] as unknown as [{ data: Record<string, unknown> }];
     expect(packLedgerWrite.data).toMatchObject({

@@ -480,6 +480,12 @@ export default function PortalPlansPage() {
     void fetchQuote(offer, "purchase", "scheduled_switch");
   }
 
+  function selectPaymentType(next: CheckoutPaymentType) {
+    if (next === paymentType) return;
+    setPaymentType(next);
+    setIdempotencyKey(crypto.randomUUID());
+  }
+
   function selectCheckoutOffer(offer: Offer) {
     if (!checkout || checkout.offer.id === offer.id) return;
     setCheckout({
@@ -1229,7 +1235,7 @@ export default function PortalPlansPage() {
                         branding,
                       )
                     }
-                    onClick={() => setPaymentType("store")}
+                    onClick={() => selectPaymentType("store")}
                   >
                     <Icon name="payments" />
                     <span>店铺购买</span>
@@ -1241,7 +1247,7 @@ export default function PortalPlansPage() {
                       type="button"
                       role="radio"
                       aria-checked={paymentType === "alipay"}
-                      onClick={() => setPaymentType("alipay")}
+                      onClick={() => selectPaymentType("alipay")}
                     >
                       <Icon name="payments" />
                       <span>支付宝</span>
@@ -1251,7 +1257,7 @@ export default function PortalPlansPage() {
                       type="button"
                       role="radio"
                       aria-checked={paymentType === "wxpay"}
-                      onClick={() => setPaymentType("wxpay")}
+                      onClick={() => selectPaymentType("wxpay")}
                     >
                       <Icon name="payments" />
                       <span>微信支付</span>
@@ -1264,7 +1270,7 @@ export default function PortalPlansPage() {
                   role="radio"
                   aria-checked={paymentType === "balance"}
                   disabled={!quote || !quote.sufficient}
-                  onClick={() => setPaymentType("balance")}
+                  onClick={() => selectPaymentType("balance")}
                 >
                   <Icon name="wallet" />
                   <span className="checkout-payment-copy">

@@ -48,6 +48,7 @@ import {
   type PlanActivationPreference,
   type PlanPurchasePolicy,
 } from './plan-purchase-policy';
+import { PaymentAttemptLifecycleService } from '../payments/payment-attempt-lifecycle.service';
 
 export type CheckoutInput =
   | {
@@ -114,6 +115,8 @@ export class CommerceService {
     private readonly store: ControlPlaneStoreService,
     @Optional() private readonly entitlements?: EntitlementService,
     @Optional() private readonly referrals?: ReferralService,
+    @Optional()
+    private readonly paymentAttempts?: PaymentAttemptLifecycleService,
   ) {}
 
   async quoteCheckout(userId: string, input: CheckoutInput) {
@@ -333,6 +336,11 @@ export class CommerceService {
               },
             });
             if (existing) return this.replayCheckout(existing, input);
+            await this.paymentAttempts?.abandonPendingPayments(
+              tx,
+              userId,
+              new Date(),
+            );
             return this.createCheckout(tx, userId, input, normalizedKey);
           },
           { isolationLevel: 'Serializable' },
@@ -1393,11 +1401,7 @@ export class CommerceService {
               userId,
               activeSlot: { not: null },
               status: {
-                in: [
-                  GroupBuyMemberStatus.PAYMENT_PENDING,
-                  GroupBuyMemberStatus.PAID,
-                  GroupBuyMemberStatus.FULFILLED,
-                ],
+                in: [GroupBuyMemberStatus.PAID, GroupBuyMemberStatus.FULFILLED],
               },
             },
             select: { id: true },

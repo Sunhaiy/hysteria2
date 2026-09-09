@@ -29,6 +29,9 @@
 - Paid fulfillment has an explicit state separate from gateway payment state.
   Retryable failures stay in reconciliation; non-retryable failures enter
   compensation refund, and missing credential snapshots require manual review.
+- A new checkout abandons only the same member's unpaid active Epay attempts.
+  Idempotency replays remain stable, while a late payment for an explicitly
+  abandoned attempt is accepted into compensation refund and never fulfilled.
 - Wallet plan checkout does not earn referral cashback. Partial refunds recover
   cashback proportionally; full refunds also revoke unused linked entitlement
   and bonus traffic without rewriting usage history.

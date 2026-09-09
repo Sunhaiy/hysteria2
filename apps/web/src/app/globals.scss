@@ -14564,12 +14564,12 @@ select.control {
 
 .group-buy-checkout-saving {
   display: grid;
-  gap: 13px;
-  padding: 15px;
-  border: 0;
+  gap: 10px;
+  padding: 12px 13px;
+  border: 1px solid color-mix(in srgb, var(--accent-500) 26%, var(--border-default));
   border-radius: 7px;
-  background: var(--accent-500);
-  color: #06110a;
+  background: var(--bg-panel-alt);
+  color: var(--text-secondary);
 }
 
 .group-buy-checkout-saving-head {
@@ -14579,8 +14579,9 @@ select.control {
 }
 
 .group-buy-checkout-saving-head > .icon-slot {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
+  color: var(--accent-500);
 }
 
 .group-buy-checkout-saving-head > span {
@@ -14589,33 +14590,68 @@ select.control {
 }
 
 .group-buy-checkout-saving-head strong {
+  color: var(--text-primary);
   font-size: 13px;
 }
 
 .group-buy-checkout-saving small {
-  color: rgb(6 17 10 / 68%);
+  color: var(--text-muted);
   font-size: 10px;
 }
 
 .group-buy-checkout-rewards {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1px;
+  gap: 8px;
   overflow: hidden;
   border-radius: 6px;
-  background: rgb(6 17 10 / 16%);
+  background: transparent;
 }
 
 .group-buy-checkout-rewards > span {
   display: grid;
-  gap: 3px;
-  padding: 11px 12px;
-  background: rgb(255 255 255 / 16%);
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: var(--bg-panel);
 }
 
 .group-buy-checkout-rewards strong {
+  color: var(--accent-500);
   font-family: var(--font-mono);
-  font-size: 18px;
+  font-size: 16px;
+}
+
+.group-buy-checkout-feedback {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  translate: 0 -4px;
+  transition:
+    grid-template-rows 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 160ms ease,
+    translate 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.group-buy-checkout-feedback.is-visible {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  translate: 0 0;
+}
+
+.group-buy-checkout-feedback > .feedback {
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.group-buy-checkout-feedback .icon-slot {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
 }
 
 .group-buy-plan-activation-summary {
@@ -14654,8 +14690,8 @@ select.control {
 }
 
 .drawer-body:has(.group-buy-checkout) {
-  overflow-y: scroll;
-  scrollbar-gutter: stable;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .group-buy-payment-options {
@@ -14907,5 +14943,9 @@ select.control {
   .daily-check-in-dialog.claimed .daily-check-in-mark,
   .group-buy-list-stage {
     animation: none;
+  }
+
+  .group-buy-checkout-feedback {
+    transition: none;
   }
 }

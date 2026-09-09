@@ -36,6 +36,10 @@ test("group buying uses a dedicated route and explicit payment channel", () => {
   const styles = read("src/app/globals.scss");
   assert.match(navigation, /href: "\/portal\/group-buys"/);
   assert.match(page, /"alipay" \| "wxpay" \| "balance"/);
+  assert.match(
+    page,
+    /function selectPaymentType\(next: "alipay" \| "wxpay" \| "balance"\)/,
+  );
   assert.match(page, /window\.open\("about:blank"/);
   assert.match(page, /\/api\/portal\/group-buys/);
   assert.match(page, /formatBytes\(selected\.bonusBytes\)/);
@@ -95,8 +99,32 @@ test("group buying uses a dedicated route and explicit payment channel", () => {
   assert.match(styles, /@keyframes group-buy-list-enter/);
   assert.match(
     styles,
-    /\.group-buy-checkout-saving\s*\{[^}]*background:\s*var\(--accent-500\);/s,
+    /\.group-buy-checkout-saving\s*\{[^}]*background:\s*var\(--bg-panel-alt\);/s,
   );
+  assert.match(page, /余额不足，请更换支付方式或充值后重试/);
+  assert.match(page, /group-buy-checkout-feedback/);
+  assert.match(page, /role=\{error \? "alert" : undefined\}/);
+  assert.match(
+    styles,
+    /\.group-buy-checkout-feedback\s*\{[^}]*grid-template-rows:\s*0fr;[\s\S]*?transition:/s,
+  );
+  assert.match(
+    styles,
+    /\.group-buy-checkout-feedback\.is-visible\s*\{[^}]*grid-template-rows:\s*1fr;/s,
+  );
+  assert.match(
+    styles,
+    /\.drawer-body:has\(\.group-buy-checkout\)\s*\{[^}]*overflow-y:\s*auto;/s,
+  );
+  assert.doesNotMatch(
+    styles,
+    /\.drawer-body:has\(\.group-buy-checkout\)\s*\{[^}]*overflow-y:\s*scroll;/s,
+  );
+  const drawer = read("src/components/drawer.tsx");
+  assert.match(drawer, /document\.documentElement\.style\.overflow = "hidden"/);
+  assert.match(drawer, /document\.body\.style\.overflow = "hidden"/);
+  assert.match(drawer, /document\.documentElement\.style\.overflow = htmlOverflow/);
+  assert.match(drawer, /document\.body\.style\.overflow = bodyOverflow/);
 });
 
 test("admin activity center controls rewards, offers, and exception retries", () => {
