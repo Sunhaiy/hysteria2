@@ -22,6 +22,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import type { QuotaAdjustmentDto } from './entitlement.dto';
 
 const multiplierScale = BigInt(10_000);
+const nodeProvisioningAccessConcurrency = 2;
 
 type DbClient = PrismaService | Prisma.TransactionClient;
 
@@ -1797,12 +1798,23 @@ export class EntitlementService {
       orderBy: { createdAt: 'asc' },
       select: { userId: true, vlessUuid: true },
     });
-    const decisions = await Promise.all(
-      tokens.map(async (token) => ({
-        token,
-        access: await this.getNodeAccess(token.userId, nodeId),
-      })),
-    );
+    const decisions = [];
+    for (
+      let offset = 0;
+      offset < tokens.length;
+      offset += nodeProvisioningAccessConcurrency
+    ) {
+      decisions.push(
+        ...(await Promise.all(
+          tokens
+            .slice(offset, offset + nodeProvisioningAccessConcurrency)
+            .map(async (token) => ({
+              token,
+              access: await this.getNodeAccess(token.userId, nodeId),
+            })),
+        )),
+      );
+    }
     return decisions
       .filter((item) => item.access.allowed)
       .map((item) => ({ userId: item.token.userId, id: item.token.vlessUuid }));

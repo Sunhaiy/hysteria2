@@ -1002,6 +1002,31 @@ describe('EntitlementService V2', () => {
     expect(packQuery.where.entitlementGrant).toBeNull();
   });
 
+  it('bounds node provisioning access checks to protect small database pools', async () => {
+    const tokens = Array.from({ length: 8 }, (_, index) => ({
+      userId: `user_${index}`,
+      vlessUuid: `uuid_${index}`,
+    }));
+    const prisma = {
+      accessToken: { findMany: jest.fn().mockResolvedValue(tokens) },
+    };
+    const service = new EntitlementService(prisma as never);
+    let inFlight = 0;
+    let peakInFlight = 0;
+    jest.spyOn(service, 'getNodeAccess').mockImplementation(async () => {
+      inFlight += 1;
+      peakInFlight = Math.max(peakInFlight, inFlight);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      inFlight -= 1;
+      return { allowed: true, reason: 'ok' } as never;
+    });
+
+    await expect(service.getNodeProvisioningUsers('node_1')).resolves.toEqual(
+      tokens.map((token) => ({ userId: token.userId, id: token.vlessUuid })),
+    );
+    expect(peakInFlight).toBeLessThanOrEqual(2);
+  });
+
   it('spends plan quota before an earlier-expiring traffic pack', async () => {
     const early = {
       id: 'bucket_early',
