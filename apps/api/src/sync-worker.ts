@@ -114,7 +114,11 @@ async function bootstrap() {
     60_000,
     minimumIntervalMs,
   );
-  const syncTimeoutMs = intervalFromEnv('NODE_SYNC_TIMEOUT_MS', 90_000, 60_000);
+  const syncTimeoutMs = intervalFromEnv(
+    'NODE_SYNC_TIMEOUT_MS',
+    120_000,
+    60_000,
+  );
   const presenceIntervalMs = intervalFromEnv(
     'NODE_PRESENCE_INTERVAL_MS',
     15_000,
