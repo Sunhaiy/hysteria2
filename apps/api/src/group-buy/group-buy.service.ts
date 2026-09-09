@@ -48,6 +48,7 @@ const GROUP_SIZE = 2;
 const GROUP_DURATION_MS = 24 * 60 * 60 * 1000;
 const GIB = 1024 ** 3;
 const BASIS_POINTS = 10_000;
+const MIN_GROUP_DISCOUNT_PERCENT = 50;
 const DEFAULT_GROUP_DISCOUNT_BASIS_POINTS = BASIS_POINTS;
 const DEFAULT_GROUP_BONUS_BYTES = BigInt(20 * GIB);
 const GROUP_BONUS_PRODUCT_ID = 'system_group_buy_traffic_bonus';
@@ -341,6 +342,15 @@ export class GroupBuyService {
     bonusTrafficGiB: number,
     actorId: string,
   ) {
+    if (
+      !Number.isFinite(discountPercent) ||
+      discountPercent < MIN_GROUP_DISCOUNT_PERCENT ||
+      discountPercent > 100
+    ) {
+      throw new BadRequestException(
+        '拼团成团价必须在 5 折至 10 折之间，9 折请填写 9',
+      );
+    }
     const uniqueOfferIds = [...new Set(offerIds)];
     const discountBasisPoints = Math.round(discountPercent * 100);
     const bonusTrafficBytes = BigInt(Math.round(bonusTrafficGiB * GIB));

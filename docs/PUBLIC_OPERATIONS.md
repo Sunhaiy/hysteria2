@@ -40,7 +40,8 @@ openssl rand -base64 32
   entitlement is retrying, awaiting compensation refund, or requires manual
   review. Compensation refunds expose their reason code and retry state.
 - `GET /api/portal/check-ins/today` and `POST /api/portal/check-ins/claim`
-  expose the idempotent daily reward. `GET /api/admin/check-ins`,
+  expose the idempotent daily reward to active Start-and-above standard plans
+  and Ultra plans; Go is not eligible. `GET /api/admin/check-ins`,
   `GET /api/admin/check-ins/settings`, and
   `PATCH /api/admin/check-ins/settings` provide paginated audit and
   configuration.
@@ -58,6 +59,10 @@ openssl rand -base64 32
   as payment settles, while rebate and bonus traffic still require the group to
   complete. An account with an existing scheduled plan may only buy a current
   cycle traffic reset until that plan starts.
+  The administrator UI accepts the completed-group price as a Chinese discount
+  rate (`9` means 90% of list price); the API persists 90 percent
+  as 9,000 basis points. Values below 5 discount are rejected as likely input
+  mistakes.
   `GET /api/admin/group-buys`, `PUT /api/admin/group-buys/campaigns`,
   `POST /api/admin/group-buys/refunds/:id/retry`, and
   `POST /api/admin/group-buys/members/:id/retry-fulfillment` provide activity

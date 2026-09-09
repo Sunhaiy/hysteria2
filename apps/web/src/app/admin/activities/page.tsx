@@ -446,18 +446,22 @@ export default function AdminActivitiesPage() {
                 {campaigns ? (
                   <div className="activity-group-buy-controls">
                     <label className="field">
-                      <span className="fine-print">拼团折扣（90 = 9 折）</span>
+                      <span className="fine-print">成团价折扣（9 = 9 折）</span>
                       <input
                         className="control"
                         type="number"
-                        min={1}
-                        max={100}
-                        step={0.01}
-                        value={campaigns.discountPercent}
+                        min={5}
+                        max={10}
+                        step={0.1}
+                        value={Number(
+                          (campaigns.discountPercent / 10).toFixed(2),
+                        )}
                         onChange={(event) =>
                           setCampaigns({
                             ...campaigns,
-                            discountPercent: Number(event.target.value),
+                            discountPercent: Number(
+                              (Number(event.target.value) * 10).toFixed(2),
+                            ),
                           })
                         }
                       />
@@ -482,7 +486,8 @@ export default function AdminActivitiesPage() {
                       />
                     </label>
                     <p>
-                      用户按原价付款并立即开通；成团后按折扣差额返余额并赠送流量。仅影响保存后新建的拼团。
+                      填写 9 即为 9 折。用户按原价付款并立即开通，成团后返还
+                      10% 到余额并赠送流量。仅影响保存后新建的拼团。
                     </p>
                   </div>
                 ) : null}

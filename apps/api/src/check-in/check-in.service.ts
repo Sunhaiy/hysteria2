@@ -243,6 +243,10 @@ export class CheckInService {
           series: {
             in: [CatalogProductSeries.STANDARD, CatalogProductSeries.ULTRA],
           },
+          NOT: {
+            series: CatalogProductSeries.STANDARD,
+            slug: 'go',
+          },
         },
       },
       include: {

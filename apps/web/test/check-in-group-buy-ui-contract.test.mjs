@@ -134,6 +134,9 @@ test("admin activity center controls rewards, offers, and exception retries", ()
   assert.match(page, /\/api\/admin\/check-ins\/settings/);
   assert.match(page, /\/api\/admin\/group-buys\/campaigns/);
   assert.match(page, /discountPercent: campaigns\.discountPercent/);
+  assert.match(page, /成团价折扣（9 = 9 折）/);
+  assert.match(page, /campaigns\.discountPercent \/ 10/);
+  assert.match(page, /Number\(event\.target\.value\) \* 10/);
   assert.match(page, /bonusTrafficGiB: campaigns\.bonusTrafficGiB/);
   assert.match(page, /重试退款/);
   assert.match(page, /重试发放/);

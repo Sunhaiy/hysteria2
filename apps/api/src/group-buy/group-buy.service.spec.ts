@@ -177,6 +177,12 @@ describe('GroupBuyService', () => {
     );
   }
 
+  it('rejects an ambiguous percentage that would turn 9 discount into 0.9 discount', async () => {
+    await expect(
+      service({}).updateAdminCampaigns([], 9, 20, 'admin-1'),
+    ).rejects.toThrow(BadRequestException);
+  });
+
   it('allows a member whose previous payment closed to join the open group again', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-09-07T05:00:00.000Z'));
     const currentGroup = {

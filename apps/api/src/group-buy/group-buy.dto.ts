@@ -37,7 +37,7 @@ export class UpdateGroupBuyCampaignsDto {
   offerIds!: string[];
 
   @IsNumber({ maxDecimalPlaces: 2 })
-  @Min(1)
+  @Min(50)
   @Max(100)
   discountPercent!: number;
 

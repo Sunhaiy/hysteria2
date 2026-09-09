@@ -113,16 +113,27 @@ describe('CheckInService', () => {
     expect(tx.quotaBucket.update).not.toHaveBeenCalled();
   });
 
-  it('accepts both standard and independently usable Ultra plan grants', async () => {
+  it('accepts Start-and-above standard and Ultra grants while excluding Go', async () => {
     const { service, tx } = setup();
 
     await service.getToday('user-1', new Date('2026-09-07T04:00:00Z'));
 
     const [request] = tx.entitlementGrant.findFirst.mock
       .calls[0] as unknown as [
-      { where: { product: { series: { in: string[] } } } },
+      {
+        where: {
+          product: {
+            series: { in: string[] };
+            NOT: { series: string; slug: string };
+          };
+        };
+      },
     ];
     expect(request.where.product.series.in).toEqual(['STANDARD', 'ULTRA']);
+    expect(request.where.product.NOT).toEqual({
+      series: 'STANDARD',
+      slug: 'go',
+    });
   });
 
   it('uses Beijing calendar dates around midnight', async () => {
