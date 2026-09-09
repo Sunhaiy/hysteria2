@@ -417,6 +417,7 @@ describe('GroupBuyService', () => {
           rebateWalletLedgerId: 'ledger-rebate',
           rebateRecoveredCents: 200,
           rebateUnrecoveredCents: 300,
+          rebateWalletLedger: { amountCents: 500 },
           user: {
             id: 'user-1',
             email: 'member@example.com',
@@ -447,8 +448,106 @@ describe('GroupBuyService', () => {
       '"rebateUnrecoveredCents":{"gt":0}',
     );
     expect(result.items[0]?.members[0]).toMatchObject({
+      rebateCents: 300,
       rebateRecoveredCents: 200,
       rebateUnrecoveredCents: 300,
+    });
+  });
+
+  it('only recovers the remaining rebate after an administrative correction', async () => {
+    const member = {
+      id: 'member-corrected',
+      userId: 'user-1',
+      rebateRecoveredCents: 1_369,
+      rebateUnrecoveredCents: 0,
+      bonusEntitlementGrant: null,
+      rebateWalletLedger: { amountCents: 1_538 },
+    };
+    const tx = {
+      groupBuyMember: {
+        findUnique: jest.fn().mockResolvedValue(member),
+        update: jest.fn().mockResolvedValue(member),
+      },
+      walletLedgerEntry: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'rebate-reversal' }),
+      },
+      user: {
+        update: jest.fn().mockResolvedValue({
+          balanceCents: 169,
+          deletedAt: null,
+        }),
+      },
+      walletTransaction: {
+        create: jest.fn().mockResolvedValue({ id: 'legacy-reversal' }),
+      },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const entitlements = { revokeGrant: jest.fn() };
+
+    await expect(
+      service({}, {}, entitlements).reverseBonusForRefund(
+        tx as never,
+        'order-1',
+        'admin-1',
+        'refund-1',
+      ),
+    ).resolves.toEqual({ reversed: true });
+
+    const [reversalPosting] = tx.walletLedgerEntry.create.mock
+      .calls[0] as unknown as [{ data: { amountCents: number } }];
+    expect(reversalPosting.data.amountCents).toBe(-169);
+    expect(tx.groupBuyMember.update).toHaveBeenCalledWith({
+      where: { id: member.id },
+      data: {
+        rebateRecoveredCents: 1_538,
+        rebateUnrecoveredCents: 0,
+      },
+    });
+    expect(entitlements.revokeGrant).not.toHaveBeenCalled();
+  });
+
+  it('replays a corrected rebate reversal without recovering it twice', async () => {
+    const member = {
+      id: 'member-corrected',
+      userId: 'user-1',
+      rebateRecoveredCents: 1_538,
+      rebateUnrecoveredCents: 0,
+      bonusEntitlementGrant: null,
+      rebateWalletLedger: { amountCents: 1_538 },
+    };
+    const reversal = { amountCents: -169 };
+    const tx = {
+      groupBuyMember: {
+        findUnique: jest.fn().mockResolvedValue(member),
+        update: jest.fn().mockResolvedValue(member),
+      },
+      walletLedgerEntry: {
+        findUnique: jest.fn().mockResolvedValue(reversal),
+        create: jest.fn(),
+      },
+      user: { update: jest.fn() },
+      walletTransaction: { create: jest.fn() },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+
+    await expect(
+      service({}, {}, { revokeGrant: jest.fn() }).reverseBonusForRefund(
+        tx as never,
+        'order-1',
+        'admin-1',
+        'refund-1',
+      ),
+    ).resolves.toEqual({ reversed: true });
+
+    expect(tx.walletLedgerEntry.create).not.toHaveBeenCalled();
+    expect(tx.user.update).not.toHaveBeenCalled();
+    expect(tx.groupBuyMember.update).toHaveBeenCalledWith({
+      where: { id: member.id },
+      data: {
+        rebateRecoveredCents: 1_538,
+        rebateUnrecoveredCents: 0,
+      },
     });
   });
 

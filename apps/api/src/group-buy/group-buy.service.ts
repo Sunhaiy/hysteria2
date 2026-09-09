@@ -59,6 +59,10 @@ function discountedPriceCents(priceCents: number, basisPoints: number) {
   return Math.max(1, Math.round((priceCents * basisPoints) / BASIS_POINTS));
 }
 
+function remainingRebateCents(grossCents: number, recoveredCents: number) {
+  return Math.max(0, grossCents - Math.max(0, recoveredCents));
+}
+
 export interface GroupBuyListQuery extends PageQuery {
   scope?: 'open' | 'mine';
 }
@@ -487,6 +491,7 @@ export class GroupBuyService {
               user: { select: { id: true, email: true, displayName: true } },
               paymentAttempt: true,
               order: { select: { amountCents: true } },
+              rebateWalletLedger: { select: { amountCents: true } },
               refundAttempt: true,
             },
           },
@@ -534,14 +539,10 @@ export class GroupBuyService {
           orderId: member.orderId,
           rebateRecoveredCents: member.rebateRecoveredCents,
           rebateUnrecoveredCents: member.rebateUnrecoveredCents,
-          rebateCents: member.rebateWalletLedgerId
-            ? Math.max(
-                0,
-                (parseCatalogOfferSnapshot(group.entitlementSnapshot)
-                  ?.groupBuyOriginalPriceCents ?? group.priceCentsSnapshot) -
-                  group.priceCentsSnapshot,
-              )
-            : 0,
+          rebateCents: remainingRebateCents(
+            Math.max(0, member.rebateWalletLedger?.amountCents ?? 0),
+            member.rebateRecoveredCents,
+          ),
         })),
       })),
       total,
@@ -1190,11 +1191,32 @@ export class GroupBuyService {
         ).revoked
       : false;
 
-    const rebateCents = Math.max(
+    const grossRebateCents = Math.max(
       0,
       member.rebateWalletLedger?.amountCents ?? 0,
     );
     const reversalKey = `group-buy:${member.id}:rebate-reversal`;
+    const existingReversal = await tx.walletLedgerEntry.findUnique({
+      where: {
+        userId_idempotencyKey: {
+          userId: member.userId,
+          idempotencyKey: reversalKey,
+        },
+      },
+      select: { amountCents: true },
+    });
+    const refundRecoveredCents = Math.max(
+      0,
+      -(existingReversal?.amountCents ?? 0),
+    );
+    const correctionRecoveredCents = Math.min(
+      grossRebateCents,
+      Math.max(0, member.rebateRecoveredCents - refundRecoveredCents),
+    );
+    const rebateCents = remainingRebateCents(
+      grossRebateCents,
+      correctionRecoveredCents,
+    );
     let recoveredCents = 0;
     let unrecoveredCents = 0;
     if (rebateCents > 0) {
@@ -1216,7 +1238,7 @@ export class GroupBuyService {
     await tx.groupBuyMember.update({
       where: { id: member.id },
       data: {
-        rebateRecoveredCents: recoveredCents,
+        rebateRecoveredCents: correctionRecoveredCents + recoveredCents,
         rebateUnrecoveredCents: unrecoveredCents,
       },
     });
@@ -1231,6 +1253,8 @@ export class GroupBuyService {
           refundId,
           grantId: grant?.id ?? null,
           bonusReversed,
+          grossRebateCents,
+          correctionRecoveredCents,
           rebateCents,
           recoveredCents,
           unrecoveredCents,

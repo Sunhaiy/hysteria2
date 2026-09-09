@@ -615,6 +615,8 @@ export default function AdminActivitiesPage() {
                     <small>
                       {member.rebateUnrecoveredCents > 0
                         ? `已追回 ${formatMoney(member.rebateRecoveredCents)}`
+                        : member.rebateRecoveredCents > 0
+                          ? `已调整 / 追回 ${formatMoney(member.rebateRecoveredCents)}`
                         : (member.refundError ??
                           member.refundGatewayMessage ??
                           "")}
