@@ -3,7 +3,11 @@
 import { useEffect, useRef } from "react";
 import * as echarts from "echarts/core";
 import { BarChart, LineChart, PieChart } from "echarts/charts";
-import { GridComponent, LegendComponent, TooltipComponent } from "echarts/components";
+import {
+  GridComponent,
+  LegendComponent,
+  TooltipComponent,
+} from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import type { EChartsOption } from "echarts";
 
@@ -27,18 +31,26 @@ export function EChart({
   ariaLabel: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<echarts.ECharts | null>(null);
+  const optionRef = useRef(option);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    let chart: echarts.ECharts | null = null;
+    let resizeFrame: number | null = null;
 
-    const render = () => {
-      chart?.dispose();
+    const initialize = () => {
+      chartRef.current?.dispose();
       const styles = getComputedStyle(document.documentElement);
       const value = (name: string) => styles.getPropertyValue(name).trim();
-      chart = echarts.init(container, {
-        color: [value("--accent-500"), "#3b82f6", "#f59e0b", "#8b5cf6", "#ef4444"],
+      const chart = echarts.init(container, {
+        color: [
+          value("--accent-500"),
+          "#3b82f6",
+          "#f59e0b",
+          "#8b5cf6",
+          "#ef4444",
+        ],
         backgroundColor: "transparent",
         textStyle: { color: value("--text-secondary") },
         title: { textStyle: { color: value("--text-primary") } },
@@ -61,21 +73,46 @@ export function EChart({
           textStyle: { color: value("--text-primary") },
         },
       });
-      chart.setOption(option, true);
+      chartRef.current = chart;
+      chart.setOption(optionRef.current, true);
     };
 
-    render();
-    const resizeObserver = new ResizeObserver(() => chart?.resize());
+    initialize();
+    const resizeObserver = new ResizeObserver(() => {
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(() => {
+        chartRef.current?.resize();
+        resizeFrame = null;
+      });
+    });
     resizeObserver.observe(container);
-    const themeObserver = new MutationObserver(render);
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    const themeObserver = new MutationObserver(initialize);
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
 
     return () => {
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
       resizeObserver.disconnect();
       themeObserver.disconnect();
-      chart?.dispose();
+      chartRef.current?.dispose();
+      chartRef.current = null;
     };
+  }, []);
+
+  useEffect(() => {
+    optionRef.current = option;
+    chartRef.current?.setOption(option, true);
   }, [option]);
 
-  return <div ref={containerRef} className="echart" style={{ height }} role="img" aria-label={ariaLabel} />;
+  return (
+    <div
+      ref={containerRef}
+      className="echart"
+      style={{ height }}
+      role="img"
+      aria-label={ariaLabel}
+    />
+  );
 }

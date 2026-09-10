@@ -86,7 +86,15 @@ export class AuthService {
       REGISTER_COOLDOWN_SECONDS,
     );
 
-    await this.mail.sendVerificationCode(email, code);
+    try {
+      await this.mail.sendVerificationCode(email, code);
+    } catch (error) {
+      await Promise.allSettled([
+        this.cache.del(`reg-code:${email}`),
+        this.cache.del(`reg-cooldown:${email}`),
+      ]);
+      throw error;
+    }
 
     return {
       success: true,

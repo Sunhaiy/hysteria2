@@ -12291,6 +12291,10 @@ select.control {
   color: var(--text-secondary);
   font-size: 11px;
   line-height: 1.55;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease;
 }
 
 .checkout-switch-confirmation input {
@@ -12298,6 +12302,12 @@ select.control {
   height: 15px;
   margin: 1px 0 0;
   accent-color: var(--accent-500);
+}
+
+.checkout-switch-confirmation.is-confirmed {
+  border-color: var(--accent-500);
+  background: var(--accent-500);
+  color: #fff;
 }
 
 .checkout-reset-preview > div:last-child {
@@ -14755,10 +14765,9 @@ select.control {
   display: grid;
   gap: 10px;
   padding: 12px 13px;
-  border: 1px solid
-    color-mix(in srgb, var(--accent-500) 26%, var(--border-default));
+  border: 1px solid var(--border-default);
   border-radius: 7px;
-  background: var(--bg-panel-alt);
+  background: var(--bg-panel);
   color: var(--text-secondary);
 }
 
@@ -14771,7 +14780,7 @@ select.control {
 .group-buy-checkout-saving-head > .icon-slot {
   width: 18px;
   height: 18px;
-  color: var(--accent-500);
+  color: var(--text-primary);
 }
 
 .group-buy-checkout-saving-head > span {

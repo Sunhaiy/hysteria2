@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import QRCode from 'qrcode';
+import { CacheService } from '../cache/cache.service';
 import {
   CommerceService,
   type CheckoutInput,
@@ -36,15 +38,27 @@ type SubscriptionNode = {
 };
 
 const NODE_HEALTH_FRESHNESS_MS = 3 * 60_000;
+const PORTAL_USAGE_CACHE_SECONDS = 60;
+const PORTAL_NODE_STATUS_CACHE_SECONDS = 30;
+
+interface HealthSnapshotRow {
+  nodeId: string;
+  healthy: boolean;
+  latencyMs: number | null;
+  checkedAt: Date;
+}
 
 @Injectable()
 export class PortalService {
+  private readonly inFlightReads = new Map<string, Promise<unknown>>();
+
   constructor(
     private readonly store: ControlPlaneStoreService,
     private readonly settings: SettingsService,
     private readonly commerce: CommerceService,
     @Optional() private readonly entitlements?: EntitlementService,
     @Optional() private readonly prisma?: PrismaService,
+    @Optional() private readonly cache?: CacheService,
   ) {}
 
   getBranding() {
@@ -70,30 +84,44 @@ export class PortalService {
   }
 
   async getUsage(userId: string) {
-    if (!this.entitlements || !this.prisma) {
-      return this.store.getUsageForUser(userId);
-    }
-    const [legacyUsage, v2Usage] = await Promise.all([
-      this.store.getUsageForUser(userId, true, { unlinkedOnly: true }),
-      this.getV2QuotaUsage(userId),
-    ]);
-    return {
-      ...legacyUsage,
-      subscriptionId:
-        v2Usage.baseRemainingBytes > 0
-          ? v2Usage.subscriptionId
-          : (legacyUsage.subscriptionId ?? v2Usage.subscriptionId),
-      consumedBytes: legacyUsage.consumedBytes + v2Usage.consumedBytes,
-      baseRemainingBytes:
-        legacyUsage.baseRemainingBytes + v2Usage.baseRemainingBytes,
-      packRemainingBytes:
-        legacyUsage.packRemainingBytes + v2Usage.packRemainingBytes,
-      totalRemainingBytes:
-        legacyUsage.totalRemainingBytes + v2Usage.totalRemainingBytes,
-    };
+    return this.cachedPortalRead(
+      `portal:usage:v3:${userId}`,
+      PORTAL_USAGE_CACHE_SECONDS,
+      async () => {
+        if (!this.entitlements || !this.prisma) {
+          return this.store.getUsageForUser(userId);
+        }
+        const [legacyUsage, v2Usage] = await Promise.all([
+          this.store.getUsageForUser(userId, true, { unlinkedOnly: true }),
+          this.getV2QuotaUsage(userId),
+        ]);
+        return {
+          ...legacyUsage,
+          subscriptionId:
+            v2Usage.baseRemainingBytes > 0
+              ? v2Usage.subscriptionId
+              : (legacyUsage.subscriptionId ?? v2Usage.subscriptionId),
+          consumedBytes: legacyUsage.consumedBytes + v2Usage.consumedBytes,
+          baseRemainingBytes:
+            legacyUsage.baseRemainingBytes + v2Usage.baseRemainingBytes,
+          packRemainingBytes:
+            legacyUsage.packRemainingBytes + v2Usage.packRemainingBytes,
+          totalRemainingBytes:
+            legacyUsage.totalRemainingBytes + v2Usage.totalRemainingBytes,
+        };
+      },
+    );
   }
 
   async getNodeStatus(userId: string, now = new Date()) {
+    return this.cachedPortalRead(
+      `portal:node-status:v2:${userId}`,
+      PORTAL_NODE_STATUS_CACHE_SECONDS,
+      () => this.getNodeStatusUncached(userId, now),
+    );
+  }
+
+  private async getNodeStatusUncached(userId: string, now: Date) {
     let bundle: Awaited<ReturnType<PortalService['getUnifiedAccessBundle']>>;
     try {
       bundle = await this.getUnifiedAccessBundle(userId);
@@ -125,26 +153,37 @@ export class PortalService {
       );
     }
 
-    const healthRows = await this.prisma.node.findMany({
-      where: {
-        id: { in: nodeIds },
-        active: true,
-        lifecycleStatus: 'ACTIVE',
-        retiredAt: null,
-      },
-      select: {
-        id: true,
-        healthSnapshots: {
-          orderBy: { checkedAt: 'desc' },
-          take: 1,
-          select: { healthy: true, latencyMs: true, checkedAt: true },
-        },
-      },
-    });
+    const healthRows = await this.prisma.$queryRaw<HealthSnapshotRow[]>(
+      Prisma.sql`
+        SELECT
+          node.id AS "nodeId",
+          snapshot.healthy,
+          snapshot."latencyMs",
+          snapshot."checkedAt"
+        FROM "Node" node
+        INNER JOIN LATERAL (
+          SELECT health.healthy, health."latencyMs", health."checkedAt"
+          FROM "NodeHealthSnapshot" health
+          WHERE health."nodeId" = node.id
+          ORDER BY health."checkedAt" DESC
+          LIMIT 1
+        ) snapshot ON TRUE
+        WHERE node.id IN (${Prisma.join(nodeIds)})
+      `,
+    );
     const healthByNodeId = new Map(
       healthRows
-        .filter((row) => accessibleNodes.has(row.id))
-        .map((row) => [row.id, row.healthSnapshots]),
+        .filter((row) => accessibleNodes.has(row.nodeId))
+        .map((row) => [
+          row.nodeId,
+          [
+            {
+              healthy: row.healthy,
+              latencyMs: row.latencyMs,
+              checkedAt: row.checkedAt,
+            },
+          ],
+        ]),
     );
     return this.buildNodeStatusResponse(
       [...accessibleNodes.values()].map((node) => ({
@@ -153,6 +192,41 @@ export class PortalService {
       })),
       now,
     );
+  }
+
+  private async cachedPortalRead<T>(
+    key: string,
+    ttlSeconds: number,
+    load: () => Promise<T>,
+  ): Promise<T> {
+    if (!this.cache) return load();
+
+    try {
+      const cached = await this.cache.get(key);
+      if (cached) return JSON.parse(cached) as T;
+    } catch {
+      // Cache failures must not make member-facing reads unavailable.
+    }
+
+    const existing = this.inFlightReads.get(key);
+    if (existing) return existing as Promise<T>;
+
+    const request = load()
+      .then(async (result) => {
+        try {
+          await this.cache?.set(key, JSON.stringify(result), ttlSeconds);
+        } catch {
+          // The database result is still valid when Redis is unavailable.
+        }
+        return result;
+      })
+      .finally(() => {
+        if (this.inFlightReads.get(key) === request) {
+          this.inFlightReads.delete(key);
+        }
+      });
+    this.inFlightReads.set(key, request);
+    return request;
   }
 
   private buildNodeStatusResponse(

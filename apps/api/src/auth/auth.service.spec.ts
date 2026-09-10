@@ -122,4 +122,36 @@ describe('AuthService sessions', () => {
     expect(store.issuePasswordResetToken).not.toHaveBeenCalled();
     expect(mail.sendPasswordReset).not.toHaveBeenCalled();
   });
+
+  it('clears the registration code and cooldown when email delivery fails', async () => {
+    const store = { findUserByEmail: jest.fn().mockResolvedValue(null) };
+    const cache = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+      del: jest.fn().mockResolvedValue(undefined),
+    };
+    const mail = {
+      sendVerificationCode: jest
+        .fn()
+        .mockRejectedValue(
+          new Error('邮箱地址不存在或填写有误，请检查后重试。'),
+        ),
+    };
+    const settings = {
+      isRegistrationEnabled: jest.fn().mockResolvedValue(true),
+    };
+    const service = new AuthService(
+      store as never,
+      {} as never,
+      cache as never,
+      mail as never,
+      settings as never,
+    );
+
+    await expect(
+      service.requestRegisterCode('Wrong@Example.com'),
+    ).rejects.toThrow('邮箱地址不存在或填写有误，请检查后重试。');
+    expect(cache.del).toHaveBeenCalledWith('reg-code:wrong@example.com');
+    expect(cache.del).toHaveBeenCalledWith('reg-cooldown:wrong@example.com');
+  });
 });

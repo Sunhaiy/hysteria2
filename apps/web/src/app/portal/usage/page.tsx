@@ -250,22 +250,18 @@ export default function PortalUsagePage() {
             >
               {nodeStatus ? (
                 <>
-                  <div
-                    className={`portal-node-diagnosis ${nodeStatus.diagnosis.kind}`}
-                    role="status"
-                  >
-                    <Icon
-                      name={
-                        nodeStatus.diagnosis.kind === "local_network_likely"
-                          ? "check"
-                          : "warning"
-                      }
-                    />
-                    <div>
-                      <strong>{nodeStatus.diagnosis.title}</strong>
-                      <p>{nodeStatus.diagnosis.message}</p>
+                  {nodeStatus.diagnosis.kind !== "local_network_likely" ? (
+                    <div
+                      className={`portal-node-diagnosis ${nodeStatus.diagnosis.kind}`}
+                      role="status"
+                    >
+                      <Icon name="warning" />
+                      <div>
+                        <strong>{nodeStatus.diagnosis.title}</strong>
+                        <p>{nodeStatus.diagnosis.message}</p>
+                      </div>
                     </div>
-                  </div>
+                  ) : null}
 
                   <div className="portal-node-status-list">
                     {nodeStatus.nodes.map((node) => (

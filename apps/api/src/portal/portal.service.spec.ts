@@ -711,50 +711,32 @@ describe('PortalService VLESS + REALITY access', () => {
       }),
     };
     const prisma = {
-      node: {
-        findMany: jest.fn().mockResolvedValue([
-          {
-            id: 'node_healthy',
-            healthSnapshots: [
-              {
-                healthy: true,
-                latencyMs: 42,
-                checkedAt: new Date('2026-09-09T04:59:30.000Z'),
-              },
-            ],
-          },
-          {
-            id: 'node_unhealthy',
-            healthSnapshots: [
-              {
-                healthy: false,
-                latencyMs: null,
-                checkedAt: new Date('2026-09-09T04:59:00.000Z'),
-              },
-            ],
-          },
-          {
-            id: 'node_stale',
-            healthSnapshots: [
-              {
-                healthy: true,
-                latencyMs: 88,
-                checkedAt: new Date('2026-09-09T04:50:00.000Z'),
-              },
-            ],
-          },
-          {
-            id: 'node_hidden',
-            healthSnapshots: [
-              {
-                healthy: true,
-                latencyMs: 1,
-                checkedAt: now,
-              },
-            ],
-          },
-        ]),
-      },
+      $queryRaw: jest.fn().mockResolvedValue([
+        {
+          nodeId: 'node_healthy',
+          healthy: true,
+          latencyMs: 42,
+          checkedAt: new Date('2026-09-09T04:59:30.000Z'),
+        },
+        {
+          nodeId: 'node_unhealthy',
+          healthy: false,
+          latencyMs: null,
+          checkedAt: new Date('2026-09-09T04:59:00.000Z'),
+        },
+        {
+          nodeId: 'node_stale',
+          healthy: true,
+          latencyMs: 88,
+          checkedAt: new Date('2026-09-09T04:50:00.000Z'),
+        },
+        {
+          nodeId: 'node_hidden',
+          healthy: true,
+          latencyMs: 1,
+          checkedAt: now,
+        },
+      ]),
     };
     const service = new PortalService(
       store as never,
@@ -766,22 +748,12 @@ describe('PortalService VLESS + REALITY access', () => {
 
     const status = await service.getNodeStatus('user_1', now);
 
-    expect(prisma.node.findMany).toHaveBeenCalledWith({
-      where: {
-        id: { in: ['node_healthy', 'node_unhealthy', 'node_stale'] },
-        active: true,
-        lifecycleStatus: 'ACTIVE',
-        retiredAt: null,
-      },
-      select: {
-        id: true,
-        healthSnapshots: {
-          orderBy: { checkedAt: 'desc' },
-          take: 1,
-          select: { healthy: true, latencyMs: true, checkedAt: true },
-        },
-      },
-    });
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    const [[query]] = prisma.$queryRaw.mock.calls as unknown as [
+      [{ strings: readonly string[] }],
+    ];
+    expect(query.strings.join('')).toContain('INNER JOIN LATERAL');
+    expect(query.strings.join('')).toContain('LIMIT 1');
     expect(status.diagnosis.kind).toBe('service_issue');
     expect(status.nodes).toEqual([
       expect.objectContaining({
@@ -821,20 +793,14 @@ describe('PortalService VLESS + REALITY access', () => {
       }),
     };
     const prisma = {
-      node: {
-        findMany: jest.fn().mockResolvedValue([
-          {
-            id: 'node_healthy',
-            healthSnapshots: [
-              {
-                healthy: true,
-                latencyMs: 36,
-                checkedAt: new Date('2026-09-09T04:59:30.000Z'),
-              },
-            ],
-          },
-        ]),
-      },
+      $queryRaw: jest.fn().mockResolvedValue([
+        {
+          nodeId: 'node_healthy',
+          healthy: true,
+          latencyMs: 36,
+          checkedAt: new Date('2026-09-09T04:59:30.000Z'),
+        },
+      ]),
     };
     const service = new PortalService(
       store as never,
@@ -849,5 +815,44 @@ describe('PortalService VLESS + REALITY access', () => {
       diagnosis: { kind: 'local_network_likely' },
       nodes: [{ status: 'healthy', latencyMs: 36 }],
     });
+  });
+
+  it('reuses the short-lived member usage projection across page navigation', async () => {
+    const result = {
+      subscriptionId: 'sub_1',
+      consumedBytes: 100,
+      baseRemainingBytes: 900,
+      packRemainingBytes: 0,
+      totalRemainingBytes: 900,
+      recent: [],
+    };
+    const store = {
+      getUsageForUser: jest.fn().mockResolvedValue(result),
+    };
+    const memory = new Map<string, string>();
+    const cache = {
+      get: jest.fn((key: string) => Promise.resolve(memory.get(key) ?? null)),
+      set: jest.fn((key: string, value: string) => {
+        memory.set(key, value);
+        return Promise.resolve();
+      }),
+    };
+    const service = new PortalService(
+      store as never,
+      {} as never,
+      {} as never,
+      undefined,
+      undefined,
+      cache as never,
+    );
+
+    await expect(service.getUsage('user_1')).resolves.toEqual(result);
+    await expect(service.getUsage('user_1')).resolves.toEqual(result);
+    expect(store.getUsageForUser).toHaveBeenCalledTimes(1);
+    expect(cache.set).toHaveBeenCalledWith(
+      'portal:usage:v3:user_1',
+      JSON.stringify(result),
+      60,
+    );
   });
 });

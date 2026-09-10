@@ -25,6 +25,7 @@ test("member usage fills the available desktop table height with billed-only rec
   assert.match(usage, /仅显示当前账号可用节点/);
   assert.match(usage, /nodeStatus\.diagnosis\.title/);
   assert.match(usage, /nodeStatus\.diagnosis\.message/);
+  assert.match(usage, /nodeStatus\.diagnosis\.kind !== "local_network_likely"/);
   assert.match(usage, /服务异常/);
   assert.match(usage, /状态过期/);
   assert.match(usage, /setInterval/);

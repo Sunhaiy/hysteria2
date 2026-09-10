@@ -99,7 +99,16 @@ test("group buying uses a dedicated route and explicit payment channel", () => {
   assert.match(styles, /@keyframes group-buy-list-enter/);
   assert.match(
     styles,
-    /\.group-buy-checkout-saving\s*\{[^}]*background:\s*var\(--bg-panel-alt\);/s,
+    /\.group-buy-checkout-saving\s*\{[^}]*border:\s*1px solid var\(--border-default\);[^}]*background:\s*var\(--bg-panel\);/s,
+  );
+  assert.match(
+    styles,
+    /\.group-buy-checkout-saving-head > \.icon-slot\s*\{[^}]*color:\s*var\(--text-primary\);/s,
+  );
+  assert.match(page, /checkout-switch-confirmation.*is-confirmed/s);
+  assert.match(
+    styles,
+    /\.checkout-switch-confirmation\.is-confirmed\s*\{[^}]*background:\s*var\(--accent-500\);[^}]*color:\s*#fff;/s,
   );
   assert.match(page, /余额不足，请更换支付方式或充值后重试/);
   assert.match(page, /group-buy-checkout-feedback/);

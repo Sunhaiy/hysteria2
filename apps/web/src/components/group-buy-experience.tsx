@@ -924,7 +924,9 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
                   </button>
                 </div>
                 {planActivation === "immediate_switch" ? (
-                  <label className="checkout-switch-confirmation">
+                  <label
+                    className={`checkout-switch-confirmation${immediateSwitchConfirmed ? " is-confirmed" : ""}`}
+                  >
                     <input
                       type="checkbox"
                       checked={immediateSwitchConfirmed}

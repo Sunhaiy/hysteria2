@@ -16,7 +16,7 @@ import {
 } from 'class-validator';
 
 export class LoginDto {
-  @IsEmail()
+  @IsEmail({}, { message: '邮箱格式不正确，请检查后重试' })
   email!: string;
 
   @IsString()
@@ -25,7 +25,7 @@ export class LoginDto {
 }
 
 export class RequestRegisterCodeDto {
-  @IsEmail()
+  @IsEmail({}, { message: '邮箱格式不正确，请检查后重试' })
   email!: string;
 }
 
@@ -249,7 +249,7 @@ export class UpdateSettingsDto {
 }
 
 export class TestEmailDto {
-  @IsEmail()
+  @IsEmail({}, { message: '邮箱格式不正确，请检查后重试' })
   to!: string;
 }
 
@@ -260,7 +260,7 @@ export class OAuthExchangeDto {
 }
 
 export class RegisterDto {
-  @IsEmail()
+  @IsEmail({}, { message: '邮箱格式不正确，请检查后重试' })
   email!: string;
 
   @IsString()
@@ -284,7 +284,7 @@ export class RegisterDto {
 }
 
 export class CreateUserDto {
-  @IsEmail()
+  @IsEmail({}, { message: '邮箱格式不正确，请检查后重试' })
   email!: string;
 
   @IsString()
