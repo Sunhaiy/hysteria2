@@ -19,6 +19,11 @@ test("daily check-in is a stable action on the member overview", () => {
   assert.match(overview, /method: "POST"/);
   assert.match(overview, /CheckInSuccessDialog/);
   assert.match(overview, /setCheckInSuccessReward\(response\.rewardBytes\)/);
+  assert.match(
+    overview,
+    /checkIn\?\.claimed\s*\|\|\s*\(checkIn\?\.enabled\s*&&\s*checkIn\.eligible\)/,
+  );
+  assert.match(overview, /当前套餐暂不可签到/);
   assert.match(admin, /预览成功动画/);
   assert.match(admin, /<CheckInSuccessDialog/);
   assert.match(celebration, /重新播放/);

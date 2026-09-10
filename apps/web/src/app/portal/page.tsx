@@ -417,7 +417,8 @@ export default function PortalPage() {
                     </span>
                   </div>
                 </article>
-                {checkIn?.enabled && checkIn.eligible ? (
+                {checkIn?.claimed ||
+                (checkIn?.enabled && checkIn.eligible) ? (
                   <button
                     className={`portal-check-in-summary${checkIn.claimed ? " claimed" : ""}`}
                     type="button"
@@ -452,11 +453,20 @@ export default function PortalPage() {
                       <strong>
                         {checkInError
                           ? "签到暂不可用"
-                          : checkIn
+                          : checkIn?.enabled === false
                             ? "活动未开启"
-                            : "正在加载"}
+                            : checkIn && !checkIn.eligible
+                              ? "当前套餐暂不可签到"
+                              : "正在加载"}
                       </strong>
-                      <small>{checkInError ?? "每日签到领取赠送流量"}</small>
+                      <small>
+                        {checkInError ??
+                          (checkIn?.enabled === false
+                            ? "每日签到领取赠送流量"
+                            : checkIn && !checkIn.eligible
+                              ? "仅限符合活动条件的有效套餐"
+                              : "正在读取签到状态")}
+                      </small>
                     </span>
                   </article>
                 )}
