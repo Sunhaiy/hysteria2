@@ -10,7 +10,7 @@ Group=hysteria2
 WorkingDirectory=/opt/hysteria2-control-plane/current/apps/api
 EnvironmentFile=/opt/hysteria2-control-plane/shared/app.env
 Environment=NODE_SYNC_RUNNER=external
-ExecStart=/usr/local/bin/node dist/main.js
+ExecStart=/usr/local/bin/node dist/src/main.js
 Restart=always
 RestartSec=5
 

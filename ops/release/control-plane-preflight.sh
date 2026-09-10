@@ -29,7 +29,7 @@ done
 
 cd "$release_dir"
 test -f apps/api/prisma/migrations/20260825120000_node_runtime_control/migration.sql
-test -f apps/api/dist/main.js
+test -f apps/api/dist/src/main.js
 test -f apps/web/.next/BUILD_ID
 pnpm --filter @hysteria/api exec prisma migrate status
 "$node_bin" apps/api/prisma/verify-runtime-agent-inventory.js "$agent_checks_file"

@@ -10,7 +10,7 @@ page latency to node-agent latency, and makes blue-green deployment unsafe.
 
 ## Decision
 
-Only `dist/sync-worker.js` runs recurring node work. It owns four independently
+Only `dist/src/sync-worker.js` runs recurring node work. It owns four independently
 locked and timed loops:
 
 - full user and traffic sync every 60 seconds;
