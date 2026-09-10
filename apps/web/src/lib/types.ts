@@ -501,6 +501,17 @@ export interface AnniversaryGiftSummary {
   available: boolean;
 }
 
+export interface AnniversaryGiftLetter {
+  kicker: string;
+  eyebrow: string;
+  seal: string;
+  title: string;
+  greeting: string;
+  paragraphs: string[];
+  signature: string;
+  signatureNote: string;
+}
+
 export interface AnniversaryGiftStatus {
   enabled: boolean;
   configured: boolean;
@@ -511,6 +522,7 @@ export interface AnniversaryGiftStatus {
   orderId: string | null;
   milestoneDays: number;
   subscribedDays: number;
+  letter: AnniversaryGiftLetter;
   gift: AnniversaryGiftSummary | null;
   replayed?: boolean;
 }

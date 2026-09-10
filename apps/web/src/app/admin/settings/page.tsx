@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import { ConsoleShell } from "@/components/console-shell";
-import { AnniversaryGiftDialog } from "@/components/anniversary-gift-dialog";
+import {
+  AnniversaryGiftDialog,
+  DEFAULT_ANNIVERSARY_GIFT_LETTER,
+} from "@/components/anniversary-gift-dialog";
 import { Icon } from "@/components/icon";
 import { Panel } from "@/components/panel";
 import { PageSkeleton } from "@/components/skeleton";
@@ -10,7 +13,10 @@ import { useAuth } from "@/components/auth-provider";
 import { Toast, useToast } from "@/components/toast";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
-import type { AnniversaryGiftSummary } from "@/lib/types";
+import type {
+  AnniversaryGiftLetter,
+  AnniversaryGiftSummary,
+} from "@/lib/types";
 
 interface OAuthProviderState {
   clientId: string;
@@ -76,6 +82,7 @@ interface SettingsResponse {
     enabled: boolean;
     offerId: string;
     configured: boolean;
+    letter: AnniversaryGiftLetter;
     gift: AnniversaryGiftSummary | null;
     options: AnniversaryGiftSummary[];
   };
@@ -134,6 +141,8 @@ export default function AdminSettingsPage() {
   const [anniversaryGiftOptions, setAnniversaryGiftOptions] = useState<
     AnniversaryGiftSummary[]
   >([]);
+  const [anniversaryGiftLetter, setAnniversaryGiftLetter] =
+    useState<AnniversaryGiftLetter>(DEFAULT_ANNIVERSARY_GIFT_LETTER);
   const [savingAnniversaryGift, setSavingAnniversaryGift] = useState(false);
   const [previewingAnniversaryGift, setPreviewingAnniversaryGift] =
     useState(false);
@@ -191,6 +200,9 @@ export default function AdminSettingsPage() {
     setAnniversaryGiftEnabled(data.anniversaryGift?.enabled ?? false);
     setAnniversaryGiftOfferId(data.anniversaryGift?.offerId ?? "");
     setAnniversaryGiftOptions(data.anniversaryGift?.options ?? []);
+    setAnniversaryGiftLetter(
+      data.anniversaryGift?.letter ?? DEFAULT_ANNIVERSARY_GIFT_LETTER,
+    );
     setPass("");
     setOauth(data.oauth);
     setGoogleId(data.oauth.google.clientId);
@@ -358,6 +370,16 @@ export default function AdminSettingsPage() {
         body: {
           anniversaryGiftEnabled,
           anniversaryGiftOfferId,
+          anniversaryGiftLetterKicker: anniversaryGiftLetter.kicker,
+          anniversaryGiftLetterEyebrow: anniversaryGiftLetter.eyebrow,
+          anniversaryGiftLetterSeal: anniversaryGiftLetter.seal,
+          anniversaryGiftLetterTitle: anniversaryGiftLetter.title,
+          anniversaryGiftLetterGreeting: anniversaryGiftLetter.greeting,
+          anniversaryGiftLetterContent:
+            anniversaryGiftLetter.paragraphs.join("\n"),
+          anniversaryGiftLetterSignature: anniversaryGiftLetter.signature,
+          anniversaryGiftLetterSignatureNote:
+            anniversaryGiftLetter.signatureNote,
         },
       });
       applySettings(data);
@@ -1045,6 +1067,128 @@ export default function AdminSettingsPage() {
               </div>
             </div>
 
+            <div className="anniversary-gift-copy-editor">
+              <div className="anniversary-gift-copy-editor-heading">
+                <strong>手写卡片文案</strong>
+                <span>每行正文会显示为一个独立段落，预览无需先保存。</span>
+              </div>
+              <div className="two-col">
+                <label className="field">
+                  <span className="fine-print">顶部英文</span>
+                  <input
+                    className="control"
+                    value={anniversaryGiftLetter.kicker}
+                    maxLength={48}
+                    onChange={(event) =>
+                      setAnniversaryGiftLetter((current) => ({
+                        ...current,
+                        kicker: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="field">
+                  <span className="fine-print">卡片眉题</span>
+                  <input
+                    className="control"
+                    value={anniversaryGiftLetter.eyebrow}
+                    maxLength={40}
+                    onChange={(event) =>
+                      setAnniversaryGiftLetter((current) => ({
+                        ...current,
+                        eyebrow: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="field">
+                  <span className="fine-print">印章文字</span>
+                  <input
+                    className="control"
+                    value={anniversaryGiftLetter.seal}
+                    maxLength={8}
+                    onChange={(event) =>
+                      setAnniversaryGiftLetter((current) => ({
+                        ...current,
+                        seal: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="field">
+                  <span className="fine-print">卡片标题</span>
+                  <input
+                    className="control"
+                    value={anniversaryGiftLetter.title}
+                    maxLength={64}
+                    onChange={(event) =>
+                      setAnniversaryGiftLetter((current) => ({
+                        ...current,
+                        title: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="field">
+                  <span className="fine-print">开场称呼</span>
+                  <input
+                    className="control"
+                    value={anniversaryGiftLetter.greeting}
+                    maxLength={40}
+                    onChange={(event) =>
+                      setAnniversaryGiftLetter((current) => ({
+                        ...current,
+                        greeting: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="field">
+                  <span className="fine-print">落款</span>
+                  <input
+                    className="control"
+                    value={anniversaryGiftLetter.signature}
+                    maxLength={60}
+                    onChange={(event) =>
+                      setAnniversaryGiftLetter((current) => ({
+                        ...current,
+                        signature: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              </div>
+              <label className="field">
+                <span className="fine-print">卡片正文</span>
+                <textarea
+                  className="control anniversary-gift-copy-textarea"
+                  value={anniversaryGiftLetter.paragraphs.join("\n")}
+                  maxLength={2000}
+                  rows={5}
+                  onChange={(event) =>
+                    setAnniversaryGiftLetter((current) => ({
+                      ...current,
+                      paragraphs: event.target.value.split(/\r?\n/),
+                    }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span className="fine-print">落款说明</span>
+                <input
+                  className="control"
+                  value={anniversaryGiftLetter.signatureNote}
+                  maxLength={100}
+                  onChange={(event) =>
+                    setAnniversaryGiftLetter((current) => ({
+                      ...current,
+                      signatureNote: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+            </div>
+
             {!anniversaryGiftOptions.length ? (
               <div className="feedback warn">
                 当前没有符合条件的永久流量包，请先在商品管理中启用并绑定节点。
@@ -1627,6 +1771,7 @@ export default function AdminSettingsPage() {
       {previewingAnniversaryGift ? (
         <AnniversaryGiftDialog
           gift={anniversaryGiftPreview}
+          letter={anniversaryGiftLetter}
           revealed={false}
           preview
           onClose={() => setPreviewingAnniversaryGift(false)}

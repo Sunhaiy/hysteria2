@@ -13,6 +13,10 @@ import { pageResponse, parsePage, type PageQuery } from '../common/pagination';
 import { EntitlementService } from '../entitlement/entitlement.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
+import {
+  goPlanActivityExclusionWhere,
+  isGoPlanProduct,
+} from '../catalog/catalog-product-policy';
 
 const GIB = 1024 ** 3;
 const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
@@ -243,13 +247,18 @@ export class CheckInService {
           series: {
             in: [CatalogProductSeries.STANDARD, CatalogProductSeries.ULTRA],
           },
-          NOT: {
-            series: CatalogProductSeries.STANDARD,
-            slug: 'go',
-          },
+          NOT: goPlanActivityExclusionWhere,
         },
       },
       include: {
+        product: {
+          select: {
+            series: true,
+            slug: true,
+            purchaseLimitKey: true,
+            legacyPlan: { select: { slug: true } },
+          },
+        },
         quotaBuckets: {
           where: { startsAt: { lte: now }, endsAt: { gt: now } },
           orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
@@ -259,7 +268,7 @@ export class CheckInService {
       orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
     });
     const bucket = grant?.quotaBuckets[0];
-    if (!grant || !bucket) return null;
+    if (!grant || !bucket || isGoPlanProduct(grant.product)) return null;
     return {
       ...grant,
       bucket,

@@ -65,6 +65,29 @@ type AnniversaryGiftOfferRecord = {
   };
 };
 
+const ANNIVERSARY_GIFT_LETTER_DEFAULTS = {
+  kicker: 'FIRST ANNIVERSARY',
+  eyebrow: '一周年纪念函',
+  seal: '素',
+  title: '致一路同行的你',
+  greeting: '见字如面：',
+  content:
+    '从第一次连接到今天，您已经与素心 Network 一起走过整整一年的有效订阅时光。\n谢谢您把每一次出发交给我们。今天，我们也想认真地回赠一份心意。',
+  signature: '素心 Network',
+  signatureNote: '写于我们的第一个周年纪念日',
+} as const;
+
+const ANNIVERSARY_GIFT_LETTER_SETTING_FIELDS = [
+  ['anniversaryGiftLetterKicker', 'anniversaryGift.letterKicker'],
+  ['anniversaryGiftLetterEyebrow', 'anniversaryGift.letterEyebrow'],
+  ['anniversaryGiftLetterSeal', 'anniversaryGift.letterSeal'],
+  ['anniversaryGiftLetterTitle', 'anniversaryGift.letterTitle'],
+  ['anniversaryGiftLetterGreeting', 'anniversaryGift.letterGreeting'],
+  ['anniversaryGiftLetterContent', 'anniversaryGift.letterContent'],
+  ['anniversaryGiftLetterSignature', 'anniversaryGift.letterSignature'],
+  ['anniversaryGiftLetterSignatureNote', 'anniversaryGift.letterSignatureNote'],
+] as const;
+
 export type TutorialUploadPlatform = 'windows' | 'android' | 'macos';
 
 export interface TutorialAssetRecord {
@@ -401,6 +424,36 @@ export class SettingsService {
       enabled: map.get('anniversaryGift.enabled') === 'true',
       offerId,
       configured,
+      letter: {
+        kicker:
+          map.get('anniversaryGift.letterKicker')?.trim() ||
+          ANNIVERSARY_GIFT_LETTER_DEFAULTS.kicker,
+        eyebrow:
+          map.get('anniversaryGift.letterEyebrow')?.trim() ||
+          ANNIVERSARY_GIFT_LETTER_DEFAULTS.eyebrow,
+        seal:
+          map.get('anniversaryGift.letterSeal')?.trim() ||
+          ANNIVERSARY_GIFT_LETTER_DEFAULTS.seal,
+        title:
+          map.get('anniversaryGift.letterTitle')?.trim() ||
+          ANNIVERSARY_GIFT_LETTER_DEFAULTS.title,
+        greeting:
+          map.get('anniversaryGift.letterGreeting')?.trim() ||
+          ANNIVERSARY_GIFT_LETTER_DEFAULTS.greeting,
+        paragraphs: (
+          map.get('anniversaryGift.letterContent')?.trim() ||
+          ANNIVERSARY_GIFT_LETTER_DEFAULTS.content
+        )
+          .split(/\r?\n/)
+          .map((paragraph) => paragraph.trim())
+          .filter(Boolean),
+        signature:
+          map.get('anniversaryGift.letterSignature')?.trim() ||
+          ANNIVERSARY_GIFT_LETTER_DEFAULTS.signature,
+        signatureNote:
+          map.get('anniversaryGift.letterSignatureNote')?.trim() ||
+          ANNIVERSARY_GIFT_LETTER_DEFAULTS.signatureNote,
+      },
       gift: selected ? this.presentAnniversaryGiftOffer(selected) : null,
       ...(options ? { options } : {}),
     };
@@ -409,12 +462,30 @@ export class SettingsService {
   async prepareAnniversaryGiftSettingsUpdate(input: {
     anniversaryGiftEnabled?: boolean;
     anniversaryGiftOfferId?: string;
+    anniversaryGiftLetterKicker?: string;
+    anniversaryGiftLetterEyebrow?: string;
+    anniversaryGiftLetterSeal?: string;
+    anniversaryGiftLetterTitle?: string;
+    anniversaryGiftLetterGreeting?: string;
+    anniversaryGiftLetterContent?: string;
+    anniversaryGiftLetterSignature?: string;
+    anniversaryGiftLetterSignatureNote?: string;
   }) {
+    const updates: Record<string, string> = {};
+    for (const [
+      inputKey,
+      settingKey,
+    ] of ANNIVERSARY_GIFT_LETTER_SETTING_FIELDS) {
+      const value = input[inputKey];
+      if (value !== undefined) {
+        updates[settingKey] = value.replace(/\r\n?/g, '\n').trim();
+      }
+    }
     if (
       input.anniversaryGiftEnabled === undefined &&
       input.anniversaryGiftOfferId === undefined
     ) {
-      return {};
+      return updates;
     }
     const map = await this.all();
     const enabled =
@@ -439,6 +510,7 @@ export class SettingsService {
     }
 
     return {
+      ...updates,
       ...(input.anniversaryGiftEnabled === undefined
         ? {}
         : {

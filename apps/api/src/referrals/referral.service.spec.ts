@@ -249,6 +249,71 @@ describe('ReferralService plan purchase settlement', () => {
     expect(tx.referralAttribution.updateMany).not.toHaveBeenCalled();
   });
 
+  it('never rewards Go when a migrated product still has the legacy eligible flag', async () => {
+    const tx = {
+      referralAttribution: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'attribution_go',
+          inviterId: 'inviter_1',
+          inviteeId: 'invitee_1',
+          status: 'PENDING',
+          inviterRewardCents: 0,
+          inviterRewardBasisPoints: 0,
+          inviteeRewardBytes: 20n * 1024n * 1024n * 1024n,
+        }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      entitlementGrant: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'go_grant',
+          userId: 'invitee_1',
+          kind: 'PLAN',
+          product: {
+            slug: 'plan-go',
+            name: 'Go',
+            series: 'STANDARD',
+            referralEligible: true,
+          },
+        }),
+      },
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'order_go',
+          userId: 'invitee_1',
+          amountCents: 200,
+          source: 'PAYMENT',
+          status: 'APPLIED',
+          kind: 'RENEWAL',
+        }),
+      },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const entitlements = {
+      createBonusTrafficGrantFromOrder: jest.fn().mockResolvedValue({
+        grantId: 'bonus_go',
+      }),
+    };
+    const service = new ReferralService(
+      {} as never,
+      {} as never,
+      entitlements as never,
+    );
+
+    await expect(
+      service.settlePlanPurchaseReward(
+        tx as never,
+        'invitee_1',
+        'order_go',
+        'go_grant',
+      ),
+    ).resolves.toEqual({ settled: false });
+    expect(tx.referralAttribution.updateMany).not.toHaveBeenCalled();
+    expect(
+      entitlements.createBonusTrafficGrantFromOrder,
+    ).not.toHaveBeenCalled();
+  });
+
   it.each(['WALLET', 'ADMIN'])(
     'does not reward a referral for a %s plan grant',
     async (source) => {

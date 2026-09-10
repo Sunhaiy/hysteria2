@@ -65,6 +65,10 @@ test("group buying uses a dedicated route and explicit payment channel", () => {
   assert.match(page, /当前 \{currentPlan\.name\}/);
   assert.match(page, /<Icon name="group_add" \/>/);
   assert.match(
+    styles,
+    /\.checkout-switch-confirmation\s*\{[\s\S]*background:\s*var\(--accent-500\)/,
+  );
+  assert.match(
     page,
     /差 \$\{Math\.max\(group\.requiredMembers - group\.paidMembers, 0\)\} 人成团/,
   );
@@ -108,7 +112,7 @@ test("group buying uses a dedicated route and explicit payment channel", () => {
   assert.match(page, /checkout-switch-confirmation.*is-confirmed/s);
   assert.match(
     styles,
-    /\.checkout-switch-confirmation\.is-confirmed\s*\{[^}]*background:\s*var\(--accent-500\);[^}]*color:\s*#fff;/s,
+    /\.checkout-switch-confirmation\.is-confirmed\s*\{[^}]*background:\s*var\(--accent-500\);[^}]*color:\s*#06110a;/s,
   );
   assert.match(page, /余额不足，请更换支付方式或充值后重试/);
   assert.match(page, /group-buy-checkout-feedback/);

@@ -8,6 +8,12 @@ describe('CheckInService', () => {
     return {
       id: 'grant-1',
       accessAccountId: 'account-1',
+      product: {
+        slug: 'plan-start',
+        series: 'STANDARD',
+        purchaseLimitKey: null,
+        legacyPlan: { slug: 'start' },
+      },
       quotaBuckets: [
         {
           id: 'bucket-1',
@@ -124,16 +130,39 @@ describe('CheckInService', () => {
         where: {
           product: {
             series: { in: string[] };
-            NOT: { series: string; slug: string };
+            NOT: {
+              OR: Array<Record<string, unknown>>;
+            };
           };
         };
       },
     ];
     expect(request.where.product.series.in).toEqual(['STANDARD', 'ULTRA']);
-    expect(request.where.product.NOT).toEqual({
-      series: 'STANDARD',
-      slug: 'go',
+    expect(request.where.product.NOT.OR).toEqual(
+      expect.arrayContaining([
+        { purchaseLimitKey: 'trial-go' },
+        { slug: { in: ['go', 'plan-go'] } },
+        { legacyPlan: { is: { slug: 'go' } } },
+      ]),
+    );
+  });
+
+  it('rejects a migrated Go grant even if the database query returns it', async () => {
+    const { service, tx, entitlements } = setup();
+    tx.entitlementGrant.findFirst.mockResolvedValue({
+      ...eligible(),
+      product: {
+        slug: 'plan-go',
+        name: 'Go',
+        series: 'STANDARD',
+      },
     });
+
+    await expect(
+      service.claim('user-1', new Date('2026-09-07T04:00:00Z')),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(entitlements.creditQuotaBucket).not.toHaveBeenCalled();
+    expect(tx.dailyCheckIn.create).not.toHaveBeenCalled();
   });
 
   it('uses Beijing calendar dates around midnight', async () => {

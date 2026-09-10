@@ -54,6 +54,7 @@ export class AnniversaryGiftService {
       orderId: claimedOrder?.id ?? null,
       milestoneDays: membership.anniversaryTargetDays,
       subscribedDays: membership.subscribedDays,
+      letter: config.letter,
       gift: config.gift,
     };
   }

@@ -7497,19 +7497,28 @@ select.control {
 }
 
 .anniversary-gift-ticket-note {
-  display: flex;
+  display: grid;
+  grid-template-columns: 14px minmax(0, auto);
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  margin-top: 13px;
+  justify-self: center;
+  gap: 6px;
+  min-height: 28px;
+  margin-top: 10px;
   color: var(--text-muted);
   font-size: 11px;
+  line-height: 1.4;
+  text-align: left;
 }
 
 .anniversary-gift-ticket-note .icon-slot {
   width: 14px;
   height: 14px;
   color: var(--accent-400);
+}
+
+.anniversary-gift-ticket-note > span {
+  min-width: 0;
 }
 
 .anniversary-gift-close {
@@ -7731,6 +7740,36 @@ select.control {
 
 .anniversary-gift-setting-preview small {
   color: var(--text-subtle);
+}
+
+.anniversary-gift-copy-editor {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-default);
+}
+
+.anniversary-gift-copy-editor-heading {
+  display: grid;
+  gap: 3px;
+}
+
+.anniversary-gift-copy-editor-heading strong {
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.anniversary-gift-copy-editor-heading span {
+  color: var(--text-subtle);
+  font-size: var(--text-tiny);
+}
+
+.anniversary-gift-copy-textarea {
+  min-height: 116px;
+  padding-block: 10px;
+  line-height: 1.65;
+  resize: vertical;
 }
 
 @keyframes anniversary-dialog-in {
@@ -12285,10 +12324,10 @@ select.control {
   align-items: start;
   gap: 9px;
   padding: 11px 12px;
-  border: 1px solid color-mix(in srgb, #d39a2c 30%, var(--border-default));
+  border: 1px solid var(--accent-500);
   border-radius: 7px;
-  background: color-mix(in srgb, #d39a2c 9%, var(--bg-panel));
-  color: var(--text-secondary);
+  background: var(--accent-500);
+  color: #06110a;
   font-size: 11px;
   line-height: 1.55;
   transition:
@@ -12298,16 +12337,38 @@ select.control {
 }
 
 .checkout-switch-confirmation input {
+  appearance: none;
+  position: relative;
   width: 15px;
   height: 15px;
   margin: 1px 0 0;
-  accent-color: var(--accent-500);
+  border: 1px solid rgb(6 17 10 / 58%);
+  border-radius: 3px;
+  background: rgb(255 255 255 / 36%);
+  cursor: pointer;
+}
+
+.checkout-switch-confirmation input:checked {
+  border-color: #06110a;
+  background: #06110a;
+}
+
+.checkout-switch-confirmation input:checked::after {
+  position: absolute;
+  top: 1px;
+  left: 4px;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  content: "";
+  transform: rotate(45deg);
 }
 
 .checkout-switch-confirmation.is-confirmed {
   border-color: var(--accent-500);
   background: var(--accent-500);
-  color: #fff;
+  color: #06110a;
 }
 
 .checkout-reset-preview > div:last-child {

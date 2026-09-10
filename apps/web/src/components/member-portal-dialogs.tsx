@@ -60,6 +60,7 @@ export function MemberPortalDialogs() {
     return (
       <AnniversaryGiftDialog
         gift={gift.gift}
+        letter={gift.letter}
         revealed={revealed}
         claiming={claiming}
         error={error}

@@ -147,6 +147,8 @@ describe('ControlPlaneStoreService performance-sensitive reads', () => {
 
     const result = await service.getUsageForUser('user_1');
 
+    expect(prisma.subscription.updateMany).not.toHaveBeenCalled();
+    expect(prisma.trafficPack.updateMany).not.toHaveBeenCalled();
     expect(prisma.usageRollup.findMany).not.toHaveBeenCalled();
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
     const [query] = prisma.$queryRaw.mock.calls[0] as unknown as [
@@ -170,5 +172,40 @@ describe('ControlPlaneStoreService performance-sensitive reads', () => {
     const quotaOnly = await service.getUsageForUser('user_1', false);
     expect(quotaOnly.recent).toEqual([]);
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts quota and chart reads together on a cold portal request', async () => {
+    let resolveSubscription!: (value: null) => void;
+    let resolvePacks!: (value: []) => void;
+    let resolveRecent!: (value: []) => void;
+    const subscriptionResult = new Promise<null>((resolve) => {
+      resolveSubscription = resolve;
+    });
+    const packsResult = new Promise<[]>((resolve) => {
+      resolvePacks = resolve;
+    });
+    const recentResult = new Promise<[]>((resolve) => {
+      resolveRecent = resolve;
+    });
+    const prisma = {
+      subscription: { findFirst: jest.fn(() => subscriptionResult) },
+      trafficPack: { findMany: jest.fn(() => packsResult) },
+      $queryRaw: jest.fn(() => recentResult),
+    };
+    const service = new ControlPlaneStoreService(
+      prisma as never,
+      { countForUser: jest.fn().mockResolvedValue(0) } as never,
+    );
+
+    const request = service.getUsageForUser('user_1');
+
+    expect(prisma.subscription.findFirst).toHaveBeenCalledTimes(1);
+    expect(prisma.trafficPack.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+
+    resolveSubscription(null);
+    resolvePacks([]);
+    resolveRecent([]);
+    await expect(request).resolves.toMatchObject({ recent: [] });
   });
 });

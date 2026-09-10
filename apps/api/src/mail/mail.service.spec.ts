@@ -1,9 +1,20 @@
-import { classifyMailDeliveryError, MailService } from './mail.service';
+import {
+  classifyMailDeliveryError,
+  mailRecipientValidationMessage,
+  MailService,
+} from './mail.service';
 
 describe('MailService delivery errors', () => {
   it.each([
     [
       { responseCode: 550, response: '550 5.1.1 User unknown' },
+      '邮箱地址不存在或填写有误，请检查后重试。',
+    ],
+    [
+      {
+        responseCode: 511,
+        response: '511 sorry, no mailbox here by that name',
+      },
       '邮箱地址不存在或填写有误，请检查后重试。',
     ],
     [
@@ -22,6 +33,23 @@ describe('MailService delivery errors', () => {
     [{ responseCode: 451 }, '邮件服务暂时繁忙，请稍后重试。'],
   ])('maps %# to a safe Chinese explanation', (error, expected) => {
     expect(classifyMailDeliveryError(error)).toBe(expected);
+  });
+
+  it('suggests the intended provider for common recipient-domain typos', () => {
+    expect(mailRecipientValidationMessage('suxin.space@gamil.com')).toBe(
+      '邮箱域名“gamil.com”疑似填写错误，请改为“gmail.com”后重试。',
+    );
+    expect(mailRecipientValidationMessage('suxin.space@gmail.com')).toBeNull();
+  });
+
+  it('rejects a common domain typo before contacting SMTP', async () => {
+    const getSmtpConfig = jest.fn();
+    const service = new MailService({ getSmtpConfig } as never);
+
+    await expect(service.sendTest('suxin.space@gamil.com')).rejects.toThrow(
+      '邮箱域名“gamil.com”疑似填写错误，请改为“gmail.com”后重试。',
+    );
+    expect(getSmtpConfig).not.toHaveBeenCalled();
   });
 
   it('does not expose the raw SMTP response to callers', async () => {

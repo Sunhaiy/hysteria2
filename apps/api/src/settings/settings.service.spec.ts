@@ -471,6 +471,11 @@ describe('SettingsService cache', () => {
         findMany: jest.fn().mockResolvedValue([
           { key: 'anniversaryGift.enabled', value: 'true' },
           { key: 'anniversaryGift.offerId', value: offer.id },
+          { key: 'anniversaryGift.letterTitle', value: '给同行一年的你' },
+          {
+            key: 'anniversaryGift.letterContent',
+            value: '第一段感谢。\n第二段祝福。',
+          },
         ]),
       },
       catalogOffer: {
@@ -492,6 +497,12 @@ describe('SettingsService cache', () => {
         enabled: true,
         configured: true,
         offerId: 'offer_200g',
+        letter: {
+          kicker: 'FIRST ANNIVERSARY',
+          title: '给同行一年的你',
+          paragraphs: ['第一段感谢。', '第二段祝福。'],
+          signature: '素心 Network',
+        },
         gift: {
           name: '200GB 流量包',
           trafficBytes: 200 * 1024 * 1024 * 1024,
@@ -522,5 +533,29 @@ describe('SettingsService cache', () => {
         anniversaryGiftOfferId: '',
       }),
     ).rejects.toThrow('请选择一个可独立使用的永久流量包');
+  });
+
+  it('prepares editable anniversary letter settings without changing the gift offer', async () => {
+    const prisma = {
+      setting: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const service = new SettingsService(
+      prisma as never,
+      {} as never,
+      {
+        get: jest.fn().mockResolvedValue(null),
+        set: jest.fn().mockResolvedValue(undefined),
+      } as never,
+    );
+
+    await expect(
+      service.prepareAnniversaryGiftSettingsUpdate({
+        anniversaryGiftLetterTitle: '  给一路同行的你  ',
+        anniversaryGiftLetterContent: '第一段。\r\n第二段。',
+      }),
+    ).resolves.toEqual({
+      'anniversaryGift.letterTitle': '给一路同行的你',
+      'anniversaryGift.letterContent': '第一段。\n第二段。',
+    });
   });
 });

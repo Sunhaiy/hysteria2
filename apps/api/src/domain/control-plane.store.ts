@@ -1070,34 +1070,75 @@ export class ControlPlaneStoreService {
     includeRecent = true,
     options: { unlinkedOnly?: boolean } = {},
   ) {
-    await this.expireOverdueSubscriptions();
-    await this.expireTrafficPacks();
     const now = new Date();
-    const subscription = await this.prisma.subscription.findFirst({
-      where: {
-        userId,
-        entitlementGrant: options.unlinkedOnly ? null : undefined,
-        status: SubscriptionStatus.ACTIVE,
-        startsAt: { lte: now },
-        endsAt: { gt: now },
-      },
-      include: {
-        cycles: {
-          where: { startsAt: { lte: now }, endsAt: { gt: now } },
-          take: 1,
+    const todayKey = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(now);
+    const todayStart = new Date(`${todayKey}T00:00:00+08:00`);
+    const rangeStart = new Date(todayStart.getTime() - 6 * 24 * 60 * 60 * 1000);
+    const rangeEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+    const [subscription, packs, recent] = await Promise.all([
+      this.prisma.subscription.findFirst({
+        where: {
+          userId,
+          entitlementGrant: options.unlinkedOnly ? null : undefined,
+          status: SubscriptionStatus.ACTIVE,
+          startsAt: { lte: now },
+          endsAt: { gt: now },
         },
-      },
-      orderBy: { endsAt: 'desc' },
-    });
-    const packs = await this.prisma.trafficPack.findMany({
-      where: {
-        userId,
-        entitlementGrant: options.unlinkedOnly ? null : undefined,
-        status: TrafficPackStatus.ACTIVE,
-        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-      },
-      orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
-    });
+        include: {
+          cycles: {
+            where: { startsAt: { lte: now }, endsAt: { gt: now } },
+            take: 1,
+          },
+        },
+        orderBy: { endsAt: 'desc' },
+      }),
+      this.prisma.trafficPack.findMany({
+        where: {
+          userId,
+          entitlementGrant: options.unlinkedOnly ? null : undefined,
+          status: TrafficPackStatus.ACTIVE,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+        },
+        orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
+      }),
+      includeRecent
+        ? this.prisma.$queryRaw<
+            Array<{
+              day: string;
+              nodeId: string;
+              nodeLabel: string;
+              txBytes: bigint;
+              rxBytes: bigint;
+              accountedBytes: bigint;
+            }>
+          >(Prisma.sql`
+            SELECT
+              to_char(
+                rollup."bucketStart" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Shanghai',
+                'YYYY-MM-DD'
+              ) AS day,
+              rollup."nodeId" AS "nodeId",
+              node.label AS "nodeLabel",
+              COALESCE(SUM(rollup."txBytes"), 0)::bigint AS "txBytes",
+              COALESCE(SUM(rollup."rxBytes"), 0)::bigint AS "rxBytes",
+              COALESCE(SUM(COALESCE(
+                rollup."accountedBytes", rollup."txBytes" + rollup."rxBytes"
+              )), 0)::bigint AS "accountedBytes"
+            FROM "UsageRollup" rollup
+            INNER JOIN "Node" node ON node.id = rollup."nodeId"
+            WHERE rollup."userId" = ${userId}
+              AND rollup."bucketStart" >= ${rangeStart}
+              AND rollup."bucketStart" < ${rangeEnd}
+            GROUP BY day, rollup."nodeId", node.label
+            ORDER BY day ASC, node.label ASC
+          `)
+        : Promise.resolve([]),
+    ]);
     const cycle = subscription?.cycles[0];
     const baseRemaining = cycle
       ? Math.max(
@@ -1120,48 +1161,6 @@ export class ControlPlaneStoreService {
       (sum, pack) => sum + Number(pack.remainingBytes),
       0,
     );
-    const todayKey = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Shanghai',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(now);
-    const todayStart = new Date(`${todayKey}T00:00:00+08:00`);
-    const rangeStart = new Date(todayStart.getTime() - 6 * 24 * 60 * 60 * 1000);
-    const rangeEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
-    const recent = includeRecent
-      ? await this.prisma.$queryRaw<
-          Array<{
-            day: string;
-            nodeId: string;
-            nodeLabel: string;
-            txBytes: bigint;
-            rxBytes: bigint;
-            accountedBytes: bigint;
-          }>
-        >(Prisma.sql`
-          SELECT
-            to_char(
-              rollup."bucketStart" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Shanghai',
-              'YYYY-MM-DD'
-            ) AS day,
-            rollup."nodeId" AS "nodeId",
-            node.label AS "nodeLabel",
-            COALESCE(SUM(rollup."txBytes"), 0)::bigint AS "txBytes",
-            COALESCE(SUM(rollup."rxBytes"), 0)::bigint AS "rxBytes",
-            COALESCE(SUM(COALESCE(
-              rollup."accountedBytes", rollup."txBytes" + rollup."rxBytes"
-            )), 0)::bigint AS "accountedBytes"
-          FROM "UsageRollup" rollup
-          INNER JOIN "Node" node ON node.id = rollup."nodeId"
-          WHERE rollup."userId" = ${userId}
-            AND rollup."bucketStart" >= ${rangeStart}
-            AND rollup."bucketStart" < ${rangeEnd}
-          GROUP BY day, rollup."nodeId", node.label
-          ORDER BY day ASC, node.label ASC
-        `)
-      : [];
-
     return {
       subscriptionId: subscription?.id ?? null,
       consumedBytes: Number(

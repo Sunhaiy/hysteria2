@@ -70,6 +70,10 @@ test("login exposes the self-service password recovery flow", async () => {
   assert.match(experience, /placeholder="登录密码"/);
   assert.match(
     experience,
+    /cause instanceof ApiError\s*\? cause\.message\s*:\s*"验证码发送失败，请稍后再试。"/,
+  );
+  assert.match(
+    experience,
     /loginSubmitting \? "登录中\.\.\." : "登录"[\s\S]*?<Icon name="login"/,
   );
   const authSubmitStyles = styles.match(
@@ -130,9 +134,13 @@ test("member console sequences the anniversary gift before announcements", async
   assert.match(gift, /领取礼物/);
   assert.match(gift, /previewRevealed/);
   assert.match(gift, /FIRST ANNIVERSARY/);
+  assert.match(gift, /letter\.paragraphs/);
+  assert.match(gift, /letter\.signatureNote/);
   assert.match(settings, /周年礼物/);
   assert.match(settings, /预览礼物动画/);
   assert.match(settings, /anniversaryGiftOfferId/);
+  assert.match(settings, /anniversaryGiftLetterContent/);
+  assert.match(settings, /手写卡片文案/);
   assert.match(settings, /每次重新登录/);
   assert.match(settings, /关闭后不显示公告/);
   assert.match(styles, /@keyframes anniversary-confetti-fall/);

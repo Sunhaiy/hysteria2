@@ -2,8 +2,25 @@
 
 import { useState, type CSSProperties } from "react";
 import { formatBytes } from "@/lib/format";
-import type { AnniversaryGiftSummary } from "@/lib/types";
+import type {
+  AnniversaryGiftLetter,
+  AnniversaryGiftSummary,
+} from "@/lib/types";
 import { Icon } from "./icon";
+
+export const DEFAULT_ANNIVERSARY_GIFT_LETTER: AnniversaryGiftLetter = {
+  kicker: "FIRST ANNIVERSARY",
+  eyebrow: "一周年纪念函",
+  seal: "素",
+  title: "致一路同行的你",
+  greeting: "见字如面：",
+  paragraphs: [
+    "从第一次连接到今天，您已经与素心 Network 一起走过整整一年的有效订阅时光。",
+    "谢谢您把每一次出发交给我们。今天，我们也想认真地回赠一份心意。",
+  ],
+  signature: "素心 Network",
+  signatureNote: "写于我们的第一个周年纪念日",
+};
 
 const confetti = Array.from({ length: 24 }, (_, index) => ({
   id: index,
@@ -16,6 +33,7 @@ const confetti = Array.from({ length: 24 }, (_, index) => ({
 
 export function AnniversaryGiftDialog({
   gift,
+  letter = DEFAULT_ANNIVERSARY_GIFT_LETTER,
   revealed,
   preview = false,
   claiming = false,
@@ -24,6 +42,7 @@ export function AnniversaryGiftDialog({
   onClose,
 }: {
   gift: AnniversaryGiftSummary;
+  letter?: AnniversaryGiftLetter;
   revealed: boolean;
   preview?: boolean;
   claiming?: boolean;
@@ -34,6 +53,7 @@ export function AnniversaryGiftDialog({
   const [stage, setStage] = useState<"letter" | "ticket">("letter");
   const [previewRevealed, setPreviewRevealed] = useState(false);
   const isRevealed = revealed || previewRevealed;
+  const paragraphs = letter.paragraphs.filter((paragraph) => paragraph.trim());
 
   function claimGift() {
     if (preview) {
@@ -115,32 +135,28 @@ export function AnniversaryGiftDialog({
           </div>
         ) : stage === "letter" ? (
           <div className="anniversary-gift-stage anniversary-gift-letter-stage">
-            <span className="anniversary-gift-kicker">FIRST ANNIVERSARY</span>
+            <span className="anniversary-gift-kicker">{letter.kicker}</span>
             <div
               className="anniversary-gift-letter"
               aria-label="一周年手写纪念卡"
             >
               <div className="anniversary-gift-letter-heading">
-                <span>一周年纪念函</span>
-                <b aria-hidden="true">素</b>
+                <span>{letter.eyebrow}</span>
+                <b aria-hidden="true">{letter.seal}</b>
               </div>
-              <h2 id="anniversary-gift-title">致一路同行的你</h2>
+              <h2 id="anniversary-gift-title">{letter.title}</h2>
               <div
                 id="anniversary-gift-copy"
                 className="anniversary-gift-letter-message"
               >
-                <p>见字如面：</p>
-                <p>
-                  从第一次连接到今天，您已经与素心 Network
-                  一起走过整整一年的有效订阅时光。
-                </p>
-                <p>
-                  谢谢您把每一次出发交给我们。今天，我们也想认真地回赠一份心意。
-                </p>
+                <p>{letter.greeting}</p>
+                {paragraphs.map((paragraph, index) => (
+                  <p key={`${index}-${paragraph}`}>{paragraph}</p>
+                ))}
               </div>
               <div className="anniversary-gift-letter-signature">
-                <span>素心 Network</span>
-                <small>写于我们的第一个周年纪念日</small>
+                <span>{letter.signature}</span>
+                <small>{letter.signatureNote}</small>
               </div>
             </div>
             <div className="anniversary-gift-actions">
@@ -185,7 +201,7 @@ export function AnniversaryGiftDialog({
 
             <div className="anniversary-gift-ticket-note">
               <Icon name="check" />
-              仅限当前账号领取一次，领取后立即生效
+              <span>仅限当前账号领取一次，领取后立即生效</span>
             </div>
 
             {error ? (

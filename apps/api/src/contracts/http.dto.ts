@@ -94,6 +94,46 @@ export class UpdateSettingsDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(48)
+  anniversaryGiftLetterKicker?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  anniversaryGiftLetterEyebrow?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(8)
+  anniversaryGiftLetterSeal?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  anniversaryGiftLetterTitle?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  anniversaryGiftLetterGreeting?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  anniversaryGiftLetterContent?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  anniversaryGiftLetterSignature?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  anniversaryGiftLetterSignatureNote?: string;
+
+  @IsOptional()
+  @IsString()
   googleClientId?: string;
 
   @IsOptional()

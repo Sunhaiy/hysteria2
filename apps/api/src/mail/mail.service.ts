@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   Logger,
   ServiceUnavailableException,
@@ -23,10 +24,31 @@ type MailDeliveryError = {
   message?: unknown;
 };
 
+const COMMON_MAIL_DOMAIN_TYPOS = new Map<string, string>([
+  ['gamil.com', 'gmail.com'],
+  ['gmial.com', 'gmail.com'],
+  ['gmai.com', 'gmail.com'],
+  ['gmail.con', 'gmail.com'],
+  ['qq.con', 'qq.com'],
+  ['163.con', '163.com'],
+  ['126.con', '126.com'],
+  ['outlook.con', 'outlook.com'],
+  ['hotmail.con', 'hotmail.com'],
+  ['icloud.con', 'icloud.com'],
+]);
+
 function safeErrorField(value: unknown) {
   return typeof value === 'string' || typeof value === 'number'
     ? String(value)
     : '';
+}
+
+export function mailRecipientValidationMessage(email: string) {
+  const domain = email.trim().toLowerCase().split('@').at(-1) ?? '';
+  const suggestedDomain = COMMON_MAIL_DOMAIN_TYPOS.get(domain);
+  return suggestedDomain
+    ? `邮箱域名“${domain}”疑似填写错误，请改为“${suggestedDomain}”后重试。`
+    : null;
 }
 
 export function classifyMailDeliveryError(error: unknown) {
@@ -45,7 +67,8 @@ export function classifyMailDeliveryError(error: unknown) {
     return MAIL_DELIVERY_MESSAGES.mailboxFull;
   }
   if (
-    /5\.1\.[0136]|user unknown|no such user|does not exist|unknown recipient|invalid recipient|recipient address rejected/.test(
+    responseCode === 511 ||
+    /5\.1\.[0-6]|user unknown|no such user|no mailbox|does not exist|unknown recipient|invalid recipient|recipient address rejected/.test(
       description,
     )
   ) {
@@ -159,6 +182,11 @@ export class MailService {
     html: string;
     devNote: string;
   }) {
+    const recipientProblem = mailRecipientValidationMessage(input.to);
+    if (recipientProblem) {
+      throw new BadRequestException(recipientProblem);
+    }
+
     const cfg = await this.settings.getSmtpConfig();
     if (!cfg.configured || !cfg.host || !cfg.user || !cfg.pass) {
       // Dev fallback: surface in logs so the flow stays testable without SMTP.

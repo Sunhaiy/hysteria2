@@ -16,6 +16,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 import { postWalletEntry, recoverWalletCredit } from '../wallet/wallet-ledger';
 import { EntitlementService } from '../entitlement/entitlement.service';
+import { isGoPlanProduct } from '../catalog/catalog-product-policy';
 
 const referralAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const referralBonusProductId = 'system_referral_traffic_bonus';
@@ -308,7 +309,11 @@ export class ReferralService {
     }
     const planGrant = await tx.entitlementGrant.findUnique({
       where: { id: planGrantId },
-      include: { product: true },
+      include: {
+        product: {
+          include: { legacyPlan: { select: { slug: true } } },
+        },
+      },
     });
     if (
       !planGrant ||
@@ -317,7 +322,10 @@ export class ReferralService {
     ) {
       throw new ConflictException('Qualifying plan entitlement is missing');
     }
-    if (!planGrant.product.referralEligible) {
+    if (
+      !planGrant.product.referralEligible ||
+      isGoPlanProduct(planGrant.product)
+    ) {
       return { settled: false } as const;
     }
     const order = await tx.manualOrder.findUnique({ where: { id: orderId } });

@@ -51,28 +51,38 @@ export default function PortalPage() {
       const usageRequest = apiRequest<PortalUsageResponse>(
         "/api/portal/usage",
         { token },
-      ).then(
-        (data) => ({ data, message: null }),
-        (cause: unknown) => ({
-          data: null,
-          message:
-            cause instanceof ApiError
-              ? `流量数据加载失败：${cause.message}`
-              : "流量数据加载失败，请稍后重试。",
-        }),
       );
       const checkInRequest = apiRequest<DailyCheckInStatus>(
         "/api/portal/check-ins/today",
         { token },
-      ).then(
-        (data) => ({ data, message: null }),
-        (cause: unknown) => ({
-          data: null,
-          message:
+      );
+      const usageSettled = usageRequest
+        .then(
+          (data) => {
+            setUsage(data);
+            setUsageError(null);
+          },
+          (cause: unknown) => {
+            setUsageError(
+              cause instanceof ApiError
+                ? `流量数据加载失败：${cause.message}`
+                : "流量数据加载失败，请稍后重试。",
+            );
+          },
+        )
+        .finally(() => setUsageLoading(false));
+      const checkInSettled = checkInRequest.then(
+        (data) => {
+          setCheckIn(data);
+          setCheckInError(null);
+        },
+        (cause: unknown) => {
+          setCheckInError(
             cause instanceof ApiError
               ? cause.message
               : "签到状态加载失败，请稍后重试。",
-        }),
+          );
+        },
       );
       const nextOverview = await apiRequest<PortalOverviewResponse>(
         "/api/portal/subscription",
@@ -80,14 +90,7 @@ export default function PortalPage() {
       );
       setOverview(nextOverview);
       setEmptyState(false);
-      const [usageResult, checkInResult] = await Promise.all([
-        usageRequest,
-        checkInRequest,
-      ]);
-      if (usageResult.data) setUsage(usageResult.data);
-      setUsageError(usageResult.message);
-      if (checkInResult.data) setCheckIn(checkInResult.data);
-      setCheckInError(checkInResult.message);
+      await Promise.all([usageSettled, checkInSettled]);
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 404) {
         setOverview(null);
@@ -98,8 +101,6 @@ export default function PortalPage() {
       setError(
         cause instanceof ApiError ? cause.message : "用户中心加载失败。",
       );
-    } finally {
-      setUsageLoading(false);
     }
   }, [token]);
 
