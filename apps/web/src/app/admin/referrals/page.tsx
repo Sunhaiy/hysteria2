@@ -26,6 +26,7 @@ interface AdminReferralSummary {
 
 interface ReferralSettings {
   enabled: boolean;
+  inviteOnlyRegistration: boolean;
   inviterRewardBasisPoints: number;
   inviteeRewardBytes: number;
 }
@@ -161,6 +162,7 @@ export default function AdminReferralsPage() {
           token,
           body: {
             enabled: settings.enabled,
+            inviteOnlyRegistration: settings.inviteOnlyRegistration,
             inviterRewardBasisPoints: settings.inviterRewardBasisPoints,
           },
         }),
@@ -175,8 +177,8 @@ export default function AdminReferralsPage() {
 
   return (
     <ConsoleShell
-      title="拉新管理"
-      subtitle="管理邀请归因、奖励结算与退款追回"
+      title="邀请系统"
+      subtitle="管理邀请注册、奖励结算与退款追回"
       scope="Growth"
       navItems={adminNav}
       requireRole="admin"
@@ -227,8 +229,8 @@ export default function AdminReferralsPage() {
             <div className="referral-admin-settings">
               <div className="setting-toggle-row">
                 <div className="setting-toggle-copy">
-                  <strong>邀请活动</strong>
-                  <span>关闭后不接受新邀请，已有待成交关系仍可结算。</span>
+                  <strong>邀请与奖励</strong>
+                  <span>控制邀请码使用与新邀请归因，已有待结算奖励不受影响。</span>
                 </div>
                 <label className="toggle-switch">
                   <input
@@ -238,6 +240,9 @@ export default function AdminReferralsPage() {
                       setSettings({
                         ...settings,
                         enabled: event.target.checked,
+                        inviteOnlyRegistration: event.target.checked
+                          ? settings.inviteOnlyRegistration
+                          : false,
                       })
                     }
                   />
@@ -246,6 +251,33 @@ export default function AdminReferralsPage() {
                   </span>
                   <span className="toggle-label">
                     {settings.enabled ? "开启" : "关闭"}
+                  </span>
+                </label>
+              </div>
+              <div className="setting-toggle-row">
+                <div className="setting-toggle-copy">
+                  <strong>封车系统</strong>
+                  <span>
+                    开启后复用同一个邀请码作为唯一注册入口，邀请归因与奖励照常结算。
+                  </span>
+                </div>
+                <label className="toggle-switch">
+                  <input
+                    type="checkbox"
+                    checked={settings.inviteOnlyRegistration}
+                    disabled={!settings.enabled}
+                    onChange={(event) =>
+                      setSettings({
+                        ...settings,
+                        inviteOnlyRegistration: event.target.checked,
+                      })
+                    }
+                  />
+                  <span className="toggle-track">
+                    <span />
+                  </span>
+                  <span className="toggle-label">
+                    {settings.inviteOnlyRegistration ? "仅限邀请" : "自由注册"}
                   </span>
                 </label>
               </div>

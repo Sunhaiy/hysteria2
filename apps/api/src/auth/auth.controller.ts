@@ -45,7 +45,7 @@ export class AuthController {
   @UseGuards(ThrottlerGuard)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   requestRegisterCode(@Body() body: RequestRegisterCodeDto) {
-    return this.authService.requestRegisterCode(body.email);
+    return this.authService.requestRegisterCode(body.email, body.inviteCode);
   }
 
   @Post('auth/register')

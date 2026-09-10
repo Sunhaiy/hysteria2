@@ -1,4 +1,4 @@
-import { IsBoolean, IsInt, Max, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, Max, Min } from 'class-validator';
 
 export class UpdateReferralSettingsDto {
   @IsBoolean()
@@ -8,4 +8,8 @@ export class UpdateReferralSettingsDto {
   @Min(0)
   @Max(10_000)
   inviterRewardBasisPoints!: number;
+
+  @IsOptional()
+  @IsBoolean()
+  inviteOnlyRegistration?: boolean;
 }

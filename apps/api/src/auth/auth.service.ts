@@ -58,7 +58,7 @@ export class AuthService {
     return this.issueSession(user);
   }
 
-  async requestRegisterCode(rawEmail: string) {
+  async requestRegisterCode(rawEmail: string, inviteCode?: string) {
     if (!(await this.settings.isRegistrationEnabled())) {
       throw new BadRequestException('当前未开放注册，请联系管理员');
     }
@@ -68,6 +68,12 @@ export class AuthService {
     const existing = await this.store.findUserByEmail(email);
     if (existing) {
       throw new ConflictException('该邮箱已注册，请直接登录');
+    }
+
+    if (this.onboarding) {
+      await this.onboarding.validateRegistrationInvite(inviteCode);
+    } else if (await this.settings.isInviteOnlyRegistrationEnabled()) {
+      throw new BadRequestException('当前仅限邀请注册，请联系管理员');
     }
 
     const cooldown = await this.cache.get(`reg-cooldown:${email}`);
@@ -169,6 +175,11 @@ export class AuthService {
       // First-time third-party login = registration; honor the open-reg toggle.
       if (!(await this.settings.isRegistrationEnabled())) {
         throw new BadRequestException('当前未开放注册，请联系管理员');
+      }
+      if (await this.settings.isInviteOnlyRegistrationEnabled()) {
+        throw new BadRequestException(
+          '当前仅限邀请注册，请使用邀请码完成邮箱注册',
+        );
       }
       const passwordHash = await hash(`${randomUUID()}${randomUUID()}`, 10);
       const displayName =

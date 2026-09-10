@@ -1,4 +1,4 @@
-import { UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { compare, hashSync } from 'bcryptjs';
 import { AuthService } from './auth.service';
@@ -139,6 +139,7 @@ describe('AuthService sessions', () => {
     };
     const settings = {
       isRegistrationEnabled: jest.fn().mockResolvedValue(true),
+      isInviteOnlyRegistrationEnabled: jest.fn().mockResolvedValue(false),
     };
     const service = new AuthService(
       store as never,
@@ -153,5 +154,117 @@ describe('AuthService sessions', () => {
     ).rejects.toThrow('邮箱地址不存在或填写有误，请检查后重试。');
     expect(cache.del).toHaveBeenCalledWith('reg-code:wrong@example.com');
     expect(cache.del).toHaveBeenCalledWith('reg-cooldown:wrong@example.com');
+  });
+
+  it('checks the invite before creating and emailing a registration code', async () => {
+    const store = { findUserByEmail: jest.fn().mockResolvedValue(null) };
+    const cache = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+    };
+    const mail = {
+      sendVerificationCode: jest.fn().mockResolvedValue(undefined),
+      isConfigured: jest.fn().mockResolvedValue(true),
+    };
+    const settings = {
+      isRegistrationEnabled: jest.fn().mockResolvedValue(true),
+    };
+    const onboarding = {
+      validateRegistrationInvite: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new AuthService(
+      store as never,
+      {} as never,
+      cache as never,
+      mail as never,
+      settings as never,
+      onboarding as never,
+    );
+
+    await service.requestRegisterCode('New@Example.com', 'abcdefgh');
+
+    expect(onboarding.validateRegistrationInvite).toHaveBeenCalledWith(
+      'abcdefgh',
+    );
+    expect(mail.sendVerificationCode).toHaveBeenCalledWith(
+      'new@example.com',
+      expect.stringMatching(/^\d{6}$/),
+    );
+  });
+
+  it('does not send a registration code when invite validation fails', async () => {
+    const store = { findUserByEmail: jest.fn().mockResolvedValue(null) };
+    const cache = { get: jest.fn(), set: jest.fn() };
+    const mail = { sendVerificationCode: jest.fn() };
+    const settings = {
+      isRegistrationEnabled: jest.fn().mockResolvedValue(true),
+    };
+    const onboarding = {
+      validateRegistrationInvite: jest
+        .fn()
+        .mockRejectedValue(
+          new BadRequestException('当前仅限邀请注册，请填写邀请码'),
+        ),
+    };
+    const service = new AuthService(
+      store as never,
+      {} as never,
+      cache as never,
+      mail as never,
+      settings as never,
+      onboarding as never,
+    );
+
+    await expect(
+      service.requestRegisterCode('new@example.com'),
+    ).rejects.toThrow('当前仅限邀请注册，请填写邀请码');
+    expect(cache.set).not.toHaveBeenCalled();
+    expect(mail.sendVerificationCode).not.toHaveBeenCalled();
+  });
+
+  it('blocks first-time OAuth registration while existing OAuth users can log in', async () => {
+    const store = {
+      findUserByEmail: jest
+        .fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          id: 'user_1',
+          email: 'existing@example.com',
+          displayName: 'Existing',
+          passwordHash: 'unused',
+          role: 'member',
+          status: 'active',
+          sessionVersion: 1,
+        }),
+      createUser: jest.fn(),
+    };
+    const jwt = { signAsync: jest.fn().mockResolvedValue('signed-session') };
+    const cache = { set: jest.fn().mockResolvedValue(undefined) };
+    const settings = {
+      isRegistrationEnabled: jest.fn().mockResolvedValue(true),
+      isInviteOnlyRegistrationEnabled: jest.fn().mockResolvedValue(true),
+    };
+    const service = new AuthService(
+      store as never,
+      jwt as never,
+      cache as never,
+      {} as never,
+      settings as never,
+    );
+
+    await expect(
+      service.oauthLogin({
+        email: 'new@example.com',
+        displayName: 'New user',
+      }),
+    ).rejects.toThrow('当前仅限邀请注册，请使用邀请码完成邮箱注册');
+    await expect(
+      service.oauthLogin({
+        email: 'existing@example.com',
+        displayName: 'Existing',
+      }),
+    ).resolves.toHaveProperty('accessToken', 'signed-session');
+    expect(store.createUser).not.toHaveBeenCalled();
+    expect(settings.isInviteOnlyRegistrationEnabled).toHaveBeenCalledTimes(1);
   });
 });

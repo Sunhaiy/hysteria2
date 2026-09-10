@@ -9,6 +9,7 @@ import {
   IsOptional,
   IsString,
   Length,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -27,6 +28,13 @@ export class LoginDto {
 export class RequestRegisterCodeDto {
   @IsEmail({}, { message: '邮箱格式不正确，请检查后重试' })
   email!: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-HJ-NP-Z2-9]{8}$/i, {
+    message: '邀请码格式不正确，请填写 8 位邀请码',
+  })
+  inviteCode?: string;
 }
 
 export class AcknowledgeAnnouncementDto {
@@ -279,7 +287,9 @@ export class RegisterDto {
 
   @IsOptional()
   @IsString()
-  @Length(8, 8)
+  @Matches(/^[A-HJ-NP-Z2-9]{8}$/i, {
+    message: '邀请码格式不正确，请填写 8 位邀请码',
+  })
   inviteCode?: string;
 }
 

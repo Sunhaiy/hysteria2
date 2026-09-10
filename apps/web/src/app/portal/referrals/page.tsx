@@ -168,8 +168,8 @@ export default function PortalReferralsPage() {
   if (loading && !summary && !error) {
     return (
       <ConsoleShell
-        title="邀请奖励"
-        subtitle="邀请新会员完成首次套餐 CDK 兑换"
+        title="邀请系统"
+        subtitle="分享邀请码并查看好友奖励"
         scope="Referral"
         navItems={portalNav}
         requireRole="member"
@@ -181,8 +181,8 @@ export default function PortalReferralsPage() {
 
   return (
     <ConsoleShell
-      title="邀请奖励"
-      subtitle="邀请新会员完成首次套餐 CDK 兑换"
+      title="邀请系统"
+      subtitle="分享邀请码并查看好友奖励"
       scope="Referral"
       navItems={portalNav}
       requireRole="member"

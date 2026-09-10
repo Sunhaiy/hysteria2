@@ -125,6 +125,7 @@ describe('SettingsService cache', () => {
       name: 'Control Plane',
       fontWeight: 550,
       iconStrokeWidth: 2.2,
+      registration: { enabled: true, inviteOnly: false },
     });
   });
 
@@ -200,6 +201,30 @@ describe('SettingsService cache', () => {
       });
     },
   );
+
+  it('publishes the invite-only registration policy with site info', async () => {
+    const prisma = {
+      setting: {
+        findMany: jest.fn().mockResolvedValue([
+          { key: 'registration.enabled', value: 'true' },
+          { key: 'registration.inviteOnly', value: 'true' },
+        ]),
+      },
+    };
+    const cache = {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new SettingsService(
+      prisma as never,
+      {} as never,
+      cache as never,
+    );
+
+    await expect(service.getSiteInfo()).resolves.toMatchObject({
+      registration: { enabled: true, inviteOnly: true },
+    });
+  });
 
   it('returns the configured purchase notice with the portal branding', async () => {
     const prisma = {

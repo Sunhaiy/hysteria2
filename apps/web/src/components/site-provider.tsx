@@ -18,6 +18,10 @@ interface SiteInfo {
   iconUrl: string;
   fontWeight: number;
   iconStrokeWidth: number;
+  registration: {
+    enabled: boolean;
+    inviteOnly: boolean;
+  };
 }
 
 const defaultSite: SiteInfo = {
@@ -27,6 +31,10 @@ const defaultSite: SiteInfo = {
   iconUrl: "/brand-icon.svg",
   fontWeight: 400,
   iconStrokeWidth: 1.5,
+  registration: {
+    enabled: true,
+    inviteOnly: false,
+  },
 };
 
 const fontWeightStorageKey = "site-font-weight";
@@ -89,6 +97,10 @@ export function SiteProvider({ children }: { children: ReactNode }) {
         iconUrl: normalizeSiteIconUrl(info.iconUrl),
         fontWeight: normalizeFontWeight(info.fontWeight),
         iconStrokeWidth: normalizeIconStrokeWidth(info.iconStrokeWidth),
+        registration: {
+          enabled: info.registration?.enabled ?? true,
+          inviteOnly: info.registration?.inviteOnly ?? false,
+        },
       };
       document.documentElement.style.setProperty(
         "--font-weight-body",

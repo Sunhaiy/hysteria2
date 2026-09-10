@@ -6,8 +6,18 @@ const source = (path) =>
   readFile(new URL(`../src/${path}`, import.meta.url), "utf8");
 
 test("login exposes the self-service password recovery flow", async () => {
-  const [login, register, experience, forgot, shell, shader, styles] =
-    await Promise.all([
+  const [
+    login,
+    register,
+    experience,
+    forgot,
+    shell,
+    shader,
+    styles,
+    referralsAdmin,
+    siteProvider,
+    copy,
+  ] = await Promise.all([
       source("app/login/page.tsx"),
       source("app/register/page.tsx"),
       source("components/auth-experience.tsx"),
@@ -15,6 +25,9 @@ test("login exposes the self-service password recovery flow", async () => {
       source("components/auth-shell.tsx"),
       source("components/auth-shader-background.tsx"),
       source("app/globals.scss"),
+      source("app/admin/referrals/page.tsx"),
+      source("components/site-provider.tsx"),
+      source("lib/copy.ts"),
     ]);
 
   assert.match(login, /<AuthExperience initialMode="login"/);
@@ -75,6 +88,19 @@ test("login exposes the self-service password recovery flow", async () => {
     styles,
     /\.auth2-card\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1\.12fr\) minmax\(440px, 0\.88fr\);/s,
   );
+  assert.match(siteProvider, /inviteOnly:\s*boolean/);
+  assert.match(experience, /useSite\(\)/);
+  assert.match(experience, /inviteOnlyRegistration && inviteCode\.length !== 8/);
+  assert.match(experience, /body:\s*\{[\s\S]*?inviteCode: inviteCode \|\| undefined/);
+  assert.match(experience, /placeholder="8 位邀请码"[\s\S]*?required/);
+  assert.match(
+    experience,
+    /mode === "register" && \(inviteOnlyRegistration \|\| inviteCode\)/,
+  );
+  assert.match(referralsAdmin, /封车系统/);
+  assert.match(referralsAdmin, /邀请归因与奖励照常结算/);
+  assert.match(referralsAdmin, /inviteOnlyRegistration: settings\.inviteOnlyRegistration/);
+  assert.match(copy, /label: "邀请系统"/);
 });
 
 test("member console sequences the anniversary gift before announcements", async () => {

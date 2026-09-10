@@ -8,12 +8,15 @@ import { useAuth } from "./auth-provider";
 import { AuthShell } from "./auth-shell";
 import { Icon } from "./icon";
 import { OAuthButtons } from "./oauth-buttons";
+import { useSite } from "./site-provider";
 
 type AuthMode = "login" | "register";
 
 export function AuthExperience({ initialMode }: { initialMode: AuthMode }) {
   const { session, login, loading } = useAuth();
+  const site = useSite();
   const router = useRouter();
+  const inviteOnlyRegistration = site.registration.inviteOnly;
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -114,6 +117,10 @@ export function AuthExperience({ initialMode }: { initialMode: AuthMode }) {
       setRegisterError("请先填写邮箱");
       return;
     }
+    if (inviteOnlyRegistration && inviteCode.length !== 8) {
+      setRegisterError("当前仅限邀请注册，请填写 8 位邀请码");
+      return;
+    }
     setSending(true);
     setRegisterError(null);
     setRegisterNotice(null);
@@ -123,7 +130,10 @@ export function AuthExperience({ initialMode }: { initialMode: AuthMode }) {
         cooldownSeconds: number;
       }>("/api/auth/register/request-code", {
         method: "POST",
-        body: { email: registerEmail },
+        body: {
+          email: registerEmail,
+          inviteCode: inviteCode || undefined,
+        },
       });
       setCodeSent(true);
       setCooldown(result.cooldownSeconds || 60);
@@ -283,6 +293,30 @@ export function AuthExperience({ initialMode }: { initialMode: AuthMode }) {
                         : "获取验证码"}
                 </button>
               </div>
+              {inviteOnlyRegistration ? (
+                <label className="auth2-input">
+                  <span className="auth2-input-icon">
+                    <Icon name="group_add" />
+                  </span>
+                  <span className="auth2-field-body">
+                    <span className="auth2-field-label">邀请码</span>
+                    <input
+                      value={inviteCode}
+                      onChange={(event) =>
+                        setInviteCode(
+                          event.target.value
+                            .toUpperCase()
+                            .replace(/[^A-HJ-NP-Z2-9]/g, "")
+                            .slice(0, 8),
+                        )
+                      }
+                      placeholder="8 位邀请码"
+                      autoComplete="off"
+                      required
+                    />
+                  </span>
+                </label>
+              ) : null}
               <label className="auth2-input">
                 <span className="auth2-input-icon">
                   <Icon name="hash" />
@@ -333,7 +367,9 @@ export function AuthExperience({ initialMode }: { initialMode: AuthMode }) {
                 <Icon name="edit" />
                 <span>
                   <strong>选填信息</strong>
-                  <small>邀请码与显示名称</small>
+                  <small>
+                    {inviteOnlyRegistration ? "显示名称" : "邀请码与显示名称"}
+                  </small>
                 </span>
                 <Icon name="arrow_down" className="auth2-optional-chevron" />
               </button>
@@ -347,27 +383,29 @@ export function AuthExperience({ initialMode }: { initialMode: AuthMode }) {
               >
                 <div className="auth2-optional-clip">
                   <div className="auth2-field-stack auth2-optional-fields">
-                    <label className="auth2-input">
-                      <span className="auth2-input-icon">
-                        <Icon name="group_add" />
-                      </span>
-                      <span className="auth2-field-body">
-                        <span className="auth2-field-label">邀请码</span>
-                        <input
-                          value={inviteCode}
-                          onChange={(event) =>
-                            setInviteCode(
-                              event.target.value
-                                .toUpperCase()
-                                .replace(/[^A-HJ-NP-Z2-9]/g, "")
-                                .slice(0, 8),
-                            )
-                          }
-                          placeholder="邀请码（选填）"
-                          autoComplete="off"
-                        />
-                      </span>
-                    </label>
+                    {!inviteOnlyRegistration ? (
+                      <label className="auth2-input">
+                        <span className="auth2-input-icon">
+                          <Icon name="group_add" />
+                        </span>
+                        <span className="auth2-field-body">
+                          <span className="auth2-field-label">邀请码</span>
+                          <input
+                            value={inviteCode}
+                            onChange={(event) =>
+                              setInviteCode(
+                                event.target.value
+                                  .toUpperCase()
+                                  .replace(/[^A-HJ-NP-Z2-9]/g, "")
+                                  .slice(0, 8),
+                              )
+                            }
+                            placeholder="邀请码（选填）"
+                            autoComplete="off"
+                          />
+                        </span>
+                      </label>
+                    ) : null}
                     <label className="auth2-input">
                       <span className="auth2-input-icon">
                         <Icon name="account_circle" />
@@ -404,6 +442,7 @@ export function AuthExperience({ initialMode }: { initialMode: AuthMode }) {
                 !codeSent ||
                 code.length !== 6 ||
                 registerPassword.length < 8 ||
+                (inviteOnlyRegistration && inviteCode.length !== 8) ||
                 (inviteCode.length > 0 && inviteCode.length !== 8)
               }
             >
@@ -413,7 +452,9 @@ export function AuthExperience({ initialMode }: { initialMode: AuthMode }) {
         )}
       </div>
 
-      {mode === "register" && inviteCode ? null : <OAuthButtons />}
+      {mode === "register" && (inviteOnlyRegistration || inviteCode) ? null : (
+        <OAuthButtons />
+      )}
 
       <div className="auth2-foot">
         {mode === "login" ? "还没有账号？" : "已有账号？"}

@@ -580,4 +580,89 @@ describe('ReferralService read models', () => {
       }),
     );
   });
+
+  describe('invite-only registration settings', () => {
+    it('persists the invite-only state and writes the resolved audit metadata', async () => {
+      const prisma = {
+        auditLog: { create: jest.fn().mockResolvedValue({}) },
+      };
+      const settings = {
+        getReferralConfig: jest
+          .fn()
+          .mockResolvedValueOnce({
+            enabled: true,
+            inviteOnlyRegistration: false,
+            inviterRewardBasisPoints: 1000,
+            inviteeRewardBytes: 1,
+          })
+          .mockResolvedValueOnce({
+            enabled: true,
+            inviteOnlyRegistration: true,
+            inviterRewardBasisPoints: 1000,
+            inviteeRewardBytes: 1,
+          }),
+        setMany: jest.fn().mockResolvedValue(undefined),
+      };
+      const service = new ReferralService(
+        prisma as never,
+        settings as never,
+        {} as never,
+      );
+
+      await expect(
+        service.updateSettings(
+          {
+            enabled: true,
+            inviterRewardBasisPoints: 1000,
+            inviteOnlyRegistration: true,
+          },
+          'admin_1',
+        ),
+      ).resolves.toMatchObject({ inviteOnlyRegistration: true });
+      expect(settings.setMany).toHaveBeenCalledWith({
+        'referral.enabled': 'true',
+        'referral.inviterRewardBasisPoints': '1000',
+        'registration.inviteOnly': 'true',
+      });
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: {
+          actorId: 'admin_1',
+          action: 'referral.settings.updated',
+          targetType: 'referral_settings',
+          metadata: {
+            enabled: true,
+            inviterRewardBasisPoints: 1000,
+            inviteOnlyRegistration: true,
+          },
+        },
+      });
+    });
+
+    it('rejects invite-only registration when the invitation activity is off', async () => {
+      const settings = {
+        getReferralConfig: jest.fn().mockResolvedValue({
+          enabled: true,
+          inviteOnlyRegistration: false,
+        }),
+        setMany: jest.fn(),
+      };
+      const service = new ReferralService(
+        {} as never,
+        settings as never,
+        {} as never,
+      );
+
+      await expect(
+        service.updateSettings(
+          {
+            enabled: false,
+            inviterRewardBasisPoints: 1000,
+            inviteOnlyRegistration: true,
+          },
+          'admin_1',
+        ),
+      ).rejects.toThrow('开启封车系统前，必须先开启邀请与奖励');
+      expect(settings.setMany).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -37,7 +37,7 @@ export const adminNav: NavItem[] = [
   },
   {
     href: "/admin/referrals",
-    label: "拉新管理",
+    label: "邀请系统",
     icon: "group_add",
     meta: "GROW",
     group: "客户与支持",
@@ -142,7 +142,7 @@ export const portalNav: NavItem[] = [
   },
   {
     href: "/portal/referrals",
-    label: "邀请奖励",
+    label: "邀请系统",
     icon: "portal_referrals",
     meta: "INVITE",
   },

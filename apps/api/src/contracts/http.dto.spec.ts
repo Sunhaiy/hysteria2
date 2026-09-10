@@ -44,4 +44,21 @@ describe('email request DTOs', () => {
       );
     },
   );
+
+  it('validates the optional invitation code alphabet', async () => {
+    const valid = Object.assign(new RequestRegisterCodeDto(), {
+      email: 'new@example.com',
+      inviteCode: 'ABCDEFGH',
+    });
+    const invalid = Object.assign(new RequestRegisterCodeDto(), {
+      email: 'new@example.com',
+      inviteCode: 'INVALID1',
+    });
+
+    await expect(validate(valid)).resolves.toEqual([]);
+    const errors = await validate(invalid);
+    expect(Object.values(errors[0]?.constraints ?? {})).toContain(
+      '邀请码格式不正确，请填写 8 位邀请码',
+    );
+  });
 });
