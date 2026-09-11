@@ -13,10 +13,7 @@ import { pageResponse, parsePage, type PageQuery } from '../common/pagination';
 import { EntitlementService } from '../entitlement/entitlement.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
-import {
-  goPlanActivityExclusionWhere,
-  isGoPlanProduct,
-} from '../catalog/catalog-product-policy';
+import { isGoPlanProduct } from '../catalog/catalog-product-policy';
 
 const GIB = 1024 ** 3;
 const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
@@ -247,7 +244,6 @@ export class CheckInService {
           series: {
             in: [CatalogProductSeries.STANDARD, CatalogProductSeries.ULTRA],
           },
-          NOT: goPlanActivityExclusionWhere,
         },
       },
       include: {

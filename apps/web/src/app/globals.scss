@@ -11435,14 +11435,14 @@ select.control {
 }
 
 .portal-quota-summary {
-  grid-template-columns: minmax(190px, 0.78fr) minmax(220px, 1.22fr);
+  grid-template-columns: minmax(230px, 0.88fr) minmax(210px, 1.12fr);
   align-items: center;
   gap: 20px;
 }
 
 .portal-quota-numbers {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(94px, 0.88fr) minmax(124px, 1.12fr);
   min-width: 0;
 }
 
@@ -11458,11 +11458,10 @@ select.control {
 }
 
 .portal-quota-numbers strong {
-  overflow: hidden;
+  overflow: visible;
   color: var(--text-primary);
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

@@ -119,7 +119,7 @@ describe('CheckInService', () => {
     expect(tx.quotaBucket.update).not.toHaveBeenCalled();
   });
 
-  it('accepts Start-and-above standard and Ultra grants while excluding Go', async () => {
+  it('queries all active Start-and-above candidates without nullable relation exclusions', async () => {
     const { service, tx } = setup();
 
     await service.getToday('user-1', new Date('2026-09-07T04:00:00Z'));
@@ -130,21 +130,13 @@ describe('CheckInService', () => {
         where: {
           product: {
             series: { in: string[] };
-            NOT: {
-              OR: Array<Record<string, unknown>>;
-            };
+            NOT?: unknown;
           };
         };
       },
     ];
     expect(request.where.product.series.in).toEqual(['STANDARD', 'ULTRA']);
-    expect(request.where.product.NOT.OR).toEqual(
-      expect.arrayContaining([
-        { purchaseLimitKey: 'trial-go' },
-        { slug: { in: ['go', 'plan-go'] } },
-        { legacyPlan: { is: { slug: 'go' } } },
-      ]),
-    );
+    expect(request.where.product.NOT).toBeUndefined();
   });
 
   it('rejects a migrated Go grant even if the database query returns it', async () => {

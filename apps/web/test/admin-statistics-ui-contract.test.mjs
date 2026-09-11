@@ -70,4 +70,16 @@ test("member overview combines billed quota progress with membership status", as
     styles,
     /\.portal-primary-metrics\s*\{[^}]*grid-template-columns:\s*minmax\(440px,\s*2fr\)[^}]*1\.28fr/s,
   );
+  assert.match(
+    styles,
+    /\.portal-quota-summary\s*\{[^}]*grid-template-columns:\s*minmax\(230px,\s*0\.88fr\)\s*minmax\(210px,\s*1\.12fr\)/s,
+  );
+  assert.match(
+    styles,
+    /\.portal-quota-numbers\s*\{[^}]*grid-template-columns:\s*minmax\(94px,\s*0\.88fr\)\s*minmax\(124px,\s*1\.12fr\)/s,
+  );
+  assert.match(
+    styles,
+    /\.portal-quota-numbers strong\s*\{[^}]*overflow:\s*visible[^}]*font-size:\s*18px/s,
+  );
 });
