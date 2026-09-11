@@ -260,20 +260,27 @@ test("member access prioritizes Clash and keeps subscription details aligned", a
 });
 
 test("support tickets are available to members and administrators", async () => {
-  const [copy, memberTickets, adminTickets] = await Promise.all([
+  const [copy, memberTickets, adminTickets, styles] = await Promise.all([
     source("lib/copy.ts"),
     source("app/portal/tickets/page.tsx"),
     source("app/admin/tickets/page.tsx"),
+    source("app/globals.scss"),
   ]);
 
   assert.match(copy, /\/portal\/tickets/);
   assert.match(copy, /\/admin\/tickets/);
   assert.match(memberTickets, /\/api\/portal\/tickets/);
   assert.match(memberTickets, /\/api\/portal\/announcement\/current/);
-  assert.match(memberTickets, /className="purchase-notice"/);
-  assert.match(memberTickets, /className="purchase-notice-icon"/);
+  assert.match(memberTickets, /ticket-announcement/);
+  assert.match(memberTickets, /aria-expanded=\{announcementOpen\}/);
+  assert.match(memberTickets, /展开公告/);
+  assert.match(memberTickets, /收起公告/);
   assert.match(memberTickets, /AnnouncementRichContent/);
   assert.match(memberTickets, /ticket-announcement-content/);
+  assert.doesNotMatch(
+    styles,
+    /\.ticket-announcement-content[^}]*overflow:\s*hidden auto/,
+  );
   assert.match(
     memberTickets,
     /disabled=\{busy \|\| !subject\.trim\(\) \|\| !message\.trim\(\)\}/,

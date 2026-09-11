@@ -48,6 +48,7 @@ export default function PortalTicketsPage() {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [announcement, setAnnouncement] = useState<Announcement | null>(null);
+  const [announcementOpen, setAnnouncementOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
 
@@ -92,7 +93,10 @@ export default function PortalTicketsPage() {
       "/api/portal/announcement/current",
       { token, signal: controller.signal },
     )
-      .then((response) => setAnnouncement(response.announcement))
+      .then((response) => {
+        setAnnouncement(response.announcement);
+        setAnnouncementOpen(false);
+      })
       .catch((cause) => {
         if (!(cause instanceof DOMException && cause.name === "AbortError")) {
           setAnnouncement(null);
@@ -182,15 +186,45 @@ export default function PortalTicketsPage() {
       }
     >
       {announcement ? (
-        <section className="purchase-notice" aria-label="服务公告">
-          <span className="purchase-notice-icon" aria-hidden="true">
-            <Icon name="warning" />
-          </span>
-          <AnnouncementRichContent
-            className="ticket-announcement-content"
-            html={announcement.contentHtml}
-            fallback={announcement.content}
-          />
+        <section
+          className={`ticket-announcement${announcementOpen ? " is-open" : ""}`}
+          aria-label="服务公告"
+        >
+          <div className="ticket-announcement-header">
+            <span className="ticket-announcement-icon" aria-hidden="true">
+              <Icon name="warning" />
+            </span>
+            <div className="ticket-announcement-heading">
+              <strong>服务公告</strong>
+              <p className="ticket-announcement-preview">
+                {announcement.content.trim() ||
+                  "公告包含图片内容，请展开查看。"}
+              </p>
+            </div>
+            <button
+              className="ghost-button compact ticket-announcement-toggle"
+              type="button"
+              aria-expanded={announcementOpen}
+              aria-controls="ticket-service-announcement"
+              onClick={() => setAnnouncementOpen((current) => !current)}
+            >
+              {announcementOpen ? "收起公告" : "展开公告"}
+              <Icon name="arrow_down" />
+            </button>
+          </div>
+          <div
+            id="ticket-service-announcement"
+            className="ticket-announcement-body"
+            aria-hidden={!announcementOpen}
+          >
+            <div className="ticket-announcement-body-inner">
+              <AnnouncementRichContent
+                className="ticket-announcement-content"
+                html={announcement.contentHtml}
+                fallback={announcement.content}
+              />
+            </div>
+          </div>
         </section>
       ) : null}
       {error ? <div className="feedback error">{error}</div> : null}
