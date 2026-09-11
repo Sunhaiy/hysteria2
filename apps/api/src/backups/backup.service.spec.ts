@@ -43,9 +43,18 @@ describe('BackupService archive validation', () => {
     const asset = Buffer.from('asset');
     await mkdir(join(source, 'files', 'tutorial-images'), { recursive: true });
     await mkdir(join(source, 'files', 'tutorial-assets'), { recursive: true });
+    await mkdir(join(source, 'files', 'seo-images'), { recursive: true });
+    await mkdir(join(source, 'files', 'announcement-images'), {
+      recursive: true,
+    });
     await writeFile(join(source, 'database.dump'), database);
     await writeFile(
       join(source, 'files', 'tutorial-images', 'one.webp'),
+      asset,
+    );
+    await writeFile(join(source, 'files', 'seo-images', 'cover.webp'), asset);
+    await writeFile(
+      join(source, 'files', 'announcement-images', 'notice.webp'),
       asset,
     );
     await writeFile(
@@ -68,6 +77,16 @@ describe('BackupService archive validation', () => {
             path: 'files/tutorial-images/one.webp',
             size: asset.length,
             sha256: checksum,
+          },
+          {
+            path: 'files/seo-images/cover.webp',
+            size: asset.length,
+            sha256: sha256(asset),
+          },
+          {
+            path: 'files/announcement-images/notice.webp',
+            size: asset.length,
+            sha256: sha256(asset),
           },
         ],
       }),
@@ -94,7 +113,15 @@ describe('BackupService archive validation', () => {
     const service = new BackupService();
     const path = await archive();
     const validated = await service.validateArchive(path);
-    expect(validated.manifest.files).toHaveLength(1);
+    expect(validated.manifest.files).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: 'files/tutorial-images/one.webp' }),
+        expect.objectContaining({ path: 'files/seo-images/cover.webp' }),
+        expect.objectContaining({
+          path: 'files/announcement-images/notice.webp',
+        }),
+      ]),
+    );
     await rm(validated.extractedDirectory, { recursive: true, force: true });
 
     const imported = await service.importArchive({

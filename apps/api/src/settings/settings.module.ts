@@ -6,6 +6,11 @@ import {
   AdminTutorialAssetsController,
   PublicTutorialAssetsController,
 } from './tutorial-assets.controller';
+import {
+  AdminAnnouncementImagesController,
+  PublicAnnouncementImagesController,
+} from './announcement-images.controller';
+import { AnnouncementImagesService } from './announcement-images.service';
 
 @Global()
 @Module({
@@ -14,8 +19,10 @@ import {
     PublicSiteController,
     AdminTutorialAssetsController,
     PublicTutorialAssetsController,
+    AdminAnnouncementImagesController,
+    PublicAnnouncementImagesController,
   ],
-  providers: [SettingsService],
+  providers: [SettingsService, AnnouncementImagesService],
   exports: [SettingsService],
 })
 export class SettingsModule {}

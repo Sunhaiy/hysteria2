@@ -7241,9 +7241,11 @@ select.control {
 }
 
 .announcement-dialog {
-  width: min(520px, 100%);
+  display: flex;
+  flex-direction: column;
+  width: min(640px, 100%);
   max-height: min(680px, calc(100dvh - 40px));
-  overflow-y: auto;
+  overflow: hidden;
   padding: 28px;
   border: 1px solid var(--border-default);
   border-radius: 8px;
@@ -7259,19 +7261,12 @@ select.control {
   font-weight: 700;
 }
 
-.announcement-dialog h2 {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 22px;
-  line-height: 1.35;
-}
-
 .announcement-content {
-  margin: 18px 0 24px;
+  min-height: 0;
+  margin: 10px -8px 22px 0;
+  padding-right: 8px;
   color: var(--text-muted);
-  line-height: 1.75;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
+  overflow: hidden auto;
 }
 
 .announcement-confirm {
@@ -7282,6 +7277,127 @@ select.control {
 .announcement-editor {
   min-height: 150px;
   resize: vertical;
+}
+
+.announcement-content-field {
+  gap: 9px;
+}
+
+.announcement-editor-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.announcement-rich-editor .seo-editor-scope {
+  min-height: 360px;
+}
+
+.announcement-rich-editor .simple-editor-content,
+.announcement-rich-editor
+  .simple-editor-content
+  .tiptap.ProseMirror.simple-editor {
+  min-height: 312px;
+}
+
+.announcement-rich-editor
+  .simple-editor-content
+  .tiptap.ProseMirror.simple-editor {
+  padding: 24px clamp(18px, 3vw, 34px) 64px;
+}
+
+.announcement-editor-help {
+  line-height: 1.6;
+}
+
+.announcement-rich-content {
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
+.announcement-rich-content > :first-child {
+  margin-top: 0;
+}
+
+.announcement-rich-content > :last-child {
+  margin-bottom: 0;
+}
+
+.announcement-rich-content h2,
+.announcement-rich-content h3,
+.announcement-rich-content h4 {
+  margin: 18px 0 8px;
+  color: var(--text-primary);
+  letter-spacing: 0;
+  line-height: 1.45;
+}
+
+.announcement-rich-content h2 {
+  font-size: 22px;
+}
+
+.announcement-rich-content h3 {
+  font-size: 18px;
+}
+
+.announcement-rich-content h4 {
+  font-size: 16px;
+}
+
+.announcement-rich-content p,
+.announcement-rich-content blockquote,
+.announcement-rich-content ul,
+.announcement-rich-content ol,
+.announcement-rich-content pre {
+  margin: 0 0 12px;
+}
+
+.announcement-rich-content ul,
+.announcement-rich-content ol {
+  padding-left: 22px;
+}
+
+.announcement-rich-content blockquote {
+  padding: 10px 14px;
+  border-left: 3px solid var(--accent-500);
+  background: var(--bg-panel-alt);
+}
+
+.announcement-rich-content pre {
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: var(--bg-panel-alt);
+}
+
+.announcement-rich-content a {
+  color: var(--accent-600);
+  font-weight: 650;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.announcement-rich-content img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: 440px;
+  margin: 14px auto;
+  border: 1px solid var(--border-default);
+  border-radius: 7px;
+  object-fit: contain;
+}
+
+.announcement-rich-content hr {
+  margin: 18px 0;
+  border: 0;
+  border-top: 1px solid var(--border-default);
 }
 
 .anniversary-gift-backdrop {
@@ -7850,6 +7966,17 @@ select.control {
   .announcement-dialog {
     max-height: calc(100dvh - 24px);
     padding: 22px 18px;
+  }
+
+  .announcement-rich-editor .seo-editor-scope {
+    min-height: 320px;
+  }
+
+  .announcement-rich-editor .simple-editor-content,
+  .announcement-rich-editor
+    .simple-editor-content
+    .tiptap.ProseMirror.simple-editor {
+    min-height: 272px;
   }
 
   .anniversary-gift-backdrop {
@@ -12109,6 +12236,22 @@ select.control {
   display: grid;
   gap: 5px;
   min-width: 0;
+}
+
+.purchase-notice .ticket-announcement-content {
+  display: block;
+  max-height: 280px;
+  min-width: 0;
+  overflow: hidden auto;
+  padding-right: 6px;
+  font-size: 12px;
+}
+
+.purchase-notice .ticket-announcement-content h2,
+.purchase-notice .ticket-announcement-content h3,
+.purchase-notice .ticket-announcement-content h4 {
+  margin-top: 8px;
+  font-size: 14px;
 }
 
 .purchase-notice strong {

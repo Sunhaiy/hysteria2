@@ -1,7 +1,7 @@
 export const BACKUP_FORMAT = 'hysteria2-control-plane-backup';
 export const BACKUP_FORMAT_VERSION = 2;
 export const CURRENT_DATABASE_SCHEMA_VERSION =
-  '20260907210000_business_integrity';
+  '20260910190200_seo_generation_observability';
 export const RESTORE_CONFIRMATION = 'RESTORE';
 
 export type BackupSource = 'scheduled' | 'manual' | 'imported' | 'pre_restore';

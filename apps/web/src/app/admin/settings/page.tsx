@@ -1,6 +1,8 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
+import type { JSONContent } from "@tiptap/react";
 import { ConsoleShell } from "@/components/console-shell";
 import {
   AnniversaryGiftDialog,
@@ -13,10 +15,23 @@ import { useAuth } from "@/components/auth-provider";
 import { Toast, useToast } from "@/components/toast";
 import { apiRequest, ApiError } from "@/lib/api";
 import { adminNav } from "@/lib/copy";
+import {
+  announcementDocumentStats,
+  EMPTY_ANNOUNCEMENT_DOCUMENT,
+  legacyAnnouncementDocument,
+} from "@/lib/announcement";
 import type {
   AnniversaryGiftLetter,
   AnniversaryGiftSummary,
 } from "@/lib/types";
+
+const SimpleEditor = dynamic(
+  () =>
+    import("@/components/tiptap-templates/simple/simple-editor").then(
+      (module) => module.SimpleEditor,
+    ),
+  { ssr: false },
+);
 
 interface OAuthProviderState {
   clientId: string;
@@ -76,6 +91,8 @@ interface SettingsResponse {
     enabled: boolean;
     title: string;
     content: string;
+    contentJson?: JSONContent;
+    contentHtml: string;
     version: string;
   };
   anniversaryGift?: {
@@ -133,8 +150,12 @@ export default function AdminSettingsPage() {
   const [registrationEnabled, setRegistrationEnabled] = useState(true);
   const [savingRegistration, setSavingRegistration] = useState(false);
   const [announcementEnabled, setAnnouncementEnabled] = useState(false);
-  const [announcementTitle, setAnnouncementTitle] = useState("服务公告");
-  const [announcementContent, setAnnouncementContent] = useState("");
+  const [announcementContent, setAnnouncementContent] = useState<JSONContent>(
+    EMPTY_ANNOUNCEMENT_DOCUMENT,
+  );
+  const [announcementDocumentKey, setAnnouncementDocumentKey] = useState(
+    "announcement-loading",
+  );
   const [savingAnnouncement, setSavingAnnouncement] = useState(false);
   const [anniversaryGiftEnabled, setAnniversaryGiftEnabled] = useState(false);
   const [anniversaryGiftOfferId, setAnniversaryGiftOfferId] = useState("");
@@ -195,8 +216,14 @@ export default function AdminSettingsPage() {
     setConfigured(data.smtp.configured);
     setRegistrationEnabled(data.registrationEnabled);
     setAnnouncementEnabled(data.announcement.enabled);
-    setAnnouncementTitle(data.announcement.title);
-    setAnnouncementContent(data.announcement.content);
+    setAnnouncementContent(
+      data.announcement.contentJson ??
+        legacyAnnouncementDocument(
+          data.announcement.title,
+          data.announcement.content,
+        ),
+    );
+    setAnnouncementDocumentKey(data.announcement.version);
     setAnniversaryGiftEnabled(data.anniversaryGift?.enabled ?? false);
     setAnniversaryGiftOfferId(data.anniversaryGift?.offerId ?? "");
     setAnniversaryGiftOptions(data.anniversaryGift?.options ?? []);
@@ -346,8 +373,7 @@ export default function AdminSettingsPage() {
         token,
         body: {
           announcementEnabled,
-          announcementTitle,
-          announcementContent,
+          announcementContentJson: announcementContent,
         },
       });
       applySettings(data);
@@ -357,6 +383,16 @@ export default function AdminSettingsPage() {
     } finally {
       setSavingAnnouncement(false);
     }
+  }
+
+  async function uploadAnnouncementImage(file: File) {
+    if (!token) throw new Error("登录状态已失效");
+    const body = new FormData();
+    body.append("file", file);
+    return apiRequest<{ id: string; url: string }>(
+      "/api/admin/settings/announcement/images",
+      { method: "POST", token, body },
+    );
   }
 
   async function saveAnniversaryGift() {
@@ -384,9 +420,7 @@ export default function AdminSettingsPage() {
       });
       applySettings(data);
       showToast(
-        data.anniversaryGift?.enabled
-          ? "周年礼物已启用"
-          : "周年礼物已暂停",
+        data.anniversaryGift?.enabled ? "周年礼物已启用" : "周年礼物已暂停",
       );
     } catch (cause) {
       setError(
@@ -709,6 +743,7 @@ export default function AdminSettingsPage() {
     permanent: true,
     available: true,
   };
+  const announcementStats = announcementDocumentStats(announcementContent);
 
   return (
     <ConsoleShell
@@ -812,7 +847,10 @@ export default function AdminSettingsPage() {
                   }
                 />
                 <span className="typography-weight-preview icon-stroke-preview">
-                  <Icon name="space_dashboard" strokeWidth={siteIconStrokeWidth} />
+                  <Icon
+                    name="space_dashboard"
+                    strokeWidth={siteIconStrokeWidth}
+                  />
                   <Icon name="group" strokeWidth={siteIconStrokeWidth} />
                   <Icon name="settings" strokeWidth={siteIconStrokeWidth} />
                   <span>Hugeicons 线宽预览</span>
@@ -924,7 +962,7 @@ export default function AdminSettingsPage() {
 
           <Panel
             title="会员公告"
-            copy="启用后，会员每次重新登录都会看到公告弹窗；点击我已知晓后，本次登录内不再重复显示。关闭后不显示公告。"
+            copy="标题和正文已合并为一份公告内容；支持长文、图片与链接。会员确认后，本次登录内不再重复显示。"
           >
             <div className="setting-toggle-row">
               <div className="setting-toggle-copy">
@@ -953,30 +991,31 @@ export default function AdminSettingsPage() {
                 </span>
               </label>
             </div>
-            <div className="form-grid">
-              <label className="field">
-                <span className="fine-print">公告标题</span>
-                <input
-                  className="control"
-                  value={announcementTitle}
-                  onChange={(event) => setAnnouncementTitle(event.target.value)}
-                  maxLength={80}
-                  placeholder="服务公告"
-                />
-              </label>
-              <label className="field">
-                <span className="fine-print">公告正文</span>
-                <textarea
-                  className="control announcement-editor"
-                  value={announcementContent}
-                  onChange={(event) =>
-                    setAnnouncementContent(event.target.value)
+            <div className="field announcement-content-field">
+              <div className="announcement-editor-heading">
+                <span className="fine-print">公告内容</span>
+                <span className="fine-print">
+                  {announcementStats.textLength.toLocaleString()} / 30,000 字
+                </span>
+              </div>
+              <div className="announcement-rich-editor">
+                <SimpleEditor
+                  content={announcementContent}
+                  documentKey={announcementDocumentKey}
+                  ariaLabel="会员公告编辑区"
+                  placeholder="直接写下完整公告，可使用标题、图片和链接"
+                  onChange={setAnnouncementContent}
+                  uploadImage={async (file) =>
+                    (await uploadAnnouncementImage(file)).url
                   }
-                  maxLength={6000}
-                  placeholder="填写需要会员确认的重要内容"
-                  rows={7}
+                  onUploadError={(uploadError) =>
+                    showToast(uploadError.message, "error")
+                  }
                 />
-              </label>
+              </div>
+              <span className="fine-print announcement-editor-help">
+                选中文字可添加链接；会员点击链接时会在新页面打开。
+              </span>
             </div>
             <div className="toolbar-actions">
               <button
@@ -984,7 +1023,8 @@ export default function AdminSettingsPage() {
                 type="button"
                 disabled={
                   savingAnnouncement ||
-                  (announcementEnabled && !announcementContent.trim())
+                  announcementStats.textLength > 30_000 ||
+                  (announcementEnabled && !announcementStats.hasContent)
                 }
                 onClick={() => void saveAnnouncement()}
               >
@@ -1040,7 +1080,8 @@ export default function AdminSettingsPage() {
                   <option value="">请选择永久流量包</option>
                   {anniversaryGiftOptions.map((option) => (
                     <option value={option.offerId} key={option.offerId}>
-                      {option.name} · {Math.round(option.trafficBytes / 1024 ** 3)}
+                      {option.name} ·{" "}
+                      {Math.round(option.trafficBytes / 1024 ** 3)}
                       GB · 永久有效
                     </option>
                   ))}

@@ -423,6 +423,8 @@ describe('SettingsService cache', () => {
     const first = await service.getPendingAnnouncement('session_1');
     expect(first?.title).toBe('线路维护');
     expect(first?.content).toBe('今晚 23:00 进行维护。');
+    expect(first?.contentHtml).toContain('<h2');
+    expect(first?.contentHtml).toContain('今晚 23:00 进行维护。');
     expect(first?.version).toMatch(/^[a-f0-9]{64}$/);
 
     await service.acknowledgeAnnouncement('session_1', first!.version);
@@ -442,6 +444,28 @@ describe('SettingsService cache', () => {
       '1',
       12 * 60 * 60,
     );
+  });
+
+  it('does not publish a legacy announcement with only its default title', async () => {
+    const service = new SettingsService(
+      {
+        setting: {
+          findMany: jest.fn().mockResolvedValue([
+            { key: 'announcement.enabled', value: 'true' },
+            { key: 'announcement.title', value: '服务公告' },
+            { key: 'announcement.content', value: '' },
+          ]),
+        },
+      } as never,
+      {} as never,
+      {
+        get: jest.fn().mockResolvedValue(null),
+        set: jest.fn().mockResolvedValue(undefined),
+        del: jest.fn().mockResolvedValue(undefined),
+      } as never,
+    );
+
+    await expect(service.getPublishedAnnouncement()).resolves.toBeNull();
   });
 
   it('exposes only serviceable permanent traffic packs as anniversary gifts', async () => {

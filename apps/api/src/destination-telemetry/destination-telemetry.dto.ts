@@ -60,7 +60,16 @@ export class DestinationBatchDto {
 
 export class UpdateAdminPermissionsDto {
   @IsArray()
-  @ArrayMaxSize(2)
-  @IsIn(['destination_audit.read', 'admin_permissions.manage'], { each: true })
-  permissions!: Array<'destination_audit.read' | 'admin_permissions.manage'>;
+  @ArrayMaxSize(3)
+  @IsIn(
+    [
+      'destination_audit.read',
+      'admin_permissions.manage',
+      'seo_content.manage',
+    ],
+    { each: true },
+  )
+  permissions!: Array<
+    'destination_audit.read' | 'admin_permissions.manage' | 'seo_content.manage'
+  >;
 }

@@ -102,10 +102,24 @@ export class AdminSettingsController {
     if (body.announcementEnabled !== undefined) {
       updates['announcement.enabled'] = String(body.announcementEnabled);
     }
-    if (body.announcementTitle !== undefined) {
+    if (body.announcementContentJson !== undefined) {
+      Object.assign(
+        updates,
+        this.settings.prepareAnnouncementSettingsUpdate(
+          body.announcementContentJson,
+        ),
+      );
+    }
+    if (
+      body.announcementContentJson === undefined &&
+      body.announcementTitle !== undefined
+    ) {
       updates['announcement.title'] = body.announcementTitle.trim();
     }
-    if (body.announcementContent !== undefined) {
+    if (
+      body.announcementContentJson === undefined &&
+      body.announcementContent !== undefined
+    ) {
       updates['announcement.content'] = body.announcementContent.trim();
     }
     Object.assign(

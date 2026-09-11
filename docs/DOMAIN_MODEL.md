@@ -159,6 +159,38 @@ online collection, health probing, and manual-check consumption.
 Publishing is atomic: archive the previous published revision, publish the
 draft, and switch the guide pointer in one database transaction.
 
+## SEO publishing
+
+- **SeoArticle** is the stable content identity and public slug owner. It keeps
+  independent draft and published revision pointers so work in progress never
+  changes the public page.
+- **SeoArticleRevision** is immutable editorial content. Tiptap JSON is the
+  source of truth; its server-rendered HTML snapshot contains only supported,
+  escaped nodes and safe links. Review belongs to the revision that was
+  approved, not to a later edit.
+- **SeoKeyword** assigns one primary search intent to at most one article.
+  Similar content above the quality threshold is rejected in favor of updating
+  the existing article.
+- **SeoGenerationJob** is an administrator-visible AI work item. It records the
+  models, prompt version, token use, image outcome, duration, attempts, and a
+  sanitized failure reason. Monday, Wednesday, and Friday scheduling is
+  idempotent per Asia/Shanghai date and creates drafts only.
+- **SeoIndexSubmission** is the durable delivery queue for IndexNow and Google
+  sitemap notifications. A published revision and operation form its
+  idempotency identity; automatic retries use exponential backoff and stop
+  after six attempts.
+- **SeoRedirect** preserves an old published slug after an approved rename.
+  **SeoSearchMetric** stores deduplicated Search Console page/query/day rows.
+- Generated and uploaded images are normalized to 1600x900 WebP in persistent
+  `storage/seo-images`. Full-site backup and restore treat that directory and
+  the database as one release-versioned unit.
+
+AI adapters may read public site information, public tutorial configuration,
+and published article titles. They must never read support tickets, member
+email addresses, orders, usage, or other private data. Search integrations are
+disabled by default; Google ordinary articles use sitemap/Search Console, not
+the Indexing API.
+
 ## Support
 
 - **SupportTicket** is a member-owned support case and status projection.
@@ -199,6 +231,8 @@ draft, and switch the guide pointer in one database transaction.
 - `NodeOpsService` and `OperationsService`: server topology and live operations.
 - `FinanceService`: paged ledgers and database-aggregated reporting.
 - `TutorialsService`: drafts, assets, publication, and published guides.
+- `SeoPublishingService`: keyword ownership, immutable article revisions,
+  quality checks, publication, indexing jobs, and Search Console projections.
 - `ReferralService`: stable codes, read models, transactional settlement, and
   conservative refund reversal.
 - `CheckInService` and `GroupBuyService`: activity state machines. They request

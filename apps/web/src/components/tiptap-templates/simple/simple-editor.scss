@@ -1,0 +1,67 @@
+@use "../../../styles/variables";
+@use "../../../styles/keyframe-animations";
+
+.seo-editor-scope {
+  --tt-toolbar-height: 44px;
+  --tt-theme-text: var(--tt-gray-light-900);
+  width: 100%;
+  min-height: 540px;
+  overflow: hidden;
+  color: var(--tt-theme-text);
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--tt-scrollbar-color) transparent;
+  }
+}
+
+[data-theme="dark"] .seo-editor-scope {
+  --tt-theme-text: var(--tt-gray-dark-900);
+}
+
+.simple-editor-wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.simple-editor-wrapper > .tiptap-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--tt-border-color);
+}
+
+.simple-editor-search-and-replace {
+  position: absolute;
+  top: calc(var(--tt-toolbar-height) + 0.5rem);
+  right: 0.5rem;
+  z-index: 5;
+  max-height: 420px;
+}
+
+.simple-editor-content {
+  width: 100%;
+  min-height: 494px;
+  overflow: auto;
+}
+
+.simple-editor-content .tiptap.ProseMirror.simple-editor {
+  min-height: 494px;
+  padding: 2.5rem clamp(1.25rem, 4vw, 3rem) 8rem;
+}
+
+@media screen and (max-width: 600px) {
+  .simple-editor-search-and-replace {
+    inset: 0.5rem 0.5rem auto;
+    width: auto;
+  }
+
+  .simple-editor-content .tiptap.ProseMirror.simple-editor {
+    padding: 1.5rem 1.25rem 6rem;
+  }
+}

@@ -2,13 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { apiRequest, ApiError } from "@/lib/api";
+import type { Announcement } from "@/lib/announcement";
+import { AnnouncementRichContent } from "./announcement-rich-content";
 import { useAuth } from "./auth-provider";
-
-interface Announcement {
-  title: string;
-  content: string;
-  version: string;
-}
 
 export function MemberAnnouncementDialog() {
   const { token } = useAuth();
@@ -66,10 +62,15 @@ export function MemberAnnouncementDialog() {
         aria-describedby="announcement-content"
       >
         <span className="announcement-label">重要公告</span>
-        <h2 id="announcement-title">{announcement.title}</h2>
-        <div id="announcement-content" className="announcement-content">
-          {announcement.content}
-        </div>
+        <h2 id="announcement-title" className="visually-hidden">
+          会员公告
+        </h2>
+        <AnnouncementRichContent
+          id="announcement-content"
+          className="announcement-content"
+          html={announcement.contentHtml}
+          fallback={announcement.content}
+        />
         {error ? (
           <div className="feedback error" role="alert">
             {error}

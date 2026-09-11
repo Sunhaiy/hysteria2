@@ -43,6 +43,7 @@ import { UsageSyncModule } from './usage-sync/usage-sync.module';
 import { AdminUsersModule } from './users/admin-users.module';
 import { TutorialsModule } from './tutorials/tutorials.module';
 import { TicketsModule } from './tickets/tickets.module';
+import { SeoPublishingModule } from './seo-publishing/seo-publishing.module';
 
 @Module({
   imports: [
@@ -96,6 +97,7 @@ import { TicketsModule } from './tickets/tickets.module';
     UsageSyncModule,
     TutorialsModule,
     TicketsModule,
+    SeoPublishingModule,
   ],
 })
 export class AppModule {}

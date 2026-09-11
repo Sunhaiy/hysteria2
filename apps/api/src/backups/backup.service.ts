@@ -74,6 +74,19 @@ function tutorialAssetDirectory() {
   );
 }
 
+function seoImageDirectory() {
+  return resolve(
+    process.env.SEO_IMAGE_DIR || join(process.cwd(), 'storage', 'seo-images'),
+  );
+}
+
+function announcementImageDirectory() {
+  return resolve(
+    process.env.ANNOUNCEMENT_IMAGE_DIR ||
+      join(process.cwd(), 'storage', 'announcement-images'),
+  );
+}
+
 function positiveInteger(value: string | undefined, fallback: number) {
   const parsed = Number.parseInt(value ?? '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -174,6 +187,10 @@ export class BackupService {
     const temporaryArchive = `${archive}.partial`;
     await mkdir(join(work, 'files', 'tutorial-images'), { recursive: true });
     await mkdir(join(work, 'files', 'tutorial-assets'), { recursive: true });
+    await mkdir(join(work, 'files', 'seo-images'), { recursive: true });
+    await mkdir(join(work, 'files', 'announcement-images'), {
+      recursive: true,
+    });
 
     try {
       await this.copySiteFiles(work);
@@ -565,6 +582,9 @@ export class BackupService {
       );
       await this.withLock(async () => {
         const rollbackRoot = join(work, '.rollback-assets');
+        await mkdir(join(work, 'files', 'announcement-images'), {
+          recursive: true,
+        });
         const swaps = [
           {
             staged: join(work, 'files', 'tutorial-images'),
@@ -575,6 +595,16 @@ export class BackupService {
             staged: join(work, 'files', 'tutorial-assets'),
             live: tutorialAssetDirectory(),
             rollback: join(rollbackRoot, 'tutorial-assets'),
+          },
+          {
+            staged: join(work, 'files', 'seo-images'),
+            live: seoImageDirectory(),
+            rollback: join(rollbackRoot, 'seo-images'),
+          },
+          {
+            staged: join(work, 'files', 'announcement-images'),
+            live: announcementImageDirectory(),
+            rollback: join(rollbackRoot, 'announcement-images'),
           },
         ];
         await mkdir(rollbackRoot, { recursive: true });
@@ -711,6 +741,16 @@ export class BackupService {
       await this.replaceDirectoryFromBackup(
         join(work, 'files', 'tutorial-assets'),
         tutorialAssetDirectory(),
+      );
+      await this.replaceDirectoryFromBackup(
+        join(work, 'files', 'seo-images'),
+        seoImageDirectory(),
+      );
+      const announcementImages = join(work, 'files', 'announcement-images');
+      await mkdir(announcementImages, { recursive: true });
+      await this.replaceDirectoryFromBackup(
+        announcementImages,
+        announcementImageDirectory(),
       );
     } finally {
       await rm(work, { recursive: true, force: true }).catch(() => undefined);
@@ -950,6 +990,14 @@ export class BackupService {
     await this.copyDirectoryIfPresent(
       tutorialAssetDirectory(),
       join(work, 'files', 'tutorial-assets'),
+    );
+    await this.copyDirectoryIfPresent(
+      seoImageDirectory(),
+      join(work, 'files', 'seo-images'),
+    );
+    await this.copyDirectoryIfPresent(
+      announcementImageDirectory(),
+      join(work, 'files', 'announcement-images'),
     );
   }
 

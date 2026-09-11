@@ -1,6 +1,6 @@
 # Full-site backups
 
-The control plane creates a PostgreSQL custom dump plus tutorial images and
+The control plane creates a PostgreSQL custom dump plus tutorial images, SEO article images, and
 client installers in one checksummed `.h2backup` archive. The sync worker runs
 the daily schedule; the API only handles explicit administrator actions.
 
@@ -13,6 +13,7 @@ BACKUP_DAILY_HOUR=3
 BACKUP_TIME_ZONE=Asia/Shanghai
 BACKUP_RESTORE_ENABLED=true
 BACKUP_MAINTENANCE_DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/postgres
+SEO_IMAGE_DIR=/opt/hysteria2-control-plane/shared/seo-images
 ```
 
 `pg_dump`, `pg_restore`, and `psql` must be installed for both the API and sync
@@ -25,3 +26,8 @@ as one PostgreSQL transaction.
 
 Only scheduled backups are automatically rotated. Manual, imported, and
 pre-restore archives remain until an administrator deletes them.
+
+The web server may use `API_INTERNAL_URL` for server-side blog rendering while
+browser requests continue to use `NEXT_PUBLIC_API_BASE_URL`. In production the
+public `WEB_PUBLIC_URL` and `API_PUBLIC_URL` values must both be HTTPS origins;
+published image URLs are built from `API_PUBLIC_URL`.

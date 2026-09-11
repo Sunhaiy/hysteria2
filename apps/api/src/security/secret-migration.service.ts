@@ -7,6 +7,8 @@ const secretSettingKeys = [
   'oauth.google.secret',
   'oauth.github.secret',
   'epay.merchantKey',
+  'seo.aiApiKey',
+  'seo.googleServiceAccountJson',
 ];
 
 @Injectable()

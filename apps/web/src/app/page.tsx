@@ -134,6 +134,9 @@ export default function HomePage() {
           </Link>
 
           <div className="ppanel-header-actions">
+            <Link className="ppanel-guide-link" href="/blog">
+              使用指南
+            </Link>
             <ThemeToggle className="ppanel-theme-toggle" />
             <Link className="ppanel-login-link" href="/login">
               登录 / 注册
@@ -396,6 +399,10 @@ export default function HomePage() {
         <div className="ppanel-container ppanel-footer-inner">
           <div className="ppanel-footer-copy">
             <strong>{site.name}</strong> © {new Date().getFullYear()} 版权所有。
+          </div>
+          <div className="public-site-footer-links">
+            <Link href="/blog">使用指南</Link>
+            <Link href="/portal/plans">查看套餐</Link>
           </div>
         </div>
       </footer>

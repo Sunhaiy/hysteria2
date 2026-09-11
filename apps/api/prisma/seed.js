@@ -188,6 +188,11 @@ async function main() {
         userId: 'usr_admin',
         permission: 'ADMIN_PERMISSIONS_MANAGE',
       },
+      {
+        id: 'perm_admin_seo',
+        userId: 'usr_admin',
+        permission: 'SEO_CONTENT_MANAGE',
+      },
     ],
   });
 

@@ -111,7 +111,10 @@ export function SiteProvider({ children }: { children: ReactNode }) {
         String(next.iconStrokeWidth),
       );
       try {
-        window.localStorage.setItem(fontWeightStorageKey, String(next.fontWeight));
+        window.localStorage.setItem(
+          fontWeightStorageKey,
+          String(next.fontWeight),
+        );
         window.localStorage.setItem(
           iconStrokeWidthStorageKey,
           String(next.iconStrokeWidth),
@@ -134,7 +137,9 @@ export function SiteProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    document.title = site.browserTitle || site.name;
+    if (!pathname.startsWith("/blog")) {
+      document.title = site.browserTitle || site.name;
+    }
 
     let icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
     if (!icon) {

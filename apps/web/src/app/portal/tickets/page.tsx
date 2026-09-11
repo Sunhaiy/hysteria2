@@ -10,9 +10,11 @@ import { Panel } from "@/components/panel";
 import { TicketThread } from "@/components/ticket-thread";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
+import type { Announcement } from "@/lib/announcement";
 import { portalNav } from "@/lib/copy";
 import { formatDateTime } from "@/lib/format";
 import type { PaginatedResponse } from "@/lib/types";
+import { AnnouncementRichContent } from "@/components/announcement-rich-content";
 import {
   ticketCategoryName,
   ticketPriorityName,
@@ -31,12 +33,6 @@ const emptyPage: PaginatedResponse<SupportTicketRecord> = {
   totalPages: 1,
 };
 
-type PublishedAnnouncement = {
-  title: string;
-  content: string;
-  version: string;
-};
-
 export default function PortalTicketsPage() {
   const { token } = useAuth();
   const [data, setData] = useState(emptyPage);
@@ -51,8 +47,7 @@ export default function PortalTicketsPage() {
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [announcement, setAnnouncement] =
-    useState<PublishedAnnouncement | null>(null);
+  const [announcement, setAnnouncement] = useState<Announcement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
 
@@ -93,7 +88,7 @@ export default function PortalTicketsPage() {
   useEffect(() => {
     if (!token) return;
     const controller = new AbortController();
-    void apiRequest<{ announcement: PublishedAnnouncement | null }>(
+    void apiRequest<{ announcement: Announcement | null }>(
       "/api/portal/announcement/current",
       { token, signal: controller.signal },
     )
@@ -191,10 +186,11 @@ export default function PortalTicketsPage() {
           <span className="purchase-notice-icon" aria-hidden="true">
             <Icon name="warning" />
           </span>
-          <div>
-            <strong>{announcement.title}</strong>
-            <p>{announcement.content}</p>
-          </div>
+          <AnnouncementRichContent
+            className="ticket-announcement-content"
+            html={announcement.contentHtml}
+            fallback={announcement.content}
+          />
         </section>
       ) : null}
       {error ? <div className="feedback error">{error}</div> : null}

@@ -29,6 +29,13 @@
 - Paid fulfillment has an explicit state separate from gateway payment state.
   Retryable failures stay in reconciliation; non-retryable failures enter
   compensation refund, and missing credential snapshots require manual review.
+- A `SeoArticle` owns separate draft and published revision pointers. Editing,
+  AI retry, cover regeneration, and version restore always create a new draft
+  revision; public readers only receive the reviewed published revision.
+- A `SeoGenerationJob` creates a draft from an administrator-owned keyword.
+  Scheduled runs are idempotent per Asia/Shanghai calendar date and never
+  publish automatically. `SeoIndexSubmission` is the six-attempt delivery
+  queue for IndexNow and Google sitemap notifications.
 - A new checkout abandons only the same member's unpaid active Epay attempts.
   Idempotency replays remain stable, while a late payment for an explicitly
   abandoned attempt is accepted into compensation refund and never fulfilled.
@@ -53,5 +60,8 @@
 - Monthly infrastructure traffic protection belongs to `NodeServer` and sums
   all of its protocol endpoints. Reaching the limit disables access before the
   worker queues endpoint stop commands.
+- Search engines may crawl only the homepage, `/blog`, and reviewed published
+  articles. AI context is limited to public site information, tutorials, and
+  published article titles; member data and support tickets are not inputs.
 
 See `docs/DOMAIN_MODEL.md` and `docs/adr/` for implementation details.

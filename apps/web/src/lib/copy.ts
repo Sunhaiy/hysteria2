@@ -36,6 +36,13 @@ export const adminNav: NavItem[] = [
     group: "客户与支持",
   },
   {
+    href: "/admin/seo",
+    label: "内容与 SEO",
+    icon: "search",
+    meta: "SEO",
+    group: "客户与支持",
+  },
+  {
     href: "/admin/referrals",
     label: "邀请系统",
     icon: "group_add",

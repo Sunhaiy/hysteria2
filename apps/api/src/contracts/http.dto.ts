@@ -6,6 +6,7 @@ import {
   IsInt,
   IsNotEmpty,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   Length,
@@ -74,10 +75,16 @@ export class UpdateSettingsDto {
   announcementEnabled?: boolean;
 
   @IsOptional()
+  @IsObject()
+  announcementContentJson?: Record<string, unknown>;
+
+  /** @deprecated Kept for compatibility with older admin clients. */
+  @IsOptional()
   @IsString()
   @MaxLength(80)
   announcementTitle?: string;
 
+  /** @deprecated Kept for compatibility with older admin clients. */
   @IsOptional()
   @IsString()
   @MaxLength(6000)

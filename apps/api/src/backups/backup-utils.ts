@@ -28,7 +28,11 @@ export function isSafeArchivePath(value: string) {
     normalized === 'files/tutorial-images' ||
     normalized.startsWith('files/tutorial-images/') ||
     normalized === 'files/tutorial-assets' ||
-    normalized.startsWith('files/tutorial-assets/')
+    normalized.startsWith('files/tutorial-assets/') ||
+    normalized === 'files/seo-images' ||
+    normalized.startsWith('files/seo-images/') ||
+    normalized === 'files/announcement-images' ||
+    normalized.startsWith('files/announcement-images/')
   );
 }
 
@@ -92,6 +96,7 @@ export function databaseCompatibilitySql() {
     AND to_regclass('public."EntitlementGrant"') IS NOT NULL
     AND to_regclass('public."GroupBuy"') IS NOT NULL
     AND to_regclass('public."DailyCheckIn"') IS NOT NULL
+    AND to_regclass('public."SeoArticle"') IS NOT NULL
     AND EXISTS (
       SELECT 1 FROM "_prisma_migrations"
       WHERE "migration_name" = '${CURRENT_DATABASE_SCHEMA_VERSION}'

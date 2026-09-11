@@ -196,7 +196,8 @@ export interface DestinationVisitResponse {
 
 export type AdminPermissionName =
   | "destination_audit.read"
-  | "admin_permissions.manage";
+  | "admin_permissions.manage"
+  | "seo_content.manage";
 
 export interface AdminPermissionRecord {
   userId: string;

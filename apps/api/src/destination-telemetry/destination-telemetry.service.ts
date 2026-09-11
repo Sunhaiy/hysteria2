@@ -344,14 +344,22 @@ export class DestinationTelemetryService {
   private toPermission(
     value: UpdateAdminPermissionsDto['permissions'][number],
   ) {
-    return value === 'destination_audit.read'
-      ? AdminPermission.DESTINATION_AUDIT_READ
-      : AdminPermission.ADMIN_PERMISSIONS_MANAGE;
+    if (value === 'destination_audit.read') {
+      return AdminPermission.DESTINATION_AUDIT_READ;
+    }
+    if (value === 'seo_content.manage') {
+      return AdminPermission.SEO_CONTENT_MANAGE;
+    }
+    return AdminPermission.ADMIN_PERMISSIONS_MANAGE;
   }
 
   private fromPermission(value: AdminPermission) {
-    return value === AdminPermission.DESTINATION_AUDIT_READ
-      ? 'destination_audit.read'
-      : 'admin_permissions.manage';
+    if (value === AdminPermission.DESTINATION_AUDIT_READ) {
+      return 'destination_audit.read';
+    }
+    if (value === AdminPermission.SEO_CONTENT_MANAGE) {
+      return 'seo_content.manage';
+    }
+    return 'admin_permissions.manage';
   }
 }

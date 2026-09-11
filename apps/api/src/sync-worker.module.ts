@@ -13,6 +13,7 @@ import { SettingsModule } from './settings/settings.module';
 import { UsageSyncModule } from './usage-sync/usage-sync.module';
 import { OperationsModule } from './operations/operations.module';
 import { NodeOpsModule } from './node-ops/node-ops.module';
+import { SeoPublishingModule } from './seo-publishing/seo-publishing.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { NodeOpsModule } from './node-ops/node-ops.module';
     UsageSyncModule,
     OperationsModule,
     NodeOpsModule,
+    SeoPublishingModule,
   ],
 })
 export class SyncWorkerModule {}

@@ -8,6 +8,7 @@ import { NodeTrafficGuardService } from './node-ops/node-traffic-guard.service';
 import { BackupService } from './backups/backup.service';
 import { EpayReconciliationService } from './epay/epay-reconciliation.service';
 import { GroupBuyReconciliationService } from './group-buy/group-buy-reconciliation.service';
+import { SeoPublishingService } from './seo-publishing/seo-publishing.service';
 
 const logger = new Logger('UsageSyncWorker');
 const minimumIntervalMs = 10_000;
@@ -108,6 +109,7 @@ async function bootstrap() {
   const backups = app.get(BackupService);
   const epayReconciliation = app.get(EpayReconciliationService);
   const groupBuyReconciliation = app.get(GroupBuyReconciliationService);
+  const seoPublishing = app.get(SeoPublishingService);
   restoreInProgress = () => backups.isMaintenanceMode();
   const syncIntervalMs = intervalFromEnv(
     'NODE_SYNC_INTERVAL_MS',
@@ -169,6 +171,11 @@ async function bootstrap() {
     30_000,
     10_000,
   );
+  const seoPublishingIntervalMs = intervalFromEnv(
+    'SEO_PUBLISHING_INTERVAL_MS',
+    60_000,
+    30_000,
+  );
   let stopping = false;
   const tasks: RecurringTask[] = [];
   const syncEnabled =
@@ -208,6 +215,29 @@ async function bootstrap() {
         if (result) {
           logger.log(
             `Restore request for ${result.backupId} completed with ${result.status}`,
+          );
+        }
+      },
+    ),
+  );
+
+  tasks.push(
+    new RecurringTask(
+      'SEO draft, publication, indexing, and analytics processing',
+      seoPublishingIntervalMs,
+      4 * 60_000,
+      async () => {
+        const result = await seoPublishing.workerTick();
+        if (
+          result.recovered ||
+          result.scheduledJobs ||
+          result.generated ||
+          result.published ||
+          result.indexed ||
+          result.metrics
+        ) {
+          logger.log(
+            `SEO: ${result.recovered} recovered, ${result.scheduledJobs} scheduled, ${result.generated} generated, ${result.published} published, ${result.indexed} indexed, ${result.metrics} metrics`,
           );
         }
       },

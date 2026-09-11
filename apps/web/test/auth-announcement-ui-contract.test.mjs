@@ -18,17 +18,17 @@ test("login exposes the self-service password recovery flow", async () => {
     siteProvider,
     copy,
   ] = await Promise.all([
-      source("app/login/page.tsx"),
-      source("app/register/page.tsx"),
-      source("components/auth-experience.tsx"),
-      source("app/forgot-password/page.tsx"),
-      source("components/auth-shell.tsx"),
-      source("components/auth-shader-background.tsx"),
-      source("app/globals.scss"),
-      source("app/admin/referrals/page.tsx"),
-      source("components/site-provider.tsx"),
-      source("lib/copy.ts"),
-    ]);
+    source("app/login/page.tsx"),
+    source("app/register/page.tsx"),
+    source("components/auth-experience.tsx"),
+    source("app/forgot-password/page.tsx"),
+    source("components/auth-shell.tsx"),
+    source("components/auth-shader-background.tsx"),
+    source("app/globals.scss"),
+    source("app/admin/referrals/page.tsx"),
+    source("components/site-provider.tsx"),
+    source("lib/copy.ts"),
+  ]);
 
   assert.match(login, /<AuthExperience initialMode="login"/);
   assert.match(register, /<AuthExperience initialMode="register"/);
@@ -94,8 +94,14 @@ test("login exposes the self-service password recovery flow", async () => {
   );
   assert.match(siteProvider, /inviteOnly:\s*boolean/);
   assert.match(experience, /useSite\(\)/);
-  assert.match(experience, /inviteOnlyRegistration && inviteCode\.length !== 8/);
-  assert.match(experience, /body:\s*\{[\s\S]*?inviteCode: inviteCode \|\| undefined/);
+  assert.match(
+    experience,
+    /inviteOnlyRegistration && inviteCode\.length !== 8/,
+  );
+  assert.match(
+    experience,
+    /body:\s*\{[\s\S]*?inviteCode: inviteCode \|\| undefined/,
+  );
   assert.match(experience, /placeholder="8 位邀请码"[\s\S]*?required/);
   assert.match(
     experience,
@@ -103,7 +109,10 @@ test("login exposes the self-service password recovery flow", async () => {
   );
   assert.match(referralsAdmin, /封车系统/);
   assert.match(referralsAdmin, /邀请归因与奖励照常结算/);
-  assert.match(referralsAdmin, /inviteOnlyRegistration: settings\.inviteOnlyRegistration/);
+  assert.match(
+    referralsAdmin,
+    /inviteOnlyRegistration: settings\.inviteOnlyRegistration/,
+  );
   assert.match(copy, /label: "邀请系统"/);
 });
 
@@ -125,6 +134,8 @@ test("member console sequences the anniversary gift before announcements", async
   assert.match(announcement, /\/api\/portal\/announcement/);
   assert.match(announcement, /announcement\/acknowledge/);
   assert.match(announcement, /我已知晓/);
+  assert.match(announcement, /AnnouncementRichContent/);
+  assert.match(announcement, /contentHtml/);
   assert.match(gift, /致一路同行的你/);
   assert.match(gift, /这张礼物票属于您/);
   assert.match(gift, /周年礼物已经到账/);
@@ -141,8 +152,11 @@ test("member console sequences the anniversary gift before announcements", async
   assert.match(settings, /anniversaryGiftOfferId/);
   assert.match(settings, /anniversaryGiftLetterContent/);
   assert.match(settings, /手写卡片文案/);
-  assert.match(settings, /每次重新登录/);
-  assert.match(settings, /关闭后不显示公告/);
+  assert.match(settings, /每个新登录会话/);
+  assert.match(settings, /会员端当前不会显示公告/);
+  assert.match(settings, /announcementContentJson/);
+  assert.match(settings, /SimpleEditor/);
+  assert.match(settings, /announcement\/images/);
   assert.match(styles, /@keyframes anniversary-confetti-fall/);
   assert.match(styles, /@keyframes anniversary-letter-in/);
   assert.match(styles, /@keyframes anniversary-ticket-in/);

@@ -12,6 +12,13 @@ import { CacheService } from '../cache/cache.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SecretCipherService } from '../security/secret-cipher.service';
 import { secretSettingKeys } from '../security/secret-migration.service';
+import {
+  announcementDocumentHasContent,
+  announcementDocumentHtml,
+  announcementDocumentPlainText,
+  legacyAnnouncementDocument,
+  normalizeAnnouncementDocument,
+} from './announcement-content';
 
 export interface SmtpConfig {
   host?: string;
@@ -181,6 +188,11 @@ export class SettingsService {
 
   async get(key: string): Promise<string | undefined> {
     return (await this.all()).get(key);
+  }
+
+  async getSecret(key: string): Promise<string | undefined> {
+    const value = await this.get(key);
+    return value ? this.cipher.decrypt(value) : undefined;
   }
 
   async setMany(updates: Record<string, string>) {
@@ -584,13 +596,53 @@ export class SettingsService {
     const map = await this.all();
     const title = map.get('announcement.title')?.trim() || '服务公告';
     const content = map.get('announcement.content')?.trim() || '';
+    const storedDocument = map.get('announcement.contentJson');
+    let contentJson = legacyAnnouncementDocument(content ? title : '', content);
+    let usesRichContent = false;
+    if (storedDocument) {
+      try {
+        contentJson = normalizeAnnouncementDocument(
+          JSON.parse(storedDocument) as unknown,
+        );
+        usesRichContent = true;
+      } catch {
+        // Keep a malformed setting from preventing members from signing in.
+      }
+    }
+    const contentHtml = announcementDocumentHtml(contentJson);
+    const plainText = announcementDocumentPlainText(contentJson);
+    const hasContent = usesRichContent
+      ? announcementDocumentHasContent(contentJson)
+      : Boolean(content);
     return {
       enabled: map.get('announcement.enabled') === 'true',
       title,
-      content,
+      content: usesRichContent ? plainText : content,
+      contentJson,
+      contentHtml,
+      hasContent,
       version: createHash('sha256')
-        .update(`${title}\0${content}`)
+        .update(
+          usesRichContent
+            ? JSON.stringify(contentJson)
+            : `${title}\0${content}`,
+        )
         .digest('hex'),
+    };
+  }
+
+  prepareAnnouncementSettingsUpdate(contentJson: Record<string, unknown>) {
+    const document = normalizeAnnouncementDocument(contentJson);
+    const plainText = announcementDocumentPlainText(document);
+    const firstLine = plainText
+      .split('\n')
+      .find((line) => line.trim())
+      ?.trim();
+    return {
+      'announcement.contentJson': JSON.stringify(document),
+      // These mirrors keep older web releases readable during a rolling deploy.
+      'announcement.title': (firstLine || '服务公告').slice(0, 80),
+      'announcement.content': plainText.slice(0, 6_000),
     };
   }
 
@@ -606,10 +658,11 @@ export class SettingsService {
 
   async getPublishedAnnouncement() {
     const announcement = await this.getAnnouncementConfig();
-    if (!announcement.enabled || !announcement.content) return null;
+    if (!announcement.enabled || !announcement.hasContent) return null;
     return {
       title: announcement.title,
       content: announcement.content,
+      contentHtml: announcement.contentHtml,
       version: announcement.version,
     };
   }
@@ -618,7 +671,7 @@ export class SettingsService {
     const announcement = await this.getAnnouncementConfig();
     if (
       !announcement.enabled ||
-      !announcement.content ||
+      !announcement.hasContent ||
       announcement.version !== version
     ) {
       throw new BadRequestException('公告已更新，请重新查看');
