@@ -17,8 +17,8 @@ implemented and tested, store checkout remains active.
 
 The admin order center is a read projection over existing order, payment,
 refund, and payment-attempt records. It does not introduce a second ledger.
-Existing CDKs remain redeemable; new plan and traffic-pack CDKs are blocked
-only while 易支付 checkout is active.
+Existing CDKs remain redeemable, and administrators can continue issuing new
+plan and traffic-pack CDKs regardless of the selected member checkout mode.
 
 ## Consequences
 
