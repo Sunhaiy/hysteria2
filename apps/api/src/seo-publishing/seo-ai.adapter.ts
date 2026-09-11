@@ -4,20 +4,13 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { SettingsService } from '../settings/settings.service';
-import type { GeneratedSection } from './seo-content';
+import {
+  runSeoGenerationPipeline,
+  type GeneratedArticleDraft,
+  type SeoPublicSource,
+} from './seo-generation-pipeline';
 
-export type GeneratedArticleDraft = {
-  title: string;
-  excerpt: string;
-  primaryKeyword: string;
-  relatedKeywords: string[];
-  tags: string[];
-  seoTitle: string;
-  metaDescription: string;
-  coverAlt: string;
-  imagePrompt: string;
-  sections: GeneratedSection[];
-};
+export type { GeneratedArticleDraft, SeoPublicSource };
 
 type ProviderConfig = {
   baseUrl: string;
@@ -34,20 +27,26 @@ export class SeoAiAdapter {
   async generateArticle(input: {
     keyword: string;
     category: string;
-    publicContext: string;
-    existingArticles: Array<{ title: string; slug: string }>;
+    searchIntent?: string | null;
+    sources: SeoPublicSource[];
+    existingArticles: Array<{
+      title: string;
+      slug: string;
+      primaryKeyword?: string;
+    }>;
   }) {
     const config = await this.config();
-    const prompt = this.articlePrompt(input);
-    const response = await this.generateText(config, prompt);
-    const article = this.parseArticle(response.text);
+    const generated = await runSeoGenerationPipeline(input, (prompt) =>
+      this.generateText(config, prompt),
+    );
     return {
-      article,
-      usage: response.usage,
+      article: generated.article,
+      usage: generated.usage,
       modelSnapshot: {
         baseUrl: config.baseUrl,
         textModel: config.textModel,
         imageModel: config.imageModel ?? null,
+        ...generated.pipeline,
       },
     };
   }
@@ -247,78 +246,10 @@ export class SeoAiAdapter {
     };
   }
 
-  private parseArticle(raw: string): GeneratedArticleDraft {
-    let value: Record<string, unknown>;
-    try {
-      value = this.object(JSON.parse(raw)) ?? {};
-    } catch {
-      throw new BadGatewayException('AI 正文不是有效 JSON');
-    }
-    const required = [
-      'title',
-      'excerpt',
-      'primaryKeyword',
-      'seoTitle',
-      'metaDescription',
-      'coverAlt',
-      'imagePrompt',
-    ] as const;
-    for (const field of required) {
-      if (typeof value[field] !== 'string' || !value[field].trim()) {
-        throw new BadGatewayException(`AI 正文缺少字段：${field}`);
-      }
-    }
-    if (!Array.isArray(value.sections)) {
-      throw new BadGatewayException('AI 正文缺少 sections');
-    }
-    return {
-      title: String(value.title),
-      excerpt: String(value.excerpt),
-      primaryKeyword: String(value.primaryKeyword),
-      relatedKeywords: this.stringArray(value.relatedKeywords, 12),
-      tags: this.stringArray(value.tags, 8),
-      seoTitle: String(value.seoTitle),
-      metaDescription: String(value.metaDescription),
-      coverAlt: String(value.coverAlt),
-      imagePrompt: String(value.imagePrompt),
-      sections: value.sections as GeneratedSection[],
-    };
-  }
-
-  private articlePrompt(input: {
-    keyword: string;
-    category: string;
-    publicContext: string;
-    existingArticles: Array<{ title: string; slug: string }>;
-  }) {
-    return `你是素心 Network 编辑部的中文技术编辑。围绕“${input.keyword}”生成一篇可由人工审核的${input.category}草稿。
-
-要求：正文 1600 至 2600 个中文字符；至少三个清晰章节；先给判断方法，再给按顺序执行的步骤；不要虚构测试数据、用户评价、软件版本、价格或保证；不要关键词堆砌；不要输出 HTML；只使用下方公开资料中的事实。内部链接由系统补充。
-
-公开资料：
-${input.publicContext.slice(0, 20_000) || '暂无，使用通用且可核验的排障方法。'}
-
-已有文章，避免重复：
-${input.existingArticles.map((article) => `- ${article.title} (/blog/${article.slug})`).join('\n') || '暂无'}
-
-仅返回 JSON：
-{"title":"","excerpt":"","primaryKeyword":"${input.keyword}","relatedKeywords":[""],"tags":[""],"seoTitle":"","metaDescription":"","coverAlt":"","imagePrompt":"","sections":[{"heading":"","blocks":[{"type":"paragraph","text":""},{"type":"bullets","items":[""]},{"type":"ordered","items":[""]},{"type":"blockquote","text":""},{"type":"code","language":"","code":""}]}]}`;
-  }
-
   private object(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : null;
-  }
-
-  private stringArray(value: unknown, maximum: number) {
-    return Array.isArray(value)
-      ? value
-          .filter((item): item is string => typeof item === 'string')
-          .map((item) => item.trim())
-          .filter(Boolean)
-          .slice(0, maximum)
-      : [];
   }
 }
 

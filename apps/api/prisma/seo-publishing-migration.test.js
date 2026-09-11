@@ -30,6 +30,15 @@ const observabilitySql = readFileSync(
   ),
   'utf8',
 );
+const editorialEvidenceSql = readFileSync(
+  join(
+    __dirname,
+    'migrations',
+    '20260911143000_seo_editorial_evidence',
+    'migration.sql',
+  ),
+  'utf8',
+);
 
 describe('SEO publishing migration', () => {
   it('adds versioned content, generation, indexing, redirects, and search metrics', () => {
@@ -49,6 +58,9 @@ describe('SEO publishing migration', () => {
     assert.match(permissionSql, /INSERT INTO "AdminPermissionGrant"/);
     assert.match(permissionSql, /WHERE "role" = 'ADMIN'/);
     assert.match(observabilitySql, /ADD COLUMN "promptVersion" TEXT/);
+    assert.match(editorialEvidenceSql, /ADD COLUMN "sourceEvidence" JSONB/);
+    assert.match(editorialEvidenceSql, /ADD COLUMN "aiAudit" JSONB/);
+    assert.match(editorialEvidenceSql, /ADD COLUMN "lastVerifiedAt" TIMESTAMP/);
   });
 
   it('does not rewrite commerce, entitlement, usage, or member data', () => {
@@ -63,6 +75,10 @@ describe('SEO publishing migration', () => {
     ]) {
       assert.doesNotMatch(
         sql,
+        new RegExp(`(?:UPDATE|DELETE FROM|TRUNCATE) "${table}"`, 'i'),
+      );
+      assert.doesNotMatch(
+        editorialEvidenceSql,
         new RegExp(`(?:UPDATE|DELETE FROM|TRUNCATE) "${table}"`, 'i'),
       );
     }

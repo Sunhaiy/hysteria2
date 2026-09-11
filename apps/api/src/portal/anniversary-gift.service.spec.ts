@@ -83,18 +83,18 @@ describe('AnniversaryGiftService', () => {
     );
   });
 
-  it('does not offer the gift before 365 complete subscribed days', async () => {
+  it('does not offer the gift before 365 subscribed calendar days', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-09-03T08:00:00.000Z'));
     const prisma = {
       user: {
         findUnique: jest.fn().mockResolvedValue({
-          createdAt: new Date('2025-09-04T08:00:00.000Z'),
+          createdAt: new Date('2025-09-05T08:00:00.000Z'),
         }),
       },
       subscription: {
         findMany: jest.fn().mockResolvedValue([
           {
-            startsAt: new Date('2025-09-04T08:00:00.000Z'),
+            startsAt: new Date('2025-09-05T08:00:00.000Z'),
             endsAt: new Date('2026-09-03T08:00:00.000Z'),
           },
         ]),

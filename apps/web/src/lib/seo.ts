@@ -3,7 +3,46 @@ export type PublicSiteInfo = {
   description: string;
   browserTitle: string;
   iconUrl: string;
+  fontWeight: number;
+  iconStrokeWidth: number;
+  registration: {
+    enabled: boolean;
+    inviteOnly: boolean;
+  };
 };
+
+export type PublicCatalogOffer = {
+  id: string;
+  name: string;
+  billingPeriod: "monthly" | "quarterly" | "yearly" | "one_time" | "legacy";
+  intervalMonths: number | null;
+  legacyDurationDays: number | null;
+  trafficBytes: number;
+  priceCents: number;
+  currency: string;
+  active: boolean;
+  isDefault: boolean;
+  archivedAt: string | null;
+};
+
+export type PublicCatalogProduct = {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  featured: boolean;
+  homepageVisible: boolean;
+  access: {
+    speedUpMbps: number;
+    speedDownMbps: number;
+    deviceLimit: number;
+    availableServerCount: number;
+    availableNodeCount: number;
+  };
+  offers: PublicCatalogOffer[];
+};
+
+export type PublicCatalog = { products: PublicCatalogProduct[] };
 
 export type PublicSeoArticle = {
   id: string;
@@ -18,6 +57,13 @@ export type PublicSeoArticle = {
   coverAlt: string | null;
   publishedAt: string | null;
   updatedAt: string;
+  reviewedAt?: string | null;
+  lastVerifiedAt?: string | null;
+  sources?: Array<{
+    title: string;
+    url: string;
+    applicableVersion: string | null;
+  }>;
   author: string;
   contentHtml?: string;
   tableOfContents?: Array<{ id: string; level: number; text: string }>;
@@ -90,8 +136,15 @@ export async function getPublicSiteInfo(): Promise<PublicSiteInfo> {
       description: "稳定、简单的网络服务。",
       browserTitle: "素心 Network",
       iconUrl: "/brand-icon.svg",
+      fontWeight: 400,
+      iconStrokeWidth: 1.5,
+      registration: { enabled: true, inviteOnly: false },
     }
   );
+}
+
+export async function getPublicCatalog(): Promise<PublicCatalog> {
+  return (await publicApi<PublicCatalog>("/api/catalog")) ?? { products: [] };
 }
 
 export async function getPublishedArticles(

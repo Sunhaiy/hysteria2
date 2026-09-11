@@ -36,8 +36,27 @@ export type SeoQualityReport = {
     plainTextLength: number;
     headingCount: number;
     internalLinkCount: number;
+    paragraphCount: number;
+    actionListCount: number;
+    sentenceDiversity: number;
     maximumSimilarity: number;
   };
+  editorialAudit?: SeoEditorialAudit;
+};
+
+export type SeoEditorialAudit = {
+  passed: boolean;
+  summary: string;
+  issues: Array<{
+    severity: 'BLOCKER' | 'WARNING';
+    category: string;
+    message: string;
+  }>;
+  intentCoverage: number;
+  evidenceCoverage: number;
+  actionabilityScore: number;
+  originalityScore: number;
+  checkedAt: string;
 };
 
 const allowedProtocols = new Set(['http:', 'https:', 'mailto:']);
@@ -177,9 +196,16 @@ function textNode(text: string, marks?: TiptapMark[]): TiptapNode {
 }
 
 export function buildGeneratedDocument(input: {
+  lead?: string;
   sections: GeneratedSection[];
 }): TiptapNode {
   const content: TiptapNode[] = [];
+  if (input.lead?.trim()) {
+    content.push({
+      type: 'paragraph',
+      content: [textNode(input.lead.trim())],
+    });
+  }
   for (const section of input.sections) {
     content.push({
       type: 'heading',
@@ -279,16 +305,23 @@ function similarity(left: string, right: string) {
 export function evaluateSeoDraft(input: {
   title: string;
   excerpt: string;
+  primaryKeyword: string;
+  relatedKeywords: string[];
+  tags: string[];
   seoTitle: string;
   metaDescription: string;
   coverImageId: string | null;
   coverAlt: string | null;
   contentJson: TiptapNode;
   existingPlainTexts: string[];
+  existingSeoTitles?: string[];
+  existingMetaDescriptions?: string[];
 }): SeoQualityReport {
   const plainText = tiptapPlainText(input.contentJson).trim();
   let headingCount = 0;
   let internalLinkCount = 0;
+  let paragraphCount = 0;
+  let actionListCount = 0;
   let bodyImageWithoutAlt = false;
   let invalidHeading = false;
   const headingLevels: number[] = [];
@@ -309,6 +342,12 @@ export function evaluateSeoDraft(input: {
     if (node.type === 'image' && !stringAttribute(node.attrs?.alt).trim()) {
       bodyImageWithoutAlt = true;
     }
+    if (node.type === 'paragraph' && tiptapPlainText(node).trim()) {
+      paragraphCount += 1;
+    }
+    if (node.type === 'bulletList' || node.type === 'orderedList') {
+      actionListCount += 1;
+    }
     for (const mark of node.marks ?? []) {
       if (
         mark.type === 'link' &&
@@ -326,14 +365,43 @@ export function evaluateSeoDraft(input: {
   );
   const blockers: string[] = [];
   const warnings: string[] = [];
+  const normalize = (value: string) =>
+    value.normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+  const keyword = normalize(input.primaryKeyword);
+  const firstAnswer = normalize(plainText.slice(0, 260));
+  const uniqueRelatedKeywords = new Set(
+    input.relatedKeywords.map(normalize).filter(Boolean),
+  );
+  const uniqueTags = new Set(input.tags.map(normalize).filter(Boolean));
+  const sentences = plainText
+    .split(/[。！？!?；;\n]+/)
+    .map((sentence) => normalize(sentence))
+    .filter((sentence) => sentence.length >= 8);
+  const sentenceDiversity = sentences.length
+    ? new Set(sentences).size / sentences.length
+    : 0;
   const unverifiablePromise = [
     /(?:100%|百分之百).{0,12}(?:稳定|可用|成功|安全|匿名)/i,
     /(?:永久免费|永久不限速|永不掉线|绝不断线|零故障|全网最快)/i,
   ].some((pattern) => pattern.test(plainText));
-  if (plainText.replace(/\s+/g, '').length < 1_200) {
-    blockers.push('正文至少需要 1200 个中文字符');
+  const emptyBoilerplate = [
+    /在当今(?:这个)?(?:数字化|互联网|信息化)时代/i,
+    /随着(?:互联网|科技|时代)的(?:快速|不断)?发展/i,
+    /众所周知/i,
+    /本文将(?:带你|为你|深入)(?:了解|介绍|解析)/i,
+    /(?:保姆级|全网最全|秒懂|必看)(?:教程|指南)?/i,
+  ].some((pattern) => pattern.test(plainText));
+  const compactLength = plainText.replace(/\s+/g, '').length;
+  if (compactLength < 600) {
+    blockers.push('正文过短，尚不足以完整回答搜索问题');
+  } else if (compactLength < 1_000) {
+    warnings.push('正文较短，请确认已覆盖必要步骤、结果判断和适用限制');
   }
   if (headingCount < 2) blockers.push('正文至少需要两个二级标题');
+  if (paragraphCount < 4) blockers.push('正文至少需要四个有效段落');
+  if (actionListCount < 1) {
+    blockers.push('正文至少需要一个可执行的步骤或检查清单');
+  }
   if (
     invalidHeading ||
     headingLevels[0] !== 2 ||
@@ -359,6 +427,40 @@ export function evaluateSeoDraft(input: {
   ) {
     blockers.push('SEO 描述长度需要保持在 40 到 180 个字符之间');
   }
+  if (keyword.length < 2) {
+    blockers.push('主关键词至少需要两个字符');
+  } else {
+    if (
+      !normalize(input.title).includes(keyword) ||
+      !normalize(input.seoTitle).includes(keyword)
+    ) {
+      blockers.push('文章标题和 SEO 标题都需要自然包含主关键词');
+    }
+    if (!normalize(input.metaDescription).includes(keyword)) {
+      blockers.push('SEO 描述需要自然包含主关键词');
+    }
+    if (!firstAnswer.includes(keyword)) {
+      warnings.push('建议在正文开头自然回答并出现主关键词');
+    }
+  }
+  if (uniqueRelatedKeywords.size < 2) {
+    blockers.push('至少需要两个不重复的相关关键词');
+  }
+  if (uniqueTags.size < 2) warnings.push('建议填写至少两个不重复标签');
+  if (
+    input.existingSeoTitles?.some(
+      (existing) => normalize(existing) === normalize(input.seoTitle),
+    )
+  ) {
+    blockers.push('SEO 标题与现有文章重复');
+  }
+  if (
+    input.existingMetaDescriptions?.some(
+      (existing) => normalize(existing) === normalize(input.metaDescription),
+    )
+  ) {
+    blockers.push('SEO 描述与现有文章重复');
+  }
   if (input.coverImageId && !input.coverAlt?.trim()) {
     blockers.push('封面图片必须填写替代文本');
   }
@@ -369,6 +471,10 @@ export function evaluateSeoDraft(input: {
   if (unverifiablePromise) {
     blockers.push('正文包含无法核实的绝对化承诺');
   }
+  if (sentences.length >= 8 && sentenceDiversity < 0.55) {
+    blockers.push('正文存在大量重复句子，不能通过重复表达凑字数');
+  }
+  if (emptyBoilerplate) blockers.push('正文包含空泛或标题党式套话');
   if (!input.coverImageId) warnings.push('建议补充 1600×900 的文章封面');
   const score = Math.max(0, 100 - blockers.length * 20 - warnings.length * 5);
   return {
@@ -380,8 +486,46 @@ export function evaluateSeoDraft(input: {
       plainTextLength: plainText.replace(/\s+/g, '').length,
       headingCount,
       internalLinkCount,
+      paragraphCount,
+      actionListCount,
+      sentenceDiversity: Number(sentenceDiversity.toFixed(4)),
       maximumSimilarity: Number(maximumSimilarity.toFixed(4)),
     },
+  };
+}
+
+export function applyEditorialAudit(
+  report: SeoQualityReport,
+  audit: SeoEditorialAudit,
+): SeoQualityReport {
+  const auditBlockers = audit.issues
+    .filter((issue) => issue.severity === 'BLOCKER')
+    .map((issue) => `AI 独立审校：${issue.message}`);
+  const auditWarnings = audit.issues
+    .filter((issue) => issue.severity === 'WARNING')
+    .map((issue) => `AI 独立审校：${issue.message}`);
+  if (!audit.passed && !auditBlockers.length) {
+    auditBlockers.push('AI 独立审校未通过，请人工核对事实与操作步骤');
+  }
+  const blockers = [...new Set([...report.blockers, ...auditBlockers])];
+  const warnings = [...new Set([...report.warnings, ...auditWarnings])];
+  const auditScore = Math.round(
+    (audit.intentCoverage +
+      audit.evidenceCoverage +
+      audit.actionabilityScore +
+      audit.originalityScore) /
+      4,
+  );
+  return {
+    ...report,
+    passed: report.passed && audit.passed && blockers.length === 0,
+    score: Math.max(
+      0,
+      Math.min(report.score, auditScore) - auditBlockers.length * 5,
+    ),
+    blockers,
+    warnings,
+    editorialAudit: audit,
   };
 }
 

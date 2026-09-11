@@ -34,8 +34,37 @@ type QualityReport = {
     plainTextLength: number;
     headingCount: number;
     internalLinkCount: number;
+    paragraphCount?: number;
+    actionListCount?: number;
+    sentenceDiversity?: number;
     maximumSimilarity: number;
   };
+  editorialAudit?: EditorialAudit;
+};
+
+type EditorialAudit = {
+  passed: boolean;
+  summary: string;
+  issues: Array<{
+    severity: "BLOCKER" | "WARNING";
+    category: string;
+    message: string;
+  }>;
+  intentCoverage: number;
+  evidenceCoverage: number;
+  actionabilityScore: number;
+  originalityScore: number;
+  checkedAt: string;
+};
+
+type SourceEvidence = {
+  claim: string;
+  sourceId: string;
+  sourceTitle: string;
+  sourceUrl: string;
+  sourceQuote: string;
+  accessedAt: string;
+  applicableVersion: string | null;
 };
 
 type Revision = {
@@ -57,6 +86,9 @@ type Revision = {
   coverAlt: string | null;
   qualityScore: number;
   qualityReport: QualityReport;
+  sourceEvidence: SourceEvidence[] | null;
+  aiAudit: EditorialAudit | null;
+  lastVerifiedAt: string | null;
   createdAt: string;
 };
 
@@ -141,6 +173,16 @@ type MetricSummary = {
 };
 
 type MetricItem = MetricSummary & { value: string };
+
+const WEEKDAY_OPTIONS = [
+  { day: 1, label: "周一" },
+  { day: 2, label: "周二" },
+  { day: 3, label: "周三" },
+  { day: 4, label: "周四" },
+  { day: 5, label: "周五" },
+  { day: 6, label: "周六" },
+  { day: 0, label: "周日" },
+];
 type PageResponse<T> = {
   items: T[];
   page: number;
@@ -635,6 +677,8 @@ export default function AdminSeoPage() {
   const currentRevision =
     selected?.draftRevision ?? selected?.publishedRevision ?? null;
   const quality = currentRevision?.qualityReport ?? null;
+  const evidence = currentRevision?.sourceEvidence ?? [];
+  const editorialAudit = currentRevision?.aiAudit ?? quality?.editorialAudit;
 
   return (
     <ConsoleShell
@@ -644,7 +688,19 @@ export default function AdminSeoPage() {
       navItems={adminNav}
       requireRole="admin"
       toolbarMeta={
-        <span className="badge info">每周一、三、五 10:00 · Asia/Shanghai</span>
+        settings ? (
+          <span className="badge info">
+            {settings.scheduleDays
+              .map(
+                (day) =>
+                  WEEKDAY_OPTIONS.find((item) => item.day === day)?.label,
+              )
+              .filter(Boolean)
+              .join("、")}{" "}
+            {String(settings.scheduleHour).padStart(2, "0")}
+            :00 · {settings.timezone}
+          </span>
+        ) : null
       }
       toolbarActions={
         <button
@@ -1017,7 +1073,13 @@ export default function AdminSeoPage() {
                       <span>
                         {quality?.metrics.plainTextLength ?? 0} 字 ·{" "}
                         {quality?.metrics.headingCount ?? 0} 个 H2 ·{" "}
-                        {quality?.metrics.internalLinkCount ?? 0} 个站内链接
+                        {quality?.metrics.internalLinkCount ?? 0} 个站内链接 ·{" "}
+                        {quality?.metrics.actionListCount ?? 0} 个操作清单 ·{" "}
+                        句子有效度{" "}
+                        {Math.round(
+                          (quality?.metrics.sentenceDiversity ?? 0) * 100,
+                        )}
+                        %
                       </span>
                     </div>
                     {[
@@ -1028,6 +1090,50 @@ export default function AdminSeoPage() {
                         {item}
                       </div>
                     ))}
+                    {editorialAudit ? (
+                      <div className="seo-editorial-audit">
+                        <strong>
+                          独立审校
+                          {editorialAudit.passed ? "已通过" : "未通过"}
+                        </strong>
+                        <span>{editorialAudit.summary}</span>
+                        <small>
+                          意图 {editorialAudit.intentCoverage} · 证据{" "}
+                          {editorialAudit.evidenceCoverage} · 可操作性{" "}
+                          {editorialAudit.actionabilityScore} · 独特性{" "}
+                          {editorialAudit.originalityScore}
+                        </small>
+                      </div>
+                    ) : null}
+                    {evidence.length ? (
+                      <details className="seo-evidence-details">
+                        <summary>
+                          查看 {evidence.length} 条事实依据
+                          {currentRevision?.lastVerifiedAt
+                            ? ` · ${dateTime(currentRevision.lastVerifiedAt)}`
+                            : ""}
+                        </summary>
+                        {evidence.map((item) => (
+                          <div
+                            className="seo-evidence-item"
+                            key={`${item.sourceId}:${item.claim}`}
+                          >
+                            <strong>{item.claim}</strong>
+                            <span>“{item.sourceQuote}”</span>
+                            <a
+                              href={item.sourceUrl}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              {item.sourceTitle}
+                            </a>
+                            {item.applicableVersion ? (
+                              <small>{item.applicableVersion}</small>
+                            ) : null}
+                          </div>
+                        ))}
+                      </details>
+                    ) : null}
                   </Panel>
                   <Panel
                     title="发布安排"
@@ -1535,7 +1641,7 @@ export default function AdminSeoPage() {
                       })
                     }
                   />
-                  <span>启用每周自动生成</span>
+                  <span>启用定时生成高质量草稿</span>
                 </label>
                 <label className="field">
                   <span className="fine-print">Base URL</span>
@@ -1631,11 +1737,7 @@ export default function AdminSeoPage() {
                 <div className="field span-2">
                   <span className="fine-print">生成日期</span>
                   <div className="seo-day-picker">
-                    {[
-                      { day: 1, label: "周一" },
-                      { day: 3, label: "周三" },
-                      { day: 5, label: "周五" },
-                    ].map((item) => (
+                    {WEEKDAY_OPTIONS.map((item) => (
                       <label key={item.day}>
                         <input
                           type="checkbox"

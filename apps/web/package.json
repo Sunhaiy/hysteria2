@@ -16,7 +16,7 @@
     "@hugeicons/core-free-icons": "4.3.0",
     "@hugeicons/react": "1.1.10",
     "@hysteria/ui": "workspace:*",
-    "@lottiefiles/dotlottie-react": "0.17.7",
+    "@lottiefiles/dotlottie-react": "0.19.16",
     "@radix-ui/react-dropdown-menu": "^2.1.24",
     "@radix-ui/react-popover": "^1.1.23",
     "@tiptap/core": "^3.31.3",

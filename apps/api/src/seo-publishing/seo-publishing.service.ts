@@ -27,8 +27,13 @@ import { pageResponse, parsePage } from '../common/pagination';
 import { apiPublicUrl, webPublicUrl } from '../common/public-url';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
-import { SeoAiAdapter, type GeneratedArticleDraft } from './seo-ai.adapter';
 import {
+  SeoAiAdapter,
+  type GeneratedArticleDraft,
+  type SeoPublicSource,
+} from './seo-ai.adapter';
+import {
+  applyEditorialAudit,
   buildGeneratedDocument,
   evaluateSeoDraft,
   extractTiptapHeadings,
@@ -38,6 +43,7 @@ import {
   type SeoQualityReport,
   type TiptapNode,
 } from './seo-content';
+import { seoGenerationPipelineVersion } from './seo-generation-pipeline';
 import type {
   CreateSeoKeywordDto,
   SaveSeoArticleDto,
@@ -48,7 +54,7 @@ import type {
 import { SeoSearchAdapter } from './seo-search.adapter';
 
 const publicArticlesCacheKey = 'seo:published:v1';
-const promptVersion = 'seo-zh-tutorial-v1';
+const promptVersion = seoGenerationPipelineVersion;
 const seoImageMaxBytes = 20 * 1024 * 1024;
 
 type AdminArticleRecord = SeoArticle & {
@@ -343,7 +349,7 @@ export class SeoPublishingService {
   async saveArticle(id: string, input: SaveSeoArticleDto, actorId: string) {
     const article = await this.prisma.seoArticle.findUnique({
       where: { id },
-      include: { publishedRevision: true },
+      include: { draftRevision: true, publishedRevision: true },
     });
     if (!article) throw new NotFoundException('文章不存在');
     const slug = await this.availableSlug(input.slug || input.title, id);
@@ -361,6 +367,12 @@ export class SeoPublishingService {
           source: SeoRevisionSource.MANUAL,
           slug,
           ...prepared,
+          sourceEvidence: this.retainSourceEvidence(
+            article.draftRevision?.sourceEvidence,
+            tiptapPlainText(prepared.contentJson as unknown as TiptapNode),
+          ),
+          aiAudit: Prisma.JsonNull,
+          lastVerifiedAt: null,
           createdById: actorId,
         },
       });
@@ -555,6 +567,15 @@ export class SeoPublishingService {
         coverAlt: source.coverAlt,
         qualityScore: source.qualityScore,
         qualityReport: source.qualityReport as Prisma.InputJsonValue,
+        sourceEvidence:
+          source.sourceEvidence === null
+            ? Prisma.JsonNull
+            : (source.sourceEvidence as Prisma.InputJsonValue),
+        aiAudit:
+          source.aiAudit === null
+            ? Prisma.JsonNull
+            : (source.aiAudit as Prisma.InputJsonValue),
+        lastVerifiedAt: source.lastVerifiedAt,
         createdById: actorId,
       },
     });
@@ -826,6 +847,15 @@ export class SeoPublishingService {
               ? Prisma.JsonNull
               : (source.modelSnapshot as Prisma.InputJsonValue),
           promptVersion: source.promptVersion,
+          sourceEvidence:
+            source.sourceEvidence === null
+              ? Prisma.JsonNull
+              : (source.sourceEvidence as Prisma.InputJsonValue),
+          aiAudit:
+            source.aiAudit === null
+              ? Prisma.JsonNull
+              : (source.aiAudit as Prisma.InputJsonValue),
+          lastVerifiedAt: source.lastVerifiedAt,
           createdById: actorId,
         },
       });
@@ -917,14 +947,14 @@ export class SeoPublishingService {
       include: { draftRevision: true, publishedRevision: true },
       take: 200,
     });
-    const existingPlainTexts = articles.flatMap((article) =>
-      [article.draftRevision, article.publishedRevision]
-        .filter((revision): revision is NonNullable<typeof revision> =>
+    const existingRevisions = articles.flatMap((article) =>
+      [article.draftRevision, article.publishedRevision].filter(
+        (revision): revision is NonNullable<typeof revision> =>
           Boolean(revision),
-        )
-        .map((revision) =>
-          tiptapPlainText(revision.contentJson as unknown as TiptapNode),
-        ),
+      ),
+    );
+    const existingPlainTexts = existingRevisions.map((revision) =>
+      tiptapPlainText(revision.contentJson as unknown as TiptapNode),
     );
     if (input.coverImageId) {
       const image = await this.prisma.seoImage.findUnique({
@@ -935,12 +965,19 @@ export class SeoPublishingService {
     const report = evaluateSeoDraft({
       title: input.title,
       excerpt: input.excerpt,
+      primaryKeyword: input.primaryKeyword,
+      relatedKeywords: input.relatedKeywords,
+      tags: input.tags,
       seoTitle: input.seoTitle,
       metaDescription: input.metaDescription,
       coverImageId: input.coverImageId ?? null,
       coverAlt: input.coverAlt ?? null,
       contentJson,
       existingPlainTexts,
+      existingSeoTitles: existingRevisions.map((revision) => revision.seoTitle),
+      existingMetaDescriptions: existingRevisions.map(
+        (revision) => revision.metaDescription,
+      ),
     });
     return {
       title: input.title.trim(),
@@ -973,6 +1010,7 @@ export class SeoPublishingService {
     targetArticleId?: string | null,
   ) {
     const contentJson = buildGeneratedDocument({
+      lead: generated.lead,
       sections: generated.sections,
     });
     const existingArticle = targetArticleId
@@ -1009,6 +1047,10 @@ export class SeoPublishingService {
       },
       existingArticle?.id ?? null,
     );
+    const qualityReport = applyEditorialAudit(
+      prepared.qualityReport as unknown as SeoQualityReport,
+      generated.audit,
+    );
     return this.prisma.$transaction(async (tx) => {
       const article = existingArticle
         ? existingArticle
@@ -1022,8 +1064,13 @@ export class SeoPublishingService {
           source: SeoRevisionSource.AI,
           slug,
           ...prepared,
+          qualityScore: qualityReport.score,
+          qualityReport,
           modelSnapshot,
           promptVersion,
+          sourceEvidence: generated.sourceEvidence,
+          aiAudit: generated.audit,
+          lastVerifiedAt: new Date(generated.audit.checkedAt),
         },
       });
       const updatedArticle = await tx.seoArticle.update({
@@ -1160,17 +1207,28 @@ export class SeoPublishingService {
           this.settings.getSiteInfo(),
           this.prisma.seoArticle.findMany({
             where: { publishedRevisionId: { not: null }, archivedAt: null },
-            include: { publishedRevision: { select: { title: true } } },
+            include: {
+              publishedRevision: {
+                select: { title: true, primaryKeyword: true },
+              },
+            },
             take: 100,
           }),
         ]);
         const generated = await this.ai.generateArticle({
           keyword: job.keyword.keyword,
           category: job.keyword.category,
-          publicContext: JSON.stringify({ site, tutorials }),
+          searchIntent: job.keyword.searchIntent,
+          sources: this.buildPublicSources(site, tutorials, new Date()),
           existingArticles: existing.flatMap((article) =>
             article.publishedRevision
-              ? [{ title: article.publishedRevision.title, slug: article.slug }]
+              ? [
+                  {
+                    title: article.publishedRevision.title,
+                    slug: article.slug,
+                    primaryKeyword: article.publishedRevision.primaryKeyword,
+                  },
+                ]
               : [],
           ),
         });
@@ -1440,12 +1498,82 @@ export class SeoPublishingService {
     throw new ConflictException('无法生成唯一的文章地址');
   }
 
+  private buildPublicSources(
+    site: unknown,
+    tutorials: unknown,
+    accessedAt: Date,
+  ): SeoPublicSource[] {
+    const timestamp = accessedAt.toISOString();
+    const tutorialConfig = this.record(tutorials);
+    const platforms = Array.isArray(tutorialConfig?.platforms)
+      ? tutorialConfig.platforms
+      : [];
+    return [
+      {
+        id: 'site-info',
+        title: '站点公开信息',
+        url: `${apiPublicUrl()}/api/site`,
+        content: JSON.stringify(site).slice(0, 12_000),
+        accessedAt: timestamp,
+        applicableVersion: '生成时的后台公开配置',
+      },
+      ...platforms.flatMap((value, index) => {
+        const platform = this.record(value);
+        if (!platform) return [];
+        const id =
+          typeof platform.id === 'string' && platform.id.trim()
+            ? platform.id.trim()
+            : `platform-${index + 1}`;
+        return [
+          {
+            id: `tutorial-${id}`,
+            title:
+              typeof platform.name === 'string' && platform.name.trim()
+                ? `${platform.name.trim()} 使用教程`
+                : `${id} 使用教程`,
+            url: `${apiPublicUrl()}/api/tutorial-assets#${encodeURIComponent(id)}`,
+            content: JSON.stringify(platform).slice(0, 12_000),
+            accessedAt: timestamp,
+            applicableVersion:
+              typeof platform.client === 'string' && platform.client.trim()
+                ? platform.client.trim()
+                : '生成时的后台公开教程',
+          },
+        ];
+      }),
+    ];
+  }
+
+  private retainSourceEvidence(value: unknown, content: string) {
+    if (!Array.isArray(value)) return Prisma.JsonNull;
+    const normalize = (input: string) =>
+      input.normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+    const normalizedContent = normalize(content);
+    const retained = value.filter((item) => {
+      const evidence = this.record(item);
+      return (
+        evidence &&
+        typeof evidence.claim === 'string' &&
+        normalizedContent.includes(normalize(evidence.claim))
+      );
+    });
+    return retained.length
+      ? (retained as Prisma.InputJsonValue)
+      : Prisma.JsonNull;
+  }
+
+  private record(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  }
+
   private parseScheduleDays(value?: string) {
-    const parsed = (value ?? '1,3,5')
+    const parsed = (value ?? '1,4')
       .split(',')
       .map((day) => Number(day))
       .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6);
-    return parsed.length ? [...new Set(parsed)] : [1, 3, 5];
+    return parsed.length ? [...new Set(parsed)] : [1, 4];
   }
 
   private serializeAdminArticle(article: AdminArticleRecord) {
@@ -1479,6 +1607,33 @@ export class SeoPublishingService {
     if (!revision) {
       throw new NotFoundException('文章没有可公开的版本');
     }
+    const sourceReferences = Array.isArray(revision.sourceEvidence)
+      ? revision.sourceEvidence.flatMap((value) => {
+          const source = this.record(value);
+          if (
+            !source ||
+            typeof source.sourceTitle !== 'string' ||
+            typeof source.sourceUrl !== 'string'
+          ) {
+            return [];
+          }
+          return [
+            {
+              title: source.sourceTitle,
+              url: source.sourceUrl,
+              applicableVersion:
+                typeof source.applicableVersion === 'string'
+                  ? source.applicableVersion
+                  : null,
+            },
+          ];
+        })
+      : [];
+    const uniqueSources = [
+      ...new Map(
+        sourceReferences.map((source) => [source.url, source]),
+      ).values(),
+    ];
     return {
       id: article.id,
       slug: article.slug,
@@ -1494,6 +1649,9 @@ export class SeoPublishingService {
       coverAlt: revision.coverAlt,
       publishedAt: article.publishedAt?.toISOString() ?? null,
       updatedAt: article.updatedAt.toISOString(),
+      reviewedAt: revision.reviewedAt?.toISOString() ?? null,
+      lastVerifiedAt: revision.lastVerifiedAt?.toISOString() ?? null,
+      sources: includeContent ? uniqueSources : [],
       author: '素心 Network 编辑部',
       ...(includeContent ? { contentHtml: revision.contentHtml } : {}),
       ...(includeContent

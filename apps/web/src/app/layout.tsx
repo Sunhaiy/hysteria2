@@ -35,11 +35,13 @@ export async function generateMetadata(): Promise<Metadata> {
       title: site.browserTitle || site.name,
       description,
       url: "/",
+      images: [{ url: "/opengraph-image", width: 1200, height: 630 }],
     },
     twitter: {
       card: "summary_large_image",
       title: site.browserTitle || site.name,
       description,
+      images: ["/opengraph-image"],
     },
   };
 }
@@ -89,7 +91,7 @@ export default async function RootLayout({
         />
         <ThemeProvider>
           <NavigationProgress />
-          <SiteProvider>
+          <SiteProvider initialSite={site}>
             <AuthProvider>{children}</AuthProvider>
           </SiteProvider>
         </ThemeProvider>

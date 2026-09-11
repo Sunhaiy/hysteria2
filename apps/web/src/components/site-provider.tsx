@@ -11,7 +11,7 @@ import {
 import { usePathname } from "next/navigation";
 import { apiRequest } from "@/lib/api";
 
-interface SiteInfo {
+export interface SiteInfo {
   name: string;
   description: string;
   browserTitle: string;
@@ -58,8 +58,29 @@ function normalizeSiteIconUrl(value: string | undefined) {
 
 const SiteContext = createContext<SiteInfo>(defaultSite);
 
-export function SiteProvider({ children }: { children: ReactNode }) {
-  const [site, setSite] = useState<SiteInfo>(defaultSite);
+function normalizeSiteInfo(info: SiteInfo): SiteInfo {
+  return {
+    ...info,
+    iconUrl: normalizeSiteIconUrl(info.iconUrl),
+    fontWeight: normalizeFontWeight(info.fontWeight),
+    iconStrokeWidth: normalizeIconStrokeWidth(info.iconStrokeWidth),
+    registration: {
+      enabled: info.registration?.enabled ?? true,
+      inviteOnly: info.registration?.inviteOnly ?? false,
+    },
+  };
+}
+
+export function SiteProvider({
+  children,
+  initialSite = defaultSite,
+}: {
+  children: ReactNode;
+  initialSite?: SiteInfo;
+}) {
+  const [site, setSite] = useState<SiteInfo>(() =>
+    normalizeSiteInfo(initialSite),
+  );
   const pathname = usePathname();
 
   useLayoutEffect(() => {
@@ -92,16 +113,7 @@ export function SiteProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const applySite = (info: SiteInfo) => {
       if (!info?.name) return;
-      const next = {
-        ...info,
-        iconUrl: normalizeSiteIconUrl(info.iconUrl),
-        fontWeight: normalizeFontWeight(info.fontWeight),
-        iconStrokeWidth: normalizeIconStrokeWidth(info.iconStrokeWidth),
-        registration: {
-          enabled: info.registration?.enabled ?? true,
-          inviteOnly: info.registration?.inviteOnly ?? false,
-        },
-      };
+      const next = normalizeSiteInfo(info);
       document.documentElement.style.setProperty(
         "--font-weight-body",
         String(next.fontWeight),

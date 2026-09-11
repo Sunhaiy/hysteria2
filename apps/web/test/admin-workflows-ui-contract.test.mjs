@@ -5,15 +5,21 @@ import test from "node:test";
 const source = (path) =>
   readFile(new URL(`../src/${path}`, import.meta.url), "utf8");
 
-test("public homepage follows the PPanel landing structure with backend-selected plans", async () => {
-  const [home, catalog, lottie, hoverButton, styles] = await Promise.all([
-    source("app/page.tsx"),
-    source("app/admin/catalog/page.tsx"),
-    source("components/deferred-dot-lottie.tsx"),
-    source("components/hover-border-gradient.tsx"),
-    source("app/globals.scss"),
-  ]);
+test("public homepage follows the PPanel landing structure with server-rendered plans", async () => {
+  const [entry, home, catalog, lottie, hoverButton, styles] = await Promise.all(
+    [
+      source("app/page.tsx"),
+      source("components/homepage-experience.tsx"),
+      source("app/admin/catalog/page.tsx"),
+      source("components/deferred-dot-lottie.tsx"),
+      source("components/hover-border-gradient.tsx"),
+      source("app/globals.scss"),
+    ],
+  );
 
+  assert.match(entry, /getPublicCatalog\(\)/);
+  assert.match(entry, /<HomepageExperience initialCatalog=\{catalog\}/);
+  assert.match(entry, /alternates:\s*\{ canonical: "\/" \}/);
   assert.match(home, /<main className="ppanel-home"/);
   assert.match(home, /className="ppanel-header"/);
   assert.match(home, /className="ppanel-hero"/);
@@ -26,6 +32,7 @@ test("public homepage follows the PPanel landing structure with backend-selected
   assert.match(home, /<HoverBorderGradient/);
   assert.match(home, /motion\.section/);
   assert.match(home, /apiRequest<PublicCatalog>\("\/api\/catalog"\)/);
+  assert.match(home, /useState<PublicCatalog \| null>\(initialCatalog\)/);
   assert.match(home, /selectHomepagePlans\(catalog\?\.products \?\? \[\], 4\)/);
   assert.match(home, /className="ppanel-stats"/);
   assert.match(home, /className="ppanel-plan-grid"/);

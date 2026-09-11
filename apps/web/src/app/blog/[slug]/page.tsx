@@ -135,6 +135,14 @@ export default async function ArticlePage({
                 new Date(article.updatedAt),
               )}
             </time>
+            {article.lastVerifiedAt ? (
+              <time dateTime={article.lastVerifiedAt}>
+                内容核验于{" "}
+                {new Intl.DateTimeFormat("zh-CN", {
+                  dateStyle: "long",
+                }).format(new Date(article.lastVerifiedAt))}
+              </time>
+            ) : null}
           </div>
           {article.coverUrl ? (
             <div className="seo-article-cover">
@@ -167,13 +175,30 @@ export default async function ArticlePage({
               className="seo-prose"
               dangerouslySetInnerHTML={{ __html: article.contentHtml ?? "" }}
             />
+            {article.sources?.length ? (
+              <section className="seo-article-sources">
+                <h2>资料依据</h2>
+                <ul>
+                  {article.sources.map((source) => (
+                    <li key={source.url}>
+                      <a href={source.url} rel="noreferrer" target="_blank">
+                        {source.title}
+                      </a>
+                      {source.applicableVersion ? (
+                        <span>{source.applicableVersion}</span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
             <section className="seo-article-cta">
               <div>
                 <span>准备开始使用？</span>
                 <strong>先查看适合自己的套餐，再完成注册。</strong>
               </div>
               <div>
-                <Link className="ghost-button" href="/portal/plans">
+                <Link className="ghost-button" href="/#plans">
                   查看套餐
                 </Link>
                 <Link className="action-button" href="/register">

@@ -1779,22 +1779,22 @@ model MonitorAlertEvent {
 }
 
 model SeoArticle {
-  id                  String                  @id @default(cuid())
-  slug                String                  @unique
-  category            String                  @default("教程")
-  status              SeoArticleStatus        @default(DRAFT)
-  draftRevisionId     String?                 @unique
-  publishedRevisionId String?                 @unique
+  id                  String               @id @default(cuid())
+  slug                String               @unique
+  category            String               @default("教程")
+  status              SeoArticleStatus     @default(DRAFT)
+  draftRevisionId     String?              @unique
+  publishedRevisionId String?              @unique
   createdById         String?
   scheduledAt         DateTime?
   publishedAt         DateTime?
   archivedAt          DateTime?
-  createdAt           DateTime                @default(now())
-  updatedAt           DateTime                @updatedAt
-  draftRevision       SeoArticleRevision?     @relation("SeoArticleDraftRevision", fields: [draftRevisionId], references: [id], onDelete: SetNull)
-  publishedRevision   SeoArticleRevision?     @relation("SeoArticlePublishedRevision", fields: [publishedRevisionId], references: [id], onDelete: SetNull)
-  createdBy           User?                   @relation("SeoArticleCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  revisions           SeoArticleRevision[]    @relation("SeoArticleRevisions")
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  draftRevision       SeoArticleRevision?  @relation("SeoArticleDraftRevision", fields: [draftRevisionId], references: [id], onDelete: SetNull)
+  publishedRevision   SeoArticleRevision?  @relation("SeoArticlePublishedRevision", fields: [publishedRevisionId], references: [id], onDelete: SetNull)
+  createdBy           User?                @relation("SeoArticleCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  revisions           SeoArticleRevision[] @relation("SeoArticleRevisions")
   keyword             SeoKeyword?
   generationJobs      SeoGenerationJob[]
   redirects           SeoRedirect[]
@@ -1807,36 +1807,39 @@ model SeoArticle {
 }
 
 model SeoArticleRevision {
-  id              String               @id @default(cuid())
-  articleId       String
-  version         Int
-  source          SeoRevisionSource
-  slug            String
-  title           String
-  excerpt         String
-  contentJson     Json
-  contentHtml     String
-  primaryKeyword String
-  relatedKeywords String[]             @default([])
-  tags            String[]             @default([])
-  seoTitle        String
-  metaDescription String
-  coverImageId    String?
-  coverAlt        String?
-  qualityScore    Int                  @default(0)
-  qualityReport   Json
-  modelSnapshot   Json?
-  promptVersion   String?
-  createdById     String?
-  reviewedById    String?
-  reviewedAt      DateTime?
-  createdAt       DateTime             @default(now())
-  article         SeoArticle           @relation("SeoArticleRevisions", fields: [articleId], references: [id], onDelete: Cascade)
-  draftFor        SeoArticle?          @relation("SeoArticleDraftRevision")
-  publishedFor    SeoArticle?          @relation("SeoArticlePublishedRevision")
-  coverImage      SeoImage?            @relation(fields: [coverImageId], references: [id], onDelete: SetNull)
-  createdBy       User?                @relation("SeoRevisionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  reviewedBy      User?                @relation("SeoRevisionReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  id               String               @id @default(cuid())
+  articleId        String
+  version          Int
+  source           SeoRevisionSource
+  slug             String
+  title            String
+  excerpt          String
+  contentJson      Json
+  contentHtml      String
+  primaryKeyword   String
+  relatedKeywords  String[]             @default([])
+  tags             String[]             @default([])
+  seoTitle         String
+  metaDescription  String
+  coverImageId     String?
+  coverAlt         String?
+  qualityScore     Int                  @default(0)
+  qualityReport    Json
+  modelSnapshot    Json?
+  promptVersion    String?
+  sourceEvidence   Json?
+  aiAudit          Json?
+  lastVerifiedAt   DateTime?
+  createdById      String?
+  reviewedById     String?
+  reviewedAt       DateTime?
+  createdAt        DateTime             @default(now())
+  article          SeoArticle           @relation("SeoArticleRevisions", fields: [articleId], references: [id], onDelete: Cascade)
+  draftFor         SeoArticle?          @relation("SeoArticleDraftRevision")
+  publishedFor     SeoArticle?          @relation("SeoArticlePublishedRevision")
+  coverImage       SeoImage?            @relation(fields: [coverImageId], references: [id], onDelete: SetNull)
+  createdBy        User?                @relation("SeoRevisionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  reviewedBy       User?                @relation("SeoRevisionReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
   indexSubmissions SeoIndexSubmission[]
 
   @@unique([articleId, version])
@@ -1862,62 +1865,62 @@ model SeoKeyword {
 }
 
 model SeoGenerationJob {
-  id             String               @id @default(cuid())
+  id             String              @id @default(cuid())
   keywordId      String?
   articleId      String?
   requestedById  String?
-  idempotencyKey String               @unique
-  status         SeoGenerationStatus  @default(QUEUED)
+  idempotencyKey String              @unique
+  status         SeoGenerationStatus @default(QUEUED)
   scheduledFor   DateTime
-  attempts       Int                  @default(0)
+  attempts       Int                 @default(0)
   promptVersion  String?
   modelSnapshot  Json?
   usage          Json?
   lastError      String?
   startedAt      DateTime?
   finishedAt     DateTime?
-  createdAt      DateTime             @default(now())
-  updatedAt      DateTime             @updatedAt
-  keyword        SeoKeyword?          @relation(fields: [keywordId], references: [id], onDelete: SetNull)
-  article        SeoArticle?          @relation(fields: [articleId], references: [id], onDelete: SetNull)
-  requestedBy    User?                @relation("SeoGenerationRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  keyword        SeoKeyword?         @relation(fields: [keywordId], references: [id], onDelete: SetNull)
+  article        SeoArticle?         @relation(fields: [articleId], references: [id], onDelete: SetNull)
+  requestedBy    User?               @relation("SeoGenerationRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
 
   @@index([status, scheduledFor, id])
   @@index([keywordId, createdAt, id])
 }
 
 model SeoImage {
-  id           String            @id @default(cuid())
-  storageKey   String            @unique
+  id           String               @id @default(cuid())
+  storageKey   String               @unique
   source       SeoImageSource
-  mimeType     String            @default("image/webp")
+  mimeType     String               @default("image/webp")
   width        Int
   height       Int
   sizeBytes    Int
   originalName String?
-  createdAt    DateTime          @default(now())
+  createdAt    DateTime             @default(now())
   revisions    SeoArticleRevision[]
 
   @@index([createdAt, id])
 }
 
 model SeoIndexSubmission {
-  id             String            @id @default(cuid())
+  id             String              @id @default(cuid())
   articleId      String
   revisionId     String?
   engine         SeoIndexEngine
   operation      SeoIndexOperation
-  status         SeoIndexStatus    @default(PENDING)
+  status         SeoIndexStatus      @default(PENDING)
   url            String
-  idempotencyKey String            @unique
-  attempts       Int               @default(0)
+  idempotencyKey String              @unique
+  attempts       Int                 @default(0)
   nextRetryAt    DateTime?
   response       Json?
   lastError      String?
   submittedAt    DateTime?
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
-  article        SeoArticle        @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  article        SeoArticle          @relation(fields: [articleId], references: [id], onDelete: Cascade)
   revision       SeoArticleRevision? @relation(fields: [revisionId], references: [id], onDelete: SetNull)
 
   @@index([status, nextRetryAt, createdAt, id])

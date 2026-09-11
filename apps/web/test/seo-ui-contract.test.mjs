@@ -23,23 +23,36 @@ async function scssFiles(directory) {
 }
 
 test("public SEO routes provide crawl metadata and server-rendered article content", async () => {
-  const [layout, article, robots, sitemap, proxy] = await Promise.all([
-    source("src/app/layout.tsx"),
-    source("src/app/blog/[slug]/page.tsx"),
-    source("src/app/robots.ts"),
-    source("src/app/sitemap.ts"),
-    source("src/proxy.ts"),
-  ]);
+  const [layout, homepage, article, robots, sitemap, socialImage, proxy] =
+    await Promise.all([
+      source("src/app/layout.tsx"),
+      source("src/app/page.tsx"),
+      source("src/app/blog/[slug]/page.tsx"),
+      source("src/app/robots.ts"),
+      source("src/app/sitemap.ts"),
+      source("src/app/opengraph-image.tsx"),
+      source("src/proxy.ts"),
+    ]);
   assert.match(layout, /Organization/);
   assert.match(layout, /WebSite/);
   assert.match(layout, /publicSiteDescription\(site\)/);
+  assert.match(layout, /<SiteProvider initialSite=\{site\}>/);
+  assert.match(homepage, /getPublicCatalog\(\)/);
+  assert.match(homepage, /alternates:\s*\{ canonical: "\/" \}/);
   assert.match(article, /dangerouslySetInnerHTML/);
   assert.match(article, /BreadcrumbList/);
   assert.match(article, /permanentRedirect/);
+  assert.match(article, /href="\/\#plans"/);
+  assert.match(article, /资料依据/);
+  assert.match(article, /内容核验于/);
   assert.match(robots, /"\/admin"/);
   assert.match(robots, /"\/portal"/);
   assert.match(robots, /"\/api"/);
   assert.match(sitemap, /getSitemapArticles/);
+  assert.doesNotMatch(sitemap, /lastModified:\s*new Date\(\)/);
+  assert.match(socialImage, /new ImageResponse/);
+  assert.match(socialImage, /1200/);
+  assert.match(socialImage, /630/);
   assert.match(proxy, /NextResponse\.redirect\(destination, 301\)/);
   assert.match(proxy, /api\/seo\/redirects/);
   const helpers = await source("src/lib/seo.ts");
@@ -63,7 +76,10 @@ test("private route groups all publish noindex and nofollow metadata", async () 
   ];
   for (const group of groups) {
     const layout = await source(`src/app/${group}/layout.tsx`);
-    assert.match(layout, /robots:\s*\{\s*index:\s*false,\s*follow:\s*false\s*\}/);
+    assert.match(
+      layout,
+      /robots:\s*\{\s*index:\s*false,\s*follow:\s*false\s*\}/,
+    );
   }
 });
 
@@ -91,4 +107,6 @@ test("published articles initialize preview and quality state without creating a
   assert.match(editor, /__html: currentRevision\.contentHtml/);
   assert.match(editor, /!selected\.draftRevision \|\| !quality\?\.passed/);
   assert.match(editor, /onClick=\{\(\) => setView\(item\.value\)\}/);
+  assert.match(editor, /独立审校/);
+  assert.match(editor, /事实依据/);
 });

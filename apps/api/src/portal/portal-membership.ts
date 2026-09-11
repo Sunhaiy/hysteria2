@@ -13,39 +13,45 @@ function shanghaiCalendarDay(value: Date) {
   return Math.floor((value.getTime() + SHANGHAI_OFFSET_MS) / DAY_MS);
 }
 
-function activeDurationMs(intervals: MembershipInterval[], now: Date) {
+function activeCalendarDays(intervals: MembershipInterval[], now: Date) {
   const normalized = intervals
     .map((interval) => ({
-      start: interval.startsAt.getTime(),
-      end: Math.min(interval.endsAt.getTime(), now.getTime()),
+      startMs: interval.startsAt.getTime(),
+      endMs: Math.min(interval.endsAt.getTime(), now.getTime()),
     }))
     .filter(
       (interval) =>
-        Number.isFinite(interval.start) &&
-        Number.isFinite(interval.end) &&
-        interval.start < now.getTime() &&
-        interval.end > interval.start,
+        Number.isFinite(interval.startMs) &&
+        Number.isFinite(interval.endMs) &&
+        interval.startMs < now.getTime() &&
+        interval.endMs > interval.startMs,
     )
-    .sort((left, right) => left.start - right.start);
+    .map((interval) => ({
+      startDay: shanghaiCalendarDay(new Date(interval.startMs)),
+      // Intervals are [start, end); subtracting one millisecond keeps an
+      // exact midnight expiry on the preceding calendar day.
+      endDay: shanghaiCalendarDay(new Date(interval.endMs - 1)),
+    }))
+    .sort((left, right) => left.startDay - right.startDay);
 
   let total = 0;
   let currentStart: number | null = null;
   let currentEnd = 0;
   for (const interval of normalized) {
     if (currentStart === null) {
-      currentStart = interval.start;
-      currentEnd = interval.end;
+      currentStart = interval.startDay;
+      currentEnd = interval.endDay;
       continue;
     }
-    if (interval.start <= currentEnd) {
-      currentEnd = Math.max(currentEnd, interval.end);
+    if (interval.startDay <= currentEnd + 1) {
+      currentEnd = Math.max(currentEnd, interval.endDay);
       continue;
     }
-    total += currentEnd - currentStart;
-    currentStart = interval.start;
-    currentEnd = interval.end;
+    total += currentEnd - currentStart + 1;
+    currentStart = interval.startDay;
+    currentEnd = interval.endDay;
   }
-  if (currentStart !== null) total += currentEnd - currentStart;
+  if (currentStart !== null) total += currentEnd - currentStart + 1;
   return total;
 }
 
@@ -59,9 +65,7 @@ export function calculateMembershipJourney(input: {
     1,
     shanghaiCalendarDay(now) - shanghaiCalendarDay(input.registeredAt) + 1,
   );
-  const subscribedDays = Math.floor(
-    activeDurationMs(input.subscriptionIntervals, now) / DAY_MS,
-  );
+  const subscribedDays = activeCalendarDays(input.subscriptionIntervals, now);
   const anniversaryProgressPercent = Math.min(
     100,
     Math.round((subscribedDays / FIRST_ANNIVERSARY_DAYS) * 1000) / 10,

@@ -166,15 +166,19 @@ draft, and switch the guide pointer in one database transaction.
   changes the public page.
 - **SeoArticleRevision** is immutable editorial content. Tiptap JSON is the
   source of truth; its server-rendered HTML snapshot contains only supported,
-  escaped nodes and safe links. Review belongs to the revision that was
-  approved, not to a later edit.
+  escaped nodes and safe links. AI revisions retain exact public-source
+  evidence, its applicable version, an independent editorial audit, and the
+  last verification time. Review belongs to the revision that was approved,
+  not to a later edit.
 - **SeoKeyword** assigns one primary search intent to at most one article.
   Similar content above the quality threshold is rejected in favor of updating
   the existing article.
 - **SeoGenerationJob** is an administrator-visible AI work item. It records the
   models, prompt version, token use, image outcome, duration, attempts, and a
-  sanitized failure reason. Monday, Wednesday, and Friday scheduling is
-  idempotent per Asia/Shanghai date and creates drafts only.
+  sanitized failure reason. The evidence, draft, per-article metadata, and
+  independent-audit stages are recorded separately. Configured scheduling is
+  idempotent per Asia/Shanghai date and creates drafts only; the default is two
+  high-quality drafts per week rather than volume-oriented publishing.
 - **SeoIndexSubmission** is the durable delivery queue for IndexNow and Google
   sitemap notifications. A published revision and operation form its
   idempotency identity; automatic retries use exponential backoff and stop
@@ -189,7 +193,9 @@ AI adapters may read public site information, public tutorial configuration,
 and published article titles. They must never read support tickets, member
 email addresses, orders, usage, or other private data. Search integrations are
 disabled by default; Google ordinary articles use sitemap/Search Console, not
-the Indexing API.
+the Indexing API. There is no preferred article word count: completeness,
+evidence, actionability, intent fit, and original value form the publication
+gate, while length is only a diagnostic signal.
 
 ## Support
 
