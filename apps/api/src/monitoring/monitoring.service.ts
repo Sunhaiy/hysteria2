@@ -20,6 +20,19 @@ interface CheckResult {
   metadata?: Prisma.InputJsonValue;
 }
 
+interface AlertForNotification {
+  id: string;
+  title: string;
+  message: string;
+  nodeId: string | null;
+  metadata: Prisma.JsonValue;
+}
+
+interface AlertTransition {
+  alert: AlertForNotification;
+  state: 'opened' | 'resolved';
+}
+
 @Injectable()
 export class MonitoringService {
   private readonly logger = new Logger(MonitoringService.name);
@@ -204,7 +217,13 @@ export class MonitoringService {
         metadata: { deniedAuth, windowMinutes: 5 },
       },
     );
-    for (const result of results) await this.applyResult(result, now);
+    const activeNodeIncidentsBefore = await this.activeCriticalNodeIds();
+    const transitions: AlertTransition[] = [];
+    for (const result of results) {
+      const transition = await this.applyResult(result, now);
+      if (transition) transitions.push(transition);
+    }
+    await this.notifyTransitions(transitions, activeNodeIncidentsBefore);
     await this.retryPendingNotifications();
     await this.prisma.nodeServiceCheck.deleteMany({
       where: {
@@ -303,7 +322,10 @@ export class MonitoringService {
     return { id: alert.id, status: 'acknowledged' };
   }
 
-  private async applyResult(result: CheckResult, now: Date) {
+  private async applyResult(
+    result: CheckResult,
+    now: Date,
+  ): Promise<AlertTransition | null> {
     const existing = await this.prisma.monitorAlert.findUnique({
       where: { fingerprint: result.fingerprint },
     });
@@ -360,18 +382,17 @@ export class MonitoringService {
             : undefined,
         },
       });
-      if (opening && alert.severity === MonitorAlertSeverity.CRITICAL) {
-        await this.notify(alert, 'opened');
-      }
-      return;
+      return opening && alert.severity === MonitorAlertSeverity.CRITICAL
+        ? { alert, state: 'opened' }
+        : null;
     }
-    if (!existing) return;
+    if (!existing) return null;
     if (existing.status === MonitorAlertStatus.RESOLVED) {
       await this.prisma.monitorAlert.update({
         where: { id: existing.id },
         data: { failureCount: 0, successCount: 0 },
       });
-      return;
+      return null;
     }
     const nextSuccess = existing.successCount + 1;
     const resolving = nextSuccess >= 2;
@@ -392,20 +413,72 @@ export class MonitoringService {
           : undefined,
       },
     });
-    if (resolving && alert.severity === MonitorAlertSeverity.CRITICAL) {
-      await this.notify(alert, 'resolved');
+    return resolving && alert.severity === MonitorAlertSeverity.CRITICAL
+      ? { alert, state: 'resolved' }
+      : null;
+  }
+
+  private async notifyTransitions(
+    transitions: AlertTransition[],
+    activeNodeIncidentsBefore: Set<string>,
+  ) {
+    for (const transition of transitions) {
+      if (!transition.alert.nodeId) {
+        await this.notify(transition.alert, transition.state);
+      }
+    }
+
+    const activeNodeIncidentsAfter = await this.activeCriticalNodeIds();
+    const nodeIds = new Set([
+      ...activeNodeIncidentsBefore,
+      ...activeNodeIncidentsAfter,
+    ]);
+    for (const nodeId of nodeIds) {
+      const wasActive = activeNodeIncidentsBefore.has(nodeId);
+      const isActive = activeNodeIncidentsAfter.has(nodeId);
+      const state =
+        !wasActive && isActive
+          ? 'opened'
+          : wasActive && !isActive
+            ? 'resolved'
+            : null;
+      if (!state) continue;
+      const transition = transitions.find(
+        (candidate) =>
+          candidate.alert.nodeId === nodeId && candidate.state === state,
+      );
+      if (transition) await this.notify(transition.alert, state);
     }
   }
 
+  private async activeCriticalNodeIds() {
+    const alerts = await this.prisma.monitorAlert.findMany({
+      where: {
+        nodeId: { not: null },
+        severity: MonitorAlertSeverity.CRITICAL,
+        status: {
+          in: [MonitorAlertStatus.OPEN, MonitorAlertStatus.ACKNOWLEDGED],
+        },
+      },
+      select: { nodeId: true, severity: true, status: true },
+    });
+    return new Set(
+      alerts
+        .filter(
+          (alert) =>
+            alert.nodeId &&
+            alert.severity === MonitorAlertSeverity.CRITICAL &&
+            alert.status !== MonitorAlertStatus.RESOLVED,
+        )
+        .map((alert) => alert.nodeId as string),
+    );
+  }
+
   private async notify(
-    alert: {
-      id: string;
-      title: string;
-      message: string;
-      metadata: Prisma.JsonValue;
-    },
+    alert: AlertForNotification,
     state: 'opened' | 'resolved',
   ) {
+    const metadata = this.readMetadata(alert.metadata);
     try {
       const admin = await this.prisma.user.findFirst({
         where: { role: 'ADMIN', status: 'ACTIVE' },
@@ -420,15 +493,29 @@ export class MonitoringService {
       });
       await this.prisma.monitorAlert.update({
         where: { id: alert.id },
-        data: { metadata: { notificationPending: null } },
+        data: {
+          metadata: {
+            ...metadata,
+            notificationPending: null,
+            notificationLastState: state,
+            notificationLastSentAt: new Date().toISOString(),
+          },
+        },
       });
     } catch (error) {
       this.logger.warn(`Alert email failed for ${alert.id}: ${String(error)}`);
       await this.prisma.monitorAlert.update({
         where: { id: alert.id },
-        data: { metadata: { notificationPending: state } },
+        data: { metadata: { ...metadata, notificationPending: state } },
       });
     }
+  }
+
+  private readMetadata(metadata: Prisma.JsonValue) {
+    if (!metadata || Array.isArray(metadata) || typeof metadata !== 'object') {
+      return {};
+    }
+    return metadata;
   }
 
   private async retryPendingNotifications() {
