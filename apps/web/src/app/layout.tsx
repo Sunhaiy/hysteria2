@@ -3,7 +3,12 @@ import { AuthProvider } from "@/components/auth-provider";
 import { SiteProvider } from "@/components/site-provider";
 import { ThemeProvider } from "@/components/theme-provider";
 import { NavigationProgress } from "@/components/navigation-progress";
-import { getPublicSiteInfo, jsonLd, publicSiteUrl } from "@/lib/seo";
+import {
+  getPublicSiteInfo,
+  jsonLd,
+  publicSiteDescription,
+  publicSiteUrl,
+} from "@/lib/seo";
 import "./globals.scss";
 import "./seo.scss";
 
@@ -12,13 +17,14 @@ const themeBootstrap = `(function(){try{var t=localStorage.getItem('theme');if(t
 
 export async function generateMetadata(): Promise<Metadata> {
   const site = await getPublicSiteInfo();
+  const description = publicSiteDescription(site);
   return {
     metadataBase: new URL(publicSiteUrl()),
     title: {
       default: site.browserTitle || site.name,
       template: `%s | ${site.name}`,
     },
-    description: site.description,
+    description,
     icons: {
       icon: [{ url: site.iconUrl || "/brand-icon.svg" }],
       shortcut: site.iconUrl || "/brand-icon.svg",
@@ -27,13 +33,13 @@ export async function generateMetadata(): Promise<Metadata> {
       type: "website",
       siteName: site.name,
       title: site.browserTitle || site.name,
-      description: site.description,
+      description,
       url: "/",
     },
     twitter: {
       card: "summary_large_image",
       title: site.browserTitle || site.name,
-      description: site.description,
+      description,
     },
   };
 }

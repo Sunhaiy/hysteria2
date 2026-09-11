@@ -35,6 +35,9 @@ export type PublicSeoArticleResponse =
   | { redirectTo: string }
   | { article: PublicSeoArticle; related: PublicSeoArticle[] };
 
+export const DEFAULT_PUBLIC_SITE_DESCRIPTION =
+  "稳定、安全、简单的网络服务，让每一次连接都清晰、顺畅。";
+
 function normalizedHttpUrl(value: string | undefined, fallback: string) {
   try {
     const url = new URL(value?.trim() || fallback);
@@ -47,6 +50,12 @@ function normalizedHttpUrl(value: string | undefined, fallback: string) {
 
 export function publicSiteUrl() {
   return normalizedHttpUrl(process.env.WEB_PUBLIC_URL, "http://localhost:3001");
+}
+
+export function publicSiteDescription(
+  site: Pick<PublicSiteInfo, "description">,
+) {
+  return site.description.trim() || DEFAULT_PUBLIC_SITE_DESCRIPTION;
 }
 
 function serverApiUrl() {

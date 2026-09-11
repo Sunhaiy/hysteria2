@@ -32,6 +32,7 @@ test("public SEO routes provide crawl metadata and server-rendered article conte
   ]);
   assert.match(layout, /Organization/);
   assert.match(layout, /WebSite/);
+  assert.match(layout, /publicSiteDescription\(site\)/);
   assert.match(article, /dangerouslySetInnerHTML/);
   assert.match(article, /BreadcrumbList/);
   assert.match(article, /permanentRedirect/);
@@ -42,6 +43,7 @@ test("public SEO routes provide crawl metadata and server-rendered article conte
   assert.match(proxy, /NextResponse\.redirect\(destination, 301\)/);
   assert.match(proxy, /api\/seo\/redirects/);
   const helpers = await source("src/lib/seo.ts");
+  assert.match(helpers, /稳定、安全、简单的网络服务/);
   assert.match(helpers, /cache: "no-store" as const/);
   assert.match(
     helpers,
