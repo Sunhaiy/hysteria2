@@ -89,6 +89,55 @@ export class TicketsService {
     return this.reply(id, actorId, body, true);
   }
 
+  async closeMember(userId: string, id: string) {
+    const existing = await this.prisma.supportTicket.findFirst({
+      where: { id, userId },
+      select: { id: true, status: true },
+    });
+    if (!existing) throw new NotFoundException('工单不存在');
+
+    if (existing.status === SupportTicketStatus.CLOSED) {
+      const ticket = await this.prisma.supportTicket.findFirst({
+        where: { id, userId },
+        include: ticketInclude,
+      });
+      if (!ticket) throw new NotFoundException('工单不存在');
+      return this.presentTicket(ticket);
+    }
+
+    const ticket = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.supportTicket.updateMany({
+        where: {
+          id,
+          userId,
+          status: { not: SupportTicketStatus.CLOSED },
+        },
+        data: { status: SupportTicketStatus.CLOSED, closedAt: new Date() },
+      });
+      if (result.count === 1) {
+        await tx.auditLog.create({
+          data: {
+            actorId: userId,
+            action: 'SUPPORT_TICKET_CLOSED_BY_MEMBER',
+            targetType: 'SupportTicket',
+            targetId: id,
+            metadata: {
+              before: existing.status,
+              after: SupportTicketStatus.CLOSED,
+            },
+          },
+        });
+      }
+      const current = await tx.supportTicket.findFirst({
+        where: { id, userId },
+        include: ticketInclude,
+      });
+      if (!current) throw new NotFoundException('工单不存在');
+      return current;
+    });
+    return this.presentTicket(ticket);
+  }
+
   async updateStatus(
     actorId: string,
     id: string,

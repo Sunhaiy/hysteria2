@@ -166,6 +166,29 @@ export default function PortalTicketsPage() {
     }
   }
 
+  async function closeTicket() {
+    if (!token || !detail || detail.ticket.status === "closed") return;
+    if (!window.confirm("确认关闭这个工单？关闭后将不能继续回复。")) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const ticket = await apiRequest<SupportTicketRecord>(
+        `/api/portal/tickets/${detail.ticket.id}/close`,
+        { method: "PATCH", token },
+      );
+      setDetail((current) =>
+        current?.ticket.id === ticket.id ? { ...current, ticket } : current,
+      );
+      setReply("");
+      setFeedback("工单已关闭。");
+      await load();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "工单关闭失败。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <ConsoleShell
       title="我的工单"
@@ -371,15 +394,26 @@ export default function PortalTicketsPage() {
         }
         footer={
           detail?.ticket.status !== "closed" ? (
-            <div className="toolbar-actions">
+            <div className="drawer-footer-split">
               <button
-                className="action-button"
+                className="danger-button"
                 type="button"
-                disabled={busy || !reply.trim()}
-                onClick={() => void sendReply()}
+                disabled={busy}
+                onClick={() => void closeTicket()}
               >
-                发送回复
+                <Icon name="close" />
+                关闭工单
               </button>
+              <div className="toolbar-actions">
+                <button
+                  className="action-button"
+                  type="button"
+                  disabled={busy || !reply.trim()}
+                  onClick={() => void sendReply()}
+                >
+                  发送回复
+                </button>
+              </div>
             </div>
           ) : undefined
         }

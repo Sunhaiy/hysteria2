@@ -58,6 +58,14 @@ export class PortalTicketsController {
   ) {
     return this.tickets.replyMember(principal.sub, id, body.body);
   }
+
+  @Patch(':id/close')
+  close(
+    @CurrentPrincipal() principal: SessionPrincipal,
+    @Param('id') id: string,
+  ) {
+    return this.tickets.closeMember(principal.sub, id);
+  }
 }
 
 @Controller('api/admin/tickets')

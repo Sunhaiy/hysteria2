@@ -103,6 +103,9 @@ test("login exposes the self-service password recovery flow", async () => {
     /body:\s*\{[\s\S]*?inviteCode: inviteCode \|\| undefined/,
   );
   assert.match(experience, /placeholder="8 位邀请码"[\s\S]*?required/);
+  assert.match(experience, /className="auth2-invite-required-notice"/);
+  assert.match(experience, /当前仅限邀请注册/);
+  assert.match(experience, /请填写有效的 8 位邀请码/);
   assert.match(
     experience,
     /mode === "register" && \(inviteOnlyRegistration \|\| inviteCode\)/,

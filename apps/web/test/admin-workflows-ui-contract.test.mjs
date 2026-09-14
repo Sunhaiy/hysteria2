@@ -277,6 +277,10 @@ test("support tickets are available to members and administrators", async () => 
   assert.match(copy, /\/portal\/tickets/);
   assert.match(copy, /\/admin\/tickets/);
   assert.match(memberTickets, /\/api\/portal\/tickets/);
+  assert.match(memberTickets, /\/api\/portal\/tickets\/\$\{detail\.ticket\.id\}\/close/);
+  assert.match(memberTickets, /method:\s*"PATCH"/);
+  assert.match(memberTickets, /关闭工单/);
+  assert.match(memberTickets, /确认关闭/);
   assert.match(memberTickets, /\/api\/portal\/announcement\/current/);
   assert.match(memberTickets, /ticket-announcement/);
   assert.match(memberTickets, /aria-expanded=\{announcementOpen\}/);

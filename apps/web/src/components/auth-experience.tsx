@@ -261,6 +261,19 @@ export function AuthExperience({ initialMode }: { initialMode: AuthMode }) {
           </form>
         ) : (
           <form className="auth2-fields" onSubmit={handleRegister}>
+            {inviteOnlyRegistration ? (
+              <div
+                className="auth2-invite-required-notice"
+                id="invite-only-registration-notice"
+                role="status"
+              >
+                <Icon name="key" />
+                <span>
+                  <strong>当前仅限邀请注册</strong>
+                  <small>请填写有效的 8 位邀请码</small>
+                </span>
+              </div>
+            ) : null}
             <div className="auth2-field-stack">
               <div className="auth2-input">
                 <span className="auth2-input-icon">
@@ -301,6 +314,7 @@ export function AuthExperience({ initialMode }: { initialMode: AuthMode }) {
                   <span className="auth2-field-body">
                     <span className="auth2-field-label">邀请码</span>
                     <input
+                      aria-describedby="invite-only-registration-notice"
                       value={inviteCode}
                       onChange={(event) =>
                         setInviteCode(

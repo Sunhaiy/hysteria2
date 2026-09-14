@@ -47,6 +47,7 @@ describe('TicketsService', () => {
           id: summary.id,
           status: SupportTicketStatus.WAITING_STAFF,
         }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         update: jest.fn().mockResolvedValue(summary),
       },
       supportTicketMessage: {
@@ -136,5 +137,84 @@ describe('TicketsService', () => {
     await expect(
       service.replyMember('member_1', 'ticket_1', '还有问题'),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('lets a member close only their own ticket and records the transition', async () => {
+    const { service, prisma } = makeService();
+    prisma.supportTicket.findFirst.mockResolvedValueOnce({
+      id: summary.id,
+      status: SupportTicketStatus.WAITING_STAFF,
+    });
+    prisma.supportTicket.findFirst.mockResolvedValueOnce({
+      ...summary,
+      status: SupportTicketStatus.CLOSED,
+      closedAt: now,
+    });
+
+    await expect(
+      service.closeMember('member_1', 'ticket_1'),
+    ).resolves.toMatchObject({ status: 'closed' });
+
+    expect(prisma.supportTicket.findFirst).toHaveBeenCalledWith({
+      where: { id: 'ticket_1', userId: 'member_1' },
+      select: { id: true, status: true },
+    });
+    const [closeCall] = prisma.supportTicket.updateMany.mock
+      .calls[0] as unknown as [
+      {
+        where: { id: string; userId: string };
+        data: { status: SupportTicketStatus };
+      },
+    ];
+    expect(closeCall).toMatchObject({
+      where: { id: 'ticket_1', userId: 'member_1' },
+      data: { status: SupportTicketStatus.CLOSED },
+    });
+    const [auditCall] = prisma.auditLog.create.mock.calls[0] as unknown as [
+      {
+        data: {
+          actorId: string;
+          action: string;
+          targetId: string;
+        };
+      },
+    ];
+    expect(auditCall).toMatchObject({
+      data: {
+        actorId: 'member_1',
+        action: 'SUPPORT_TICKET_CLOSED_BY_MEMBER',
+        targetId: 'ticket_1',
+      },
+    });
+  });
+
+  it('does not let a member close another member ticket', async () => {
+    const { service, prisma } = makeService();
+    prisma.supportTicket.findFirst.mockResolvedValueOnce(null);
+
+    await expect(
+      service.closeMember('member_2', 'ticket_1'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.supportTicket.updateMany).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('treats closing an already closed member ticket as an idempotent replay', async () => {
+    const { service, prisma } = makeService();
+    prisma.supportTicket.findFirst.mockResolvedValueOnce({
+      id: summary.id,
+      status: SupportTicketStatus.CLOSED,
+    });
+    prisma.supportTicket.findFirst.mockResolvedValueOnce({
+      ...summary,
+      status: SupportTicketStatus.CLOSED,
+      closedAt: now,
+    });
+
+    await expect(
+      service.closeMember('member_1', 'ticket_1'),
+    ).resolves.toMatchObject({ status: 'closed' });
+    expect(prisma.supportTicket.updateMany).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
   });
 });

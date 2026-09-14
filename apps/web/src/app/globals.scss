@@ -6958,6 +6958,42 @@ select.control {
   gap: 10px;
 }
 
+.auth2-invite-required-notice {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel-alt);
+  color: var(--text-primary);
+}
+
+.auth2-invite-required-notice > .icon-slot {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--accent-500);
+  color: #06110a;
+}
+
+.auth2-invite-required-notice > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.auth2-invite-required-notice strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.auth2-invite-required-notice small {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
 .auth2-input {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) auto;
