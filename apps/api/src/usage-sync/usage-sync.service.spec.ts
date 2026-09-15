@@ -2,6 +2,54 @@ import { UsageSyncService } from './usage-sync.service';
 import { QuotaEnforcementService } from '../kick-service/quota-enforcement.service';
 
 describe('UsageSyncService', () => {
+  it('serializes cross-node accounting and continues after a failed batch', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const node = (id: string) => ({ id, active: true, protocol: 'hysteria2' });
+    const store = {
+      getNodeForControl: jest.fn((id: string) => Promise.resolve(node(id))),
+      acknowledgeTrafficBatch: jest.fn(),
+      markTrafficSyncSuccess: jest.fn(),
+      markUserSyncSuccess: jest.fn(),
+      markSyncFailure: jest.fn(),
+    };
+    const applyTrafficBatch = jest
+      .fn()
+      .mockImplementationOnce(async () => {
+        await gate;
+        throw new Error('write conflict');
+      })
+      .mockResolvedValue({ impactedUsers: [] });
+    const client = {
+      claimTrafficBatch: jest
+        .fn()
+        .mockResolvedValue({ id: 'batch', traffic: {} }),
+      acknowledgeTrafficBatch: jest.fn(),
+    };
+    const service = new UsageSyncService(
+      store as never,
+      client as never,
+      new QuotaEnforcementService(
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+      ),
+      { applyTrafficBatch } as never,
+      store as never,
+    );
+    const first = service.syncNode('a').catch(() => undefined);
+    const second = service.syncNode('b');
+    await new Promise((resolve) => setImmediate(resolve));
+    const started = applyTrafficBatch.mock.calls.length;
+    release();
+    await Promise.all([first, second]);
+    expect(started).toBe(1);
+    expect(applyTrafficBatch).toHaveBeenCalledTimes(2);
+    expect(client.acknowledgeTrafficBatch).toHaveBeenCalledTimes(1);
+  });
   it('does not let an in-flight fast pass swallow the full permission refresh', async () => {
     const node = { id: 'vless', protocol: 'vless_reality', active: true };
     const store = {

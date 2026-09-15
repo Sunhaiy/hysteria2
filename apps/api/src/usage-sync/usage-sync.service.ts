@@ -18,6 +18,7 @@ import { QuotaEnforcementService } from '../kick-service/quota-enforcement.servi
 export class UsageSyncService {
   private readonly logger = new Logger(UsageSyncService.name);
   private readonly activeNodeSyncs = new Map<string, Promise<unknown>>();
+  private trafficImportTail: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly store: ControlPlaneStoreService,
@@ -96,7 +97,13 @@ export class UsageSyncService {
       let provisionedUsers = 0;
 
       const batch = await this.nodeClient.claimTrafficBatch(node);
-      const applied = await this.entitlements.applyTrafficBatch(node.id, batch);
+      // Different nodes often meter the same accounts in different orders.
+      // Keep remote collection concurrent but serialize worker-owned billing.
+      const imported = this.trafficImportTail
+        .catch(() => undefined)
+        .then(() => this.entitlements.applyTrafficBatch(node.id, batch));
+      this.trafficImportTail = imported;
+      const applied = await imported;
       const impactedUsers = applied.impactedUsers;
 
       const restrictionChecks = [];
