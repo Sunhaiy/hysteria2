@@ -295,7 +295,7 @@ export class NodeTrafficClientService {
     }
 
     const response = await firstValueFrom(
-      this.httpService.post<{ kicked?: number }>(
+      this.httpService.post<{ kicked?: number; sessionRevocation?: string }>(
         `${node.trafficApiBaseUrl}/kick`,
         userIds,
         {
@@ -304,6 +304,14 @@ export class NodeTrafficClientService {
         },
       ),
     );
+    if (
+      node.protocol === 'vless_reality' &&
+      response.data.sessionRevocation !== 'suxin-session-revoke-v1'
+    ) {
+      throw new Error(
+        'VLESS 节点尚未支持关闭已有连接，断流未确认，请升级节点核心和 Agent',
+      );
+    }
     return response.data;
   }
 

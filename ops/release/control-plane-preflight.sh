@@ -112,6 +112,16 @@ while IFS='|' read -r label base_url secret service expected_status; do
     online=0
     users=0
     if [[ "$status" == "active" ]]; then
+      capabilities_file="$temporary_dir/agent-${index}-capabilities.json"
+      agent_get "$base_url" "$secret" "/capabilities" "$capabilities_file"
+      "$node_bin" -e '
+        const fs = require("fs");
+        const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+        if (value.sessionRevocation !== "suxin-session-revoke-v1") {
+          console.error("Running VLESS core does not confirm live session revocation");
+          process.exit(1);
+        }
+      ' "$capabilities_file"
       online_file="$temporary_dir/agent-${index}-online.json"
       users_file="$temporary_dir/agent-${index}-users.json"
       agent_get "$base_url" "$secret" "/online" "$online_file"

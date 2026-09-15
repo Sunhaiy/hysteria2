@@ -1,6 +1,55 @@
 import { UsageSyncService } from './usage-sync.service';
+import { QuotaEnforcementService } from '../kick-service/quota-enforcement.service';
 
 describe('UsageSyncService', () => {
+  it('does not let an in-flight fast pass swallow the full permission refresh', async () => {
+    const node = { id: 'vless', protocol: 'vless_reality', active: true };
+    const store = {
+      getNodesForControl: jest.fn().mockResolvedValue([node]),
+      acknowledgeTrafficBatch: jest.fn(),
+      markUserSyncSuccess: jest.fn(),
+      markTrafficSyncSuccess: jest.fn(),
+      markSyncFailure: jest.fn(),
+    };
+    let release!: () => void;
+    const blocked = new Promise<void>((r) => {
+      release = r;
+    });
+    const client = {
+      claimTrafficBatch: jest
+        .fn()
+        .mockImplementationOnce(async () => {
+          await blocked;
+          return { id: 'fast', traffic: {} };
+        })
+        .mockResolvedValue({ id: 'full', traffic: {} }),
+      acknowledgeTrafficBatch: jest.fn(),
+      syncUsers: jest.fn(),
+    };
+    const enforcement = new QuotaEnforcementService(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    const service = new UsageSyncService(
+      store as never,
+      client as never,
+      enforcement,
+      {
+        applyTrafficBatch: jest.fn().mockResolvedValue({ impactedUsers: [] }),
+        getNodeProvisioningUsers: jest.fn().mockResolvedValue([]),
+      } as never,
+      store as never,
+    );
+    const fast = service.syncTrafficNodes();
+    await new Promise((r) => setImmediate(r));
+    const full = service.syncAllNodes();
+    release();
+    await Promise.all([fast, full]);
+    expect(client.claimTrafficBatch).toHaveBeenCalledTimes(2);
+    expect(client.syncUsers).toHaveBeenCalledTimes(1);
+  });
   it('applies and acknowledges one durable traffic batch', async () => {
     const store = {
       getNodesForControl: jest.fn().mockResolvedValue([
@@ -36,7 +85,8 @@ describe('UsageSyncService', () => {
     };
 
     const kickService = {
-      kickUserEverywhere: jest.fn(() => ({ ok: true })),
+      withNodeLock: (_id: string, work: () => Promise<unknown>) => work(),
+      enqueue: jest.fn(() => ({ ok: true })),
     };
     const entitlements = {
       applyTrafficBatch: jest.fn().mockResolvedValue({
@@ -73,15 +123,12 @@ describe('UsageSyncService', () => {
       expect.objectContaining({ id: 'node_hk_core' }),
       'batch-1',
     );
-    expect(kickService.kickUserEverywhere).toHaveBeenCalledWith(
-      'usr_lin',
-      'usage-sync',
-    );
+    expect(kickService.enqueue).toHaveBeenCalledWith('usr_lin', 'node_hk_core');
     expect(store.markUserSyncSuccess).toHaveBeenCalledWith('node_hk_core');
     expect(store.markTrafficSyncSuccess).toHaveBeenCalledWith('node_hk_core');
   });
 
-  it('provisions VLESS users before collecting Xray statistics', async () => {
+  it('meters Xray before refreshing permissions so provisioning cannot hide usage', async () => {
     const node = {
       id: 'node_vless',
       protocol: 'vless_reality',
@@ -134,7 +181,10 @@ describe('UsageSyncService', () => {
     const service = new UsageSyncService(
       store as never,
       nodeClient as never,
-      { kickUserEverywhere: jest.fn() } as never,
+      {
+        withNodeLock: (_id: string, work: () => Promise<unknown>) => work(),
+        enqueue: jest.fn(),
+      } as never,
       entitlements as never,
       store as never,
     );
@@ -149,6 +199,9 @@ describe('UsageSyncService', () => {
         flow: 'xtls-rprx-vision',
       },
     ]);
+    expect(
+      nodeClient.claimTrafficBatch.mock.invocationCallOrder[0],
+    ).toBeLessThan(nodeClient.syncUsers.mock.invocationCallOrder[0]);
     expect(result[0]).toMatchObject({
       nodeId: 'node_vless',
       provisionedUsers: 1,
@@ -204,7 +257,10 @@ describe('UsageSyncService', () => {
     const service = new UsageSyncService(
       store as never,
       nodeClient as never,
-      { kickUserEverywhere: jest.fn() } as never,
+      {
+        withNodeLock: (_id: string, work: () => Promise<unknown>) => work(),
+        enqueue: jest.fn(),
+      } as never,
       entitlements as never,
       store as never,
     );
@@ -265,7 +321,10 @@ describe('UsageSyncService', () => {
     const service = new UsageSyncService(
       store as never,
       nodeClient as never,
-      { kickUserEverywhere: jest.fn() } as never,
+      {
+        withNodeLock: (_id: string, work: () => Promise<unknown>) => work(),
+        enqueue: jest.fn(),
+      } as never,
       entitlements as never,
       store as never,
     );
@@ -276,7 +335,7 @@ describe('UsageSyncService', () => {
     expect(maxConcurrentAccessChecks).toBe(1);
   });
 
-  it('keeps an acknowledged traffic sync healthy when best-effort kicking fails', async () => {
+  it('does not acknowledge traffic until disconnect work is durable', async () => {
     const node = {
       id: 'node_hysteria',
       protocol: 'hysteria2',
@@ -307,7 +366,8 @@ describe('UsageSyncService', () => {
       getNodeAccess: jest.fn().mockResolvedValue({ allowed: false }),
     };
     const kickService = {
-      kickUserEverywhere: jest
+      withNodeLock: (_id: string, work: () => Promise<unknown>) => work(),
+      enqueue: jest
         .fn()
         .mockRejectedValue(new Error('Request failed with status code 502')),
     };
@@ -322,15 +382,12 @@ describe('UsageSyncService', () => {
     await expect(service.syncAllNodes()).resolves.toEqual([
       expect.objectContaining({
         nodeId: 'node_hysteria',
-        impactedUsers: 1,
+        error: 'Error: Request failed with status code 502',
       }),
     ]);
-    expect(nodeClient.acknowledgeTrafficBatch).toHaveBeenCalledWith(
-      node,
-      'batch-kick-failure',
-    );
-    expect(store.markTrafficSyncSuccess).toHaveBeenCalledWith('node_hysteria');
-    expect(store.markSyncFailure).not.toHaveBeenCalled();
+    expect(nodeClient.acknowledgeTrafficBatch).not.toHaveBeenCalled();
+    expect(store.markTrafficSyncSuccess).not.toHaveBeenCalled();
+    expect(store.markSyncFailure).toHaveBeenCalled();
   });
 
   it('exposes cleanup for the external worker without scheduling it in the API', async () => {

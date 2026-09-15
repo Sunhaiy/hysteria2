@@ -2061,16 +2061,16 @@ export class ControlPlaneStoreService {
   }
 
   async getNodeIdsForUser(userId: string) {
-    const subscription = await this.getActiveSubscriptionForUser(userId);
-    if (!subscription) return [];
-
-    // Return all nodes bound to the subscription's plan that are active
-    const bindings = await this.prisma.planBinding.findMany({
-      where: { planId: subscription.planId },
-      include: { node: { select: { id: true, active: true } } },
+    // Manual disconnect must also cover pack-only and expired users. Connections
+    // can outlive their original entitlement and its old PlanBinding records.
+    const nodes = await this.prisma.node.findMany({
+      where: {
+        retiredAt: null,
+        OR: [{ active: true }, { onlinePresence: { some: { userId } } }],
+      },
+      select: { id: true },
     });
-
-    return bindings.filter((b) => b.node.active).map((b) => b.node.id);
+    return nodes.map((node) => node.id);
   }
 
   async getManualOrders(query: ManualOrderQuery = {}) {

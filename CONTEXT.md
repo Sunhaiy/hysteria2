@@ -67,6 +67,11 @@
 - Monthly infrastructure traffic protection belongs to `NodeServer` and sums
   all of its protocol endpoints. Reaching the limit disables access before the
   worker queues endpoint stop commands.
+- User quota disconnection is durable `NodeAccessRevocation` work owned by the
+  worker. It checks current per-node access on every attempt, retries failed
+  disconnects, and never derives targets solely from old `PlanBinding` rows.
+  VLESS must confirm `suxin-session-revoke-v1` live-session revocation capability;
+  removing authentication alone is insufficient. See ADR 0015.
 - Search engines may crawl only the homepage, `/blog`, and reviewed published
   articles. AI context is limited to public site information, tutorials, and
   published article titles; member data and support tickets are not inputs.

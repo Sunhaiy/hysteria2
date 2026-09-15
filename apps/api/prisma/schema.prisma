@@ -1719,6 +1719,26 @@ model NodeCost {
   @@index([nodeId, effectiveFrom, effectiveTo])
 }
 
+// Durable worker-owned enforcement; one coalesced task per user and endpoint.
+model NodeAccessRevocation {
+  id            String   @id @default(cuid())
+  userId        String
+  nodeId        String
+  status        String   @default("PENDING")
+  attempts      Int      @default(0)
+  nextAttemptAt DateTime @default(now())
+  leaseToken    String?
+  leaseUntil    DateTime?
+  lastError     String?
+  completedAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userId, nodeId])
+  @@index([status, nextAttemptAt])
+  @@index([status, leaseUntil])
+}
+
 model AnnualOperatingCost {
   year           Int      @id
   totalCostCents Int

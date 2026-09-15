@@ -42,17 +42,18 @@ type provisionedUser struct {
 }
 
 type agent struct {
-	secret     string
-	inboundTag string
-	stats      statscommand.StatsServiceClient
-	handler    proxymancommand.HandlerServiceClient
-	stateFile  string
-	mu         sync.Mutex
-	pending    *trafficBatch
-	services   map[string]string
-	manager    serviceManager
-	controlMu  sync.Mutex
-	completed  map[string]completedServiceCommand
+	secret           string
+	inboundTag       string
+	stats            statscommand.StatsServiceClient
+	handler          proxymancommand.HandlerServiceClient
+	stateFile        string
+	mu               sync.Mutex
+	pending          *trafficBatch
+	services         map[string]string
+	manager          serviceManager
+	controlMu        sync.Mutex
+	completed        map[string]completedServiceCommand
+	verifyRevocation func(context.Context) error
 }
 
 type serviceManager interface {
@@ -130,12 +131,14 @@ func main() {
 		manager:    systemdServiceManager{},
 		completed:  make(map[string]completedServiceCommand),
 	}
+	a.verifyRevocation = a.verifyRunningCoreRevocation
 	if err := a.loadPendingBatch(); err != nil {
 		log.Fatalf("load traffic batch state: %v", err)
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", a.authorize(a.health))
+	mux.HandleFunc("GET /capabilities", a.authorize(a.capabilities))
 	mux.HandleFunc("GET /traffic", a.authorize(a.traffic))
 	mux.HandleFunc("POST /traffic/claim", a.authorize(a.claimTraffic))
 	mux.HandleFunc("POST /traffic/ack", a.authorize(a.acknowledgeTraffic))
@@ -565,6 +568,8 @@ func (a *agent) online(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *agent) syncUsers(w http.ResponseWriter, r *http.Request) {
+	a.controlMu.Lock()
+	defer a.controlMu.Unlock()
 	var desired []provisionedUser
 	if err := decodeJSON(w, r, &desired); err != nil {
 		return
@@ -606,6 +611,10 @@ func (a *agent) syncUsers(w http.ResponseWriter, r *http.Request) {
 		if _, keep := desiredByEmail[email]; keep {
 			continue
 		}
+		if err := a.requireSessionRevocation(ctx); err != nil {
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
 		if err := a.removeUser(ctx, email); err != nil {
 			writeGRPCError(w, err)
 			return
@@ -645,6 +654,8 @@ func (a *agent) userCount(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *agent) kickUsers(w http.ResponseWriter, r *http.Request) {
+	a.controlMu.Lock()
+	defer a.controlMu.Unlock()
 	var emails []string
 	if err := decodeJSON(w, r, &emails); err != nil {
 		return
@@ -652,6 +663,10 @@ func (a *agent) kickUsers(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
+	if err := a.requireSessionRevocation(ctx); err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
 	kicked := 0
 	for _, email := range emails {
 		email = strings.TrimSpace(email)
@@ -668,7 +683,7 @@ func (a *agent) kickUsers(w http.ResponseWriter, r *http.Request) {
 		kicked++
 	}
 
-	writeJSON(w, http.StatusOK, map[string]int{"kicked": kicked})
+	writeJSON(w, http.StatusOK, map[string]any{"kicked": kicked, "sessionRevocation": revocationMarker})
 }
 
 func isMissingUserError(err error) bool {

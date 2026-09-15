@@ -9,6 +9,7 @@ import { BackupService } from './backups/backup.service';
 import { EpayReconciliationService } from './epay/epay-reconciliation.service';
 import { GroupBuyReconciliationService } from './group-buy/group-buy-reconciliation.service';
 import { SeoPublishingService } from './seo-publishing/seo-publishing.service';
+import { QuotaEnforcementService } from './kick-service/quota-enforcement.service';
 
 const logger = new Logger('UsageSyncWorker');
 const minimumIntervalMs = 10_000;
@@ -103,6 +104,7 @@ class RecurringTask {
 async function bootstrap() {
   const app = await NestFactory.createApplicationContext(SyncWorkerModule);
   const sync = app.get(UsageSyncService);
+  const enforcement = app.get(QuotaEnforcementService);
   const operations = app.get(OperationsService);
   const runtime = app.get(NodeRuntimeCommandService);
   const trafficGuard = app.get(NodeTrafficGuardService);
@@ -181,6 +183,33 @@ async function bootstrap() {
   const syncEnabled =
     process.env.NODE_SYNC_ENABLED === 'true' ||
     process.env.HYSTERIA_SYNC_ENABLED === 'true';
+  if (syncEnabled) {
+    tasks.push(
+      new RecurringTask('Quota disconnect retry', 2_000, 120_000, async () => {
+        await enforcement.processDue();
+      }),
+    );
+    tasks.push(
+      new RecurringTask(
+        'Online quota enforcement',
+        15_000,
+        120_000,
+        async () => {
+          await enforcement.checkOnlineUsers();
+        },
+      ),
+    );
+    tasks.push(
+      new RecurringTask(
+        'Fast traffic enforcement',
+        10_000,
+        120_000,
+        async () => {
+          await sync.syncTrafficNodes();
+        },
+      ),
+    );
+  }
   const operationsEnabled = process.env.NODE_OPERATIONS_ENABLED !== 'false';
   const runtimeControlEnabled =
     process.env.NODE_RUNTIME_CONTROL_ENABLED !== 'false';

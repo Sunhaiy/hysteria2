@@ -12,7 +12,7 @@ import {
 import { NodeControlService } from '../domain/node-control.service';
 import { EntitlementService } from '../entitlement/entitlement.service';
 import { NodeAdapterRegistry } from '../integrations/node.adapter';
-import { KickService } from '../kick-service/kick-service.service';
+import { QuotaEnforcementService } from '../kick-service/quota-enforcement.service';
 
 @Injectable()
 export class UsageSyncService {
@@ -22,7 +22,7 @@ export class UsageSyncService {
   constructor(
     private readonly store: ControlPlaneStoreService,
     private readonly nodeClient: NodeAdapterRegistry,
-    private readonly kickService: KickService,
+    private readonly enforcement: QuotaEnforcementService,
     private readonly entitlements: EntitlementService,
     private readonly nodes: NodeControlService,
   ) {}
@@ -65,30 +65,38 @@ export class UsageSyncService {
     }
   }
 
+  async syncTrafficNodes() {
+    const nodes = (await this.nodes.getNodesForControl()).filter(
+      (node) => node.active,
+    );
+    for (let offset = 0; offset < nodes.length; offset += 3) {
+      await Promise.all(
+        nodes.slice(offset, offset + 3).map(async (node) => {
+          try {
+            await this.withNodeLock(
+              node.id,
+              () => this.syncNodeRecord(node, false),
+              'traffic',
+            );
+          } catch (error) {
+            this.logger.warn(
+              `Traffic enforcement sync failed on ${node.id}: ${String(error)}`,
+            );
+          }
+        }),
+      );
+    }
+  }
+
   private async syncNodeRecord(
     node: Awaited<ReturnType<NodeControlService['getNodeForControl']>> & object,
+    provision = true,
   ) {
     try {
       let provisionedUsers = 0;
-      if (node.protocol === 'vless_reality') {
-        const users = await this.entitlements.getNodeProvisioningUsers(node.id);
-        await this.nodeClient.syncUsers(
-          node,
-          users.map((user) => ({
-            ...user,
-            email: user.userId,
-            flow: node.vlessFlow ?? 'xtls-rprx-vision',
-          })),
-        );
-        provisionedUsers = users.length;
-      }
-      await this.nodes.markUserSyncSuccess(node.id);
 
       const batch = await this.nodeClient.claimTrafficBatch(node);
       const applied = await this.entitlements.applyTrafficBatch(node.id, batch);
-      await this.nodeClient.acknowledgeTrafficBatch(node, batch.id);
-      await this.store.acknowledgeTrafficBatch(node.id, batch.id);
-      await this.nodes.markTrafficSyncSuccess(node.id);
       const impactedUsers = applied.impactedUsers;
 
       const restrictionChecks = [];
@@ -104,18 +112,28 @@ export class UsageSyncService {
         restrictionChecks
           .filter((item) => item.restricted)
           .map(async (item) => {
-            try {
-              await this.kickService.kickUserEverywhere(
-                item.userId,
-                'usage-sync',
-              );
-            } catch (error) {
-              this.logger.warn(
-                `Failed to kick restricted user ${item.userId} after traffic sync: ${String(error)}`,
-              );
-            }
+            // Queue must be durable before the import is acknowledged.
+            await this.enforcement.enqueue(item.userId, node.id);
           }),
       );
+
+      await this.nodeClient.acknowledgeTrafficBatch(node, batch.id);
+      await this.store.acknowledgeTrafficBatch(node.id, batch.id);
+      await this.nodes.markTrafficSyncSuccess(node.id);
+
+      if (provision && node.protocol === 'vless_reality') {
+        const users = await this.entitlements.getNodeProvisioningUsers(node.id);
+        await this.nodeClient.syncUsers(
+          node,
+          users.map((user) => ({
+            ...user,
+            email: user.userId,
+            flow: node.vlessFlow ?? 'xtls-rprx-vision',
+          })),
+        );
+        provisionedUsers = users.length;
+      }
+      if (provision) await this.nodes.markUserSyncSuccess(node.id);
 
       return {
         nodeId: node.id,
@@ -135,16 +153,23 @@ export class UsageSyncService {
     }
   }
 
-  private withNodeLock<T>(nodeId: string, operation: () => Promise<T>) {
-    const existing = this.activeNodeSyncs.get(nodeId);
+  private withNodeLock<T>(
+    nodeId: string,
+    operation: () => Promise<T>,
+    mode = 'full',
+  ) {
+    const key = `${mode}:${nodeId}`;
+    const existing = this.activeNodeSyncs.get(key);
     if (existing) return existing as Promise<T>;
 
-    const running = operation().finally(() => {
-      if (this.activeNodeSyncs.get(nodeId) === running) {
-        this.activeNodeSyncs.delete(nodeId);
-      }
-    });
-    this.activeNodeSyncs.set(nodeId, running);
+    const running = this.enforcement
+      .withNodeLock(nodeId, operation)
+      .finally(() => {
+        if (this.activeNodeSyncs.get(key) === running) {
+          this.activeNodeSyncs.delete(key);
+        }
+      });
+    this.activeNodeSyncs.set(key, running);
     return running;
   }
 }

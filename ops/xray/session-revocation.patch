@@ -1,0 +1,60 @@
+diff --git a/proxy/vless/inbound/inbound.go b/proxy/vless/inbound/inbound.go
+index 02dc947..47fd74a 100644
+--- a/proxy/vless/inbound/inbound.go
++++ b/proxy/vless/inbound/inbound.go
+@@ -74,6 +74,7 @@ func init() {
+ 
+ // Handler is an inbound connection handler that handles messages in VLess protocol.
+ type Handler struct {
++	sessions               userSessions
+ 	inboundHandlerManager  feature_inbound.Manager
+ 	policyManager          policy.Manager
+ 	stats                  stats.Manager
+@@ -238,13 +239,25 @@ func (h *Handler) Close() error {
+ 
+ // AddUser implements proxy.UserManager.AddUser().
+ func (h *Handler) AddUser(ctx context.Context, u *protocol.MemoryUser) error {
++	h.sessions.mu.Lock()
++	defer h.sessions.mu.Unlock()
+ 	return h.validator.Add(u)
+ }
+ 
+ // RemoveUser implements proxy.UserManager.RemoveUser().
+ func (h *Handler) RemoveUser(ctx context.Context, e string) error {
+-	h.RemoveReverse(h.validator.GetByEmail(e))
+-	return h.validator.Del(e)
++	h.sessions.mu.Lock()
++	defer h.sessions.mu.Unlock()
++	user := h.validator.GetByEmail(e)
++	if err := h.validator.Del(e); err != nil {
++		return err
++	}
++	h.RemoveReverse(user)
++	for _, close := range h.sessions.active[user] {
++		close()
++	}
++	delete(h.sessions.active, user)
++	return nil
+ }
+ 
+ // GetUser implements proxy.UserManager.GetUser().
+@@ -534,6 +547,18 @@ func (h *Handler) Process(ctx context.Context, network net.Network, connection s
+ 		panic("no inbound metadata")
+ 	}
+ 	inbound.Name = "vless"
++	// Authentication and revocation can race. Register only the exact user
++	// instance still in the validator; an old handshake cannot survive re-add.
++	ctx, cancelSession := context.WithCancel(ctx)
++	defer cancelSession()
++	release, err := h.trackUserSession(request.User, func() {
++		cancelSession()
++		connection.Close()
++	})
++	if err != nil {
++		return err
++	}
++	defer release()
+ 	inbound.User = request.User
+ 	inbound.VlessRoute = net.PortFromBytes(userSentID[6:8])
+ 
+
