@@ -9,6 +9,7 @@ const secretSettingKeys = [
   'epay.merchantKey',
   'seo.aiApiKey',
   'seo.googleServiceAccountJson',
+  'agentUpdates.signingKey',
 ];
 
 @Injectable()

@@ -44,9 +44,11 @@ import { AdminUsersModule } from './users/admin-users.module';
 import { TutorialsModule } from './tutorials/tutorials.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { SeoPublishingModule } from './seo-publishing/seo-publishing.module';
+import { AgentUpdatesModule } from './agent-updates/agent-updates.module';
 
 @Module({
   imports: [
+    AgentUpdatesModule,
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: [

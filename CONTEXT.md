@@ -59,6 +59,9 @@
 - Legacy plan, offer, product store URL, and tutorial setting fields remain
   readable during the expand-contract migration window.
 - Local development changes must not connect to or mutate production nodes.
+- `AgentUpdatesModule` owns signed Agent releases and sequential pull rollouts.
+  Independent node updaters restart only the pinned Agent service, preserve
+  traffic state, and roll back locally even while offline. See ADR 0016.
 - Full-site restore accepts only a backup whose manifest and restored
   `_prisma_migrations` version exactly match the running release.
 - Node access lifecycle and runtime service state are separate. Runtime start,

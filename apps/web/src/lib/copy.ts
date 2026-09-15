@@ -92,6 +92,13 @@ export const adminNav: NavItem[] = [
     group: "节点运营",
   },
   {
+    href: "/admin/agent-updates",
+    label: "Agent 更新",
+    icon: "download",
+    meta: "AGENT",
+    group: "节点运营",
+  },
+  {
     href: "/admin/audit",
     label: "审计",
     icon: "shield",

@@ -18,6 +18,13 @@ than adding another interpretation to the legacy plan and pool models.
 - **AccessProfile** is the access policy granted by a product. It owns speed,
   device, and directly bound node priorities.
 - **NodeServer** is one physical or virtual server.
+- **AgentInstallation** identifies one managed Agent systemd service on a
+  `NodeServer`, with a dedicated updater credential and observed version.
+- **AgentRelease** is an immutable signed Linux binary for one CPU architecture.
+- **AgentRollout** is an ordered, administrator-confirmed set of installation
+  updates. Its first **AgentUpdateJob** is the canary. Confirmed success unlocks
+  the next job; failure pauses the rollout. Offline jobs retain their execution
+  slot and recover from the independent updater's durable journal (ADR 0016).
 - **Node** is one protocol endpoint on a server. Hysteria2 and VLESS + Reality
   endpoints are separate nodes even when they share a server.
 - A `NodeServer` owns the monthly physical-traffic protection policy. Its usage

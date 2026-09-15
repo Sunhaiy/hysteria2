@@ -60,6 +60,9 @@ Xray 或 Hysteria2。
 
 ## 3. 在管理后台添加节点
 
+后续需要从后台统一更新 Agent 时，参见 [独立更新器](../agent-updater/README.md)。
+该更新器只重启 Agent，保留流量批次状态，不重启代理核心。
+
 选择 `VLESS + REALITY`，填写：
 
 - 节点地址和端口
