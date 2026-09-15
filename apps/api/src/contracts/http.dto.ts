@@ -629,6 +629,12 @@ export class UpdateSubscriptionDto {
 
 export class CreateNodeDto {
   @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  @Matches(/^[^\p{Cc}]*$/u)
+  icon?: string;
+
+  @IsOptional()
   @IsIn(['hysteria2', 'vless_reality'])
   protocol?: 'hysteria2' | 'vless_reality';
 
@@ -730,6 +736,12 @@ export class CreateNodeDto {
 }
 
 export class UpdateNodeDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  @Matches(/^[^\p{Cc}]*$/u)
+  icon?: string;
+
   @IsOptional()
   @IsIn(['hysteria2', 'vless_reality'])
   protocol?: 'hysteria2' | 'vless_reality';

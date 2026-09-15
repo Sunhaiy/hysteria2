@@ -80,6 +80,7 @@ export class NodeOpsService {
         id: node.id,
         serverId: node.serverId,
         label: node.label,
+        icon: node.icon ?? null,
         protocol: node.protocol.toLowerCase(),
         hostname: node.hostname,
         port: node.port,

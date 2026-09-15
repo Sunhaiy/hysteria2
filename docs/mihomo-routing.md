@@ -1,5 +1,24 @@
 # Mihomo routing
 
+## Subscription branding and node icons
+
+New portal import/copy/QR links use `?profile=2` on both subscription formats.
+Only these links receive the default title `素心 Network` and an RFC 5987 UTF-8
+download filename. Unversioned URLs retain their existing filename and title
+headers, so refreshing an already imported subscription does not opt into the
+new naming policy. The client still owns locally edited subscription names.
+Both formats advertise `Profile-Web-Page-Url` pointing to the configured web
+origin's `/login`; the actual website action depends on client support.
+
+Administrators can edit the optional `icon` field on a node via the existing
+node create/update endpoints. It accepts up to 32 characters, excluding control
+characters; an empty value clears it and an omitted update preserves it.
+Use Emoji or symbols (for example `🇺🇸` or `⚡`), not image URLs. The icon is
+prepended only when rendering subscription names and the admin node list.
+The underlying node label, machine tier and billing rate remain independent.
+Mihomo selector references are generated from the same decorated names.
+The nullable `20260915120000_node_icon` migration leaves existing nodes unchanged.
+
 The `/subscribe/{token}/clash` profile consumes native MRS rule sets from
 [MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat), `meta`
 branch. Upstream rule data is GPL-3.0; it is fetched by the client and is not

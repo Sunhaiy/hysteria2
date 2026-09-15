@@ -97,6 +97,27 @@ describe('buildMihomoProfile', () => {
     );
   });
 
+  it('uses configured icons in names and keeps all selector references valid', () => {
+    const profile = parseProfile(
+      buildMihomoProfile(
+        credential,
+        nodes.map((node) => ({ ...node, icon: '🇺🇸' })),
+      ),
+    );
+    expect(profile.proxies.every((proxy) => proxy.name.startsWith('🇺🇸 '))).toBe(
+      true,
+    );
+    const names = new Set([
+      'DIRECT',
+      'REJECT',
+      ...profile.proxies.map((proxy) => proxy.name),
+      ...profile['proxy-groups'].map((group) => group.name),
+    ]);
+    for (const group of profile['proxy-groups']) {
+      expect(group.proxies.every((name) => names.has(name))).toBe(true);
+    }
+  });
+
   it('uses ordered automatic failover as the default selector', () => {
     const profile = parseProfile(buildMihomoProfile(credential, nodes));
     const failover = profile['proxy-groups'][0];

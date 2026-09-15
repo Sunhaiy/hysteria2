@@ -582,6 +582,7 @@ model Node {
   serverId                    String?
   protocol                    NodeProtocol             @default(HYSTERIA2)
   label                       String                   @unique
+  icon                        String?
   hostname                    String
   port                        Int
   obfsPassword                String?

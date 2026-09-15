@@ -12,6 +12,7 @@ import { buildPortalAlerts } from './portal-alerts';
 import { EntitlementService } from '../entitlement/entitlement.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { buildMihomoProfile } from './mihomo-profile';
+import { nodeDisplayName } from './node-display-name';
 import { apiPublicUrl } from '../common/public-url';
 import {
   calculateMembershipJourney,
@@ -666,14 +667,15 @@ export class PortalService {
       label: node.label,
       protocol:
         node.protocol === 'VLESS_REALITY' ? 'vless_reality' : 'hysteria2',
-      uri: this.buildNodeUri(bundle.token, node, node.label),
+      uri: this.buildNodeUri(bundle.token, node, nodeDisplayName(node)),
     }));
     const qrCode = await QRCode.toDataURL(uri, {
       margin: 1,
       width: 256,
     });
-    const subscriptionPath = `/subscribe/${bundle.token.token}`;
-    const mihomoSubscriptionPath = `${subscriptionPath}/clash`;
+    const subscriptionBasePath = `/subscribe/${bundle.token.token}`;
+    const subscriptionPath = `${subscriptionBasePath}?profile=2`;
+    const mihomoSubscriptionPath = `${subscriptionBasePath}/clash?profile=2`;
     const publicBaseUrl = apiPublicUrl();
     const subscriptionUrl = `${publicBaseUrl}${subscriptionPath}`;
     const mihomoSubscriptionUrl = `${publicBaseUrl}${mihomoSubscriptionPath}`;
@@ -911,7 +913,11 @@ export class PortalService {
 
     const site = await this.settings.getSiteInfo();
     const uris = bundle.nodes.map((node) =>
-      this.buildNodeUri(bundle.token, node, `${site.name}-${node.label}`),
+      this.buildNodeUri(
+        bundle.token,
+        node,
+        `${site.name}-${nodeDisplayName(node)}`,
+      ),
     );
 
     return {

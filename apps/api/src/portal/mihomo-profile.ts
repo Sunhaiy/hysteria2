@@ -1,7 +1,9 @@
 import { stringify } from 'yaml';
+import { nodeDisplayName } from './node-display-name';
 
 export type MihomoNode = {
   label: string;
+  icon?: string | null;
   protocol: 'HYSTERIA2' | 'VLESS_REALITY';
   hostname: string;
   port: number;
@@ -272,7 +274,7 @@ function uniqueProxyNames(nodes: MihomoNode[]) {
   return nodes.map((node) => {
     const protocol =
       node.protocol === 'VLESS_REALITY' ? 'VLESS Reality' : 'Hysteria 2';
-    const base = `${node.label} · ${protocol}`;
+    const base = `${nodeDisplayName(node)} · ${protocol}`;
     let name = base;
     let suffix = 2;
     while (used.has(name)) name = `${base} ${suffix++}`;

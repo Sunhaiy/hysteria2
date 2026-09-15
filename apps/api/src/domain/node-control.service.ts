@@ -24,6 +24,7 @@ const runningRuntimeStates = new Set<NodeRuntimeState>([
 export type NodeProtocolInput = 'hysteria2' | 'vless_reality';
 
 export interface SaveNodeInput {
+  icon?: string;
   protocol?: NodeProtocolInput;
   serverId?: string;
   label: string;
@@ -129,6 +130,7 @@ export class NodeControlService {
           serverId: input.serverId,
           protocol: this.toDbNodeProtocol(protocol),
           label: input.label,
+          icon: input.icon?.trim() || null,
           hostname: input.hostname,
           port: input.port,
           portHoppingEnabled: input.portHoppingEnabled ?? false,
@@ -209,6 +211,8 @@ export class NodeControlService {
             ? this.toDbNodeProtocol(input.protocol)
             : undefined,
           label: input.label,
+          icon:
+            input.icon === undefined ? undefined : input.icon.trim() || null,
           hostname: input.hostname,
           port: input.port,
           portHoppingEnabled: input.portHoppingEnabled,
@@ -375,6 +379,7 @@ export class NodeControlService {
       serverId: node.serverId,
       protocol: this.fromDbNodeProtocol(node.protocol),
       label: node.label,
+      icon: node.icon ?? null,
       hostname: node.hostname,
       port: node.port,
       portHoppingEnabled: node.portHoppingEnabled,

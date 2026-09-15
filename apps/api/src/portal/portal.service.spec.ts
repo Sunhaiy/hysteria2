@@ -102,10 +102,10 @@ describe('PortalService VLESS + REALITY access', () => {
     expect(access.configSnippet).toContain('"publicKey": "reality-public-key"');
     expect(access.configSnippet).not.toContain('"password"');
     expect(access.subscriptionPath).toBe(
-      '/subscribe/hy2_0123456789abcdef01234567',
+      '/subscribe/hy2_0123456789abcdef01234567?profile=2',
     );
     expect(access.mihomoSubscriptionPath).toBe(
-      '/subscribe/hy2_0123456789abcdef01234567/clash',
+      '/subscribe/hy2_0123456789abcdef01234567/clash?profile=2',
     );
   });
 

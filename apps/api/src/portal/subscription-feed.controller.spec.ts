@@ -1,6 +1,37 @@
 import { SubscriptionFeedController } from './subscription-feed.controller';
+import { webPublicUrl } from '../common/public-url';
 
 describe('SubscriptionFeedController', () => {
+  it('brands only versioned import links and exposes the login page', async () => {
+    const feed = {
+      content: 'proxies: []',
+      title: 'Legacy title',
+      expiresAt: 0,
+      consumedBytes: 0,
+      totalBytes: 100,
+      nodeCount: 0,
+    };
+    const controller = new SubscriptionFeedController({
+      getMihomoSubscription: jest.fn().mockResolvedValue(feed),
+    } as never);
+    const response = { set: jest.fn() };
+    await controller.getMihomoSubscription('token', response as never, '2');
+    expect(response.set).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent('素心 Network')}`,
+        'Profile-Title': `base64:${Buffer.from('素心 Network').toString('base64')}`,
+        'Profile-Web-Page-Url': `${webPublicUrl()}/login`,
+      }),
+    );
+    await controller.getMihomoSubscription('token', response as never);
+    expect(response.set).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        'Content-Disposition': 'inline; filename="mihomo.yaml"',
+        'Profile-Title': `base64:${Buffer.from('Legacy title').toString('base64')}`,
+      }),
+    );
+  });
+
   it('serves an unencoded Mihomo profile with subscription metadata', async () => {
     const portalService = {
       getMihomoSubscription: jest.fn().mockResolvedValue({

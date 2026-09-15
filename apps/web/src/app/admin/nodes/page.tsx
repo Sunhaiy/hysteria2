@@ -38,6 +38,7 @@ type TrafficGuard = {
 };
 
 type Endpoint = {
+  icon?: string | null;
   id: string;
   label: string;
   protocol: "hysteria2" | "vless_reality";
@@ -117,6 +118,7 @@ type ServerForm = {
   provider: string;
 };
 type NodeForm = {
+  icon: string;
   serverId: string;
   protocol: Endpoint["protocol"];
   label: string;
@@ -153,6 +155,7 @@ const emptyServerForm: ServerForm = {
   provider: "",
 };
 const emptyNodeForm: NodeForm = {
+  icon: "",
   serverId: "",
   protocol: "vless_reality",
   label: "",
@@ -444,6 +447,7 @@ export default function NodesPage() {
             serverId: server?.id ?? "",
             protocol: node.protocol,
             label: node.label,
+            icon: node.icon ?? "",
             hostname: node.hostname,
             port: node.port,
             portHoppingEnabled: node.portHoppingEnabled,
@@ -538,6 +542,7 @@ export default function NodesPage() {
             serverId: nodeForm.serverId,
             protocol: nodeForm.protocol,
             label: nodeForm.label.trim(),
+            icon: nodeForm.icon.trim(),
             hostname: nodeForm.hostname.trim(),
             port: nodeForm.port,
             portHoppingEnabled:
@@ -904,7 +909,7 @@ export default function NodesPage() {
                   <article className="node-endpoint-row" key={node.id}>
                     <div className="node-endpoint-main">
                       <div className="node-endpoint-heading">
-                        <strong>{node.label}</strong>
+                        <strong>{node.icon ? `${node.icon} ` : ""}{node.label}</strong>
                         <span className="badge neutral">
                           {protocolName(node.protocol)}
                         </span>
@@ -1271,6 +1276,17 @@ export default function NodesPage() {
                 }))
               }
             />
+          </label>
+          <label className="field">
+            <span className="fine-print">节点图标（选填）</span>
+            <input
+              className="control"
+              value={nodeForm.icon}
+              maxLength={32}
+              placeholder="例如 🇺🇸、⚡、🚀；留空不显示"
+              onChange={(event) => setNodeForm((current) => ({ ...current, icon: event.target.value }))}
+            />
+            <span className="fine-print">填写 Emoji 或符号，更新订阅后显示在节点名称前。</span>
           </label>
           <label className="field">
             <span className="fine-print">公网主机名或 IP</span>
