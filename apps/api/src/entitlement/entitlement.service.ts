@@ -1,3 +1,4 @@
+import { machineTrafficRate } from './machine-traffic-rate';
 import {
   BadRequestException,
   ConflictException,
@@ -1079,10 +1080,8 @@ export class EntitlementService {
       userTrafficMultiplier:
         (fresh.trafficMultiplierOverrideBasisPoints ?? 10_000) / 10_000,
       trafficMultiplier:
-        Math.max(
-          fresh.trafficMultiplierBasisPoints,
-          fresh.trafficMultiplierOverrideBasisPoints ?? 10_000,
-        ) / 10_000,
+        (fresh.trafficMultiplierOverrideBasisPoints ?? 10_000) / 10_000,
+      trafficBillingMode: 'machine_user_max',
       subscriptions: fresh.subscriptions.map((subscription) => {
         const cycle = subscription.cycles[0];
         return {
@@ -1169,10 +1168,8 @@ export class EntitlementService {
         userTrafficMultiplier:
           (updated.trafficMultiplierOverrideBasisPoints ?? 10_000) / 10_000,
         trafficMultiplier:
-          Math.max(
-            updated.trafficMultiplierBasisPoints,
-            updated.trafficMultiplierOverrideBasisPoints ?? 10_000,
-          ) / 10_000,
+          (updated.trafficMultiplierOverrideBasisPoints ?? 10_000) / 10_000,
+        trafficBillingMode: 'machine_user_max',
       };
     });
   }
@@ -1636,6 +1633,14 @@ export class EntitlementService {
         if (existing) {
           return { replayed: true, impactedUsers: Object.keys(batch.traffic) };
         }
+        const node = await tx.node.findUniqueOrThrow({
+          where: { id: nodeId },
+          select: {
+            label: true,
+            server: { select: { trafficMultiplierBasisPoints: true } },
+          },
+        });
+        const nodeMultiplierBasisPoints = machineTrafficRate(node);
         const values = Object.values(batch.traffic);
         const imported = await tx.usageImportBatch.create({
           data: {
@@ -1664,6 +1669,7 @@ export class EntitlementService {
               counters,
               imported.id,
               claimedAt,
+              nodeMultiplierBasisPoints,
             )
           ) {
             impactedUsers.push(userId);
@@ -1831,13 +1837,14 @@ export class EntitlementService {
     counters: { tx: number; rx: number },
     importBatchId: string,
     bucketStart: Date,
+    nodeMultiplierBasisPoints: number,
   ) {
     const user = await tx.user.findUnique({ where: { id: userId } });
     if (!user) return false;
     const account = await this.ensureAccessAccount(userId, tx);
     const physical = BigInt(counters.tx) + BigInt(counters.rx);
     const accountMultiplierBasisPoints = Math.max(
-      account.trafficMultiplierBasisPoints,
+      nodeMultiplierBasisPoints,
       account.trafficMultiplierOverrideBasisPoints ?? 10_000,
     );
     const v2Buckets = await tx.quotaBucket.findMany({
@@ -1913,7 +1920,6 @@ export class EntitlementService {
       const metered = this.meterV2Usage(
         physical,
         usableV2Buckets,
-        account.trafficMultiplierOverrideBasisPoints ?? 10_000,
         accountMultiplierBasisPoints,
         account.trafficMultiplierRemainder,
       );
@@ -2158,7 +2164,6 @@ export class EntitlementService {
   private meterV2Usage<T extends MeteredQuotaBucket>(
     physicalBytes: bigint,
     buckets: T[],
-    userMultiplierBasisPoints: number,
     fallbackMultiplierBasisPoints: number,
     initialRemainder: number,
   ) {
@@ -2183,11 +2188,7 @@ export class EntitlementService {
       }
 
       if (available > BigInt(0) && physicalRemaining > BigInt(0)) {
-        const multiplierBasisPoints = Math.max(
-          bucket.trafficMultiplierBasisPointsSnapshot ??
-            fallbackMultiplierBasisPoints,
-          userMultiplierBasisPoints,
-        );
+        const multiplierBasisPoints = fallbackMultiplierBasisPoints;
         overflowMultiplierBasisPoints = multiplierBasisPoints;
         const multiplier = BigInt(multiplierBasisPoints);
         const scaledNeeded = available * multiplierScale - remainder;

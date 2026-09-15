@@ -34,21 +34,24 @@ stability window, but they do not receive new business rules.
 
 - **EntitlementGrant** is the durable record that a product was successfully
   granted to a customer for a bounded period. Purchased price, traffic,
-  cadence, reset anchor, and multiplier snapshots are contractual. Revocation
+  cadence and reset anchor are contractual; old multiplier snapshots are retained
+  for audit and no longer control new consumption. Revocation
   changes lifecycle state and end time but never rewrites consumed usage.
   Explicit administrator changes to an active product's access profile may
   propagate speed and node-access snapshots through `EntitlementService`.
 - **QuotaBucket** is spendable traffic owned by one grant. Recurring plan
   buckets reset monthly from the subscription anchor; traffic-pack buckets are
   normally one-time. Ultra traffic-pack grants also reset monthly from their
-  first-purchase anchor. Each bucket freezes the multiplier used for its own
-  consumption so a later renewal cannot alter an existing bucket's billing.
+  first-purchase anchor. All buckets use the rate of the machine carrying the
+  traffic, combined with the member override by taking the maximum.
 - **QuotaAdjustment** is an immutable operator ledger entry. It records actor,
   reason, target bucket, and before/after values without rewriting usage.
 - **UsageImportBatch** is the idempotency seam between a node worker and quota
   accounting.
 - **UsageRollup** is an immutable accounted usage record. The traffic multiplier
-  is applied when the batch is saved; old rollups are never recalculated.
+  is max(NodeServer rate, member override defaulting to 1x), applied when the
+  batch is saved; old rollups are never recalculated. Protocol endpoints share
+  their machine's rate. Top-tier machines default to 2x, other machines to 1x.
 
 ## Operations
 

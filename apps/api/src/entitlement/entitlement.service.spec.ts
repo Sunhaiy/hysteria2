@@ -1029,6 +1029,12 @@ describe('EntitlementService V2', () => {
 
   it('allows a production-sized traffic import to outlive the default interactive transaction timeout', async () => {
     const tx = {
+      node: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          label: '[中级]测试',
+          server: { trafficMultiplierBasisPoints: 10_000 },
+        }),
+      },
       usageImportBatch: {
         findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: 'batch_db_slow' }),
@@ -1092,6 +1098,12 @@ describe('EntitlementService V2', () => {
       },
     };
     const tx = {
+      node: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          label: '[中级]测试',
+          server: { trafficMultiplierBasisPoints: 10_000 },
+        }),
+      },
       usageImportBatch: {
         findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: 'batch_db_1' }),
@@ -1197,6 +1209,12 @@ describe('EntitlementService V2', () => {
 
   it('meters only unlinked legacy quota when no V2 bucket can serve the node', async () => {
     const tx = {
+      node: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          label: '[中级]测试',
+          server: { trafficMultiplierBasisPoints: 10_000 },
+        }),
+      },
       usageImportBatch: {
         findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: 'batch_db_legacy' }),
@@ -1265,6 +1283,12 @@ describe('EntitlementService V2', () => {
       },
     };
     const tx = {
+      node: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          label: '[中级]测试',
+          server: { trafficMultiplierBasisPoints: 10_000 },
+        }),
+      },
       usageImportBatch: {
         findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: 'batch_db_cross_model' }),
@@ -1391,19 +1415,34 @@ describe('EntitlementService V2', () => {
 
   it.each([
     {
-      productMultiplierBasisPoints: 20_000,
+      productMultiplierBasisPoints: 90_000,
+      nodeMultiplierBasisPoints: 10_000,
+      userMultiplierBasisPoints: 10_000,
+      expectedAccountedBytes: 100n,
+    },
+    {
+      productMultiplierBasisPoints: 90_000,
+      nodeMultiplierBasisPoints: 20_000,
+      userMultiplierBasisPoints: 5_000,
+      expectedAccountedBytes: 200n,
+    },
+    {
+      productMultiplierBasisPoints: 90_000,
+      nodeMultiplierBasisPoints: 20_000,
       userMultiplierBasisPoints: 15_000,
       expectedAccountedBytes: 200n,
     },
     {
-      productMultiplierBasisPoints: 15_000,
+      productMultiplierBasisPoints: 90_000,
+      nodeMultiplierBasisPoints: 10_000,
       userMultiplierBasisPoints: 20_000,
       expectedAccountedBytes: 200n,
     },
   ])(
-    'charges usage with the higher product or user multiplier',
+    'charges the higher machine or member rate, ignoring product snapshots',
     async ({
       productMultiplierBasisPoints,
+      nodeMultiplierBasisPoints,
       userMultiplierBasisPoints,
       expectedAccountedBytes,
     }) => {
@@ -1418,6 +1457,14 @@ describe('EntitlementService V2', () => {
         },
       };
       const tx = {
+        node: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            label: '[中级]测试',
+            server: {
+              trafficMultiplierBasisPoints: nodeMultiplierBasisPoints,
+            },
+          }),
+        },
         usageImportBatch: {
           findUnique: jest.fn().mockResolvedValue(null),
           create: jest.fn().mockResolvedValue({ id: 'batch_db_1' }),
@@ -1467,21 +1514,36 @@ describe('EntitlementService V2', () => {
         rawBytes: 100n,
         accountedBytes: expectedAccountedBytes,
         multiplierBasisPoints: Math.max(
-          productMultiplierBasisPoints,
+          nodeMultiplierBasisPoints,
           userMultiplierBasisPoints,
         ),
       });
+      tx.usageImportBatch.findUnique.mockResolvedValue({ id: 'batch_db_1' });
+      tx.node.findUniqueOrThrow.mockResolvedValue({
+        label: '[顶级]测试',
+        server: { trafficMultiplierBasisPoints: 90_000 },
+      });
+      await expect(
+        service.applyUsageBatch('node_core', {
+          id: `batch-${productMultiplierBasisPoints}-${userMultiplierBasisPoints}`,
+          claimedAt: '2027-03-30T08:00:00.000Z',
+          traffic: { user_1: { tx: 40, rx: 60 } },
+        }),
+      ).resolves.toMatchObject({ replayed: true });
+      expect(tx.usageRollup.create).toHaveBeenCalledTimes(1);
+      expect(tx.quotaBucket.update).toHaveBeenCalledTimes(1);
+      expect(tx.node.findUniqueOrThrow).toHaveBeenCalledTimes(1);
     },
   );
 
-  it('charges a traffic-pack bucket with its purchase multiplier snapshot', async () => {
+  it('meters a traffic pack at the machine rate with exact fractional-byte carry', async () => {
     const physicalBytes = 20_538_376n;
     const expectedAccountedBytes = 43_130_589n;
     const bucket = {
       id: 'bucket_pack_21x',
       grantedBytes: 100_000_000n,
       consumedBytes: 0n,
-      trafficMultiplierBasisPointsSnapshot: 21_000,
+      trafficMultiplierBasisPointsSnapshot: 90_000,
       endsAt: new Date('2027-05-01T00:00:00.000Z'),
       createdAt: new Date('2027-03-01T00:00:00.000Z'),
       grant: {
@@ -1493,6 +1555,12 @@ describe('EntitlementService V2', () => {
       },
     };
     const tx = {
+      node: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          label: '[中级]测试',
+          server: { trafficMultiplierBasisPoints: 21_000 },
+        }),
+      },
       usageImportBatch: {
         findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: 'batch_db_pack_21x' }),
@@ -1555,7 +1623,7 @@ describe('EntitlementService V2', () => {
     });
   });
 
-  it('applies each entitlement multiplier when one batch crosses quota buckets', async () => {
+  it('keeps the same machine rate across plan and traffic-pack buckets', async () => {
     const buckets = [
       {
         id: 'bucket_pack',
@@ -1589,6 +1657,12 @@ describe('EntitlementService V2', () => {
       },
     ];
     const tx = {
+      node: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          label: '[中级]测试',
+          server: { trafficMultiplierBasisPoints: 10_000 },
+        }),
+      },
       usageImportBatch: {
         findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: 'batch_db_mixed' }),
@@ -1637,7 +1711,7 @@ describe('EntitlementService V2', () => {
       [
         {
           where: { id: 'bucket_pack' },
-          data: { consumedBytes: { increment: 105n } },
+          data: { consumedBytes: { increment: 50n } },
         },
       ],
     ]);
@@ -1654,13 +1728,13 @@ describe('EntitlementService V2', () => {
       },
     ];
     expect(createRollup.data).toMatchObject({
-      accountedBytes: 155n,
-      multiplierBasisPoints: 15_500,
+      accountedBytes: 100n,
+      multiplierBasisPoints: 10_000,
       overageBytes: 0n,
       allocations: {
         create: [
           { quotaBucketId: 'bucket_plan', accountedBytes: 50n },
-          { quotaBucketId: 'bucket_pack', accountedBytes: 105n },
+          { quotaBucketId: 'bucket_pack', accountedBytes: 50n },
         ],
       },
     });
@@ -1682,6 +1756,12 @@ describe('EntitlementService V2', () => {
       },
     };
     const tx = {
+      node: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          label: '[中级]测试',
+          server: { trafficMultiplierBasisPoints: 10_000 },
+        }),
+      },
       usageImportBatch: {
         findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: 'batch_db_ultra_boundary' }),

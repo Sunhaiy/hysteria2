@@ -32,9 +32,41 @@ const latencyGroup = '延迟优选';
 const selectorGroup = '节点选择';
 const aiAutomaticGroup = 'AI 自动优选';
 const aiSelectorGroup = 'AI 服务';
+const mediaGroup = '流媒体';
+const messagingGroup = 'Telegram';
+
+// Upstream's native Mihomo MRS sets; client-side cache and daily refresh.
+const ruleSources = {
+  private: ['geosite/private', 'domain'],
+  cn: ['geosite/cn', 'domain'],
+  ai: ['geosite/category-ai-!cn', 'domain'],
+  youtube: ['geosite/youtube', 'domain'],
+  netflix: ['geosite/netflix', 'domain'],
+  spotify: ['geosite/spotify', 'domain'],
+  telegram: ['geosite/telegram', 'domain'],
+  overseas: ['geosite/geolocation-!cn', 'domain'],
+  'cn-ip': ['geoip/cn', 'ipcidr'],
+} as const;
+
+function buildRuleProviders() {
+  return Object.fromEntries(
+    Object.entries(ruleSources).map(([name, [path, behavior]]) => [
+      name,
+      {
+        type: 'http',
+        behavior,
+        format: 'mrs',
+        interval: 86_400,
+        path: `./rule-providers/suxin-meta-${name}.mrs`,
+        url: `https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/${path}.mrs`,
+        proxy: selectorGroup,
+      },
+    ]),
+  );
+}
 
 const privateNetworkRules = [
-  'GEOSITE,private,DIRECT',
+  'RULE-SET,private,DIRECT',
   'IP-CIDR,127.0.0.0/8,DIRECT,no-resolve',
   'IP-CIDR,10.0.0.0/8,DIRECT,no-resolve',
   'IP-CIDR,172.16.0.0/12,DIRECT,no-resolve',
@@ -117,6 +149,13 @@ export function buildMihomoProfile(
       ? [aiAutomaticGroup, ...aiProxyNames]
       : [selectorGroup],
   });
+  for (const name of [mediaGroup, messagingGroup]) {
+    proxyGroups.push({
+      name,
+      type: 'select',
+      proxies: [selectorGroup, latencyGroup, failoverGroup, ...names],
+    });
+  }
 
   const profile = {
     'mixed-port': 7890,
@@ -132,11 +171,18 @@ export function buildMihomoProfile(
     },
     proxies,
     'proxy-groups': proxyGroups,
+    'rule-providers': buildRuleProviders(),
     rules: [
       ...privateNetworkRules,
       ...aiRules,
-      'GEOSITE,cn,DIRECT',
-      'GEOIP,CN,DIRECT,no-resolve',
+      `RULE-SET,ai,${aiSelectorGroup}`,
+      `RULE-SET,youtube,${mediaGroup}`,
+      `RULE-SET,netflix,${mediaGroup}`,
+      `RULE-SET,spotify,${mediaGroup}`,
+      `RULE-SET,telegram,${messagingGroup}`,
+      `RULE-SET,overseas,${selectorGroup}`,
+      'RULE-SET,cn,DIRECT',
+      'RULE-SET,cn-ip,DIRECT,no-resolve',
       `MATCH,${selectorGroup}`,
     ],
   };

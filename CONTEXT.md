@@ -45,10 +45,17 @@
 
 ## Compatibility rules
 
+- Traffic billing uses max(NodeServer rate, member override), independently of
+  old product/grant snapshots. Top-tier machines default to 2x, others to 1x;
+  all protocols on one machine share the rate. Historical rollups are immutable.
+
 - `/subscribe/{token}` remains the v2rayN/Hiddify subscription.
 - `/subscribe/{token}/clash` is the Clash/Mihomo subscription with automatic
   node selection. Both are generated from current serviceable nodes on every
   refresh.
+- Mihomo routing uses MetaCubeX/meta-rules-dat MRS providers with daily client
+  refresh and persistent caching, plus separate AI, media, and Telegram groups.
+  Plain URI subscriptions do not carry routing rules.
 - Legacy plan, offer, product store URL, and tutorial setting fields remain
   readable during the expand-contract migration window.
 - Local development changes must not connect to or mutate production nodes.

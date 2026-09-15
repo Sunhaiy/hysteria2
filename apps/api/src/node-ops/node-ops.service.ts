@@ -18,6 +18,7 @@ import type {
 } from './node-ops.dto';
 import { NodeTrafficGuardService } from './node-traffic-guard.service';
 import { NodeRuntimeCommandService } from './node-runtime-command.service';
+import { defaultMachineRate } from '../entitlement/machine-traffic-rate';
 
 @Injectable()
 export class NodeOpsService {
@@ -149,6 +150,7 @@ export class NodeOpsService {
         region: server.region,
         provider: server.provider,
         active: server.active,
+        trafficMultiplier: server.trafficMultiplierBasisPoints / 10_000,
         trafficGuard: trafficGuards.get(server.id),
         runtimeControlConfigured:
           endpoints.length > 0 &&
@@ -169,6 +171,7 @@ export class NodeOpsService {
         id: 'unassigned',
         slug: 'unassigned',
         name: '未归属服务器',
+        trafficMultiplier: 1,
         hostname: '',
         region: null,
         provider: null,
@@ -196,21 +199,54 @@ export class NodeOpsService {
     };
   }
 
-  async createServer(input: SaveNodeServerDto) {
-    return this.prisma.nodeServer.create({
-      data: this.serverData(input),
+  async createServer(input: SaveNodeServerDto, actorId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const server = await tx.nodeServer.create({
+        data: this.serverData(input),
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: 'server.created',
+          targetType: 'node_server',
+          targetId: server.id,
+          metadata: {
+            trafficMultiplierBasisPoints: server.trafficMultiplierBasisPoints,
+          },
+        },
+      });
+      return server;
     });
   }
 
-  async updateServer(id: string, input: SaveNodeServerDto) {
-    const existing = await this.prisma.nodeServer.findFirst({
-      where: { id, retiredAt: null },
-    });
-    if (!existing) throw new NotFoundException('Node server not found');
-    return this.prisma.nodeServer.update({
-      where: { id },
-      data: this.serverData(input),
-    });
+  async updateServer(id: string, input: SaveNodeServerDto, actorId: string) {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const existing = await tx.nodeServer.findFirst({
+          where: { id, retiredAt: null },
+        });
+        if (!existing) throw new NotFoundException('Node server not found');
+        const server = await tx.nodeServer.update({
+          where: { id },
+          data: this.serverData(input, existing.trafficMultiplierBasisPoints),
+        });
+        await tx.auditLog.create({
+          data: {
+            actorId,
+            action: 'server.updated',
+            targetType: 'node_server',
+            targetId: id,
+            metadata: {
+              beforeTrafficMultiplierBasisPoints:
+                existing.trafficMultiplierBasisPoints,
+              trafficMultiplierBasisPoints: server.trafficMultiplierBasisPoints,
+            },
+          },
+        });
+        return server;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   async stopServer(id: string, actorId: string) {
@@ -519,8 +555,12 @@ export class NodeOpsService {
     return results.filter((result) => result.status === 'fulfilled').length;
   }
 
-  private serverData(input: SaveNodeServerDto) {
+  private serverData(input: SaveNodeServerDto, existingRate?: number) {
     return {
+      trafficMultiplierBasisPoints:
+        input.trafficMultiplier == null
+          ? (existingRate ?? defaultMachineRate(input.name))
+          : Math.round(input.trafficMultiplier * 10_000),
       slug: input.slug.trim(),
       name: input.name.trim(),
       hostname: input.hostname.trim(),

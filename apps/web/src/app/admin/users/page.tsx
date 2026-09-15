@@ -739,7 +739,7 @@ export default function AdminUsersPage() {
               "注册时间",
               "角色",
               "状态",
-              "倍率",
+              "用户倍率",
               "可用流量",
               "最近使用",
               "操作",

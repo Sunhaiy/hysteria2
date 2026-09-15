@@ -736,7 +736,7 @@ export default function CatalogPage() {
           </label>
           {form.series === "ultra" ? (
             <div className="feedback info form-grid-wide">
-              这是普通线路 Ultra 系列商品。三档共用下方节点，节点被选中后会自动从普通商品访问配置中移除；速率固定为上下行 300 Mbps，倍率固定为 1x。
+              这是普通线路 Ultra 系列商品。三档共用下方节点，节点被选中后会自动从普通商品访问配置中移除；速率固定为上下行 300 Mbps，流量按机器与用户倍率的较高值计费。
             </div>
           ) : null}
           <label className="field">
@@ -883,22 +883,8 @@ export default function CatalogPage() {
             <input className="control" value="不限设备" disabled />
           </label>
           <label className="field">
-            <span className="fine-print">默认倍率</span>
-            <input
-              className="control"
-              type="number"
-              min={0.1}
-              max={100}
-              step={0.1}
-              value={form.defaultTrafficMultiplier}
-              disabled={form.series === "ultra"}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  defaultTrafficMultiplier: Number(event.target.value),
-                }))
-              }
-            />
+            <span className="fine-print">流量计费</span>
+            <input className="control" value="按机器与用户倍率的较高值计费" disabled />
           </label>
           {form.kind === "plan" ? (
             <>

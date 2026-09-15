@@ -51,7 +51,7 @@ type Customer = {
   trafficMultiplier: number;
   planTrafficMultiplier: number;
   entitlementTrafficMultiplier: number;
-  effectiveTrafficMultiplier: number;
+  effectiveTrafficMultiplier: number | null;
   createdAt: string;
   summary: {
     activeGrantCount: number;
@@ -639,7 +639,7 @@ export default function CustomerDetailPage() {
             </div>
             <span className="metric-footnote">
               已用 {formatBytes(customer.summary.consumedBytes)} ·{" "}
-              {customer.effectiveTrafficMultiplier}x
+              按所用机器计费
             </span>
           </article>
           <MetricCard
@@ -691,7 +691,7 @@ export default function CustomerDetailPage() {
           <>
             <Panel
               title="计费倍率与总额度"
-              copy={`当前权益最高倍率 ${customer.entitlementTrafficMultiplier}x，用户倍率 ${customer.trafficMultiplier}x；实际按所用节点对应权益倍率与用户倍率的较高值计费。`}
+              copy={`用户倍率 ${customer.trafficMultiplier}x；实际按所用机器倍率与用户倍率的较高值计费，套餐和流量包不再单独设置倍率。`}
             >
               <div className="inline-form">
                 <label className="field">

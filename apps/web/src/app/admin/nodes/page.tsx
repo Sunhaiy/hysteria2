@@ -93,6 +93,7 @@ type Endpoint = {
   } | null;
 };
 type Server = {
+  trafficMultiplier: number;
   id: string;
   slug: string;
   name: string;
@@ -108,6 +109,7 @@ type Server = {
 };
 type Overview = { servers: Server[]; nodes: Endpoint[] };
 type ServerForm = {
+  trafficMultiplier: string;
   slug: string;
   name: string;
   hostname: string;
@@ -143,6 +145,7 @@ type TrafficLimitForm = {
 };
 
 const emptyServerForm: ServerForm = {
+  trafficMultiplier: "",
   slug: "",
   name: "",
   hostname: "",
@@ -418,6 +421,7 @@ export default function NodesPage() {
       server
         ? {
             slug: server.slug,
+            trafficMultiplier: String(server.trafficMultiplier),
             name: server.name,
             hostname: server.hostname,
             region: server.region ?? "",
@@ -494,6 +498,7 @@ export default function NodesPage() {
           token,
           body: {
             ...serverForm,
+            trafficMultiplier: serverForm.trafficMultiplier === "" ? undefined : Number(serverForm.trafficMultiplier),
             slug: serverForm.slug.trim(),
             name: serverForm.name.trim(),
             hostname: serverForm.hostname.trim(),
@@ -767,7 +772,7 @@ export default function NodesPage() {
             key={server.id}
             title={server.name}
             copy={
-              [server.hostname, server.region, server.provider]
+              [server.hostname, server.region, server.provider, server.id === "unassigned" ? "倍率按节点等级" : `机器倍率 ${server.trafficMultiplier}×`]
                 .filter(Boolean)
                 .join(" · ") || "未填写服务器信息"
             }
@@ -1113,6 +1118,14 @@ export default function NodesPage() {
           <div className="feedback error">{error}</div>
         ) : null}
         <form id="server-form" className="form-grid" onSubmit={saveServer}>
+          <label className="field">
+            <span className="fine-print">机器流量倍率</span>
+            <input className="control" type="number" min={0.1} max={100} step={0.0001}
+              placeholder="自动：顶级 2×，其余 1×"
+              value={serverForm.trafficMultiplier}
+              onChange={(event) => setServerForm((current) => ({ ...current, trafficMultiplier: event.target.value }))} />
+            <span className="fine-print">所有协议共用此倍率，扣费取机器与用户倍率的较高值。</span>
+          </label>
           <label className="field">
             <span className="fine-print">服务器名称</span>
             <input

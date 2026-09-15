@@ -272,28 +272,6 @@ export class CustomerAdminService {
         0,
       );
       const remainingBytes = v2Remaining + planRemaining + packRemaining;
-      const entitlementMultiplierBasisPoints = Math.max(
-        user.accessAccount?.trafficMultiplierBasisPoints ?? 10_000,
-        ...user.entitlementGrants.flatMap((grant) =>
-          grant.quotaBuckets
-            .filter((bucket) => bucket.grantedBytes > bucket.consumedBytes)
-            .map(
-              (bucket) =>
-                bucket.trafficMultiplierBasisPointsSnapshot ??
-                grant.trafficMultiplierBasisPointsSnapshot ??
-                10_000,
-            ),
-        ),
-        ...user.trafficPacks
-          .filter((pack) => pack.remainingBytes > BigInt(0))
-          .map(
-            (pack) =>
-              pack.trafficPackProduct?.catalogProduct
-                ?.defaultTrafficMultiplierBasisPoints ??
-              user.accessAccount?.trafficMultiplierBasisPoints ??
-              10_000,
-          ),
-      );
       const activePlanNames = [
         ...new Set([
           ...user.entitlementGrants
@@ -321,10 +299,8 @@ export class CustomerAdminService {
         primaryAccessTokenLastUsedAt:
           user.accessTokens[0]?.lastUsedAt?.toISOString() ?? null,
         trafficMultiplier:
-          Math.max(
-            entitlementMultiplierBasisPoints,
-            user.accessAccount?.trafficMultiplierOverrideBasisPoints ?? 10_000,
-          ) / 10_000,
+          (user.accessAccount?.trafficMultiplierOverrideBasisPoints ?? 10_000) /
+          10_000,
         remainingBytes,
         activePlanNames,
         activeTrafficPackCount,
@@ -421,11 +397,8 @@ export class CustomerAdminService {
         consumedTrafficBytes: Number(consumed),
         trafficRemainingBytes: remainingBytes,
         trafficMultiplier:
-          Math.max(
-            subscription.accessAccount?.trafficMultiplierBasisPoints ?? 10_000,
-            subscription.accessAccount?.trafficMultiplierOverrideBasisPoints ??
-              10_000,
-          ) / 10_000,
+          (subscription.accessAccount?.trafficMultiplierOverrideBasisPoints ??
+            10_000) / 10_000,
         quotaState: this.quotaState(remainingBytes),
         speedUpMbpsSnapshot: subscription.speedUpMbpsSnapshot,
         speedDownMbpsSnapshot: subscription.speedDownMbpsSnapshot,
@@ -572,9 +545,8 @@ export class CustomerAdminService {
         (user.accessAccount?.trafficMultiplierBasisPoints ?? 10_000) / 10_000,
       entitlementTrafficMultiplier: entitlementMultiplierBasisPoints / 10_000,
       trafficMultiplier: userMultiplierBasisPoints / 10_000,
-      effectiveTrafficMultiplier:
-        Math.max(entitlementMultiplierBasisPoints, userMultiplierBasisPoints) /
-        10_000,
+      trafficBillingMode: 'machine_user_max',
+      effectiveTrafficMultiplier: null,
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),
       summary: {

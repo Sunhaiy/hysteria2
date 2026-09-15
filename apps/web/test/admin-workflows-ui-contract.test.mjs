@@ -97,7 +97,7 @@ test("catalog offers expose period-specific shop URLs and plan traffic policy", 
   );
   assert.doesNotMatch(plans, /window\.location\.assign\(storeUrl\)/);
   assert.doesNotMatch(plans, /href=\{purchaseStoreUrl\}/);
-  assert.match(catalog, /默认倍率/);
+  assert.match(catalog, /按机器与用户倍率的较高值计费/);
   assert.match(catalog, /上行限速/);
   assert.match(catalog, /下行限速/);
   assert.match(catalog, /nodeIds/);
@@ -146,7 +146,7 @@ test("catalog uses one product quota while offers only edit prices and links", a
   );
   assert.match(catalog, /三档共用下方节点/);
   assert.match(catalog, /Ultra 专属/);
-  assert.match(catalog, /速率固定为上下行\s*300 Mbps，倍率固定为 1x/);
+  assert.match(catalog, /速率固定为上下行\s*300 Mbps，流量按机器与用户倍率的较高值计费/);
 });
 
 test("node operations separate access and runtime service controls", async () => {
@@ -226,8 +226,8 @@ test("customer traffic statistics include an accounted-usage chart", async () =>
   assert.match(detail, /<EChart/);
   assert.match(detail, /trafficChartOption/);
   assert.match(detail, /accountedBytes/);
-  assert.match(detail, /customer\.entitlementTrafficMultiplier/);
-  assert.match(detail, /当前权益最高倍率/);
+  assert.match(detail, /所用机器倍率与用户倍率的较高值计费/);
+  assert.match(detail, /按所用机器计费/);
   assert.doesNotMatch(detail, /copy=\{`套餐倍率/);
 });
 

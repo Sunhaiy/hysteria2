@@ -9,6 +9,18 @@ type ParsedMihomoProfile = {
     proxies: string[];
   }>;
   rules: string[];
+  'rule-providers': Record<
+    string,
+    {
+      type: string;
+      format: string;
+      behavior: string;
+      interval: number;
+      path: string;
+      url: string;
+      proxy: string;
+    }
+  >;
 };
 
 function parseProfile(source: string) {
@@ -104,16 +116,73 @@ describe('buildMihomoProfile', () => {
 
     expect(profile.rules).toEqual(
       expect.arrayContaining([
-        'GEOSITE,private,DIRECT',
+        'RULE-SET,private,DIRECT',
         'IP-CIDR,10.0.0.0/8,DIRECT,no-resolve',
-        'GEOSITE,cn,DIRECT',
-        'GEOIP,CN,DIRECT,no-resolve',
+        'RULE-SET,cn,DIRECT',
+        'RULE-SET,cn-ip,DIRECT,no-resolve',
         'MATCH,节点选择',
       ]),
     );
-    expect(profile.rules.indexOf('GEOSITE,cn,DIRECT')).toBeLessThan(
+    expect(profile.rules.indexOf('RULE-SET,cn,DIRECT')).toBeLessThan(
       profile.rules.indexOf('MATCH,节点选择'),
     );
+  });
+
+  it('uses upstream MRS providers with persistent daily caching and a bootstrap proxy', () => {
+    const profile = parseProfile(buildMihomoProfile(credential, nodes));
+    const providers = profile['rule-providers'];
+    expect(Object.keys(providers)).toHaveLength(9);
+    expect(providers['cn-ip'].behavior).toBe('ipcidr');
+    for (const [name, provider] of Object.entries(providers)) {
+      expect(provider).toMatchObject({
+        type: 'http',
+        format: 'mrs',
+        interval: 86400,
+        proxy: '节点选择',
+      });
+      expect(provider.url).toMatch(
+        /^https:\/\/raw\.githubusercontent\.com\/MetaCubeX\/meta-rules-dat\/meta\/geo\//,
+      );
+      expect(provider.path).toBe(`./rule-providers/suxin-meta-${name}.mrs`);
+      expect(
+        profile.rules.some((rule) => rule.startsWith(`RULE-SET,${name},`)),
+      ).toBe(true);
+    }
+    // No hidden dependency on the client's default geo database source.
+    expect(profile.rules.some((rule) => /^(GEOSITE|GEOIP),/.test(rule))).toBe(
+      false,
+    );
+  });
+
+  it('prioritizes AI and media over regional rules and references only authorized proxies', () => {
+    const profile = parseProfile(buildMihomoProfile(credential, nodes));
+    const destinations = new Set([
+      'DIRECT',
+      'REJECT',
+      ...profile.proxies.map((proxy) => proxy.name),
+      ...profile['proxy-groups'].map((group) => group.name),
+    ]);
+    for (const rule of profile.rules) {
+      const parts = rule.split(',');
+      expect(destinations.has(parts[0] === 'MATCH' ? parts[1] : parts[2])).toBe(
+        true,
+      );
+    }
+    for (const group of profile['proxy-groups']) {
+      for (const proxy of group.proxies)
+        expect(destinations.has(proxy)).toBe(true);
+    }
+    for (const rule of [
+      'RULE-SET,ai,AI 服务',
+      'RULE-SET,youtube,流媒体',
+      'RULE-SET,telegram,Telegram',
+      'RULE-SET,overseas,节点选择',
+    ]) {
+      expect(profile.rules.indexOf(rule)).toBeGreaterThan(-1);
+      expect(profile.rules.indexOf(rule)).toBeLessThan(
+        profile.rules.indexOf('RULE-SET,cn,DIRECT'),
+      );
+    }
   });
 
   it('uses only authorized US nodes for the AI service group', () => {

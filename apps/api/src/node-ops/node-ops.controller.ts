@@ -41,13 +41,20 @@ export class NodeOpsController {
   }
 
   @Post('servers')
-  createServer(@Body() body: SaveNodeServerDto) {
-    return this.nodes.createServer(body);
+  createServer(
+    @Body() body: SaveNodeServerDto,
+    @CurrentPrincipal() principal: SessionPrincipal,
+  ) {
+    return this.nodes.createServer(body, principal.sub);
   }
 
   @Put('servers/:id')
-  updateServer(@Param('id') id: string, @Body() body: SaveNodeServerDto) {
-    return this.nodes.updateServer(id, body);
+  updateServer(
+    @Param('id') id: string,
+    @Body() body: SaveNodeServerDto,
+    @CurrentPrincipal() principal: SessionPrincipal,
+  ) {
+    return this.nodes.updateServer(id, body, principal.sub);
   }
 
   @Post('servers/:id/stop')

@@ -564,6 +564,7 @@ model NodeServer {
   region               String?
   provider             String?
   active               Boolean   @default(true)
+  trafficMultiplierBasisPoints Int @default(10000)
   trafficLimitEnabled  Boolean   @default(false)
   trafficLimitBytes    BigInt?
   trafficLimitResetDay Int       @default(1)

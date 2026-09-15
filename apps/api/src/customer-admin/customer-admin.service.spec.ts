@@ -589,7 +589,8 @@ describe('CustomerAdminService quota policy', () => {
 
     expect(result).toMatchObject({
       entitlementTrafficMultiplier: 2.1,
-      effectiveTrafficMultiplier: 2.1,
+      effectiveTrafficMultiplier: null,
+      trafficBillingMode: 'machine_user_max',
     });
   });
 

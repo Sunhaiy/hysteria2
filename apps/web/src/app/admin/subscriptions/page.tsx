@@ -348,7 +348,7 @@ export default function AdminSubscriptionsPage() {
 
         {subscriptions.length > 0 ? (
           <DataTable
-            headers={["用户", "套餐 / 周期", "节点", "状态", "倍率", "剩余流量", "到期时间"]}
+            headers={["用户", "套餐 / 周期", "节点", "状态", "用户倍率", "剩余流量", "到期时间"]}
             rows={subscriptions.map((sub) => [
               <div className="table-user-actions" key={sub.id}>
                 <CustomerLink

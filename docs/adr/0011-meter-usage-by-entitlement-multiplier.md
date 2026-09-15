@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Superseded for new traffic imports by [machine-based metering](0014-machine-traffic-multiplier.md).
 
 ## Decision
 

@@ -75,6 +75,12 @@ export class UpdateNodeOperationsDto {
 }
 
 export class SaveNodeServerDto {
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0.1)
+  @Max(100)
+  trafficMultiplier?: number;
+
   @IsString()
   slug!: string;
 
