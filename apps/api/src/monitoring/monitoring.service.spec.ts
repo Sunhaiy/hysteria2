@@ -25,9 +25,15 @@ function createFixture(input?: {
 }) {
   let deniedAuth = input?.deniedAuth ?? 0;
   const alerts = new Map<string, AlertState>();
+  let nodeEmailClaimed = false;
   const findById = (id: string) =>
     [...alerts.values()].find((alert) => alert.id === id);
   const prisma = {
+    $executeRaw: jest.fn().mockImplementation(() => {
+      if (nodeEmailClaimed) return Promise.resolve(0);
+      nodeEmailClaimed = true;
+      return Promise.resolve(1);
+    }),
     node: { findMany: jest.fn().mockResolvedValue(input?.nodes ?? []) },
     usageImportBatch: { count: jest.fn().mockResolvedValue(0) },
     authEvent: {
@@ -181,7 +187,7 @@ describe('MonitoringService', () => {
     expect(alerts.size).toBe(1);
   });
 
-  it('sends one email per node incident and resets notification after recovery', async () => {
+  it('caps node emails at one even when recovery and another failure occur', async () => {
     const staleAt = new Date('2027-01-01T00:00:00.000Z');
     const node = {
       id: 'node_1',
@@ -235,10 +241,7 @@ describe('MonitoringService', () => {
     await service.runChecks(recoveredAt);
     await service.runChecks(new Date('2027-01-01T00:07:00.000Z'));
 
-    expect(mail.sendOperationalAlert).toHaveBeenCalledTimes(2);
-    expect(mail.sendOperationalAlert).toHaveBeenLastCalledWith(
-      expect.objectContaining({ state: 'resolved', to: 'ops@example.com' }),
-    );
+    expect(mail.sendOperationalAlert).toHaveBeenCalledTimes(1);
 
     node.lastSyncAt = staleAt;
     node.lastSyncError = 'agent timeout';
@@ -254,7 +257,7 @@ describe('MonitoringService', () => {
     await service.runChecks(new Date('2027-01-01T00:10:00.000Z'));
     await service.runChecks(new Date('2027-01-01T00:11:00.000Z'));
 
-    expect(mail.sendOperationalAlert).toHaveBeenCalledTimes(3);
+    expect(mail.sendOperationalAlert).toHaveBeenCalledTimes(1);
     expect(mail.sendOperationalAlert).toHaveBeenLastCalledWith(
       expect.objectContaining({ state: 'opened', to: 'ops@example.com' }),
     );

@@ -485,6 +485,19 @@ export class MonitoringService {
         orderBy: { createdAt: 'asc' },
       });
       if (!admin) return;
+      if (alert.nodeId) {
+        // A persistent daily slot covers all node failure and recovery emails.
+        // Claim before SMTP to prevent concurrent or uncertain delivery retries.
+        const claimed = await this.prisma.$executeRaw`
+          INSERT INTO "Setting" ("key", "value", "updatedAt")
+          VALUES ('monitoring.nodeEmailDay',
+            (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date::text, NOW())
+          ON CONFLICT ("key") DO UPDATE SET
+            "value" = EXCLUDED."value", "updatedAt" = NOW()
+          WHERE "Setting"."value" <> EXCLUDED."value"
+        `;
+        if (!claimed) return;
+      }
       await this.mail.sendOperationalAlert({
         to: admin.email,
         title: alert.title,
