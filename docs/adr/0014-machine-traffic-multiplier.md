@@ -8,6 +8,9 @@ share its rate. Existing top-tier machines are initialized to 2x, others to
 configured rate. Unassigned legacy endpoints default by their label until
 assigned to a server.
 
+Tier detection uses a leading `[顶级]`, `【顶级】`, or `顶级` marker. A label
+such as `[中级]非特殊情况，请用顶级线路` is intermediate, not top tier.
+
 The rate is read once per import transaction. Replayed batches do not charge
 again. Fractional-byte carry, quota allocation order, raw physical traffic,
 and immutable historical rollups remain intact. Configuration changes affect

@@ -4,6 +4,8 @@ describe('machine traffic rates', () => {
   it('defaults top tier to 2x and intermediate tier to 1x', () => {
     expect(defaultMachineRate('[顶级]美国')).toBe(20_000);
     expect(defaultMachineRate('[中级]日本')).toBe(10_000);
+    expect(defaultMachineRate('[中级]非特殊情况，请用顶级线路')).toBe(10_000);
+    expect(defaultMachineRate('【顶级】美国')).toBe(20_000);
   });
   it('shares an explicit machine rate across protocol labels', () => {
     const server = { trafficMultiplierBasisPoints: 15_000 };
