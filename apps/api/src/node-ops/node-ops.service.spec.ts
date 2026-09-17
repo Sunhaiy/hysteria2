@@ -230,11 +230,15 @@ describe('node overview loading', () => {
       lifecycleStatus: 'ACTIVE',
       runtimeState: 'RUNNING',
       onlinePresence: [{ concurrentClients: 3 }],
-      healthSnapshots: [{ healthy: true, checkedAt: new Date() }],
       accessProfileBindings: [],
       runtimeCommands: [],
     };
     const prisma = {
+      $queryRaw: jest
+        .fn()
+        .mockResolvedValue([
+          { nodeId: 'node', healthy: true, checkedAt: new Date() },
+        ]),
       nodeServer: {
         findMany: jest.fn().mockResolvedValue([
           {

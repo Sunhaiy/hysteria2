@@ -32,7 +32,6 @@ export class NodeOpsService {
   async overview(includeTraffic = true) {
     const freshSince = new Date(Date.now() - 45_000);
     const endpointInclude = {
-      healthSnapshots: { orderBy: { checkedAt: 'desc' as const }, take: 1 },
       onlinePresence: {
         where: {
           observedAt: { gte: freshSince },
@@ -67,13 +66,41 @@ export class NodeOpsService {
         orderBy: { createdAt: 'asc' },
       }),
     ]);
+    const nodeIds = [
+      ...servers.flatMap((server) => server.endpoints),
+      ...unassignedNodes,
+    ].map((node) => node.id);
+    // Limit in PostgreSQL for each endpoint rather than loading all historical
+    // health rows through Prisma's batched relation query.
+    const latestHealth = nodeIds.length
+      ? await this.prisma.$queryRaw<
+          Array<{
+            nodeId: string;
+            healthy: boolean;
+            latencyMs: number | null;
+            checkedAt: Date;
+          }>
+        >(Prisma.sql`
+      SELECT health.* FROM "Node" node
+      JOIN LATERAL (
+        SELECT "nodeId", "healthy", "latencyMs", "checkedAt"
+        FROM "NodeHealthSnapshot"
+        WHERE "nodeId" = node."id"
+        ORDER BY "checkedAt" DESC LIMIT 1
+      ) health ON true
+      WHERE node."id" IN (${Prisma.join(nodeIds)})
+    `)
+      : [];
+    const healthByNode = new Map(
+      latestHealth.map((health) => [health.nodeId, health]),
+    );
     const trafficGuards = includeTraffic
       ? await this.trafficGuard.project(servers, new Date())
       : new Map<string, NodeTrafficGuardProjection>();
 
     type Endpoint = (typeof servers)[number]['endpoints'][number];
     const presentEndpoint = (node: Endpoint) => {
-      const health = node.healthSnapshots[0];
+      const health = healthByNode.get(node.id);
       const onlineUsers = node.onlinePresence.reduce(
         (total, presence) => total + presence.concurrentClients,
         0,
