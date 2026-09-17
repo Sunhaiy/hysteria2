@@ -101,7 +101,63 @@ export class SeoAiAdapter {
     return { ok: response.text.includes('true'), model: config.textModel };
   }
 
-  private async config(): Promise<ProviderConfig> {
+  async listModels(overrides?: { baseUrl?: string; apiKey?: string }) {
+    const config = await this.config(false, overrides);
+    const baseUrls = [`${config.baseUrl}/models`];
+    if (/\/v1$/i.test(config.baseUrl)) {
+      baseUrls.push(`${config.baseUrl.slice(0, -3)}/models`);
+    } else {
+      baseUrls.push(`${config.baseUrl}/v1/models`);
+    }
+
+    let response: Record<string, unknown> | null = null;
+    for (const url of [...new Set(baseUrls)]) {
+      try {
+        response = await this.requestJson(url, undefined, config, 'GET');
+        break;
+      } catch (error) {
+        if (
+          !(error instanceof ProviderHttpError) ||
+          ![404, 405].includes(error.status)
+        ) {
+          throw error;
+        }
+      }
+    }
+    if (!response) throw new BadGatewayException('上游模型接口不存在');
+
+    const candidates = Array.isArray(response.data)
+      ? response.data
+      : Array.isArray(response.models)
+        ? response.models
+        : Array.isArray(response)
+          ? response
+          : [];
+    const models = [
+      ...new Set(
+        candidates
+          .map((item) => {
+            if (typeof item === 'string') return item.trim();
+            const value = this.object(item);
+            return typeof value?.id === 'string'
+              ? value.id.trim()
+              : typeof value?.name === 'string'
+                ? value.name.trim()
+                : typeof value?.model === 'string'
+                  ? value.model.trim()
+                  : '';
+          })
+          .filter(Boolean),
+      ),
+    ].sort((left, right) => left.localeCompare(right));
+    if (!models.length) throw new BadGatewayException('上游没有返回可用模型');
+    return { models: models.slice(0, 500) };
+  }
+
+  private async config(
+    requireTextModel = true,
+    overrides?: { baseUrl?: string; apiKey?: string },
+  ): Promise<ProviderConfig> {
     const [baseUrl, apiKey, textModel, imageModel, timeoutRaw] =
       await Promise.all([
         this.settings.get('seo.aiBaseUrl'),
@@ -110,30 +166,29 @@ export class SeoAiAdapter {
         this.settings.get('seo.imageModel'),
         this.settings.get('seo.timeoutMs'),
       ]);
-    if (!baseUrl?.trim() || !apiKey?.trim() || !textModel?.trim()) {
+    const effectiveBaseUrl = overrides?.baseUrl ?? baseUrl;
+    const effectiveApiKey = overrides?.apiKey ?? apiKey;
+    if (
+      !effectiveBaseUrl?.trim() ||
+      !effectiveApiKey?.trim() ||
+      (requireTextModel && !textModel?.trim())
+    ) {
       throw new BadRequestException('AI 服务尚未配置');
     }
     let parsed: URL;
     try {
-      parsed = new URL(baseUrl.trim());
+      parsed = new URL(effectiveBaseUrl.trim());
     } catch {
       throw new BadRequestException('AI Base URL 格式无效');
     }
     if (!['http:', 'https:'].includes(parsed.protocol)) {
       throw new BadRequestException('AI Base URL 必须使用 HTTP(S)');
     }
-    if (
-      process.env.NODE_ENV === 'production' &&
-      parsed.protocol !== 'https:' &&
-      !['localhost', '127.0.0.1'].includes(parsed.hostname)
-    ) {
-      throw new BadRequestException('生产环境 AI Base URL 必须使用 HTTPS');
-    }
     const timeout = Number(timeoutRaw ?? 60_000);
     return {
       baseUrl: parsed.toString().replace(/\/$/, ''),
-      apiKey,
-      textModel: textModel.trim(),
+      apiKey: effectiveApiKey,
+      textModel: textModel?.trim() ?? '',
       imageModel: imageModel?.trim() || undefined,
       timeoutMs: Number.isFinite(timeout)
         ? Math.min(Math.max(timeout, 5_000), 180_000)
@@ -187,18 +242,19 @@ export class SeoAiAdapter {
 
   private async requestJson(
     url: string,
-    body: Record<string, unknown>,
+    body: Record<string, unknown> | undefined,
     config: ProviderConfig,
+    method: 'GET' | 'POST' = 'POST',
   ): Promise<Record<string, unknown>> {
     let response: Response;
     try {
       response = await fetch(url, {
-        method: 'POST',
+        method,
         headers: {
           Authorization: `Bearer ${config.apiKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(body),
+        ...(body ? { body: JSON.stringify(body) } : {}),
         signal: AbortSignal.timeout(config.timeoutMs),
       });
     } catch (error) {

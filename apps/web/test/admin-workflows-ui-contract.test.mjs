@@ -235,7 +235,7 @@ test("admin navigation keeps CDK management visible", async () => {
   const copy = await source("lib/copy.ts");
 
   assert.match(copy, /\/admin\/redemption-codes/);
-  assert.doesNotMatch(copy, /\/admin\/finance/);
+  assert.match(copy, /\/admin\/finance/);
 });
 
 test("customer list can filter everyone with subscription history", async () => {

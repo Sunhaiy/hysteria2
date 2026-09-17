@@ -10,12 +10,12 @@ function aiResponse(value: Record<string, unknown>, input = 10, output = 20) {
   );
 }
 
-function configuredSettings() {
+function configuredSettings(baseUrl = 'https://example.test/v1') {
   return {
     get: jest.fn((key: string) =>
       Promise.resolve(
         {
-          'seo.aiBaseUrl': 'https://example.test/v1',
+          'seo.aiBaseUrl': baseUrl,
           'seo.textModel': 'text-model',
           'seo.timeoutMs': '30000',
         }[key],
@@ -213,5 +213,72 @@ describe('SeoAiAdapter', () => {
         existingArticles: [],
       }),
     ).rejects.toThrow('AI 服务尚未配置');
+  });
+
+  it('allows an HTTP upstream in production when the provider is reachable', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    jest.spyOn(global, 'fetch').mockResolvedValueOnce(aiResponse({ ok: true }));
+    try {
+      const adapter = new SeoAiAdapter(
+        configuredSettings('http://198.51.100.10:8080/v1') as never,
+      );
+
+      await expect(adapter.testConnection()).resolves.toEqual({
+        ok: true,
+        model: 'text-model',
+      });
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
+
+  it('lists and de-duplicates models from an OpenAI-compatible upstream', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: [{ id: 'gpt-5.6' }, { id: 'gpt-4o' }, { id: 'gpt-5.6' }],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    const adapter = new SeoAiAdapter(configuredSettings() as never);
+
+    await expect(adapter.listModels()).resolves.toEqual({
+      models: ['gpt-4o', 'gpt-5.6'],
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://example.test/v1/models',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('can list models with unsaved connection overrides', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ models: [{ name: 'local-model' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const adapter = new SeoAiAdapter(
+      configuredSettings('https://saved.example/v1') as never,
+    );
+
+    await expect(
+      adapter.listModels({
+        baseUrl: 'http://198.51.100.10:8080/v1',
+        apiKey: 'temporary-secret',
+      }),
+    ).resolves.toEqual({ models: ['local-model'] });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://198.51.100.10:8080/v1/models',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer temporary-secret',
+        }) as unknown,
+      }),
+    );
   });
 });

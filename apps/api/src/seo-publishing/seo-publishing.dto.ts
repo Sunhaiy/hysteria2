@@ -109,6 +109,17 @@ export class UpdateSeoSettingsDto {
   clearGoogleServiceAccount?: boolean;
 }
 
+export class FetchSeoModelsDto {
+  @IsOptional()
+  @IsUrl({ require_tld: false, protocols: ['http', 'https'] })
+  aiBaseUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(10_000)
+  aiApiKey?: string;
+}
+
 export class CreateSeoKeywordDto {
   @IsString()
   @MaxLength(120)

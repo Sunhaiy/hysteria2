@@ -46,6 +46,7 @@ import {
 import { seoGenerationPipelineVersion } from './seo-generation-pipeline';
 import type {
   CreateSeoKeywordDto,
+  FetchSeoModelsDto,
   SaveSeoArticleDto,
   SeoListQueryDto,
   UpdateSeoKeywordDto,
@@ -138,13 +139,6 @@ export class SeoPublishingService {
       updates['seo.enabled'] = String(input.enabled);
     if (input.aiBaseUrl !== undefined) {
       const url = new URL(input.aiBaseUrl.trim());
-      if (
-        process.env.NODE_ENV === 'production' &&
-        url.protocol !== 'https:' &&
-        !['localhost', '127.0.0.1'].includes(url.hostname)
-      ) {
-        throw new BadRequestException('生产环境 AI Base URL 必须使用 HTTPS');
-      }
       updates['seo.aiBaseUrl'] = url.toString().replace(/\/$/, '');
     }
     if (input.textModel !== undefined)
@@ -200,6 +194,13 @@ export class SeoPublishingService {
 
   testAiConnection() {
     return this.ai.testConnection();
+  }
+
+  listAiModels(input?: FetchSeoModelsDto) {
+    return this.ai.listModels({
+      baseUrl: input?.aiBaseUrl,
+      apiKey: input?.aiApiKey,
+    });
   }
 
   testGoogleConnection() {

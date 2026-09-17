@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { TrafficAnalyticsService } from './traffic-analytics/traffic-analytics.service';
 import { NestFactory } from '@nestjs/core';
 import { OperationsService } from './operations/operations.service';
 import { SyncWorkerModule } from './sync-worker.module';
@@ -180,6 +181,19 @@ async function bootstrap() {
   );
   let stopping = false;
   const tasks: RecurringTask[] = [];
+  const trafficReports = app.get(TrafficAnalyticsService);
+  tasks.push(
+    new RecurringTask(
+      'Server traffic report snapshots',
+      60_000,
+      120_000,
+      async () => {
+        await operations.refreshReport();
+        await trafficReports.refreshServerReports();
+      },
+      false,
+    ),
+  );
   const syncEnabled =
     process.env.NODE_SYNC_ENABLED === 'true' ||
     process.env.HYSTERIA_SYNC_ENABLED === 'true';

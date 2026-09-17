@@ -71,6 +71,33 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     this.memory.delete(key);
   }
 
+  async addMember(key: string, value: string) {
+    if (this.redis?.status === 'ready') {
+      await this.redis.sadd(key, value);
+      return;
+    }
+    const members = new Set<string>(
+      JSON.parse(this.memory.get(key) ?? '[]') as string[],
+    );
+    members.add(value);
+    this.memory.set(key, JSON.stringify([...members]));
+  }
+
+  async members(key: string): Promise<string[]> {
+    if (this.redis?.status === 'ready') return this.redis.smembers(key);
+    return JSON.parse(this.memory.get(key) ?? '[]') as string[];
+  }
+
+  async removeMember(key: string, value: string) {
+    if (this.redis?.status === 'ready') {
+      await this.redis.srem(key, value);
+      return;
+    }
+    const members = new Set<string>(await this.members(key));
+    members.delete(value);
+    this.memory.set(key, JSON.stringify([...members]));
+  }
+
   async onModuleDestroy() {
     if (this.redis) {
       await this.redis.quit();

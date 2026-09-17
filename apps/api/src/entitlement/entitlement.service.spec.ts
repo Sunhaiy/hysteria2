@@ -842,7 +842,7 @@ describe('EntitlementService V2', () => {
       entitlementGrant: {
         findMany: jest
           .fn()
-          .mockResolvedValueOnce([planGrant])
+          .mockResolvedValueOnce([{ ...planGrant, quotaBuckets: [] }])
           .mockResolvedValueOnce([planGrant, packGrant]),
       },
       quotaBucket: { upsert: jest.fn().mockResolvedValue({}) },

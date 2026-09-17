@@ -1,4 +1,11 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  Optional,
+} from '@nestjs/common';
+import { CacheService } from '../cache/cache.service';
+import { ReportSnapshotService } from './report-snapshot.service';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { pageResponse, parsePage } from '../common/pagination';
@@ -49,7 +56,42 @@ interface ServerTrafficDailyRow {
 
 @Injectable()
 export class TrafficAnalyticsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(TrafficAnalyticsService.name);
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly reports?: ReportSnapshotService,
+    @Optional() private readonly cache?: CacheService,
+  ) {}
+
+  async serverMonthlySnapshot(query: ServerTrafficQuery = {}) {
+    const range = this.serverMonthRange(query.month, new Date());
+    const snapshot = await this.reports!.read<
+      Awaited<ReturnType<TrafficAnalyticsService['serverMonthly']>>
+    >(`servers:${range.month}`);
+    if (snapshot.stale)
+      await this.cache!.addMember('report:server-months', range.month);
+    return snapshot;
+  }
+
+  async refreshServerReports() {
+    const current = this.serverMonthRange(undefined, new Date()).month;
+    const months = new Set([
+      current,
+      ...(await this.cache!.members('report:server-months')),
+    ]);
+    for (const month of months) {
+      try {
+        await this.reports!.refresh(`servers:${month}`, () =>
+          this.serverMonthly({ month }),
+        );
+        await this.cache!.removeMember('report:server-months', month);
+      } catch (error) {
+        this.logger.warn(
+          `Server report ${month} failed; preserving last snapshot: ${String(error)}`,
+        );
+      }
+    }
+  }
 
   async overview(query: TrafficQuery) {
     const where = this.sqlWhere(query);

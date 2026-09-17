@@ -6,6 +6,36 @@ import { join } from 'node:path';
 import { SeoPublishingService } from './seo-publishing.service';
 
 describe('SeoPublishingService publication boundary', () => {
+  it('accepts an HTTP AI upstream URL in production', async () => {
+    const setMany = jest.fn().mockResolvedValue(undefined);
+    const settings = {
+      get: jest.fn().mockResolvedValue(undefined),
+      getSecret: jest.fn().mockResolvedValue(undefined),
+      setMany,
+    };
+    const service = new SeoPublishingService(
+      {} as never,
+      settings as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      await service.updateAdminSettings({
+        aiBaseUrl: 'http://198.51.100.10:8080/v1',
+      });
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
+
+    expect(setMany).toHaveBeenCalledWith({
+      'seo.aiBaseUrl': 'http://198.51.100.10:8080/v1',
+    });
+  });
+
   it('publishes one reviewed revision and queues idempotent engine submissions', async () => {
     const now = new Date('2026-09-10T02:00:00.000Z');
     const article = {

@@ -110,3 +110,12 @@ test("published articles initialize preview and quality state without creating a
   assert.match(editor, /独立审校/);
   assert.match(editor, /事实依据/);
 });
+
+test("AI settings can discover upstream models without forcing HTTPS", async () => {
+  const editor = await source("src/app/admin/seo/page.tsx");
+  assert.match(editor, /placeholder="http:\/\/或 https:\/\/上游地址\/v1"/);
+  assert.match(editor, /\/api\/admin\/seo\/settings\/models/);
+  assert.match(editor, /method: "POST"/);
+  assert.match(editor, /一键获取模型/);
+  assert.match(editor, /list="seo-upstream-models"/);
+});

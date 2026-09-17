@@ -23,6 +23,7 @@ import { CurrentPrincipal } from '../common/current-principal.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import {
   CreateSeoKeywordDto,
+  FetchSeoModelsDto,
   GenerateSeoArticleDto,
   SaveSeoArticleDto,
   ScheduleSeoArticleDto,
@@ -51,6 +52,11 @@ export class AdminSeoPublishingController {
   @Post('settings/test-ai')
   testAi() {
     return this.seo.testAiConnection();
+  }
+
+  @Post('settings/models')
+  models(@Body() body: FetchSeoModelsDto) {
+    return this.seo.listAiModels(body);
   }
 
   @Post('settings/test-google')

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { CustomerLink } from "@/components/customer-link";
 import { DataTable } from "@/components/data-table";
@@ -120,6 +120,11 @@ export default function OperationsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const loadingRequest = useRef<AbortSignal | null>(null);
+  const [trafficGeneratedAt, setTrafficGeneratedAt] = useState<string | null>(
+    null,
+  );
+  const [trafficPending, setTrafficPending] = useState(false);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -144,17 +149,21 @@ export default function OperationsPage() {
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
-      if (!token) return;
+      if (!token || (loadingRequest.current && !loadingRequest.current.aborted))
+        return;
+      loadingRequest.current = signal ?? null;
       setLoading(true);
       setError(null);
       try {
         if (tab === "overview") {
-          setSummary(
-            await apiRequest<Summary>("/api/admin/operations/summary", {
+          const snapshot = await apiRequest<{ data: Summary | null }>(
+            "/api/admin/operations/summary",
+            {
               token,
               signal,
-            }),
+            },
           );
+          if (!signal?.aborted) setSummary(snapshot.data);
         } else if (tab === "presence") {
           const query = new URLSearchParams({
             page: String(page),
@@ -168,12 +177,19 @@ export default function OperationsPage() {
             ),
           );
         } else if (tab === "traffic") {
-          setServerTraffic(
-            await apiRequest<ServerTraffic>(
-              `/api/admin/operations/traffic/servers?month=${trafficMonth}`,
-              { token, signal },
-            ),
-          );
+          const snapshot = await apiRequest<{
+            data: ServerTraffic | null;
+            generatedAt: string | null;
+            stale: boolean;
+          }>(`/api/admin/operations/traffic/servers?month=${trafficMonth}`, {
+            token,
+            signal,
+          });
+          if (!signal?.aborted) {
+            setServerTraffic(snapshot.data);
+            setTrafficGeneratedAt(snapshot.generatedAt);
+            setTrafficPending(!snapshot.data);
+          }
         } else {
           setAlerts(
             await apiRequest<PaginatedResponse<Alert>>(
@@ -183,12 +199,17 @@ export default function OperationsPage() {
           );
         }
       } catch (cause) {
+        if (signal?.aborted) return;
         if (cause instanceof DOMException && cause.name === "AbortError")
           return;
         setError(
-          cause instanceof ApiError ? cause.message : "运营数据加载失败。",
+          cause instanceof ApiError &&
+            !/internal server error/i.test(cause.message)
+            ? cause.message
+            : "运营统计暂时无法读取，请稍后重试。已有统计会继续保留。",
         );
       } finally {
+        if (loadingRequest.current === signal) loadingRequest.current = null;
         if (!signal?.aborted) setLoading(false);
       }
     },
@@ -200,14 +221,18 @@ export default function OperationsPage() {
     const timer = window.setTimeout(() => void load(controller.signal), 0);
     const interval = window.setInterval(
       () => void load(controller.signal),
-      tab === "presence" || tab === "overview" ? 10000 : 60000,
+      tab === "presence"
+        ? 15000
+        : tab === "traffic" && trafficPending
+          ? 5000
+          : 60000,
     );
     return () => {
       window.clearTimeout(timer);
       controller.abort();
       window.clearInterval(interval);
     };
-  }, [load, reloadKey, tab]);
+  }, [load, reloadKey, tab, trafficPending]);
 
   function changeTab(next: Tab) {
     setTab(next);
@@ -321,20 +346,27 @@ export default function OperationsPage() {
         </div>
         {tab === "overview" ? (
           <>
+            <p className="fine-print">
+              概览每半小时汇总一次。
+              {summary
+                ? `统计时间：${formatDateTime(summary.generatedAt)}`
+                : "正在生成统计，请稍候。"}{" "}
+              当前连接请查看“实时在线”。
+            </p>
             <div className="metric-grid">
               <MetricCard
                 label="在线账号"
-                value={String(summary?.onlineAccounts ?? 0)}
-                footnote="当前状态投影"
+                value={summary ? String(summary.onlineAccounts) : "—"}
+                footnote="统计时在线账号"
               />
               <MetricCard
                 label="在线连接"
-                value={String(summary?.onlineClients ?? 0)}
+                value={summary ? String(summary.onlineClients) : "—"}
                 footnote="不采集具体 IP"
               />
               <MetricCard
                 label="开放告警"
-                value={String(summary?.openAlerts ?? 0)}
+                value={summary ? String(summary.openAlerts) : "—"}
                 footnote="连续两次失败开启"
               />
               <MetricCard
@@ -443,42 +475,63 @@ export default function OperationsPage() {
                   className="control"
                   type="month"
                   value={trafficMonth}
-                  onChange={(event) => setTrafficMonth(event.target.value)}
+                  onChange={(event) => {
+                    setServerTraffic(null);
+                    setTrafficGeneratedAt(null);
+                    setTrafficMonth(event.target.value);
+                  }}
                 />
               </label>
               <span className="fine-print">
-                按北京时间自然月统计，历史月份可随时回看
+                每半小时汇总一次，不影响实时计费。
+                {trafficGeneratedAt
+                  ? `统计时间：${formatDateTime(trafficGeneratedAt)}`
+                  : "正在生成本月统计，请稍候。"}
               </span>
             </div>
             <div className="metric-grid admin-data-metrics operations-traffic-metrics">
               <MetricCard
                 label="本月真实流量"
-                value={formatBytes(serverTraffic?.totals.physicalBytes ?? 0)}
+                value={
+                  serverTraffic
+                    ? formatBytes(serverTraffic.totals.physicalBytes)
+                    : "—"
+                }
                 footnote={`${trafficMonth} · 全部服务器双向合计`}
               />
               <MetricCard
                 label="今日真实流量"
-                value={formatBytes(
-                  serverTraffic?.totals.todayPhysicalBytes ?? 0,
-                )}
+                value={
+                  serverTraffic
+                    ? formatBytes(serverTraffic.totals.todayPhysicalBytes)
+                    : "—"
+                }
                 footnote={serverTraffic?.today ?? "北京时间今日"}
               />
               <MetricCard
                 label="本月上行"
-                value={formatBytes(serverTraffic?.totals.txBytes ?? 0)}
+                value={
+                  serverTraffic
+                    ? formatBytes(serverTraffic.totals.txBytes)
+                    : "—"
+                }
                 footnote="所有 HY2 与 VLESS 端点"
               />
               <MetricCard
                 label="本月下行"
-                value={formatBytes(serverTraffic?.totals.rxBytes ?? 0)}
+                value={
+                  serverTraffic
+                    ? formatBytes(serverTraffic.totals.rxBytes)
+                    : "—"
+                }
                 footnote={`${serverTraffic?.servers.length ?? 0} 台物理服务器`}
               />
             </div>
             <div className="operations-traffic-layout">
               <Panel className="admin-data-panel" title="本月服务器汇总">
                 <DataTable
-                  loading={loading}
-                  emptyText="本月暂无服务器流量"
+                  loading={!serverTraffic && (loading || trafficPending)}
+                  emptyText={error ? "统计暂不可用" : "本月暂无服务器流量"}
                   minimumColumnWidth={84}
                   headers={["服务器", "上行", "下行", "双向合计", "今日"]}
                   rows={(serverTraffic?.servers ?? []).map((server) => [
@@ -496,7 +549,7 @@ export default function OperationsPage() {
               </Panel>
               <Panel className="admin-data-panel" title="每日服务器真实流量">
                 <DataTable
-                  loading={loading}
+                  loading={!serverTraffic && (loading || trafficPending)}
                   headers={[
                     "日期",
                     ...(serverTraffic?.servers.map((server) => server.name) ??

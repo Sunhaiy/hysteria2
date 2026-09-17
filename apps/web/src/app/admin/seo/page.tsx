@@ -310,6 +310,7 @@ export default function AdminSeoPage() {
   }>({ generation: [], indexing: [] });
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [settings, setSettings] = useState<SeoSettings | null>(null);
+  const [upstreamModels, setUpstreamModels] = useState<string[]>([]);
   const [settingsSecrets, setSettingsSecrets] = useState({
     aiApiKey: "",
     googleServiceAccountJson: "",
@@ -351,6 +352,7 @@ export default function AdminSeoPage() {
       setJobs(nextJobs);
       setAnalytics(nextAnalytics);
       setSettings(nextSettings);
+      setUpstreamModels([]);
     } catch (error) {
       showToast(messageOf(error, "SEO 数据加载失败。"), "error");
     } finally {
@@ -655,6 +657,33 @@ export default function AdminSeoPage() {
       );
     } catch (error) {
       showToast(messageOf(error, "连接测试失败。"), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function fetchUpstreamModels() {
+    if (!token || !settings) return;
+    setBusy(true);
+    try {
+      const result = await apiRequest<{ models: string[] }>(
+        "/api/admin/seo/settings/models",
+        {
+          method: "POST",
+          token,
+          body: {
+            aiBaseUrl: settings.aiBaseUrl || undefined,
+            aiApiKey: settingsSecrets.aiApiKey || undefined,
+          },
+        },
+      );
+      setUpstreamModels(result.models);
+      if (!settings.textModel && result.models[0]) {
+        setSettings({ ...settings, textModel: result.models[0] });
+      }
+      showToast(`已获取 ${result.models.length} 个上游模型。`);
+    } catch (error) {
+      showToast(messageOf(error, "上游模型获取失败。"), "error");
     } finally {
       setBusy(false);
     }
@@ -1647,7 +1676,7 @@ export default function AdminSeoPage() {
                   <span className="fine-print">Base URL</span>
                   <input
                     className="control"
-                    placeholder="https://api.openai.com/v1"
+                    placeholder="http://或 https://上游地址/v1"
                     value={settings.aiBaseUrl}
                     onChange={(event) =>
                       setSettings({
@@ -1659,21 +1688,47 @@ export default function AdminSeoPage() {
                 </label>
                 <label className="field">
                   <span className="fine-print">文本模型</span>
-                  <input
-                    className="control"
-                    value={settings.textModel}
-                    onChange={(event) =>
-                      setSettings({
-                        ...settings,
-                        textModel: event.target.value,
-                      })
-                    }
-                  />
+                  <div className="seo-model-control">
+                    <input
+                      className="control"
+                      list="seo-upstream-models"
+                      value={settings.textModel}
+                      onChange={(event) =>
+                        setSettings({
+                          ...settings,
+                          textModel: event.target.value,
+                        })
+                      }
+                    />
+                    <button
+                      className="toolbar-button"
+                      disabled={
+                        busy ||
+                        !settings.aiBaseUrl ||
+                        (!settings.aiConfigured && !settingsSecrets.aiApiKey)
+                      }
+                      type="button"
+                      onClick={() => void fetchUpstreamModels()}
+                    >
+                      一键获取模型
+                    </button>
+                  </div>
+                  {upstreamModels.length ? (
+                    <small className="field-hint">
+                      已获取 {upstreamModels.length} 个模型
+                    </small>
+                  ) : null}
+                  <datalist id="seo-upstream-models">
+                    {upstreamModels.map((model) => (
+                      <option key={model} value={model} />
+                    ))}
+                  </datalist>
                 </label>
                 <label className="field">
                   <span className="fine-print">图片模型（可选）</span>
                   <input
                     className="control"
+                    list="seo-upstream-models"
                     value={settings.imageModel}
                     onChange={(event) =>
                       setSettings({

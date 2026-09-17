@@ -46,7 +46,9 @@ test("customer traffic, orders, and operations expose durable daily statistics",
     /\/api\/admin\/operations\/traffic\/servers\?month=/,
   );
   assert.match(operations, /每日服务器真实流量/);
-  assert.match(financeRedirect, /redirect\("\/admin\/orders"\)/);
+  assert.match(financeRedirect, /每月账单/);
+  assert.match(financeRedirect, /type="month"/);
+  assert.match(financeRedirect, /\/api\/admin\/finance\/summary/);
   assert.match(
     styles,
     /\.order-annual-cost-form\s*\{[^}]*grid-template-columns:/s,

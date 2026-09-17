@@ -29,7 +29,7 @@ export class OperationsController {
 
   @Get('summary')
   summary() {
-    return this.operations.summary();
+    return this.operations.summarySnapshot();
   }
 
   @Get('presence')

@@ -900,7 +900,17 @@ export class EntitlementService {
         accessProfile: {
           include: {
             nodeBindings: {
-              include: { node: true },
+              include: {
+                node: {
+                  select: {
+                    id: true,
+                    label: true,
+                    active: true,
+                    lifecycleStatus: true,
+                    region: true,
+                  },
+                },
+              },
               orderBy: { priority: 'asc' },
             },
           },
@@ -1625,13 +1635,21 @@ export class EntitlementService {
     },
   ) {
     const claimedAt = this.validateTrafficBatch(batch);
+    // Zero counters carry no billable usage. Online quota enforcement handles
+    // expiry without traffic; preserve the batch receipt for reliable ACKs.
+    const activeTraffic = Object.entries(batch.traffic).filter(
+      ([, counters]) => counters.tx > 0 || counters.rx > 0,
+    );
     return this.serializable(
       async (tx) => {
         const existing = await tx.usageImportBatch.findUnique({
           where: { nodeId_externalId: { nodeId, externalId: batch.id } },
         });
         if (existing) {
-          return { replayed: true, impactedUsers: Object.keys(batch.traffic) };
+          return {
+            replayed: true,
+            impactedUsers: activeTraffic.map(([userId]) => userId),
+          };
         }
         const node = await tx.node.findUniqueOrThrow({
           where: { id: nodeId },
@@ -1660,7 +1678,7 @@ export class EntitlementService {
         });
 
         const impactedUsers: string[] = [];
-        for (const [userId, counters] of Object.entries(batch.traffic)) {
+        for (const [userId, counters] of activeTraffic) {
           if (
             await this.applyUserTraffic(
               tx,
@@ -2247,6 +2265,7 @@ export class EntitlementService {
   }
 
   private async ensureCurrentCycles(userId: string) {
+    const now = new Date();
     const subscriptions = await this.prisma.subscription.findMany({
       where: {
         userId,
@@ -2254,9 +2273,18 @@ export class EntitlementService {
         startsAt: { lte: new Date() },
         endsAt: { gt: new Date() },
       },
-      include: { plan: true, planOffer: true },
+      include: {
+        plan: true,
+        planOffer: true,
+        cycles: {
+          where: { startsAt: { lte: now }, endsAt: { gt: now } },
+          take: 1,
+        },
+      },
     });
     for (const subscription of subscriptions) {
+      // Existing cycles need no write transaction; access still reads live quota.
+      if (subscription.cycles?.length) continue;
       await this.serializable((tx) =>
         this.ensureCurrentCycleInTransaction(tx, subscription, new Date()),
       );
@@ -2279,10 +2307,17 @@ export class EntitlementService {
           },
         ],
       },
-      include: { offer: true },
+      include: {
+        offer: true,
+        quotaBuckets: {
+          where: { startsAt: { lte: now }, endsAt: { gt: now } },
+          take: 1,
+        },
+      },
     });
     for (const grant of grants) {
       if (!grant.offer) continue;
+      if (grant.quotaBuckets?.length) continue;
       const bounds = this.monthlyCycleBounds(
         grant.resetAnchorAt ?? grant.startsAt,
         grant.endsAt,

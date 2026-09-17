@@ -6,8 +6,8 @@ import { PrismaService } from '../prisma/prisma.service';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PRESENCE_FRESHNESS_MS = 45_000;
 const DASHBOARD_CACHE_KEY = 'admin:dashboard:summary:v2';
-const DASHBOARD_FRESHNESS_MS = 90_000;
-const DASHBOARD_CACHE_TTL_SECONDS = 10 * 60;
+const DASHBOARD_FRESHNESS_MS = 30 * 60_000;
+const DASHBOARD_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 interface UsageAggregateRow {
   date: string;

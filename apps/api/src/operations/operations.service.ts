@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { ReportSnapshotService } from '../traffic-analytics/report-snapshot.service';
 import { Prisma } from '@prisma/client';
 import { CacheService } from '../cache/cache.service';
 import { pageResponse, parsePage, type PageQuery } from '../common/pagination';
@@ -45,7 +46,18 @@ export class OperationsService {
     private readonly kick: KickService,
     private readonly nodes: NodeControlService,
     private readonly presenceProjection: OnlinePresenceService,
+    @Optional() private readonly reports?: ReportSnapshotService,
   ) {}
+
+  summarySnapshot() {
+    return this.reports!.read<
+      Awaited<ReturnType<OperationsService['summary']>>
+    >('operations');
+  }
+
+  async refreshReport() {
+    await this.reports!.refresh('operations', () => this.summary());
+  }
 
   async collectPresence() {
     if (this.presenceRunning) return [];
@@ -292,7 +304,7 @@ export class OperationsService {
   }
 
   serverTraffic(query: ServerTrafficQuery) {
-    return this.traffic.serverMonthly(query);
+    return this.traffic.serverMonthlySnapshot(query);
   }
 
   async alerts(query: AlertQuery) {
