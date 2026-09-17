@@ -9,6 +9,7 @@ import {
   Patch,
   Post,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import type { SessionPrincipal } from '../common/auth.types';
@@ -36,8 +37,13 @@ export class NodeOpsController {
   ) {}
 
   @Get()
-  overview() {
-    return this.nodes.overview();
+  overview(@Query('includeTraffic') includeTraffic?: string) {
+    return this.nodes.overview(includeTraffic !== 'false');
+  }
+
+  @Get('traffic-summary')
+  trafficSummary() {
+    return this.nodes.trafficSummary();
   }
 
   @Post('servers')

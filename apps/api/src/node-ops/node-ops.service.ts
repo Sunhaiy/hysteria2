@@ -17,6 +17,7 @@ import type {
   UpdateNodeOperationsDto,
 } from './node-ops.dto';
 import { NodeTrafficGuardService } from './node-traffic-guard.service';
+import type { NodeTrafficGuardProjection } from './node-traffic-guard.service';
 import { NodeRuntimeCommandService } from './node-runtime-command.service';
 import { defaultMachineRate } from '../entitlement/machine-traffic-rate';
 
@@ -28,7 +29,7 @@ export class NodeOpsService {
     @Optional() private readonly runtime?: NodeRuntimeCommandService,
   ) {}
 
-  async overview() {
+  async overview(includeTraffic = true) {
     const freshSince = new Date(Date.now() - 45_000);
     const endpointInclude = {
       healthSnapshots: { orderBy: { checkedAt: 'desc' as const }, take: 1 },
@@ -66,7 +67,9 @@ export class NodeOpsService {
         orderBy: { createdAt: 'asc' },
       }),
     ]);
-    const trafficGuards = await this.trafficGuard.project(servers, new Date());
+    const trafficGuards = includeTraffic
+      ? await this.trafficGuard.project(servers, new Date())
+      : new Map<string, NodeTrafficGuardProjection>();
 
     type Endpoint = (typeof servers)[number]['endpoints'][number];
     const presentEndpoint = (node: Endpoint) => {
@@ -198,6 +201,27 @@ export class NodeOpsService {
         })),
       ),
     };
+  }
+
+  async trafficSummary() {
+    const servers = await this.prisma.nodeServer.findMany({
+      where: { retiredAt: null },
+      include: {
+        endpoints: {
+          where: { retiredAt: null },
+          select: {
+            id: true,
+            protocol: true,
+            controlApiBaseUrl: true,
+            controlApiSecret: true,
+            runtimeState: true,
+            runtimeStateObservedAt: true,
+            retiredAt: true,
+          },
+        },
+      },
+    });
+    return Object.fromEntries(await this.trafficGuard.project(servers));
   }
 
   async createServer(input: SaveNodeServerDto, actorId: string) {

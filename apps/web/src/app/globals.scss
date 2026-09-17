@@ -10161,7 +10161,7 @@ select.control {
 }
 
 @media (min-width: 921px) {
-  .data-viewport .admin-data-page > .operations-traffic-layout {
+  .data-viewport .admin-data-page > .operations-traffic-layout:not(.admin-data-panel):not(.admin-data-scroll) {
     flex: 1 1 0;
     min-height: 0;
     overflow: hidden;

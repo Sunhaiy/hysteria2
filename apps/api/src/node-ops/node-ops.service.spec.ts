@@ -219,3 +219,74 @@ describe('NodeOpsService server lifecycle', () => {
     });
   });
 });
+
+describe('node overview loading', () => {
+  it('returns topology without waiting for monthly traffic aggregation', async () => {
+    const endpoint = {
+      id: 'node',
+      serverId: 'server',
+      label: '美国 01',
+      protocol: 'HYSTERIA2',
+      lifecycleStatus: 'ACTIVE',
+      runtimeState: 'RUNNING',
+      onlinePresence: [{ concurrentClients: 3 }],
+      healthSnapshots: [{ healthy: true, checkedAt: new Date() }],
+      accessProfileBindings: [],
+      runtimeCommands: [],
+    };
+    const prisma = {
+      nodeServer: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'server',
+            name: '美国服务器',
+            trafficMultiplierBasisPoints: 20000,
+            endpoints: [endpoint],
+          },
+        ]),
+      },
+      node: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const guard = {
+      project: jest.fn().mockRejectedValue(new Error('slow report')),
+    };
+    const service = new NodeOpsService(prisma as never, guard as never);
+    await expect(service.overview(false)).resolves.toMatchObject({
+      servers: [{ id: 'server', onlineUsers: 3, healthyEndpoints: 1 }],
+      nodes: [{ id: 'node', label: '美国 01', onlineUsers: 3 }],
+    });
+    expect(guard.project).not.toHaveBeenCalled();
+  });
+
+  it('retains traffic projections for existing overview callers', async () => {
+    const prisma = {
+      nodeServer: { findMany: jest.fn().mockResolvedValue([]) },
+      node: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const guard = { project: jest.fn().mockResolvedValue(new Map()) };
+    await new NodeOpsService(prisma as never, guard as never).overview();
+    expect(guard.project).toHaveBeenCalledTimes(1);
+  });
+
+  it('loads traffic independently and returns only projections, not credentials', async () => {
+    const servers = [
+      { id: 'server', endpoints: [], controlApiSecret: 'private' },
+    ];
+    const prisma = {
+      nodeServer: { findMany: jest.fn().mockResolvedValue(servers) },
+    };
+    const guard = {
+      project: jest
+        .fn()
+        .mockResolvedValue(
+          new Map([['server', { usedBytes: 42, status: 'monitoring' }]]),
+        ),
+    };
+    const result = await new NodeOpsService(
+      prisma as never,
+      guard as never,
+    ).trafficSummary();
+    expect(result).toEqual({ server: { usedBytes: 42, status: 'monitoring' } });
+    expect(guard.project).toHaveBeenCalledWith(servers);
+  });
+});

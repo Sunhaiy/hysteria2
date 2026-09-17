@@ -170,3 +170,17 @@ pnpm --filter @hysteria/api prisma:reconcile-traffic-multipliers -- \
 The command only reconciles pre-cutoff allocations recorded at exactly `1x`.
 It writes an idempotent `QuotaAdjustment` and audit event, never changes a
 historical `UsageRollup`, and cannot reduce remaining quota below zero.
+
+## Administrator node page loading
+
+`GET /api/admin/node-ops?includeTraffic=false` returns topology, health and
+presence without waiting for cycle-wide traffic aggregation. The existing
+request without this option retains its full response for compatibility.
+`GET /api/admin/node-ops/traffic-summary` returns traffic-protection projections
+keyed by server ID; both routes require administrator authentication.
+
+The node page loads these separately. A statistics timeout leaves the node
+list usable and offers a statistics retry. Traffic-protection editing remains
+disabled until its projection is available. Runtime-command polling refreshes
+topology only; it does not start another traffic aggregation every two seconds.
+This changes presentation loading, not the worker's live traffic enforcement.

@@ -239,6 +239,9 @@ export default function NodesPage() {
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [trafficRevision, setTrafficRevision] = useState(0);
+  const [trafficError, setTrafficError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<"server" | "node" | "traffic" | null>(
     null,
@@ -258,9 +261,31 @@ export default function NodesPage() {
       if (!token) return;
       if (showLoading) setLoading(true);
       try {
-        setData(
-          await apiRequest<Overview>("/api/admin/node-ops", { token, signal }),
+        const result = await apiRequest<Overview>(
+          "/api/admin/node-ops?includeTraffic=false",
+          {
+            token,
+            signal: signal
+              ? AbortSignal.any([signal, AbortSignal.timeout(20_000)])
+              : AbortSignal.timeout(20_000),
+          },
         );
+        if (signal?.aborted) return;
+        setData((previous) => ({
+          ...result,
+          servers: result.servers.map((server) => ({
+            ...server,
+            trafficGuard: showLoading
+              ? undefined
+              : previous.servers.find((item) => item.id === server.id)
+                  ?.trafficGuard,
+          })),
+        }));
+        setLoaded(true);
+        if (showLoading) {
+          setTrafficError(null);
+          setTrafficRevision((value) => value + 1);
+        }
         setError(null);
       } catch (cause) {
         if (cause instanceof DOMException && cause.name === "AbortError")
@@ -289,6 +314,36 @@ export default function NodesPage() {
       node.latestRuntimeCommand?.status === "queued" ||
       node.latestRuntimeCommand?.status === "running",
   );
+
+  useEffect(() => {
+    if (!token || trafficRevision === 0) return;
+    const controller = new AbortController();
+    void apiRequest<Record<string, TrafficGuard>>(
+      "/api/admin/node-ops/traffic-summary",
+      {
+        token,
+        signal: AbortSignal.any([
+          controller.signal,
+          AbortSignal.timeout(20_000),
+        ]),
+      },
+    )
+      .then((guards) => {
+        if (controller.signal.aborted) return;
+        setData((previous) => ({
+          ...previous,
+          servers: previous.servers.map((server) => ({
+            ...server,
+            trafficGuard: guards[server.id],
+          })),
+        }));
+      })
+      .catch(() => {
+        if (!controller.signal.aborted)
+          setTrafficError("服务器流量统计暂不可用，节点列表不受影响。");
+      });
+    return () => controller.abort();
+  }, [token, trafficRevision]);
 
   useEffect(() => {
     if (!hasPendingRuntimeCommand) return;
@@ -710,7 +765,7 @@ export default function NodesPage() {
       dataViewport
       toolbarMeta={
         <span className="badge info">
-          {data.servers.length} 台服务器 · {data.nodes.length} 个端点
+          {loaded ? `${data.servers.length} 台服务器 · ${data.nodes.length} 个端点` : "节点数据加载中"}
         </span>
       }
       toolbarActions={
@@ -744,27 +799,42 @@ export default function NodesPage() {
       }
     >
       {error ? <div className="feedback error">{error}</div> : null}
+      {trafficError ? (
+        <div className="feedback error">
+          {trafficError}
+          <button
+            className="ghost-button compact"
+            type="button"
+            onClick={() => {
+              setTrafficError(null);
+              setTrafficRevision((value) => value + 1);
+            }}
+          >
+            重试统计
+          </button>
+        </div>
+      ) : null}
       {feedback ? <div className="feedback success">{feedback}</div> : null}
       <div className="page-stack admin-data-page">
         <div className="metric-grid admin-data-metrics">
           <MetricCard
             label="物理服务器"
-            value={String(data.servers.length)}
+            value={loaded ? String(data.servers.length) : "—"}
             footnote="按主机归组"
           />
           <MetricCard
             label="可服务端点"
-            value={String(activeEndpoints)}
+            value={loaded ? String(activeEndpoints) : "—"}
             footnote="ACTIVE 且启用"
           />
           <MetricCard
             label="健康端点"
-            value={`${healthyEndpoints} / ${data.nodes.length}`}
+            value={loaded ? `${healthyEndpoints} / ${data.nodes.length}` : "—"}
             footnote="最近一次协议探测"
           />
           <MetricCard
             label="在线连接"
-            value={String(onlineUsers)}
+            value={loaded ? String(onlineUsers) : "—"}
             footnote="45 秒内当前投影"
           />
         </div>
@@ -832,7 +902,7 @@ export default function NodesPage() {
                     )}
                     <button
                       className="ghost-button compact"
-                      disabled={busyId === `traffic-${server.id}`}
+                      disabled={!server.trafficGuard || busyId === `traffic-${server.id}`}
                       type="button"
                       onClick={() => openTrafficLimitDrawer(server)}
                     >
@@ -867,7 +937,7 @@ export default function NodesPage() {
                   >
                     {server.trafficGuard
                       ? trafficGuardStatusName(server.trafficGuard.status)
-                      : "未配置"}
+                      : trafficError ? "统计暂不可用" : "统计加载中"}
                   </span>
                 </div>
                 {server.trafficGuard?.limitBytes ? (
