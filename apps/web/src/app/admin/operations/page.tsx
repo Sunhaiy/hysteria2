@@ -181,6 +181,7 @@ export default function OperationsPage() {
             data: ServerTraffic | null;
             generatedAt: string | null;
             stale: boolean;
+            refreshError?: string;
           }>(`/api/admin/operations/traffic/servers?month=${trafficMonth}`, {
             token,
             signal,
@@ -188,7 +189,8 @@ export default function OperationsPage() {
           if (!signal?.aborted) {
             setServerTraffic(snapshot.data);
             setTrafficGeneratedAt(snapshot.generatedAt);
-            setTrafficPending(!snapshot.data);
+            setTrafficPending(!snapshot.data && !snapshot.refreshError);
+            if (snapshot.refreshError) setError(snapshot.refreshError);
           }
         } else {
           setAlerts(

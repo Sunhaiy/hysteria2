@@ -7,6 +7,7 @@ type Snapshot<T> = {
   generatedAt: string | null;
   status: 'ready' | 'pending';
   stale: boolean;
+  refreshError?: string;
 };
 
 /** Reporting only. Never use these snapshots for billing or access decisions. */
@@ -17,12 +18,24 @@ export class ReportSnapshotService {
 
   async read<T>(key: string): Promise<Snapshot<T>> {
     const saved = await this.cache.get(`report:v1:${key}`);
+    const failed = await this.cache.get(`report:retry:${key}`);
     if (!saved)
-      return { data: null, generatedAt: null, status: 'pending', stale: true };
+      return {
+        data: null,
+        generatedAt: null,
+        status: 'pending',
+        stale: true,
+        ...(failed
+          ? { refreshError: '统计生成暂时失败，后台稍后自动重试。' }
+          : {}),
+      };
     const snapshot = JSON.parse(saved) as Snapshot<T>;
     return {
       ...snapshot,
       stale: Date.now() - Date.parse(snapshot.generatedAt!) >= reportRefreshMs,
+      ...(failed
+        ? { refreshError: '统计更新暂时失败，正在展示上次成功结果。' }
+        : {}),
     };
   }
 
@@ -36,7 +49,14 @@ export class ReportSnapshotService {
     const operation = (async () => {
       const saved = await this.read<T>(key);
       if (!force && !saved.stale) return saved;
-      const data = await query();
+      if (!force && (await this.cache.get(`report:retry:${key}`))) return saved;
+      let data: T;
+      try {
+        data = await query();
+      } catch (error) {
+        await this.cache.set(`report:retry:${key}`, 'failed', 5 * 60);
+        throw error;
+      }
       const snapshot: Snapshot<T> = {
         data,
         generatedAt: new Date().toISOString(),

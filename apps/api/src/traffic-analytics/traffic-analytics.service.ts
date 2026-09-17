@@ -82,7 +82,21 @@ export class TrafficAnalyticsService {
     for (const month of months) {
       try {
         await this.reports!.refresh(`servers:${month}`, () =>
-          this.serverMonthly({ month }),
+          this.prisma.$transaction(
+            async (tx) => {
+              // Millions of timestamp groups are vastly overestimated by the
+              // planner. Hash the small actual server/day set instead of sorting
+              // every raw row to disk. Bound this reporting work independently
+              // of live traffic transactions.
+              await tx.$executeRaw`SET LOCAL enable_sort = off`;
+              await tx.$executeRaw`SET LOCAL max_parallel_workers_per_gather = 0`;
+              await tx.$executeRaw`SET LOCAL work_mem = '2MB'`;
+              await tx.$executeRaw`SET LOCAL jit = off`;
+              await tx.$executeRaw`SET LOCAL statement_timeout = '20s'`;
+              return this.serverMonthly({ month }, new Date(), tx);
+            },
+            { timeout: 25_000, maxWait: 2_000 },
+          ),
         );
         await this.cache!.removeMember('report:server-months', month);
       } catch (error) {
@@ -211,11 +225,13 @@ export class TrafficAnalyticsService {
     };
   }
 
-  async serverMonthly(query: ServerTrafficQuery = {}, now = new Date()) {
+  async serverMonthly(
+    query: ServerTrafficQuery = {},
+    now = new Date(),
+    client: Pick<PrismaService, '$queryRaw'> = this.prisma,
+  ) {
     const range = this.serverMonthRange(query.month, now);
-    const rows = await this.prisma.$queryRaw<
-      ServerTrafficDailyRow[]
-    >(Prisma.sql`
+    const rows = await client.$queryRaw<ServerTrafficDailyRow[]>(Prisma.sql`
       WITH server_inventory AS (
         SELECT
           server."id" AS "serverId",
@@ -252,6 +268,7 @@ export class TrafficAnalyticsService {
         LEFT JOIN "NodeServer" server ON server."id" = node."serverId"
         WHERE r."bucketStart" >= ${range.from}
           AND r."bucketStart" < ${range.to}
+          AND (r."txBytes" > 0 OR r."rxBytes" > 0 OR r."rawBytes" > 0)
         GROUP BY
           COALESCE(server."id", node."id"),
           date_trunc(
