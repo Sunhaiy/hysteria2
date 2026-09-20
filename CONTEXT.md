@@ -31,17 +31,22 @@
   compensation refund, and missing credential snapshots require manual review.
 - A `SeoArticle` owns separate draft and published revision pointers. Editing,
   AI retry, cover regeneration, and version restore always create a new draft
-  revision; public readers only receive the reviewed published revision.
-- A `SeoGenerationJob` creates a reviewed-only draft from a keyword or explicit
+  revision; public readers only receive the quality-checked published revision.
+- New `SeoGenerationJob` snapshots opt into quality-gated automatic publishing from a keyword or explicit
   administrator-provided material/public reference URLs. Material jobs analyze
   their topic before assigning a keyword and use actor-scoped idempotency keys.
   Validated stage checkpoints survive retries. A completed draft is never
-  overwritten by a worker retry; one automatic revision is allowed before
-  retaining a blocked draft for manual editing. Research reuses the configured
+  overwritten by crash recovery; one evidence-enriched automatic revision is allowed before
+  retaining a blocked draft. Explicit retries can create a new AI revision only
+  when the original AI draft is still current, unpublished and unedited.
+  Initial source gaps are rechecked against expanded evidence, not ignored.
+  Research reuses the configured
   upstream and is supported only after actual search tool output and safe source
   retrieval; model prose alone is not a capability signal.
-  Scheduled runs are idempotent per Asia/Shanghai calendar date and never
-  publish automatically. `SeoIndexSubmission` is the six-attempt delivery
+  Scheduled runs are idempotent per Asia/Shanghai calendar date and
+  automatically publish only passing revisions. Historical job snapshots without
+  autoPublish remain manual; generated revision IDs guard publishing and recovery.
+  `SeoIndexSubmission` is the six-attempt delivery
   queue for IndexNow and Google sitemap notifications.
 - A new checkout abandons only the same member's unpaid active Epay attempts.
   Idempotency replays remain stable, while a late payment for an explicitly

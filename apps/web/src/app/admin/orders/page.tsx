@@ -907,7 +907,12 @@ export default function AdminOrdersPage() {
               />,
               <div className="split" key={`${order.id}-product`}>
                 <strong>{order.product.name}</strong>
-                <span className="badge">{order.operationLabel}</span>
+                <span
+                  className="badge order-operation-badge"
+                  data-operation={order.operationLabel}
+                >
+                  {order.operationLabel}
+                </span>
                 <span className="muted">
                   {order.product.kind === "plan" ? "套餐" : "流量包"}
                   {order.offer ? ` · ${order.offer.name}` : ""}

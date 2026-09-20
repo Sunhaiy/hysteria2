@@ -731,7 +731,7 @@ export default function AdminSeoPage() {
   return (
     <ConsoleShell
       title="内容与 SEO"
-      subtitle="人工审核发布，自动生成仅进入草稿"
+      subtitle="AI 自动补充来源与修订，检查通过后发布；未通过的保留草稿"
       scope="Content"
       navItems={adminNav}
       requireRole="admin"
@@ -1563,15 +1563,16 @@ export default function AdminSeoPage() {
                           void openArticle(job.articleId!);
                         }}
                       >
-                        查看草稿
+                        查看文章
                       </button>
-                    ) : job.status === "FAILED" ? (
+                    ) : null}
+                    {job.status === "FAILED" ? (
                       <button
                         className="table-action"
                         type="button"
                         onClick={() => void retryJob("generation-jobs", job.id)}
                       >
-                        重试
+                        自动修复并发布
                       </button>
                     ) : null}
                   </div>

@@ -135,7 +135,7 @@ describe('material generation with real PostgreSQL', () => {
         getTutorialConfig: () => Promise.resolve({}),
         getSiteInfo: () => Promise.resolve({ name: '测试站' }),
       } as never,
-      {} as never,
+      { del: jest.fn().mockResolvedValue(undefined) } as never,
       ai as never,
       {} as never,
     );
@@ -252,17 +252,19 @@ describe('material generation with real PostgreSQL', () => {
       expect(result.status).toBe('SUCCEEDED');
       expect(result.articleId).toBeTruthy();
       const article = await service.getAdminArticle(result.articleId!);
-      expect(article.publishedRevisionId).toBeNull();
-      expect(article.draftRevision).toMatchObject({
+      expect(article.publishedRevisionId).toBeTruthy();
+      expect(article.publishedRevision).toMatchObject({
         primaryKeyword: keyword,
         tags: ['排障', '客户端'],
         slug: 'connection-troubleshooting',
         coverImageId: null,
       });
-      expect(article.draftRevision?.contentHtml).toContain('<h2');
-      expect(article.draftRevision?.seoTitle).toContain(keyword);
+      expect(article.publishedRevision?.contentHtml).toContain('<h2');
+      expect(article.publishedRevision?.seoTitle).toContain(keyword);
       await expect(service.retryGeneration(job.id)).rejects.toThrow();
-      await expect(service.getPublishedArticle(article.slug)).rejects.toThrow();
+      await expect(
+        service.getPublishedArticle(article.slug),
+      ).resolves.toBeTruthy();
     },
   );
   it('replays concurrent clicks once and rejects changed input under the same key', async () => {
@@ -278,6 +280,81 @@ describe('material generation with real PostgreSQL', () => {
         actorId,
       ),
     ).rejects.toThrow('同一请求');
+  });
+  it('rechecks initial gaps using newly fetched evidence and publishes', async () => {
+    ai.analyzeBrief.mockResolvedValueOnce({
+      keyword,
+      category: '教程',
+      searchIntent: '排障',
+      missingInformation: ['客户端版本'],
+      usage: {},
+      model: 'test',
+    });
+    ai.research.mockResolvedValue({
+      status: 'supported',
+      sources: [await readSeoSource('https://example.com/docs')],
+      warnings: [],
+      usage: {},
+    });
+    const job = await service.queueGenerationRequest(
+      { material: paragraphs.join('\n'), idempotencyKey: 'repair-evidence' },
+      actorId,
+    );
+    await run();
+    const result = await service.getGenerationJob(job.id);
+    expect(result.status).toBe('SUCCEEDED');
+    expect(ai.analyzeBrief).toHaveBeenCalledTimes(2);
+    expect(ai.generateArticle).toHaveBeenCalledTimes(2);
+    expect(
+      (await service.getAdminArticle(result.articleId!)).publishedRevisionId,
+    ).toBeTruthy();
+  });
+  it('keeps historical manual jobs as drafts and refuses to auto-publish a changed revision', async () => {
+    const job = await service.queueGenerationRequest(
+      { material: paragraphs.join('\n'), idempotencyKey: 'historical' },
+      actorId,
+    );
+    await prisma.seoGenerationJob.update({
+      where: { id: job.id },
+      data: { inputSnapshot: { material: paragraphs.join('\n') } },
+    });
+    await run();
+    const result = await service.getGenerationJob(job.id);
+    const article = await service.getAdminArticle(result.articleId!);
+    expect(article.publishedRevisionId).toBeNull();
+    await expect(
+      service.publishArticle(
+        article.id,
+        undefined,
+        new Date(),
+        'stale-revision',
+      ),
+    ).rejects.toThrow('草稿已被编辑');
+    expect(
+      (await service.getAdminArticle(article.id)).publishedRevisionId,
+    ).toBeNull();
+  });
+  it('recovers after publishing without generating duplicate revisions', async () => {
+    const job = await service.queueGenerationRequest(
+      { material: paragraphs.join('\n'), idempotencyKey: 'publish-recovery' },
+      actorId,
+    );
+    await run();
+    const original = await service.getGenerationJob(job.id);
+    await prisma.seoGenerationJob.update({
+      where: { id: job.id },
+      data: { status: 'QUEUED' },
+    });
+    await run();
+    const recovered = await service.getGenerationJob(job.id);
+    expect(recovered.status).toBe('SUCCEEDED');
+    expect(recovered.progress).toContain('自动发布');
+    expect(ai.generateArticle).toHaveBeenCalledTimes(1);
+    expect(
+      await prisma.seoArticleRevision.count({
+        where: { articleId: original.articleId! },
+      }),
+    ).toBe(1);
   });
   it('retains a blocked draft after exactly one unsuccessful automatic revision', async () => {
     const article = draft(keyword);
@@ -296,12 +373,20 @@ describe('material generation with real PostgreSQL', () => {
     expect(result.status).toBe('FAILED');
     expect(result.articleId).toBeTruthy();
     expect(ai.generateArticle).toHaveBeenCalledTimes(2);
-    await expect(service.retryGeneration(job.id)).rejects.toThrow(
-      '正文草稿已保留',
-    );
     await expect(
       service.publishArticle(result.articleId!, actorId),
     ).rejects.toThrow();
+    ai.generateArticle.mockResolvedValue({
+      article: draft(keyword),
+      usage: {},
+      modelSnapshot: {},
+    });
+    await service.retryGeneration(job.id);
+    await run();
+    expect((await service.getGenerationJob(job.id)).status).toBe('SUCCEEDED');
+    expect(
+      (await service.getAdminArticle(result.articleId!)).publishedRevisionId,
+    ).toBeTruthy();
   });
   it('reuses completed research after an upstream writing failure', async () => {
     ai.generateArticle.mockRejectedValueOnce(new Error('timeout'));

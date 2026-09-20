@@ -247,6 +247,40 @@ img {
   color: #06101f;
 }
 
+.badge.order-operation-badge {
+  width: fit-content;
+  background: #64748b;
+  color: #fff;
+
+  &[data-operation="新开"] {
+    background: #2563eb;
+  }
+
+  &[data-operation="续费"] {
+    background: #15803d;
+  }
+
+  &[data-operation="到期切换"] {
+    background: #7c3aed;
+  }
+
+  &[data-operation="立即切换"] {
+    background: #be185d;
+  }
+
+  &[data-operation="流量重置"] {
+    background: #b45309;
+  }
+
+  &[data-operation="流量包"] {
+    background: #0e7490;
+  }
+
+  &[data-operation="升级"] {
+    background: #4338ca;
+  }
+}
+
 .app-shell {
   min-height: 100vh;
   display: grid;

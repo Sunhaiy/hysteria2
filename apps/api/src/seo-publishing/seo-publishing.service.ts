@@ -425,13 +425,20 @@ export class SeoPublishingService {
     return this.getAdminArticle(id);
   }
 
-  async publishArticle(id: string, actorId?: string, now = new Date()) {
+  async publishArticle(
+    id: string,
+    actorId?: string,
+    now = new Date(),
+    expectedRevisionId?: string,
+  ) {
     const article = await this.prisma.seoArticle.findUnique({
       where: { id },
       include: { draftRevision: true, publishedRevision: true },
     });
     if (!article?.draftRevision)
       throw new NotFoundException('没有可发布的文章草稿');
+    if (expectedRevisionId && article.draftRevision.id !== expectedRevisionId)
+      throw new ConflictException('草稿已被编辑，自动发布已停止');
     const report = article.draftRevision
       .qualityReport as unknown as SeoQualityReport;
     if (report.passed !== true || report.blockers?.length) {
@@ -486,7 +493,11 @@ export class SeoPublishingService {
         });
       }
       const updated = await tx.seoArticle.update({
-        where: { id },
+        where: {
+          id,
+          draftRevisionId: article.draftRevision!.id,
+          ...(expectedRevisionId ? { status: SeoArticleStatus.DRAFT } : {}),
+        },
         data: {
           slug: article.draftRevision!.slug,
           status: SeoArticleStatus.PUBLISHED,
@@ -650,6 +661,7 @@ export class SeoPublishingService {
         requestedById: actorId,
         idempotencyKey: `manual:${actorId ?? 'system'}:${keyword.id}:${now.toISOString()}`,
         scheduledFor: now,
+        inputSnapshot: { autoPublish: true },
       },
       update: {},
     });
@@ -669,6 +681,7 @@ export class SeoPublishingService {
       problem: input.problem?.trim() || '',
       mustInclude: input.mustInclude?.trim() || '',
       keywordId: input.keywordId || '',
+      autoPublish: true,
     };
     const isBrief = Boolean(brief.material || brief.referenceUrls.length);
     if (!isBrief && !input.keywordId)
@@ -741,18 +754,40 @@ export class SeoPublishingService {
     if (job.status !== SeoGenerationStatus.FAILED) {
       throw new ConflictException('只有失败的生成任务可以重试');
     }
-    if (job.articleId)
-      throw new ConflictException(
-        '正文草稿已保留，请在编辑页完善并复检；封面可单独重新生成',
-      );
+    let repairRevisionId: string | null = null;
+    if (job.articleId) {
+      const article = await this.prisma.seoArticle.findUnique({
+        where: { id: job.articleId },
+        include: { draftRevision: true },
+      });
+      if (
+        !article?.draftRevision ||
+        article.publishedRevisionId ||
+        article.draftRevision.source !== SeoRevisionSource.AI ||
+        article.status !== SeoArticleStatus.DRAFT
+      )
+        throw new ConflictException('文章已编辑、发布或归档，请在编辑页处理');
+      repairRevisionId = article.draftRevision.id;
+    }
     const retry = await this.prisma.seoGenerationJob.updateMany({
-      where: { id, status: SeoGenerationStatus.FAILED, articleId: null },
+      where: { id, status: SeoGenerationStatus.FAILED },
       data: {
         status: SeoGenerationStatus.QUEUED,
         scheduledFor: new Date(),
         lastError: null,
         startedAt: null,
         finishedAt: null,
+        ...(repairRevisionId
+          ? {
+              inputSnapshot: {
+                ...this.record(job.inputSnapshot),
+                autoPublish: true,
+                repairRevisionId,
+              },
+              checkpoints: Prisma.JsonNull,
+              modelSnapshot: Prisma.JsonNull,
+            }
+          : {}),
       },
     });
     if (!retry.count)
@@ -1134,6 +1169,7 @@ export class SeoPublishingService {
     modelSnapshot: Prisma.InputJsonValue,
     targetArticleId?: string | null,
     generationJobId?: string,
+    repairRevisionId?: string,
   ) {
     const contentJson = buildGeneratedDocument({
       lead: generated.lead,
@@ -1225,7 +1261,18 @@ export class SeoPublishingService {
         },
       });
       const updatedArticle = await tx.seoArticle.update({
-        where: { id: article.id },
+        where: {
+          id: article.id,
+          ...(repairRevisionId
+            ? {
+                draftRevisionId: repairRevisionId,
+                AND: {
+                  publishedRevisionId: null,
+                  status: SeoArticleStatus.DRAFT,
+                },
+              }
+            : {}),
+        },
         data: {
           category: keyword.category,
           draftRevisionId: revision.id,
@@ -1245,8 +1292,10 @@ export class SeoPublishingService {
         const reserved = await tx.seoKeyword.updateMany({
           where: {
             id: keyword.id,
-            articleId: null,
-            status: SeoKeywordStatus.ACTIVE,
+            articleId: targetArticleId ?? null,
+            status: targetArticleId
+              ? SeoKeywordStatus.USED
+              : SeoKeywordStatus.ACTIVE,
           },
           data: keywordData,
         });
@@ -1260,7 +1309,10 @@ export class SeoPublishingService {
       if (generationJobId)
         await tx.seoGenerationJob.update({
           where: { id: generationJobId },
-          data: { articleId: article.id },
+          data: {
+            articleId: article.id,
+            modelSnapshot: { generatedRevisionId: revision.id },
+          },
         });
       return {
         article: updatedArticle,
@@ -1305,7 +1357,12 @@ export class SeoPublishingService {
     if (!keyword) return 0;
     try {
       await this.prisma.seoGenerationJob.create({
-        data: { keywordId: keyword.id, idempotencyKey, scheduledFor: now },
+        data: {
+          keywordId: keyword.id,
+          idempotencyKey,
+          scheduledFor: now,
+          inputSnapshot: { autoPublish: true },
+        },
       });
     } catch (error) {
       if (
@@ -1370,23 +1427,51 @@ export class SeoPublishingService {
       });
       if (!claimed.count) continue;
       try {
+        const autoPublish =
+          this.record(job.inputSnapshot)?.autoPublish === true;
+        const repairRevisionId = this.record(
+          job.inputSnapshot,
+        )?.repairRevisionId;
+        const isRepair =
+          typeof repairRevisionId === 'string' &&
+          !this.record(job.modelSnapshot)?.generatedRevisionId;
         // Creation and association commit together. A crash after that must not
         // replace a draft an administrator may already be editing.
-        if (job.articleId) {
+        if (job.articleId && !isRepair) {
           const article = await this.prisma.seoArticle.findUnique({
             where: { id: job.articleId },
-            include: { draftRevision: true },
+            include: { draftRevision: true, publishedRevision: true },
           });
-          const report = article?.draftRevision?.qualityReport as unknown as
-            | SeoQualityReport
-            | undefined;
+          const expectedRevisionId = this.record(
+            job.modelSnapshot,
+          )?.generatedRevisionId;
+          const alreadyPublished =
+            typeof expectedRevisionId === 'string' &&
+            article?.publishedRevisionId === expectedRevisionId;
+          const report = (alreadyPublished
+            ? article?.publishedRevision
+            : article?.draftRevision
+          )?.qualityReport as unknown as SeoQualityReport | undefined;
+          if (autoPublish && report?.passed && !alreadyPublished) {
+            if (typeof expectedRevisionId !== 'string')
+              throw new ConflictException('缺少原生成版本，保留草稿');
+            await this.publishArticle(
+              job.articleId,
+              undefined,
+              now,
+              expectedRevisionId,
+            );
+          }
           await this.prisma.seoGenerationJob.update({
             where: { id: job.id },
             data: {
               status: report?.passed
                 ? SeoGenerationStatus.SUCCEEDED
                 : SeoGenerationStatus.FAILED,
-              progress: '草稿已保留',
+              progress:
+                autoPublish && report?.passed
+                  ? '已完成 · 自动发布'
+                  : '草稿已保留',
               finishedAt: new Date(),
               lastError: report?.passed
                 ? null
@@ -1403,6 +1488,9 @@ export class SeoPublishingService {
           pipeline?: Record<string, SeoPipelineCheckpoint>;
           revisedPipeline?: Record<string, SeoPipelineCheckpoint>;
           revisionFeedback?: string[];
+          repairResearch?: Awaited<ReturnType<SeoAiAdapter['research']>>;
+          repairAnalysis?: Awaited<ReturnType<SeoAiAdapter['analyzeBrief']>>;
+          repairComplete?: boolean;
           generated?: Awaited<ReturnType<SeoAiAdapter['generateArticle']>>;
           imageId?: string;
         };
@@ -1501,40 +1589,44 @@ export class SeoPublishingService {
               ) as Prisma.InputJsonValue,
             },
           });
-          keyword = await this.prisma.$transaction(async (tx) => {
-            await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`seo-topic:${analysis.keyword}`}))::text`;
-            const topic = await tx.seoKeyword.upsert({
-              where: { keyword: analysis.keyword },
-              update: {},
-              create: {
-                keyword: analysis.keyword,
-                category: analysis.category,
-                searchIntent: analysis.searchIntent,
-              },
-            });
-            if (topic.articleId || topic.status !== SeoKeywordStatus.ACTIVE)
-              throw new ConflictException(
-                `已有相同主题，请更新原文章：${topic.articleId ?? topic.keyword}`,
-              );
-            const inProgress = await tx.seoGenerationJob.findFirst({
-              where: {
-                keywordId: topic.id,
-                id: { not: job.id },
-                status: {
-                  in: [SeoGenerationStatus.QUEUED, SeoGenerationStatus.RUNNING],
+          if (!isRepair)
+            keyword = await this.prisma.$transaction(async (tx) => {
+              await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`seo-topic:${analysis.keyword}`}))::text`;
+              const topic = await tx.seoKeyword.upsert({
+                where: { keyword: analysis.keyword },
+                update: {},
+                create: {
+                  keyword: analysis.keyword,
+                  category: analysis.category,
+                  searchIntent: analysis.searchIntent,
                 },
-              },
+              });
+              if (topic.articleId || topic.status !== SeoKeywordStatus.ACTIVE)
+                throw new ConflictException(
+                  `已有相同主题，请更新原文章：${topic.articleId ?? topic.keyword}`,
+                );
+              const inProgress = await tx.seoGenerationJob.findFirst({
+                where: {
+                  keywordId: topic.id,
+                  id: { not: job.id },
+                  status: {
+                    in: [
+                      SeoGenerationStatus.QUEUED,
+                      SeoGenerationStatus.RUNNING,
+                    ],
+                  },
+                },
+              });
+              if (inProgress)
+                throw new ConflictException(
+                  '相同主题已有生成任务，请等待原任务完成',
+                );
+              await tx.seoGenerationJob.update({
+                where: { id: job.id },
+                data: { keywordId: topic.id },
+              });
+              return topic;
             });
-            if (inProgress)
-              throw new ConflictException(
-                '相同主题已有生成任务，请等待原任务完成',
-              );
-            await tx.seoGenerationJob.update({
-              where: { id: job.id },
-              data: { keywordId: topic.id },
-            });
-            return topic;
-          });
         }
         if (!keyword)
           throw new BadRequestException('任务关键词已删除，请重新提供资料');
@@ -1564,6 +1656,10 @@ export class SeoPublishingService {
               : [],
           ),
         };
+        for (const source of checkpoints.repairResearch?.sources ?? []) {
+          if (!generationInput.sources.some((item) => item.url === source.url))
+            generationInput.sources.push(source);
+        }
         generationInput.sources.push(
           ...existing
             .filter(
@@ -1629,29 +1725,68 @@ export class SeoPublishingService {
             article.audit,
           );
         let quality = localReport(generated.article);
-        if (!quality.passed && !checkpoints.revisionFeedback) {
+        // Initial analysis is a research hint, not a permanent veto after new evidence.
+        // Feed gaps into the independent evidence/draft/audit pass instead.
+        const gaps = checkpoints.analysis?.missingInformation ?? [];
+        if (
+          (!quality.passed || gaps.length || checkpoints.revisionFeedback) &&
+          !checkpoints.repairComplete
+        ) {
           checkpoints.generated = generated;
-          checkpoints.revisionFeedback = quality.blockers;
+          checkpoints.revisionFeedback ??= [
+            ...quality.blockers,
+            ...gaps.map(
+              (gap) =>
+                `核实资料缺口：${gap}；无法核实时必须阻止发布，不能编造。`,
+            ),
+          ];
           await saveProgress('质量检查 · 自动修订');
           try {
+            if (!checkpoints.repairResearch) {
+              checkpoints.repairResearch = await this.ai.research(
+                `${keyword.keyword}\n${checkpoints.revisionFeedback.join('\n')}`,
+              );
+              await saveProgress('自动修订 · 补充可靠来源');
+            }
+            for (const source of checkpoints.repairResearch.sources) {
+              if (
+                !generationInput.sources.some((item) => item.url === source.url)
+              )
+                generationInput.sources.push(source);
+            }
+            if (gaps.length && input && !checkpoints.repairAnalysis) {
+              checkpoints.repairAnalysis = await this.ai.analyzeBrief(
+                input,
+                generationInput.sources,
+              );
+              await saveProgress('自动修订 · 核实资料缺口');
+            }
             generated = await runPipeline(true);
           } catch {
-            /* Keep the completed first draft if revision fails. */
+            generated.article.audit.passed = false;
+            generated.article.audit.issues.push({
+              severity: 'BLOCKER',
+              category: 'REPAIR_FAILED',
+              message: '自动修订未完成，请重试；原正文已保留',
+            });
           }
+          checkpoints.repairComplete = true;
           quality = localReport(generated.article);
         }
-        checkpoints.generated = generated;
-        await saveProgress('质量检查');
-        if (checkpoints.analysis?.missingInformation.length) {
+        const unresolved =
+          checkpoints.repairAnalysis?.missingInformation ?? gaps;
+        if (unresolved.length) {
           generated.article.audit.passed = false;
           generated.article.audit.issues.push(
-            ...checkpoints.analysis.missingInformation.map((message) => ({
+            ...unresolved.map((message) => ({
               severity: 'BLOCKER' as const,
               category: 'MISSING_SOURCE',
               message: `资料待补充：${message}`,
             })),
           );
         }
+        checkpoints.generated = generated;
+        await saveProgress('质量检查');
         const textDurationMs = Date.now() - textStartedAt;
         let imageId: string | null = checkpoints.imageId ?? null;
         let imageError: string | null = null;
@@ -1706,21 +1841,39 @@ export class SeoPublishingService {
           },
           job.articleId,
           job.id,
+          isRepair ? repairRevisionId : undefined,
         );
         const passed = created.report.passed === true;
+        if (passed && autoPublish) {
+          await saveProgress('检查通过 · 自动发布');
+          await this.publishArticle(
+            created.article.id,
+            undefined,
+            new Date(),
+            created.revision.id,
+          );
+        }
         await this.prisma.seoGenerationJob.update({
           where: { id: job.id },
           data: {
             articleId: created.article.id,
-            progress: passed ? '已完成 · 待人工审核' : '待完善草稿',
+            progress: passed
+              ? autoPublish
+                ? '已完成 · 自动发布'
+                : '已完成 · 待人工审核'
+              : '自动修订后仍待完善',
             status: passed
               ? SeoGenerationStatus.SUCCEEDED
               : SeoGenerationStatus.FAILED,
-            modelSnapshot: generated.modelSnapshot,
+            modelSnapshot: {
+              ...generated.modelSnapshot,
+              generatedRevisionId: created.revision.id,
+            },
             usage: {
               ...generated.usage,
               analysis: checkpoints.analysis?.usage ?? null,
               research: checkpoints.research?.usage ?? null,
+              repairResearch: checkpoints.repairResearch?.usage ?? null,
               textDurationMs,
               image: imageUsage,
             },

@@ -144,7 +144,7 @@ export function SeoMaterialGeneration({
   return (
     <Panel
       title="资料生成文章"
-      copy="粘贴资料或参考链接，自动填写正文和 SEO 信息；生成后仍需人工审核发布。"
+      copy="粘贴资料或参考链接，AI 补充来源、撰写并自动修订；质量检查通过后自动发布，无法核实的内容保留草稿。"
     >
       <div className="form-grid seo-article-fields">
         <label className="field span-2">
@@ -206,7 +206,7 @@ export function SeoMaterialGeneration({
           disabled={busy || running}
           onClick={() => void generate()}
         >
-          {running ? "正在生成草稿…" : busy ? "处理中…" : "生成完整草稿"}
+          {running ? "正在生成与检查…" : busy ? "处理中…" : "生成并自动发布"}
         </button>
         <button
           className="ghost-button"
@@ -242,7 +242,7 @@ export function SeoMaterialGeneration({
               type="button"
               onClick={() => onOpen(job.articleId!)}
             >
-              打开草稿与预览
+              查看文章与检查结果
             </button>
           )}
           {job.status === "FAILED" && !job.articleId && (
