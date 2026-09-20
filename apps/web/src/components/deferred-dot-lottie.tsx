@@ -3,19 +3,25 @@
 // Adapted from perfect-panel/frontend (GPL-3.0).
 // See /public/vendor/perfect-panel/LICENSE and THIRD_PARTY_NOTICES.md.
 import type {
-  DotLottie,
-  DotLottieReactProps,
+  DotLottieWorker,
+  DotLottieWorkerReactProps,
 } from "@lottiefiles/dotlottie-react";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 const LazyDotLottie = lazy(() =>
-  import("@lottiefiles/dotlottie-react").then((module) => ({
-    default: module.DotLottieReact,
-  })),
+  import("@lottiefiles/dotlottie-react").then((module) => {
+    module.setWasmUrl(
+      new URL(
+        "/vendor/dotlottie/dotlottie-player-0.80.0.wasm",
+        window.location.origin,
+      ).href,
+    );
+    return { default: module.DotLottieWorkerReact };
+  }),
 );
 
 interface DeferredDotLottieProps
-  extends Omit<DotLottieReactProps, "className"> {
+  extends Omit<DotLottieWorkerReactProps, "className"> {
   className?: string;
   rootMargin?: string;
   threshold?: number;
@@ -27,10 +33,11 @@ export function DeferredDotLottie({
   dotLottieRefCallback,
   rootMargin = "0px",
   threshold = 0.25,
+  src,
   ...props
 }: DeferredDotLottieProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const playerRef = useRef<DotLottie | null>(null);
+  const playerRef = useRef<DotLottieWorker | null>(null);
   const [isVisible, setIsVisible] = useState(false);
   const [shouldRender, setShouldRender] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(() =>
@@ -78,22 +85,14 @@ export function DeferredDotLottie({
 
   useEffect(() => {
     if (!(autoplay && isVisible) || prefersReducedMotion) {
-      playerRef.current?.pause();
+      void playerRef.current?.pause().catch(() => undefined);
       return;
     }
-    playerRef.current?.play();
+    void playerRef.current?.play().catch(() => undefined);
   }, [autoplay, isVisible, prefersReducedMotion]);
 
-  useEffect(
-    () => () => {
-      playerRef.current?.destroy();
-      playerRef.current = null;
-    },
-    [],
-  );
-
   const setPlayerRef = useCallback(
-    (player: DotLottie | null) => {
+    (player: DotLottieWorker | null) => {
       playerRef.current = player;
       dotLottieRefCallback?.(player);
     },
@@ -106,6 +105,7 @@ export function DeferredDotLottie({
         {shouldRender && !prefersReducedMotion ? (
           <LazyDotLottie
             {...props}
+            src={src ? new URL(src, window.location.href).href : undefined}
             autoplay={Boolean(autoplay && isVisible)}
             className="ppanel-lottie-player"
             dotLottieRefCallback={setPlayerRef}

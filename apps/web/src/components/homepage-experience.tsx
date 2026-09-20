@@ -9,7 +9,6 @@ import { DeferredDotLottie } from "@/components/deferred-dot-lottie";
 import { HoverBorderGradient } from "@/components/hover-border-gradient";
 import { Icon } from "@/components/icon";
 import { useSite } from "@/components/site-provider";
-import { TextGenerateEffect } from "@/components/text-generate-effect";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { apiRequest } from "@/lib/api";
 import { calculateTermSavings } from "@/lib/catalog-pricing";
@@ -121,13 +120,13 @@ export function HomepageExperience({
         <motion.section
           animate={{ opacity: 1, y: 0 }}
           className="ppanel-hero"
-          initial={{ opacity: 0, y: -50 }}
+          initial={false}
           transition={{ type: "spring", stiffness: 100, damping: 20 }}
         >
           <motion.div
             animate={{ opacity: 1, y: 0 }}
             className="ppanel-hero-copy"
-            initial={{ opacity: 0, y: 50 }}
+            initial={false}
             transition={{
               type: "spring",
               stiffness: 80,
@@ -136,10 +135,9 @@ export function HomepageExperience({
             }}
           >
             <h1>欢迎来到 {site.name}</h1>
-            <TextGenerateEffect
-              className="ppanel-hero-description"
-              words={description}
-            />
+            <p className="ppanel-generated-copy ppanel-hero-description">
+              {description}
+            </p>
             <Link className="ppanel-start-link" href="/register">
               <HoverBorderGradient
                 as="span"

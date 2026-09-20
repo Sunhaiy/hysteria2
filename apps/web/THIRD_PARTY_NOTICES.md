@@ -1,5 +1,17 @@
 # Third-Party Notices
 
+## dotLottie Web runtime
+
+The homepage serves the WebAssembly runtime from `@lottiefiles/dotlottie-web`
+0.80.0 locally, matching the installed player. Animation rendering runs in a
+Worker while the main thread remains available for page interaction.
+
+- Local runtime: `public/vendor/dotlottie/dotlottie-player-0.80.0.wasm`
+- Local license copy: `public/vendor/dotlottie/LICENSE`
+- When updating the player, update the versioned runtime and its cache header.
+- Run `node scripts/check-homepage-build.mjs` after a production build to check
+  the runtime digest and server-rendered first-screen visibility.
+
 ## Perfect Panel frontend
 
 The public homepage includes adapted components and the original homepage

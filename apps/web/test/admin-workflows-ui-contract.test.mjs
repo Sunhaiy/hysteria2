@@ -28,7 +28,7 @@ test("public homepage follows the PPanel landing structure with server-rendered 
   assert.match(home, /\/assets\/lotties\/servers\.json/);
   assert.match(home, /\/assets\/lotties\/locations\.json/);
   assert.match(home, /src="\/assets\/lotties\/global-map\.json"/);
-  assert.match(home, /<TextGenerateEffect/);
+  assert.match(home, /<p className="ppanel-generated-copy ppanel-hero-description">/);
   assert.match(home, /<HoverBorderGradient/);
   assert.match(home, /motion\.section/);
   assert.match(home, /apiRequest<PublicCatalog>\("\/api\/catalog"\)/);
@@ -50,7 +50,7 @@ test("public homepage follows the PPanel landing structure with server-rendered 
   assert.doesNotMatch(catalog, /商城推荐及首页展示/);
   assert.match(lottie, /@lottiefiles\/dotlottie-react/);
   assert.match(lottie, /IntersectionObserver/);
-  assert.match(lottie, /playerRef\.current\?\.destroy\(\)/);
+  assert.match(lottie, /DotLottieWorkerReact/);
   assert.match(hoverButton, /radial-gradient/);
   assert.match(styles, /\.ppanel-home\s*\{/);
   assert.match(styles, /--ppanel-primary:\s*var\(--accent-500\)/);

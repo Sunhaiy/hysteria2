@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { apiRequest, ApiError } from "@/lib/api";
+import { hasSessionHint } from "@/lib/session-hint";
 import type { LoginResponse, SessionPayload } from "@/lib/types";
 
 interface AuthContextValue {
@@ -31,6 +32,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
+    if (!hasSessionHint(document.cookie)) {
+      startTransition(() => {
+        setToken(null);
+        setSession(null);
+        setLoading(false);
+      });
+      return;
+    }
     try {
       const me = await apiRequest<SessionPayload>("/api/me");
       startTransition(() => {
