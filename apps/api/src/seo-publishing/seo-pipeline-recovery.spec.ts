@@ -91,5 +91,15 @@ describe('SEO stage recovery', () => {
     expect(complete).toHaveBeenCalledTimes(5);
     expect(result.article.relatedArticleSlugs).toEqual(['real-guide']);
     expect(result.article.suggestedSlug).toBe('network-timeout');
+    for (let index = 1; index <= 5; index += 1) {
+      expect(complete).toHaveBeenNthCalledWith(
+        index,
+        expect.stringContaining('写给真实读者的实用教程'),
+      );
+      expect(complete).toHaveBeenNthCalledWith(
+        index,
+        expect.stringContaining('不得虚构来源、实测或事实'),
+      );
+    }
   });
 });

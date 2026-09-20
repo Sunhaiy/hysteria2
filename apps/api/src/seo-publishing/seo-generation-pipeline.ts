@@ -1,11 +1,12 @@
 import { BadGatewayException } from '@nestjs/common';
+import { seoReaderFirstPolicy } from './seo-editorial-policy';
 import type {
   GeneratedBlock,
   GeneratedSection,
   SeoEditorialAudit,
 } from './seo-content';
 
-export const seoGenerationPipelineVersion = 'seo-zh-brief-evidence-v4';
+export const seoGenerationPipelineVersion = 'seo-zh-reader-first-v5';
 
 export type SeoPipelineCheckpoint = {
   text: string;
@@ -134,6 +135,8 @@ export async function runSeoGenerationPipeline(
     const startedAt = Date.now();
     const response = await complete(
       prompt +
+        '\n' +
+        seoReaderFirstPolicy +
         (options.revisionFeedback?.length
           ? `\n本次为唯一一次自动修订。必须解决这些审查问题，不得降低标准：${JSON.stringify(options.revisionFeedback)}`
           : ''),

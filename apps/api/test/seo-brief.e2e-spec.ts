@@ -248,7 +248,8 @@ describe('material generation with real PostgreSQL', () => {
       expect(job.keywordId).toBeNull();
       await run();
       const result = await service.getGenerationJob(job.id);
-      expect(result.lastError).toContain('封面失败');
+      expect(result.lastError).toBeNull();
+      expect(ai.generateCover).not.toHaveBeenCalled();
       expect(result.status).toBe('SUCCEEDED');
       expect(result.articleId).toBeTruthy();
       const article = await service.getAdminArticle(result.articleId!);
@@ -451,6 +452,18 @@ describe('material generation with real PostgreSQL', () => {
     }
   });
   it('retains a draft with explicit missing-information blockers if links cannot be read', async () => {
+    ai.generateArticle.mockImplementation(() => {
+      const article = draft(keyword);
+      article.audit.passed = false;
+      article.audit.issues = [
+        {
+          severity: 'BLOCKER',
+          category: 'MISSING_SOURCE',
+          message: '资料待补充：正文声称的客户端版本和下载来源无法核实',
+        },
+      ];
+      return Promise.resolve({ article, usage: {}, modelSnapshot: {} });
+    });
     jest
       .mocked(readSeoSource)
       .mockRejectedValue(new Error('private network blocked'));
@@ -497,5 +510,66 @@ describe('material generation with real PostgreSQL', () => {
     await expect(
       service.publishArticle(result.articleId!, actorId),
     ).rejects.toThrow();
+  });
+  it('reframes a failed internal-audit topic without replacing the article or requiring unrelated evidence', async () => {
+    const bad = draft(keyword);
+    bad.audit.passed = false;
+    bad.audit.issues = [
+      {
+        severity: 'BLOCKER',
+        category: 'INTENT',
+        message: '仅内部核验清单，未解决读者问题',
+      },
+    ];
+    ai.generateArticle.mockResolvedValue({
+      article: bad,
+      usage: {},
+      modelSnapshot: {},
+    });
+    const job = await service.queueGenerationRequest(
+      { material: paragraphs.join('\n'), idempotencyKey: 'reframe-retry' },
+      actorId,
+    );
+    await run();
+    const failed = await service.getGenerationJob(job.id);
+    expect(failed.status).toBe('FAILED');
+    const oldKeyword = failed.keywordId;
+    keyword = `Windows使用指南${Date.now().toString().slice(-6)}`;
+    ai.analyzeBrief.mockResolvedValue({
+      keyword,
+      category: '教程',
+      searchIntent: '通用客户端使用指南',
+      missingInformation: ['站内附件哈希未确认，但通用正文不涉及该附件'],
+      usage: {},
+      model: 'test',
+    });
+    ai.generateArticle.mockImplementation(() =>
+      Promise.resolve({
+        article: draft(keyword),
+        usage: {},
+        modelSnapshot: {},
+      }),
+    );
+    await service.retryGeneration(job.id);
+    await run();
+    const result = await service.getGenerationJob(job.id);
+    expect(result.status).toBe('SUCCEEDED');
+    expect(result.articleId).toBe(failed.articleId);
+    expect(result.keywordId).not.toBe(oldKeyword);
+    const article = await service.getAdminArticle(result.articleId!);
+    expect(article.publishedRevision?.primaryKeyword).toBe(keyword);
+    expect(
+      await prisma.seoArticleRevision.count({
+        where: { articleId: article.id },
+      }),
+    ).toBe(2);
+    expect(
+      (
+        await prisma.seoKeyword.findUniqueOrThrow({
+          where: { id: oldKeyword! },
+        })
+      ).articleId,
+    ).toBeNull();
+    await prisma.seoKeyword.delete({ where: { id: oldKeyword! } });
   });
 });

@@ -1289,13 +1289,26 @@ export class SeoPublishingService {
         lastGeneratedAt: new Date(),
       };
       if (generationJobId) {
+        if (targetArticleId) {
+          await tx.seoKeyword.updateMany({
+            where: { articleId: targetArticleId, id: { not: keyword.id } },
+            data: { articleId: null, status: SeoKeywordStatus.ACTIVE },
+          });
+        }
         const reserved = await tx.seoKeyword.updateMany({
           where: {
             id: keyword.id,
-            articleId: targetArticleId ?? null,
-            status: targetArticleId
-              ? SeoKeywordStatus.USED
-              : SeoKeywordStatus.ACTIVE,
+            OR: [
+              { articleId: null, status: SeoKeywordStatus.ACTIVE },
+              ...(targetArticleId
+                ? [
+                    {
+                      articleId: targetArticleId,
+                      status: SeoKeywordStatus.USED,
+                    },
+                  ]
+                : []),
+            ],
           },
           data: keywordData,
         });
@@ -1589,44 +1602,47 @@ export class SeoPublishingService {
               ) as Prisma.InputJsonValue,
             },
           });
-          if (!isRepair)
-            keyword = await this.prisma.$transaction(async (tx) => {
-              await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`seo-topic:${analysis.keyword}`}))::text`;
-              const topic = await tx.seoKeyword.upsert({
-                where: { keyword: analysis.keyword },
-                update: {},
-                create: {
-                  keyword: analysis.keyword,
-                  category: analysis.category,
-                  searchIntent: analysis.searchIntent,
-                },
-              });
-              if (topic.articleId || topic.status !== SeoKeywordStatus.ACTIVE)
-                throw new ConflictException(
-                  `已有相同主题，请更新原文章：${topic.articleId ?? topic.keyword}`,
-                );
-              const inProgress = await tx.seoGenerationJob.findFirst({
-                where: {
-                  keywordId: topic.id,
-                  id: { not: job.id },
-                  status: {
-                    in: [
-                      SeoGenerationStatus.QUEUED,
-                      SeoGenerationStatus.RUNNING,
-                    ],
-                  },
-                },
-              });
-              if (inProgress)
-                throw new ConflictException(
-                  '相同主题已有生成任务，请等待原任务完成',
-                );
-              await tx.seoGenerationJob.update({
-                where: { id: job.id },
-                data: { keywordId: topic.id },
-              });
-              return topic;
+          keyword = await this.prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`seo-topic:${analysis.keyword}`}))::text`;
+            const topic = await tx.seoKeyword.upsert({
+              where: { keyword: analysis.keyword },
+              update: {},
+              create: {
+                keyword: analysis.keyword,
+                category: analysis.category,
+                searchIntent: analysis.searchIntent,
+              },
             });
+            const ownRepairTopic =
+              isRepair &&
+              topic.articleId === job.articleId &&
+              topic.status === SeoKeywordStatus.USED;
+            if (
+              !ownRepairTopic &&
+              (topic.articleId || topic.status !== SeoKeywordStatus.ACTIVE)
+            )
+              throw new ConflictException(
+                `已有相同主题，请更新原文章：${topic.articleId ?? topic.keyword}`,
+              );
+            const inProgress = await tx.seoGenerationJob.findFirst({
+              where: {
+                keywordId: topic.id,
+                id: { not: job.id },
+                status: {
+                  in: [SeoGenerationStatus.QUEUED, SeoGenerationStatus.RUNNING],
+                },
+              },
+            });
+            if (inProgress)
+              throw new ConflictException(
+                '相同主题已有生成任务，请等待原任务完成',
+              );
+            await tx.seoGenerationJob.update({
+              where: { id: job.id },
+              data: { keywordId: topic.id },
+            });
+            return topic;
+          });
         }
         if (!keyword)
           throw new BadRequestException('任务关键词已删除，请重新提供资料');
@@ -1634,7 +1650,7 @@ export class SeoPublishingService {
           keyword: keyword.keyword,
           category: keyword.category,
           searchIntent: [
-            keyword.searchIntent,
+            checkpoints.analysis?.searchIntent ?? keyword.searchIntent,
             input?.audience && `目标读者：${input.audience}`,
             input?.problem && `解决问题：${input.problem}`,
             input?.mustInclude && `必须包含：${input.mustInclude}`,
@@ -1737,7 +1753,7 @@ export class SeoPublishingService {
             ...quality.blockers,
             ...gaps.map(
               (gap) =>
-                `核实资料缺口：${gap}；无法核实时必须阻止发布，不能编造。`,
+                `资料缺口：${gap}。仅当最终正文依赖此事实时必须核实；可删除无依据的支线主张或缩小到同一读者问题的通用范围，不得编造，不得偏离主题。`,
             ),
           ];
           await saveProgress('质量检查 · 自动修订');
@@ -1773,43 +1789,17 @@ export class SeoPublishingService {
           checkpoints.repairComplete = true;
           quality = localReport(generated.article);
         }
-        const unresolved =
-          checkpoints.repairAnalysis?.missingInformation ?? gaps;
-        if (unresolved.length) {
-          generated.article.audit.passed = false;
-          generated.article.audit.issues.push(
-            ...unresolved.map((message) => ({
-              severity: 'BLOCKER' as const,
-              category: 'MISSING_SOURCE',
-              message: `资料待补充：${message}`,
-            })),
-          );
-        }
+        // The independent audit checks the final article and its evidence.
+        // Topic-analysis gaps may concern claims removed during revision, so they
+        // must not become permanent blockers detached from the published text.
         checkpoints.generated = generated;
         await saveProgress('质量检查');
         const textDurationMs = Date.now() - textStartedAt;
-        let imageId: string | null = checkpoints.imageId ?? null;
-        let imageError: string | null = null;
-        const imageStartedAt = Date.now();
-        try {
-          if (!imageId)
-            imageId = (
-              await this.saveImageBuffer(
-                await this.ai.generateCover(generated.article.imagePrompt),
-                SeoImageSource.AI,
-                null,
-              )
-            ).id;
-          checkpoints.imageId = imageId;
-          await saveProgress('质量检查');
-        } catch (error) {
-          imageError = this.cleanError(error);
-        }
+        // Text publishing does not call or require an image provider.
+        const imageId: string | null = checkpoints.imageId ?? null;
         const imageUsage = {
-          status: imageId ? 'succeeded' : 'failed',
-          prompt: generated.article.imagePrompt,
-          durationMs: Date.now() - imageStartedAt,
-          error: imageError,
+          status: imageId ? 'reused' : 'skipped',
+          durationMs: 0,
         };
         const created = await this.createArticleFromGenerated(
           // Research metadata is admin-only; public fields come from the revision.
@@ -1878,9 +1868,7 @@ export class SeoPublishingService {
               image: imageUsage,
             },
             lastError: passed
-              ? imageError
-                ? `正文已生成，封面失败：${imageError}`
-                : null
+              ? null
               : `质量检查未通过：${created.report.blockers.join('；')}`,
             finishedAt: new Date(),
           },

@@ -519,23 +519,6 @@ export default function AdminSeoPage() {
     return image;
   }
 
-  async function regenerateCover() {
-    if (!token || !selected) return;
-    setBusy(true);
-    try {
-      await apiRequest(
-        `/api/admin/seo/articles/${selected.id}/cover/regenerate`,
-        { method: "POST", token },
-      );
-      await openArticle(selected.id);
-      showToast("封面已重新生成，正文草稿仍然保留。");
-    } catch (error) {
-      showToast(messageOf(error, "封面生成失败，正文草稿没有丢失。"), "error");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function createKeyword() {
     if (!token) return;
     setBusy(true);
@@ -1044,17 +1027,6 @@ export default function AdminSeoPage() {
                               }}
                             />
                           </label>
-                          {selected ? (
-                            <button
-                              className="toolbar-button"
-                              disabled={busy}
-                              type="button"
-                              onClick={() => void regenerateCover()}
-                            >
-                              <Icon name="refresh" />
-                              AI 重新生成
-                            </button>
-                          ) : null}
                           {draft.coverImageId ? (
                             <button
                               className="ghost-button"
@@ -1532,7 +1504,7 @@ export default function AdminSeoPage() {
           <div className="seo-review-grid">
             <Panel
               title="AI 生成任务"
-              copy="正文失败与封面失败都会保留明确原因"
+              copy="自动检查并发布正文，无需生图模型；封面可手动上传"
             >
               <div className="seo-job-list">
                 {jobs.generation.map((job) => (
@@ -1806,20 +1778,6 @@ export default function AdminSeoPage() {
                       <option key={model} value={model} />
                     ))}
                   </datalist>
-                </label>
-                <label className="field">
-                  <span className="fine-print">图片模型（可选）</span>
-                  <input
-                    className="control"
-                    list="seo-upstream-models"
-                    value={settings.imageModel}
-                    onChange={(event) =>
-                      setSettings({
-                        ...settings,
-                        imageModel: event.target.value,
-                      })
-                    }
-                  />
                 </label>
                 <label className="field">
                   <span className="fine-print">

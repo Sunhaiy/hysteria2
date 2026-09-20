@@ -39,7 +39,12 @@
   overwritten by crash recovery; one evidence-enriched automatic revision is allowed before
   retaining a blocked draft. Explicit retries can create a new AI revision only
   when the original AI draft is still current, unpublished and unedited.
-  Initial source gaps are rechecked against expanded evidence, not ignored.
+  Initial source gaps inform revision; the independent audit decides whether
+  the final article still relies on unsupported facts. Unrelated internal asset
+  checks do not block a useful general guide. Material retries may select a
+  reader-focused topic; keyword reassignment and the new revision commit together,
+  with topic uniqueness and protection against concurrent manual edits preserved.
+  Automatic text generation never calls an image model; covers are optional uploads.
   Research reuses the configured
   upstream and is supported only after actual search tool output and safe source
   retrieval; model prose alone is not a capability signal.
