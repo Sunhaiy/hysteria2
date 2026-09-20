@@ -5,7 +5,22 @@ import type {
   SeoEditorialAudit,
 } from './seo-content';
 
-export const seoGenerationPipelineVersion = 'seo-zh-evidence-first-v3';
+export const seoGenerationPipelineVersion = 'seo-zh-brief-evidence-v4';
+
+export type SeoPipelineCheckpoint = {
+  text: string;
+  inputTokens: number;
+  outputTokens: number;
+  durationMs: number;
+};
+export type SeoPipelineOptions = {
+  checkpoints?: Record<string, SeoPipelineCheckpoint>;
+  onStage?: (
+    stage: string,
+    checkpoint?: SeoPipelineCheckpoint,
+  ) => Promise<void>;
+  revisionFeedback?: string[];
+};
 
 export type SeoPublicSource = {
   id: string;
@@ -27,6 +42,8 @@ export type SeoSourceEvidence = {
 };
 
 export type GeneratedArticleDraft = {
+  suggestedSlug?: string;
+  relatedArticleSlugs?: string[];
   title: string;
   excerpt: string;
   primaryKeyword: string;
@@ -70,6 +87,8 @@ type ArticleBody = {
 };
 
 type ArticleMetadata = {
+  suggestedSlug?: string;
+  relatedArticleSlugs?: string[];
   excerpt: string;
   primaryKeyword: string;
   relatedKeywords: string[];
@@ -92,6 +111,7 @@ export async function runSeoGenerationPipeline(
     }>;
   },
   complete: CompleteJson,
+  options: SeoPipelineOptions = {},
 ) {
   const emptyStage = () => ({ inputTokens: 0, outputTokens: 0, durationMs: 0 });
   const stages = {
@@ -105,12 +125,38 @@ export async function runSeoGenerationPipeline(
     stage: keyof typeof stages,
     prompt: string,
   ): Promise<string> => {
+    const cached = options.checkpoints?.[stage];
+    if (cached) {
+      stages[stage] = cached;
+      return cached.text;
+    }
+    await options.onStage?.(stage);
     const startedAt = Date.now();
-    const response = await complete(prompt);
+    const response = await complete(
+      prompt +
+        (options.revisionFeedback?.length
+          ? `\n本次为唯一一次自动修订。必须解决这些审查问题，不得降低标准：${JSON.stringify(options.revisionFeedback)}`
+          : ''),
+    );
+    // Persist only validated stages so a malformed result cannot poison retries.
+    if (stage === 'evidence')
+      verifyEvidence(parseEvidencePlan(response.text), input.sources);
+    if (stage === 'draft')
+      verifyEvidenceAppearsInBody(
+        parseArticleBody(response.text),
+        sourceEvidence,
+      );
+    if (stage === 'metadata') {
+      const parsed = parseArticleMetadata(response.text);
+      if (normalize(parsed.primaryKeyword) !== normalize(input.keyword))
+        throw new BadGatewayException('AI 返回的主关键词与任务关键词不一致');
+    }
+    if (stage === 'audit') parseAudit(response.text);
     stages[stage] = {
       ...response.usage,
       durationMs: Date.now() - startedAt,
     };
+    await options.onStage?.(stage, { text: response.text, ...stages[stage] });
     return response.text;
   };
 
@@ -125,6 +171,11 @@ export async function runSeoGenerationPipeline(
   const metadata = parseArticleMetadata(
     await invoke('metadata', metadataPrompt(input, evidencePlan, body)),
   );
+  metadata.relatedArticleSlugs = (metadata.relatedArticleSlugs ?? [])
+    .filter((slug) =>
+      input.existingArticles.some((article) => article.slug === slug),
+    )
+    .slice(0, 3);
   if (normalize(metadata.primaryKeyword) !== normalize(input.keyword)) {
     throw new BadGatewayException('AI 返回的主关键词与任务关键词不一致');
   }
@@ -186,6 +237,7 @@ function evidencePrompt(input: {
 3. 站点功能、客户端名称、操作路径、兼容性、套餐、节点、速度、价格和服务承诺只能来自给定来源。
 4. evidence 最多 8 条。sourceId 必须来自来源列表，sourceQuote 必须是来源 content 中逐字存在的连续原文，claim 是准备在正文中原样使用的完整事实句。
 5. 没有资料依据时 evidence 返回空数组，不得根据常识猜测站点专属信息。
+   所有可核验的技术事实也应有来源支撑；资料不足时明确指出需要补充什么，不把猜测写成操作步骤。管理员粘贴资料尚未独立核实，不得冒充官方文档或实测结果。
 6. 已有文章若覆盖相同意图，应把 audit 风险写进 directAnswer，不要换同义词制造重复页面。
 
 公开来源：
@@ -224,7 +276,11 @@ function draftPrompt(
 }
 
 function metadataPrompt(
-  input: { keyword: string; category: string },
+  input: {
+    keyword: string;
+    category: string;
+    existingArticles: Array<{ title: string; slug: string }>;
+  },
   plan: EvidencePlan,
   body: ArticleBody,
 ) {
@@ -242,9 +298,10 @@ function metadataPrompt(
 3. metaDescription 用 55 至 120 字，包含主关键词、解决路径和适用对象，不写正文之外的承诺。Google 可能按查询改写摘要，因此优先准确而非口号。
 4. relatedKeywords 给 3 至 6 个同一搜索意图下的自然长尾词；tags 给 2 至 5 个真正用于分类的标签，不堆同义词。
 5. coverAlt 准确描述预期插画和文章主题，不堆关键词。
+6. suggestedSlug 使用简短英文或拼音连字符，不包含域名。relatedArticleSlugs 只能从下面真实文章中选最多三篇直接相关的文章，无相关项则为空：${JSON.stringify(input.existingArticles)}。不要编造地址、作者、日期或 canonical。标题和描述长度是本站编辑规范，不是搜索排名规则。
 
 只返回合法 JSON：
-{"excerpt":"","primaryKeyword":"${input.keyword}","relatedKeywords":[""],"tags":[""],"seoTitle":"","metaDescription":"","coverAlt":""}`;
+{"excerpt":"","primaryKeyword":"${input.keyword}","relatedKeywords":[""],"tags":[""],"seoTitle":"","metaDescription":"","coverAlt":"","suggestedSlug":"","relatedArticleSlugs":[]}`;
 }
 
 function auditPrompt(
@@ -338,7 +395,11 @@ function verifyEvidence(plan: EvidencePlan, sources: SeoPublicSource[]) {
       sourceQuote: item.sourceQuote,
       accessedAt: source.accessedAt,
       applicableVersion:
-        item.applicableVersion || source.applicableVersion || null,
+        source.applicableVersion ||
+        (item.applicableVersion &&
+        source.content.includes(item.applicableVersion)
+          ? item.applicableVersion
+          : null),
     };
   });
 }
@@ -373,6 +434,8 @@ function parseArticleMetadata(raw: string): ArticleMetadata {
   }
   return {
     excerpt: text(value.excerpt),
+    suggestedSlug: text(value.suggestedSlug).slice(0, 100) || undefined,
+    relatedArticleSlugs: stringArray(value.relatedArticleSlugs, 3),
     primaryKeyword: text(value.primaryKeyword),
     relatedKeywords: stringArray(value.relatedKeywords, 12),
     tags: stringArray(value.tags, 8),

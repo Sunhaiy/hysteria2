@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -229,4 +230,39 @@ export class GenerateSeoArticleDto {
   @IsOptional()
   @IsString()
   keywordId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30000)
+  material?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsUrl(
+    { protocols: ['http', 'https'], require_protocol: true },
+    { each: true },
+  )
+  @MaxLength(2000, { each: true })
+  referenceUrls?: string[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  audience?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  problem?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(3000)
+  mustInclude?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  idempotencyKey?: string;
 }

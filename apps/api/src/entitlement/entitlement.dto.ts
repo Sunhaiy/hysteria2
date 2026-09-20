@@ -1,4 +1,5 @@
 import {
+  IsDateString,
   IsIn,
   IsNumber,
   IsOptional,
@@ -8,6 +9,19 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+
+export class UpdatePlanValidityDto {
+  @IsDateString()
+  endsAt!: string;
+
+  @IsDateString()
+  expectedEndsAt!: string;
+
+  @IsString()
+  @MinLength(3)
+  @MaxLength(500)
+  reason!: string;
+}
 
 export class UpdateTrafficPolicyDto {
   @IsNumber({ maxDecimalPlaces: 2 })

@@ -112,6 +112,7 @@ describe('FinanceService', () => {
         findUnique: jest.fn().mockResolvedValue({
           id: 'order_1',
           userId: 'user_1',
+          source: 'WALLET',
           status: 'APPLIED',
           amountCents: 1000,
           user: { balanceCents: 400 },
@@ -203,6 +204,7 @@ describe('FinanceService', () => {
         findUnique: jest.fn().mockResolvedValue({
           id: 'order_retry',
           userId: 'user_1',
+          source: 'PAYMENT',
           status: 'APPLIED',
           amountCents: 1_000,
           user: { balanceCents: 0 },
@@ -247,6 +249,7 @@ describe('FinanceService', () => {
         findUnique: jest.fn().mockResolvedValue({
           id: 'order_ultra',
           userId: 'user_1',
+          source: 'PAYMENT',
           status: 'APPLIED',
           amountCents: 6_900,
           user: { balanceCents: 0 },
@@ -311,6 +314,7 @@ describe('FinanceService', () => {
         findUnique: jest.fn().mockResolvedValue({
           id: 'order_1',
           userId: 'user_1',
+          source: 'PAYMENT',
           status: 'APPLIED',
           amountCents: 1000,
           user: { balanceCents: 400 },
@@ -332,7 +336,31 @@ describe('FinanceService', () => {
         { amountCents: 101, method: 'manual', reason: 'Too much' },
         'admin_1',
       ),
-    ).rejects.toThrow('Refund exceeds the refundable amount');
+    ).rejects.toThrow('退款金额超过剩余可退金额');
+    expect(tx.refund.create).not.toHaveBeenCalled();
+  });
+
+  it('does not turn complimentary or CDK nominal prices into refundable cash', async () => {
+    const tx = {
+      manualOrder: {
+        findUnique: jest.fn().mockResolvedValue({
+          status: 'APPLIED',
+          source: 'CDK',
+          amountCents: 1690,
+        }),
+      },
+      refund: { create: jest.fn() },
+    };
+    const service = new FinanceService({
+      $transaction: (fn: (client: typeof tx) => unknown) => fn(tx),
+    } as never);
+    await expect(
+      service.createRefund(
+        'cdk',
+        { amountCents: 1690, method: 'wallet', reason: 'test' },
+        'admin',
+      ),
+    ).rejects.toThrow('仅在线支付或余额购买');
     expect(tx.refund.create).not.toHaveBeenCalled();
   });
 

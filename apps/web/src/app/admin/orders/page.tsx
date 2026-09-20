@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { CustomerLink } from "@/components/customer-link";
 import { CustomSelect } from "@/components/custom-select";
+import { OrderRefundButton } from "@/components/order-refund-button";
 import { DataTable } from "@/components/data-table";
 import { Drawer } from "@/components/drawer";
 import { Icon } from "@/components/icon";
@@ -20,6 +21,7 @@ type View = "orders" | "attempts";
 
 type OrderRecord = {
   id: string;
+  operationLabel: string;
   user: { id: string; email: string; displayName: string };
   product: {
     id: string | null;
@@ -905,6 +907,7 @@ export default function AdminOrdersPage() {
               />,
               <div className="split" key={`${order.id}-product`}>
                 <strong>{order.product.name}</strong>
+                <span className="badge">{order.operationLabel}</span>
                 <span className="muted">
                   {order.product.kind === "plan" ? "套餐" : "流量包"}
                   {order.offer ? ` · ${order.offer.name}` : ""}
@@ -938,6 +941,18 @@ export default function AdminOrdersPage() {
                   effectiveFulfillmentStatus(order)}
               </span>,
               <div className="table-actions" key={`${order.id}-actions`}>
+                <OrderRefundButton
+                  order={{
+                    ...order,
+                    status: order.fulfillmentStatus,
+                    productName: order.product.name,
+                  }}
+                  token={token}
+                  onComplete={() => {
+                    void loadPage();
+                    void loadSummary();
+                  }}
+                />
                 <button
                   className="ghost-button compact"
                   type="button"
@@ -1063,16 +1078,10 @@ export default function AdminOrdersPage() {
               <span className="muted">商品</span>
               <strong>{detail.product.name}</strong>
             </div>
-            {detail.purchaseMode !== "initial" ? (
-              <div className="list-row">
-                <span className="muted">购买方式</span>
-                <strong>
-                  {detail.purchaseMode === "upgrade"
-                    ? "补差价升级"
-                    : "本期流量重置"}
-                </strong>
-              </div>
-            ) : null}
+            <div className="list-row">
+              <span className="muted">业务类型</span>
+              <strong>{detail.operationLabel}</strong>
+            </div>
             <div className="list-row">
               <span className="muted">订单金额</span>
               <strong>{formatMoney(detail.amountCents)}</strong>

@@ -12,12 +12,31 @@ import { CurrentPrincipal } from '../common/current-principal.decorator';
 import type { SessionPrincipal } from '../common/auth.types';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { EntitlementService } from './entitlement.service';
-import { QuotaAdjustmentDto, UpdateTrafficPolicyDto } from './entitlement.dto';
+import {
+  QuotaAdjustmentDto,
+  UpdateTrafficPolicyDto,
+  UpdatePlanValidityDto,
+} from './entitlement.dto';
 
 @Controller('api/admin')
 @UseGuards(JwtAuthGuard, AdminGuard)
 export class EntitlementController {
   constructor(private readonly entitlements: EntitlementService) {}
+
+  @Patch('customers/:userId/entitlements/:grantId/validity')
+  updateValidity(
+    @Param('userId') userId: string,
+    @Param('grantId') grantId: string,
+    @Body() body: UpdatePlanValidityDto,
+    @CurrentPrincipal() principal: SessionPrincipal,
+  ) {
+    return this.entitlements.updatePlanValidity(
+      userId,
+      grantId,
+      body,
+      principal.sub,
+    );
+  }
 
   @Get('access-accounts/:userId')
   getAccount(@Param('userId') userId: string) {

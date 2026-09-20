@@ -1960,6 +1960,10 @@ model SeoGenerationJob {
   promptVersion  String?
   modelSnapshot  Json?
   usage          Json?
+  inputSnapshot  Json?
+  research       Json?
+  checkpoints    Json?
+  progress       String?
   lastError      String?
   startedAt      DateTime?
   finishedAt     DateTime?

@@ -144,7 +144,7 @@ describe('SeoAiAdapter', () => {
       'metadata',
       'audit',
     ]);
-    expect(result.modelSnapshot.version).toBe('seo-zh-evidence-first-v3');
+    expect(result.modelSnapshot.version).toBe('seo-zh-brief-evidence-v4');
     expect(result.modelSnapshot.evidenceCount).toBe(1);
     expect(result.modelSnapshot.audit.passed).toBe(true);
 

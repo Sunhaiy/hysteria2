@@ -670,7 +670,7 @@ describe('SeoPublishingService publication boundary', () => {
     });
   });
 
-  it('adds a revision instead of duplicating an article when AI generation is retried', async () => {
+  it('preserves an existing draft after a worker restart instead of overwriting administrator edits', async () => {
     const keyword = {
       id: 'keyword-1',
       keyword: 'macOS 客户端教程',
@@ -719,6 +719,7 @@ describe('SeoPublishingService publication boundary', () => {
         findUnique: jest.fn().mockResolvedValue({
           id: 'article-existing',
           publishedRevisionId: null,
+          draftRevision: { qualityReport: { passed: true, blockers: [] } },
         }),
       },
       seoArticleRevision: {
@@ -785,36 +786,16 @@ describe('SeoPublishingService publication boundary', () => {
 
     await expect(
       service.workerTick(new Date('2026-09-10T02:00:00.000Z')),
-    ).resolves.toMatchObject({ generated: 1 });
+    ).resolves.toMatchObject({ generated: 0 });
 
     expect(articleCreate).not.toHaveBeenCalled();
-    expect(revisionCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        articleId: 'article-existing',
-        version: 3,
-        source: 'AI',
-        sourceEvidence: expect.any(Array),
-        aiAudit: expect.objectContaining({ passed: true }),
-        lastVerifiedAt: new Date('2026-09-11T05:00:00.000Z'),
-      }),
-    });
-    expect(articleUpdate).toHaveBeenCalledWith({
-      where: { id: 'article-existing' },
-      data: expect.objectContaining({ draftRevisionId: 'revision-3' }),
-    });
+    expect(revisionCreate).not.toHaveBeenCalled();
+    expect(articleUpdate).not.toHaveBeenCalled();
     expect(generationUpdate).toHaveBeenCalledWith({
       where: { id: 'generation-1' },
       data: expect.objectContaining({
-        articleId: 'article-existing',
         status: 'SUCCEEDED',
-        usage: expect.objectContaining({
-          inputTokens: 10,
-          outputTokens: 20,
-          image: expect.objectContaining({
-            status: 'failed',
-            error: 'no image model',
-          }),
-        }),
+        progress: '草稿已保留',
       }),
     });
   });

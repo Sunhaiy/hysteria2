@@ -8,6 +8,7 @@ import type { JSONContent } from "@tiptap/react";
 import { ConsoleShell } from "@/components/console-shell";
 import { Icon } from "@/components/icon";
 import { Panel } from "@/components/panel";
+import { SeoMaterialGeneration } from "@/components/seo-material-generation";
 import { PageSkeleton } from "@/components/skeleton";
 import { Toast, useToast } from "@/components/toast";
 import { useAuth } from "@/components/auth-provider";
@@ -22,7 +23,13 @@ const SimpleEditor = dynamic(
   { ssr: false },
 );
 
-type View = "articles" | "keywords" | "jobs" | "analytics" | "settings";
+type View =
+  | "articles"
+  | "materials"
+  | "keywords"
+  | "jobs"
+  | "analytics"
+  | "settings";
 type ArticleStatus = "DRAFT" | "SCHEDULED" | "PUBLISHED" | "ARCHIVED";
 
 type QualityReport = {
@@ -87,6 +94,14 @@ type Revision = {
   qualityScore: number;
   qualityReport: QualityReport;
   sourceEvidence: SourceEvidence[] | null;
+  modelSnapshot?: {
+    researchSummary?: {
+      status: string;
+      warnings: string[];
+      missingInformation: string[];
+      sources: Array<{ title: string; url: string; accessedAt: string }>;
+    };
+  } | null;
   aiAudit: EditorialAudit | null;
   lastVerifiedAt: string | null;
   createdAt: string;
@@ -142,6 +157,9 @@ type GenerationJob = {
   finishedAt: string | null;
   keyword: Keyword | null;
   article: { slug: string } | null;
+  articleId?: string | null;
+  progress?: string | null;
+  fromMaterial?: boolean;
   usage: { inputTokens?: number; outputTokens?: number } | null;
 };
 
@@ -230,6 +248,7 @@ const EMPTY_ARTICLE: ArticleDraft = {
 
 const VIEW_LABELS: Array<{ value: View; label: string }> = [
   { value: "articles", label: "文章" },
+  { value: "materials", label: "资料生成文章" },
   { value: "keywords", label: "关键词" },
   { value: "jobs", label: "任务" },
   { value: "analytics", label: "数据" },
@@ -573,7 +592,7 @@ export default function AdminSeoPage() {
       await apiRequest("/api/admin/seo/generate", {
         method: "POST",
         token,
-        body: { keywordId },
+        body: { keywordId, idempotencyKey: crypto.randomUUID() },
       });
       setJobs(
         await apiRequest<{
@@ -761,6 +780,15 @@ export default function AdminSeoPage() {
           ))}
         </div>
 
+        <div hidden={view !== "materials"}>
+          <SeoMaterialGeneration
+            token={token}
+            onOpen={(id) => {
+              setView("articles");
+              void openArticle(id);
+            }}
+          />
+        </div>
         {view === "articles" ? (
           selected || draft.title || draft.contentJson !== EMPTY_DOCUMENT ? (
             <div className="seo-editor-page">
@@ -1134,6 +1162,45 @@ export default function AdminSeoPage() {
                         </small>
                       </div>
                     ) : null}
+                    {currentRevision?.modelSnapshot?.researchSummary && (
+                      <details className="seo-evidence-details">
+                        <summary>生成来源与待确认事项</summary>
+                        <p>
+                          {currentRevision.modelSnapshot.researchSummary
+                            .status === "supported"
+                            ? "已使用可核验联网来源"
+                            : "本次未确认联网能力，使用已有资料"}
+                        </p>
+                        {[
+                          ...currentRevision.modelSnapshot.researchSummary
+                            .warnings,
+                          ...currentRevision.modelSnapshot.researchSummary
+                            .missingInformation,
+                        ].map((item, index) => (
+                          <p key={index}>{item}</p>
+                        ))}
+                        <ul>
+                          {currentRevision.modelSnapshot.researchSummary.sources.map(
+                            (source, index) => (
+                              <li key={index}>
+                                {source.url ? (
+                                  <a
+                                    href={source.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    {source.title}
+                                  </a>
+                                ) : (
+                                  source.title
+                                )}{" "}
+                                · {dateTime(source.accessedAt)}
+                              </li>
+                            ),
+                          )}
+                        </ul>
+                      </details>
+                    )}
                     {evidence.length ? (
                       <details className="seo-evidence-details">
                         <summary>
@@ -1474,7 +1541,11 @@ export default function AdminSeoPage() {
                       <span className={`badge ${badgeKind(job.status)}`}>
                         {STATUS_LABEL[job.status]}
                       </span>
-                      <strong>{job.keyword?.keyword || "关键词已删除"}</strong>
+                      <strong>
+                        {job.keyword?.keyword ||
+                          (job.fromMaterial ? "资料生成文章" : "关键词已删除")}
+                      </strong>
+                      {job.progress && <small>{job.progress}</small>}
                       <small>
                         {dateTime(job.createdAt)} · 尝试 {job.attempts} 次
                         {job.usage
@@ -1483,7 +1554,18 @@ export default function AdminSeoPage() {
                       </small>
                       {job.lastError ? <em>{job.lastError}</em> : null}
                     </div>
-                    {job.status === "FAILED" ? (
+                    {job.articleId ? (
+                      <button
+                        className="table-action"
+                        type="button"
+                        onClick={() => {
+                          setView("articles");
+                          void openArticle(job.articleId!);
+                        }}
+                      >
+                        查看草稿
+                      </button>
+                    ) : job.status === "FAILED" ? (
                       <button
                         className="table-action"
                         type="button"

@@ -1,6 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import {
+  autoUpdate,
+  flip,
+  FloatingPortal,
+  offset,
+  shift,
+  size,
+  useClick,
+  useDismiss,
+  useFloating,
+  useInteractions,
+  useRole,
+} from "@floating-ui/react";
 import { Icon } from "@/components/icon";
 
 export function CustomSelect({
@@ -15,27 +28,43 @@ export function CustomSelect({
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onClickOutside(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", onClickOutside);
-    return () => document.removeEventListener("mousedown", onClickOutside);
-  }, [open]);
+  const { refs, floatingStyles, context } = useFloating({
+    open,
+    onOpenChange: setOpen,
+    whileElementsMounted: autoUpdate,
+    placement: "bottom-start",
+    strategy: "fixed",
+    middleware: [
+      offset(4),
+      flip(),
+      shift({ padding: 8 }),
+      size({
+        padding: 8,
+        apply({ availableHeight, rects, elements }) {
+          Object.assign(elements.floating.style, {
+            width: `${rects.reference.width}px`,
+            maxHeight: `${Math.max(0, Math.min(320, availableHeight))}px`,
+          });
+        },
+      }),
+    ],
+  });
+  const { getReferenceProps, getFloatingProps } = useInteractions([
+    useClick(context, { enabled: !disabled }),
+    useDismiss(context),
+    useRole(context, { role: "listbox" }),
+  ]);
+  const { setReference, setFloating } = refs;
 
   const selected = options.find((o) => o.value === value);
 
   return (
-    <div className={`custom-select${open ? " open" : ""}`} ref={ref}>
+    <div className={`custom-select${open ? " open" : ""}`}>
       <button
         type="button"
         className="custom-select-trigger control"
-        onClick={() => !disabled && setOpen((v) => !v)}
+        ref={setReference}
+        {...getReferenceProps()}
         disabled={disabled}
       >
         <span>{selected?.label ?? value}</span>
@@ -43,21 +72,30 @@ export function CustomSelect({
       </button>
 
       {open && (
-        <div className="custom-select-dropdown">
-          {options.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              className={`custom-select-option${opt.value === value ? " active" : ""}`}
-              onClick={() => {
-                onChange(opt.value);
-                setOpen(false);
-              }}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
+        <FloatingPortal>
+          <div
+            className="custom-select-dropdown"
+            ref={setFloating}
+            style={floatingStyles}
+            {...getFloatingProps()}
+          >
+            {options.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                role="option"
+                aria-selected={opt.value === value}
+                className={`custom-select-option${opt.value === value ? " active" : ""}`}
+                onClick={() => {
+                  onChange(opt.value);
+                  setOpen(false);
+                }}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </FloatingPortal>
       )}
     </div>
   );

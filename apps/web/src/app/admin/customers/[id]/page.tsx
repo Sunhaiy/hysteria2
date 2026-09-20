@@ -5,6 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConsoleShell } from "@/components/console-shell";
 import { CustomSelect } from "@/components/custom-select";
+import { OrderRefundButton } from "@/components/order-refund-button";
+import { PlanValidityButton } from "@/components/plan-validity-button";
 import { DataTable } from "@/components/data-table";
 import { EChart } from "@/components/echart";
 import { Icon } from "@/components/icon";
@@ -110,6 +112,7 @@ type DailyTraffic = {
 };
 type Order = {
   id: string;
+  operationLabel: string;
   status: string;
   source: string;
   productName?: string | null;
@@ -753,6 +756,24 @@ export default function CustomerDetailPage() {
               </div>
             </Panel>
             <Panel title="权益与额度">
+              {grants.items
+                .filter((grant) => grant.kind === "plan")
+                .map((grant) => (
+                  <div className="list-row" key={grant.id}>
+                    <div>
+                      <strong>{grant.productName}</strong>
+                      <p className="muted">
+                        套餐到期：{formatDateTime(grant.endsAt)}
+                      </p>
+                    </div>
+                    <PlanValidityButton
+                      userId={customer.id}
+                      grant={grant}
+                      token={token}
+                      onComplete={() => setReloadKey((value) => value + 1)}
+                    />
+                  </div>
+                ))}
               <DataTable
                 loading={loading}
                 error={error}
@@ -1052,14 +1073,41 @@ export default function CustomerDetailPage() {
                 loading={loading}
                 pagination={pagination}
                 emptyText="暂无订单"
-                headers={["时间", "商品", "来源", "成交额", "退款", "状态"]}
+                headers={[
+                  "时间",
+                  "商品",
+                  "业务类型",
+                  "来源",
+                  "成交额",
+                  "已退金额",
+                  "状态",
+                  "操作",
+                ]}
                 rows={orders.items.map((order) => [
                   formatDateTime(order.createdAt),
                   order.productName ?? order.id,
-                  order.source,
+                  order.operationLabel,
+                  {
+                    payment: "在线支付",
+                    wallet: "余额",
+                    cdk: "兑换码",
+                    admin: "管理员发放",
+                    legacy: "历史订单",
+                  }[order.source] ?? order.source,
                   formatMoney(order.amountCents),
                   formatMoney(order.refundedCents),
-                  order.status,
+                  { applied: "已到账", pending: "待处理", void: "已关闭" }[
+                    order.status
+                  ] ?? order.status,
+                  <OrderRefundButton
+                    key={order.id}
+                    order={{
+                      ...order,
+                      productName: order.productName ?? "订单",
+                    }}
+                    token={token}
+                    onComplete={() => setReloadKey((value) => value + 1)}
+                  />,
                 ])}
               />
             </Panel>

@@ -21,6 +21,7 @@ import {
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import sharp from 'sharp';
 import { CacheService } from '../cache/cache.service';
 import { pageResponse, parsePage } from '../common/pagination';
@@ -43,10 +44,15 @@ import {
   type SeoQualityReport,
   type TiptapNode,
 } from './seo-content';
-import { seoGenerationPipelineVersion } from './seo-generation-pipeline';
+import {
+  seoGenerationPipelineVersion,
+  type SeoPipelineCheckpoint,
+} from './seo-generation-pipeline';
+import { publicSourceUrl, readSeoSource } from './seo-source-reader';
 import type {
   CreateSeoKeywordDto,
   FetchSeoModelsDto,
+  GenerateSeoArticleDto,
   SaveSeoArticleDto,
   SeoListQueryDto,
   UpdateSeoKeywordDto,
@@ -355,6 +361,25 @@ export class SeoPublishingService {
     if (!article) throw new NotFoundException('文章不存在');
     const slug = await this.availableSlug(input.slug || input.title, id);
     const prepared = await this.prepareRevision({ ...input, slug }, id);
+    const previous = article.draftRevision ?? article.publishedRevision;
+    const unchanged =
+      previous &&
+      isDeepStrictEqual(previous.contentJson, prepared.contentJson) &&
+      previous.title === prepared.title &&
+      previous.excerpt === prepared.excerpt &&
+      previous.seoTitle === prepared.seoTitle &&
+      previous.metaDescription === prepared.metaDescription &&
+      previous.primaryKeyword === prepared.primaryKeyword;
+    // Saving an unchanged AI draft is not an editorial review and must not
+    // silently clear failed factual checks.
+    const retainedAudit =
+      unchanged && previous.aiAudit ? previous.aiAudit : null;
+    const reviewedReport = retainedAudit
+      ? applyEditorialAudit(
+          prepared.qualityReport as unknown as SeoQualityReport,
+          retainedAudit as unknown as GeneratedArticleDraft['audit'],
+        )
+      : null;
     const latest = await this.prisma.seoArticleRevision.findFirst({
       where: { articleId: id },
       orderBy: { version: 'desc' },
@@ -368,12 +393,19 @@ export class SeoPublishingService {
           source: SeoRevisionSource.MANUAL,
           slug,
           ...prepared,
+          ...(reviewedReport
+            ? {
+                qualityReport: reviewedReport,
+                qualityScore: reviewedReport.score,
+              }
+            : {}),
+          modelSnapshot: previous?.modelSnapshot ?? Prisma.JsonNull,
           sourceEvidence: this.retainSourceEvidence(
             article.draftRevision?.sourceEvidence,
             tiptapPlainText(prepared.contentJson as unknown as TiptapNode),
           ),
-          aiAudit: Prisma.JsonNull,
-          lastVerifiedAt: null,
+          aiAudit: retainedAudit ?? Prisma.JsonNull,
+          lastVerifiedAt: retainedAudit ? previous?.lastVerifiedAt : null,
           createdById: actorId,
         },
       });
@@ -623,6 +655,84 @@ export class SeoPublishingService {
     });
   }
 
+  async queueGenerationRequest(input: GenerateSeoArticleDto, actorId: string) {
+    const brief = {
+      material: input.material?.trim() || '',
+      referenceUrls: [...new Set(input.referenceUrls ?? [])].map((url) => {
+        try {
+          return publicSourceUrl(url).href;
+        } catch {
+          throw new BadRequestException('参考链接必须是公开 HTTP/HTTPS 网页');
+        }
+      }),
+      audience: input.audience?.trim() || '',
+      problem: input.problem?.trim() || '',
+      mustInclude: input.mustInclude?.trim() || '',
+      keywordId: input.keywordId || '',
+    };
+    const isBrief = Boolean(brief.material || brief.referenceUrls.length);
+    if (!isBrief && !input.keywordId)
+      throw new BadRequestException('请填写文字资料或至少一个参考链接');
+    if (isBrief && input.keywordId)
+      throw new BadRequestException('资料生成与关键词生成请选择一种方式');
+    if (!input.idempotencyKey?.trim() && isBrief)
+      throw new BadRequestException('缺少生成请求标识，请刷新页面后重试');
+    const snapshot = brief as Prisma.InputJsonValue;
+    const idempotencyKey = `request:${actorId}:${input.idempotencyKey || randomUUID()}`;
+    const existing = await this.prisma.seoGenerationJob.findUnique({
+      where: { idempotencyKey },
+    });
+    if (existing) {
+      if (!isDeepStrictEqual(existing.inputSnapshot, snapshot))
+        throw new ConflictException('同一请求标识不能用于不同资料');
+      return existing;
+    }
+    if (input.keywordId) {
+      const keyword = await this.requireKeyword(input.keywordId);
+      if (keyword.articleId || keyword.status !== SeoKeywordStatus.ACTIVE)
+        throw new ConflictException('此主题已有文章或已停用，请编辑原文章');
+    }
+    // Upsert resolves simultaneous submissions; verify the winning input as well.
+    const job = await this.prisma.seoGenerationJob.upsert({
+      where: { idempotencyKey },
+      update: { idempotencyKey },
+      create: {
+        idempotencyKey,
+        requestedById: actorId,
+        keywordId: input.keywordId,
+        inputSnapshot: snapshot,
+        scheduledFor: new Date(),
+        progress: '整理资料',
+      },
+    });
+    if (!isDeepStrictEqual(job.inputSnapshot, snapshot))
+      throw new ConflictException('同一请求标识不能用于不同资料');
+    return job;
+  }
+
+  async testResearch() {
+    const { sources, ...result } = await this.ai.research();
+    return {
+      ...result,
+      sources: sources.map(({ url, title, accessedAt }) => ({
+        url,
+        title,
+        accessedAt,
+      })),
+    };
+  }
+
+  async getGenerationJob(id: string) {
+    const job = await this.prisma.seoGenerationJob.findUnique({
+      where: { id },
+      include: { keyword: true, article: { select: { id: true, slug: true } } },
+    });
+    if (!job) throw new NotFoundException('生成任务不存在');
+    const { checkpoints: _checkpoints, ...visible } = job;
+    void _checkpoints;
+    return visible;
+  }
+
   async retryGeneration(id: string) {
     const job = await this.prisma.seoGenerationJob.findUnique({
       where: { id },
@@ -631,8 +741,12 @@ export class SeoPublishingService {
     if (job.status !== SeoGenerationStatus.FAILED) {
       throw new ConflictException('只有失败的生成任务可以重试');
     }
-    return this.prisma.seoGenerationJob.update({
-      where: { id },
+    if (job.articleId)
+      throw new ConflictException(
+        '正文草稿已保留，请在编辑页完善并复检；封面可单独重新生成',
+      );
+    const retry = await this.prisma.seoGenerationJob.updateMany({
+      where: { id, status: SeoGenerationStatus.FAILED, articleId: null },
       data: {
         status: SeoGenerationStatus.QUEUED,
         scheduledFor: new Date(),
@@ -641,6 +755,9 @@ export class SeoPublishingService {
         finishedAt: null,
       },
     });
+    if (!retry.count)
+      throw new ConflictException('任务已开始重试或已生成草稿，请刷新查看');
+    return this.getGenerationJob(id);
   }
 
   async retryIndexSubmission(id: string) {
@@ -924,6 +1041,7 @@ export class SeoPublishingService {
   async listJobs() {
     const [generation, indexing] = await Promise.all([
       this.prisma.seoGenerationJob.findMany({
+        omit: { checkpoints: true, research: true },
         include: { keyword: true, article: { select: { slug: true } } },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: 50,
@@ -933,7 +1051,13 @@ export class SeoPublishingService {
         take: 50,
       }),
     ]);
-    return { generation, indexing };
+    return {
+      generation: generation.map(({ inputSnapshot, ...job }) => ({
+        ...job,
+        fromMaterial: Boolean(inputSnapshot),
+      })),
+      indexing,
+    };
   }
 
   private async prepareRevision(
@@ -1009,11 +1133,34 @@ export class SeoPublishingService {
     imageId: string | null,
     modelSnapshot: Prisma.InputJsonValue,
     targetArticleId?: string | null,
+    generationJobId?: string,
   ) {
     const contentJson = buildGeneratedDocument({
       lead: generated.lead,
       sections: generated.sections,
     });
+    for (const slug of generated.relatedArticleSlugs ?? []) {
+      const related = await this.prisma.seoArticle.findFirst({
+        where: { slug, publishedRevisionId: { not: null }, archivedAt: null },
+        include: { publishedRevision: true },
+      });
+      if (related?.publishedRevision)
+        contentJson.content?.push({
+          type: 'paragraph',
+          content: [
+            {
+              type: 'text',
+              text: `继续阅读：${related.publishedRevision.title}`,
+              marks: [
+                {
+                  type: 'link',
+                  attrs: { href: `/blog/${encodeURIComponent(slug)}` },
+                },
+              ],
+            },
+          ],
+        });
+    }
     const existingArticle = targetArticleId
       ? await this.prisma.seoArticle.findUnique({
           where: { id: targetArticleId },
@@ -1030,7 +1177,10 @@ export class SeoPublishingService {
           select: { version: true },
         })
       : null;
-    const slug = await this.availableSlug(generated.title, existingArticle?.id);
+    const slug = await this.availableSlug(
+      generated.suggestedSlug || generated.title,
+      existingArticle?.id,
+    );
     const prepared = await this.prepareRevision(
       {
         slug,
@@ -1044,7 +1194,7 @@ export class SeoPublishingService {
         seoTitle: generated.seoTitle,
         metaDescription: generated.metaDescription,
         coverImageId: imageId ?? undefined,
-        coverAlt: imageId ? generated.coverAlt : undefined,
+        coverAlt: generated.coverAlt,
       },
       existingArticle?.id ?? null,
     );
@@ -1086,14 +1236,32 @@ export class SeoPublishingService {
           archivedAt: null,
         },
       });
-      await tx.seoKeyword.update({
-        where: { id: keyword.id },
-        data: {
-          status: SeoKeywordStatus.USED,
-          articleId: article.id,
-          lastGeneratedAt: new Date(),
-        },
-      });
+      const keywordData = {
+        status: SeoKeywordStatus.USED,
+        articleId: article.id,
+        lastGeneratedAt: new Date(),
+      };
+      if (generationJobId) {
+        const reserved = await tx.seoKeyword.updateMany({
+          where: {
+            id: keyword.id,
+            articleId: null,
+            status: SeoKeywordStatus.ACTIVE,
+          },
+          data: keywordData,
+        });
+        if (!reserved.count)
+          throw new ConflictException('相同主题已生成文章，请更新原文章');
+      } else
+        await tx.seoKeyword.update({
+          where: { id: keyword.id },
+          data: keywordData,
+        });
+      if (generationJobId)
+        await tx.seoGenerationJob.update({
+          where: { id: generationJobId },
+          data: { articleId: article.id },
+        });
       return {
         article: updatedArticle,
         revision,
@@ -1200,8 +1368,55 @@ export class SeoPublishingService {
           promptVersion,
         },
       });
-      if (!claimed.count || !job.keyword) continue;
+      if (!claimed.count) continue;
       try {
+        // Creation and association commit together. A crash after that must not
+        // replace a draft an administrator may already be editing.
+        if (job.articleId) {
+          const article = await this.prisma.seoArticle.findUnique({
+            where: { id: job.articleId },
+            include: { draftRevision: true },
+          });
+          const report = article?.draftRevision?.qualityReport as unknown as
+            | SeoQualityReport
+            | undefined;
+          await this.prisma.seoGenerationJob.update({
+            where: { id: job.id },
+            data: {
+              status: report?.passed
+                ? SeoGenerationStatus.SUCCEEDED
+                : SeoGenerationStatus.FAILED,
+              progress: '草稿已保留',
+              finishedAt: new Date(),
+              lastError: report?.passed
+                ? null
+                : '请在编辑页完善已保留的草稿并复检',
+            },
+          });
+          continue;
+        }
+        const checkpoints = (job.checkpoints ?? {}) as unknown as {
+          sourceWarnings?: string[];
+          sources?: SeoPublicSource[];
+          analysis?: Awaited<ReturnType<SeoAiAdapter['analyzeBrief']>>;
+          research?: Awaited<ReturnType<SeoAiAdapter['research']>>;
+          pipeline?: Record<string, SeoPipelineCheckpoint>;
+          revisedPipeline?: Record<string, SeoPipelineCheckpoint>;
+          revisionFeedback?: string[];
+          generated?: Awaited<ReturnType<SeoAiAdapter['generateArticle']>>;
+          imageId?: string;
+        };
+        const saveProgress = async (progress: string) => {
+          await this.prisma.seoGenerationJob.update({
+            where: { id: job.id },
+            data: {
+              progress,
+              checkpoints: JSON.parse(
+                JSON.stringify(checkpoints),
+              ) as Prisma.InputJsonValue,
+            },
+          });
+        };
         const textStartedAt = Date.now();
         const [tutorials, site, existing] = await Promise.all([
           this.settings.getTutorialConfig(),
@@ -1210,17 +1425,133 @@ export class SeoPublishingService {
             where: { publishedRevisionId: { not: null }, archivedAt: null },
             include: {
               publishedRevision: {
-                select: { title: true, primaryKeyword: true },
+                select: {
+                  title: true,
+                  primaryKeyword: true,
+                  contentJson: true,
+                },
               },
             },
             take: 100,
           }),
         ]);
-        const generated = await this.ai.generateArticle({
-          keyword: job.keyword.keyword,
-          category: job.keyword.category,
-          searchIntent: job.keyword.searchIntent,
-          sources: this.buildPublicSources(site, tutorials, new Date()),
+        let keyword = job.keyword;
+        const input = job.inputSnapshot as GenerateSeoArticleDto | null;
+        if (input && (input.material || input.referenceUrls?.length)) {
+          await saveProgress('整理资料');
+          if (!checkpoints.sources) {
+            checkpoints.sources = this.buildPublicSources(
+              site,
+              tutorials,
+              new Date(),
+            );
+            checkpoints.sourceWarnings = [];
+            if (input.material)
+              checkpoints.sources.push({
+                id: 'administrator-material',
+                title: '管理员提供的资料（待审核核实）',
+                url: '',
+                content: input.material,
+                accessedAt: job.createdAt.toISOString(),
+                applicableVersion: null,
+              });
+            for (const url of input.referenceUrls ?? []) {
+              try {
+                checkpoints.sources.push(await readSeoSource(url));
+              } catch {
+                checkpoints.sourceWarnings.push(
+                  `参考链接读取失败或被安全限制阻止：${url}`,
+                );
+              }
+            }
+            await saveProgress('整理资料');
+          }
+          if (!checkpoints.analysis) {
+            checkpoints.analysis = await this.ai.analyzeBrief(
+              input,
+              checkpoints.sources,
+            );
+            await saveProgress('补充来源');
+          }
+          if (!checkpoints.research) {
+            checkpoints.research = await this.ai.research(
+              checkpoints.analysis.searchIntent,
+            );
+            await saveProgress('补充来源');
+          }
+          const analysis = checkpoints.analysis;
+          await this.prisma.seoGenerationJob.update({
+            where: { id: job.id },
+            data: {
+              research: JSON.parse(
+                JSON.stringify({
+                  analysis,
+                  ...checkpoints.research,
+                  warnings: [
+                    ...(checkpoints.sourceWarnings ?? []),
+                    ...checkpoints.research.warnings,
+                  ],
+                  sources: [
+                    ...checkpoints.sources,
+                    ...checkpoints.research.sources,
+                  ],
+                  requestedUrls: input.referenceUrls ?? [],
+                  missingInformation: analysis.missingInformation,
+                }),
+              ) as Prisma.InputJsonValue,
+            },
+          });
+          keyword = await this.prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`seo-topic:${analysis.keyword}`}))::text`;
+            const topic = await tx.seoKeyword.upsert({
+              where: { keyword: analysis.keyword },
+              update: {},
+              create: {
+                keyword: analysis.keyword,
+                category: analysis.category,
+                searchIntent: analysis.searchIntent,
+              },
+            });
+            if (topic.articleId || topic.status !== SeoKeywordStatus.ACTIVE)
+              throw new ConflictException(
+                `已有相同主题，请更新原文章：${topic.articleId ?? topic.keyword}`,
+              );
+            const inProgress = await tx.seoGenerationJob.findFirst({
+              where: {
+                keywordId: topic.id,
+                id: { not: job.id },
+                status: {
+                  in: [SeoGenerationStatus.QUEUED, SeoGenerationStatus.RUNNING],
+                },
+              },
+            });
+            if (inProgress)
+              throw new ConflictException(
+                '相同主题已有生成任务，请等待原任务完成',
+              );
+            await tx.seoGenerationJob.update({
+              where: { id: job.id },
+              data: { keywordId: topic.id },
+            });
+            return topic;
+          });
+        }
+        if (!keyword)
+          throw new BadRequestException('任务关键词已删除，请重新提供资料');
+        const generationInput = {
+          keyword: keyword.keyword,
+          category: keyword.category,
+          searchIntent: [
+            keyword.searchIntent,
+            input?.audience && `目标读者：${input.audience}`,
+            input?.problem && `解决问题：${input.problem}`,
+            input?.mustInclude && `必须包含：${input.mustInclude}`,
+          ]
+            .filter(Boolean)
+            .join('\n'),
+          sources: checkpoints.sources
+            ? [...checkpoints.sources, ...(checkpoints.research?.sources ?? [])]
+            : this.buildPublicSources(site, tutorials, new Date()),
           existingArticles: existing.flatMap((article) =>
             article.publishedRevision
               ? [
@@ -1232,19 +1563,110 @@ export class SeoPublishingService {
                 ]
               : [],
           ),
-        });
+        };
+        generationInput.sources.push(
+          ...existing
+            .filter(
+              (article) =>
+                article.publishedRevision &&
+                article.publishedRevision.primaryKeyword.includes(
+                  keyword.keyword,
+                ),
+            )
+            .slice(0, 5)
+            .map((article) => ({
+              id: `article:${article.id}`,
+              title: article.publishedRevision!.title,
+              url: `${webPublicUrl()}/blog/${article.slug}`,
+              content: tiptapPlainText(
+                article.publishedRevision!.contentJson as unknown as TiptapNode,
+              ).slice(0, 6000),
+              accessedAt: new Date().toISOString(),
+              applicableVersion: null,
+            })),
+        );
+        const runPipeline = async (revised: boolean) => {
+          const key = revised ? 'revisedPipeline' : 'pipeline';
+          checkpoints[key] ??= {};
+          return this.ai.generateArticle(generationInput, {
+            checkpoints: checkpoints[key],
+            revisionFeedback: revised
+              ? checkpoints.revisionFeedback
+              : undefined,
+            onStage: async (stage, value) => {
+              if (value) checkpoints[key]![stage] = value;
+              await saveProgress(
+                (
+                  {
+                    evidence: '补充来源',
+                    draft: '撰写正文',
+                    metadata: '优化 SEO',
+                    audit: '质量检查',
+                  } as Record<string, string>
+                )[stage] || stage,
+              );
+            },
+          });
+        };
+        let generated =
+          checkpoints.generated ??
+          (await runPipeline(Boolean(checkpoints.revisionFeedback)));
+        const localReport = (article: GeneratedArticleDraft) =>
+          applyEditorialAudit(
+            evaluateSeoDraft({
+              title: article.title,
+              excerpt: article.excerpt,
+              contentJson: buildGeneratedDocument(article),
+              primaryKeyword: article.primaryKeyword,
+              seoTitle: article.seoTitle,
+              metaDescription: article.metaDescription,
+              relatedKeywords: article.relatedKeywords,
+              tags: article.tags,
+              coverImageId: null,
+              coverAlt: article.coverAlt,
+              existingPlainTexts: [],
+            }),
+            article.audit,
+          );
+        let quality = localReport(generated.article);
+        if (!quality.passed && !checkpoints.revisionFeedback) {
+          checkpoints.generated = generated;
+          checkpoints.revisionFeedback = quality.blockers;
+          await saveProgress('质量检查 · 自动修订');
+          try {
+            generated = await runPipeline(true);
+          } catch {
+            /* Keep the completed first draft if revision fails. */
+          }
+          quality = localReport(generated.article);
+        }
+        checkpoints.generated = generated;
+        await saveProgress('质量检查');
+        if (checkpoints.analysis?.missingInformation.length) {
+          generated.article.audit.passed = false;
+          generated.article.audit.issues.push(
+            ...checkpoints.analysis.missingInformation.map((message) => ({
+              severity: 'BLOCKER' as const,
+              category: 'MISSING_SOURCE',
+              message: `资料待补充：${message}`,
+            })),
+          );
+        }
         const textDurationMs = Date.now() - textStartedAt;
-        let imageId: string | null = null;
+        let imageId: string | null = checkpoints.imageId ?? null;
         let imageError: string | null = null;
         const imageStartedAt = Date.now();
         try {
-          imageId = (
-            await this.saveImageBuffer(
-              await this.ai.generateCover(generated.article.imagePrompt),
-              SeoImageSource.AI,
-              null,
-            )
-          ).id;
+          if (!imageId)
+            imageId = (
+              await this.saveImageBuffer(
+                await this.ai.generateCover(generated.article.imagePrompt),
+                SeoImageSource.AI,
+                null,
+              )
+            ).id;
+          checkpoints.imageId = imageId;
+          await saveProgress('质量检查');
         } catch (error) {
           imageError = this.cleanError(error);
         }
@@ -1255,23 +1677,50 @@ export class SeoPublishingService {
           error: imageError,
         };
         const created = await this.createArticleFromGenerated(
+          // Research metadata is admin-only; public fields come from the revision.
           generated.article,
-          job.keyword,
+          keyword,
           imageId,
-          generated.modelSnapshot,
-          job.articleId ?? job.keyword.articleId,
+          {
+            ...generated.modelSnapshot,
+            imagePrompt: generated.article.imagePrompt,
+            researchSummary: checkpoints.research
+              ? {
+                  status: checkpoints.research.status,
+                  warnings: [
+                    ...(checkpoints.sourceWarnings ?? []),
+                    ...checkpoints.research.warnings,
+                  ],
+                  missingInformation:
+                    checkpoints.analysis?.missingInformation ?? [],
+                  sources: generationInput.sources.map(
+                    ({ title, url, accessedAt, applicableVersion }) => ({
+                      title,
+                      url,
+                      accessedAt,
+                      applicableVersion,
+                    }),
+                  ),
+                }
+              : null,
+          },
+          job.articleId,
+          job.id,
         );
         const passed = created.report.passed === true;
         await this.prisma.seoGenerationJob.update({
           where: { id: job.id },
           data: {
             articleId: created.article.id,
+            progress: passed ? '已完成 · 待人工审核' : '待完善草稿',
             status: passed
               ? SeoGenerationStatus.SUCCEEDED
               : SeoGenerationStatus.FAILED,
             modelSnapshot: generated.modelSnapshot,
             usage: {
               ...generated.usage,
+              analysis: checkpoints.analysis?.usage ?? null,
+              research: checkpoints.research?.usage ?? null,
               textDurationMs,
               image: imageUsage,
             },
@@ -1614,7 +2063,8 @@ export class SeoPublishingService {
           if (
             !source ||
             typeof source.sourceTitle !== 'string' ||
-            typeof source.sourceUrl !== 'string'
+            typeof source.sourceUrl !== 'string' ||
+            !/^https?:\/\//i.test(source.sourceUrl)
           ) {
             return [];
           }

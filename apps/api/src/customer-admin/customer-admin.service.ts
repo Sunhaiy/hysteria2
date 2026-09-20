@@ -15,6 +15,7 @@ import {
   UserStatus,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { orderOperation } from '../orders/order-operation';
 import type { CustomerQuotaOperationDto } from './customer-admin.dto';
 import { pageResponse, parsePage, type PageQuery } from '../common/pagination';
 import { apiPublicUrl } from '../common/public-url';
@@ -824,6 +825,8 @@ export class CustomerAdminService {
         include: {
           catalogOffer: { include: { product: true } },
           refunds: true,
+          epayPaymentAttempt: { select: { entitlementSnapshot: true } },
+          groupBuyMember: { select: { entitlementSnapshot: true } },
         },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip,
@@ -837,6 +840,7 @@ export class CustomerAdminService {
         status: order.status.toLowerCase(),
         source: order.source.toLowerCase(),
         kind: order.kind.toLowerCase(),
+        operationLabel: orderOperation(order),
         productName:
           order.productNameSnapshot ?? order.catalogOffer?.product.name ?? null,
         amountCents: order.amountCents,

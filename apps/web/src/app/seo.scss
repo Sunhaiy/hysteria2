@@ -542,6 +542,30 @@
   max-width: 100%;
 }
 
+.seo-generation-stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  padding: 16px 0;
+  list-style: none;
+  color: var(--text-muted);
+  li[aria-current="step"] {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+}
+
+.seo-research-summary {
+  overflow-wrap: anywhere;
+  margin-top: 16px;
+  details {
+    margin-top: 12px;
+  }
+  li {
+    margin-block: 8px;
+  }
+}
+
 .seo-editor-page,
 .seo-job-list,
 .form-stack {

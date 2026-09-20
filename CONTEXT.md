@@ -32,7 +32,14 @@
 - A `SeoArticle` owns separate draft and published revision pointers. Editing,
   AI retry, cover regeneration, and version restore always create a new draft
   revision; public readers only receive the reviewed published revision.
-- A `SeoGenerationJob` creates a draft from an administrator-owned keyword.
+- A `SeoGenerationJob` creates a reviewed-only draft from a keyword or explicit
+  administrator-provided material/public reference URLs. Material jobs analyze
+  their topic before assigning a keyword and use actor-scoped idempotency keys.
+  Validated stage checkpoints survive retries. A completed draft is never
+  overwritten by a worker retry; one automatic revision is allowed before
+  retaining a blocked draft for manual editing. Research reuses the configured
+  upstream and is supported only after actual search tool output and safe source
+  retrieval; model prose alone is not a capability signal.
   Scheduled runs are idempotent per Asia/Shanghai calendar date and never
   publish automatically. `SeoIndexSubmission` is the six-attempt delivery
   queue for IndexNow and Google sitemap notifications.

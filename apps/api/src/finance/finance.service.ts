@@ -286,14 +286,19 @@ export class FinanceService {
               include: { refunds: true, user: true },
             });
             if (!order || order.status !== 'APPLIED') {
-              throw new NotFoundException('Applied order not found');
+              throw new NotFoundException('未找到已到账的订单');
             }
+            if (!['PAYMENT', 'WALLET'].includes(order.source)) {
+              throw new BadRequestException('仅在线支付或余额购买订单支持退款');
+            }
+            if (!input.reason.trim())
+              throw new BadRequestException('请填写退款原因');
             const refunded = order.refunds
               .filter((refund) => refund.status === RefundStatus.APPLIED)
               .reduce((sum, refund) => sum + refund.amountCents, 0);
             if (refunded + input.amountCents > order.amountCents) {
               throw new BadRequestException(
-                'Refund exceeds the refundable amount',
+                '退款金额超过剩余可退金额，请刷新订单后重试',
               );
             }
             const processedAt = new Date();

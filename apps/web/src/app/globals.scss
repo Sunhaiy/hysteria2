@@ -1273,7 +1273,7 @@ details.field-section .field-section-body {
 
 .plan-switch-form {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: 10px;
 }
@@ -3947,7 +3947,9 @@ select.control {
   border: 1px solid var(--border-strong);
   border-radius: 10px;
   z-index: 200;
-  overflow: hidden;
+  max-height: min(320px, 60dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   box-shadow: 0 8px 24px -8px var(--shadow-color);
 }
 

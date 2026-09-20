@@ -16,6 +16,7 @@ import {
 } from '@prisma/client';
 import { pageResponse, parsePage, type PageQuery } from '../common/pagination';
 import { PrismaService } from '../prisma/prisma.service';
+import { orderOperation } from './order-operation';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -42,6 +43,7 @@ export interface PaymentAttemptQuery extends PageQuery {
 }
 
 const orderInclude = {
+  groupBuyMember: { select: { entitlementSnapshot: true } },
   user: { select: { id: true, email: true, displayName: true } },
   processedBy: { select: { id: true, email: true, displayName: true } },
   catalogOffer: {
@@ -466,6 +468,7 @@ export class OrderQueryService {
         : 'plan';
     return {
       id: order.id,
+      operationLabel: orderOperation(order),
       user: order.user,
       product: {
         id: order.catalogOffer?.product.id ?? null,

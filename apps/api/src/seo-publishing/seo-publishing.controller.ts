@@ -64,6 +64,16 @@ export class AdminSeoPublishingController {
     return this.seo.testGoogleConnection();
   }
 
+  @Post('settings/test-research')
+  testResearch() {
+    return this.seo.testResearch();
+  }
+
+  @Get('generation-jobs/:id')
+  generationJob(@Param('id') id: string) {
+    return this.seo.getGenerationJob(id);
+  }
+
   @Get('keywords')
   keywords(@Query() query: SeoListQueryDto) {
     return this.seo.listKeywords(query);
@@ -154,7 +164,7 @@ export class AdminSeoPublishingController {
     @Body() body: GenerateSeoArticleDto,
     @CurrentPrincipal() principal: SessionPrincipal,
   ) {
-    return this.seo.queueGeneration(body.keywordId, principal.sub);
+    return this.seo.queueGenerationRequest(body, principal.sub);
   }
 
   @Post('generation-jobs/:id/retry')

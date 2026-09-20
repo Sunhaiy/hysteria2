@@ -20,7 +20,10 @@ import {
   UserStatus,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import type { QuotaAdjustmentDto } from './entitlement.dto';
+import type {
+  QuotaAdjustmentDto,
+  UpdatePlanValidityDto,
+} from './entitlement.dto';
 
 const multiplierScale = BigInt(10_000);
 const nodeProvisioningAccessConcurrency = 2;
@@ -51,6 +54,145 @@ type MeteredQuotaBucket = {
 @Injectable()
 export class EntitlementService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async updatePlanValidity(
+    userId: string,
+    grantId: string,
+    input: UpdatePlanValidityDto,
+    actorId: string,
+  ) {
+    const endsAt = new Date(input.endsAt);
+    const now = new Date();
+    if (
+      !Number.isFinite(endsAt.getTime()) ||
+      endsAt <= now ||
+      !input.reason.trim()
+    ) {
+      throw new BadRequestException('请选择未来的到期时间并填写调整原因');
+    }
+    return this.prisma.$transaction(
+      async (tx) => {
+        const grant = await tx.entitlementGrant.findFirst({
+          where: { id: grantId, userId, kind: 'PLAN', status: 'ACTIVE' },
+          include: { quotaBuckets: true },
+        });
+        if (!grant) throw new NotFoundException('未找到可调整的套餐权益');
+        if (
+          grant.endsAt.toISOString() !==
+          new Date(input.expectedEndsAt).toISOString()
+        ) {
+          throw new ConflictException('套餐有效期已发生变化，请刷新后重试');
+        }
+        if (
+          grant.startsAt > now ||
+          grant.endsAt <= now ||
+          grant.endsAt.getUTCFullYear() >= 9999
+        ) {
+          throw new BadRequestException('仅支持调整当前生效的非永久套餐');
+        }
+        const overlapping = await tx.entitlementGrant.findFirst({
+          where: {
+            userId,
+            kind: 'PLAN',
+            status: 'ACTIVE',
+            id: { not: grantId },
+            startsAt: { lt: endsAt },
+            endsAt: { gt: grant.startsAt },
+          },
+        });
+        if (overlapping)
+          throw new ConflictException(
+            '调整后会与其他套餐或预约切换重叠，请先处理预约套餐',
+          );
+        await tx.entitlementGrant.update({
+          where: { id: grantId },
+          data: { endsAt },
+        });
+        // Keep every existing cycle and its consumption; only adjust its time boundary.
+        for (const bucket of grant.quotaBuckets) {
+          if (bucket.endsAt <= now) continue;
+          const boundary = this.monthlyCycleBounds(
+            grant.resetAnchorAt ?? grant.startsAt,
+            endsAt,
+            bucket.startsAt,
+          ).endsAt;
+          const bucketEnd =
+            boundary < bucket.startsAt ? bucket.startsAt : boundary;
+          await tx.quotaBucket.update({
+            where: { id: bucket.id },
+            data: { endsAt: bucketEnd },
+          });
+        }
+        if (grant.legacySubscriptionId) {
+          await tx.subscription.update({
+            where: { id: grant.legacySubscriptionId },
+            data: { endsAt },
+          });
+          const cycles = await tx.subscriptionCycle.findMany({
+            where: {
+              subscriptionId: grant.legacySubscriptionId,
+              endsAt: { gt: now },
+            },
+          });
+          for (const cycle of cycles) {
+            const boundary = this.monthlyCycleBounds(
+              grant.resetAnchorAt ?? grant.startsAt,
+              endsAt,
+              cycle.startsAt,
+            ).endsAt;
+            await tx.subscriptionCycle.update({
+              where: { id: cycle.id },
+              data: {
+                endsAt: boundary < cycle.startsAt ? cycle.startsAt : boundary,
+              },
+            });
+          }
+        }
+        // Group rewards follow this purchased plan's expiry, not unrelated traffic packs.
+        const bonuses = await tx.entitlementGrant.findMany({
+          where: {
+            userId,
+            status: 'ACTIVE',
+            endsAt: grant.endsAt,
+            groupBuyBonusFor: {
+              is: { order: { is: { entitlementGrantId: grantId } } },
+            },
+          },
+        });
+        for (const bonus of bonuses) {
+          await tx.entitlementGrant.update({
+            where: { id: bonus.id },
+            data: { endsAt },
+          });
+          await tx.quotaBucket.updateMany({
+            where: { grantId: bonus.id, endsAt: grant.endsAt },
+            data: { endsAt },
+          });
+          if (bonus.legacyTrafficPackId)
+            await tx.trafficPack.update({
+              where: { id: bonus.legacyTrafficPackId },
+              data: { expiresAt: endsAt },
+            });
+        }
+        await tx.auditLog.create({
+          data: {
+            actorId,
+            action: 'entitlement.validity.updated',
+            targetType: 'user',
+            targetId: userId,
+            metadata: {
+              grantId,
+              before: grant.endsAt.toISOString(),
+              after: endsAt.toISOString(),
+              reason: input.reason.trim(),
+            },
+          },
+        });
+        return { id: grantId, endsAt: endsAt.toISOString() };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
 
   async creditQuotaBucket(
     client: DbClient,

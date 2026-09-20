@@ -17,6 +17,23 @@ openssl rand -base64 32
 
 ## Commerce interface
 
+- Customer finance and order-center responses expose `operationLabel` from the
+  immutable checkout decision (new plan, renewal, scheduled/immediate switch,
+  upgrade or quota reset). Historical rows lacking that evidence remain labeled
+  as a plan purchase; do not infer a first purchase from legacy `RENEWAL` alone.
+- `PATCH /api/admin/customers/:userId/entitlements/:grantId/validity` accepts
+  `{ endsAt, expectedEndsAt, reason }`. Administrators may adjust a currently
+  active, non-permanent plan to a future expiry, without clearing usage or
+  changing monthly reset anchors. Stale forms and overlapping plans are rejected;
+  legacy subscription cycles and attached group rewards are kept consistent.
+- Per-order refund controls require two steps and show the remaining refundable
+  amount. `POST /api/admin/finance/orders/:orderId/refunds` accepts
+  `{ amountCents, method: "wallet" | "manual", reason }`. Wallet credits site
+  balance; manual records an already completed offline refund, not a gateway
+  transfer. Only applied PAYMENT/WALLET orders are eligible. Full refunds follow
+  the existing entitlement and incentive reversal policy. No live refunds are
+  performed by UI verification; browser fixtures intercept all mutation requests.
+
 - `POST /api/portal/commerce/quote` accepts `{ kind: "plan" | "traffic_pack", productId, discountCode? }`.
 - `POST /api/portal/commerce/checkout` accepts the same body and requires an `Idempotency-Key` header.
 - `POST /api/portal/commerce/redeem` accepts `{ code, expectedTrafficPackProductId? }`.
@@ -170,6 +187,56 @@ pnpm --filter @hysteria/api prisma:reconcile-traffic-multipliers -- \
 The command only reconciles pre-cutoff allocations recorded at exactly `1x`.
 It writes an idempotent `QuotaAdjustment` and audit event, never changes a
 historical `UsageRollup`, and cannot reduce remaining quota below zero.
+
+## Material-driven SEO drafts
+
+The admin Content & SEO workspace includes **资料生成文章**. Supply `material`
+(up to 30,000 characters), `referenceUrls` (at most five public HTTP/S URLs), or
+both; `audience`, `problem`, and `mustInclude` are optional. No keyword needs to
+exist beforehand. The server analyzes and claims a keyword, checks for existing
+topics, and creates only an unpublished draft. Generated slug collisions are
+resolved by the existing slug allocator. Completed drafts open in the editor;
+failed quality reviews retain the draft and block publication. An administrator
+can edit, recheck, preview, and publish using the existing revision workflow.
+
+- `POST /api/admin/seo/generate`: accepts the fields above and `idempotencyKey`.
+  Keys are scoped to the requesting admin. Replays return the same job; reuse with
+  changed input returns 409. Legacy `{ keywordId }` callers remain supported.
+- `GET /api/admin/seo/generation-jobs/:id`: stage progress, research provenance,
+  article association and failure reasons; never exposes raw stage checkpoints.
+- `POST /api/admin/seo/settings/test-research`: tests the **saved** upstream/model;
+  returns `supported`, `unsupported`, or `error`, and verification time/model.
+  Every new material job tests again. No additional search-service credential is
+  used. Changing settings does not rewrite source snapshots of existing jobs.
+- Retry resumes validated stages if no draft exists. Once a draft exists, edit
+  that draft; cover generation can be retried independently. At most one automatic
+  editorial revision is attempted. Image failures preserve text and alt text.
+
+All endpoints retain `SEO_CONTENT_MANAGE`, session/CSRF protection, and the
+global admin audit interceptor. Input material, model responses and source
+content are untrusted data, never executable instructions. Only explicit admin
+material, public tutorials/site details and published articles are supplied to
+AI; customer, billing and support data are not queried. Public metadata uses the
+reviewed revision and server-controlled domain/author/dates.
+
+Source retrieval validates all DNS answers and pins the connection address;
+private/loopback/reserved addresses, credentials, nonstandard ports, unsafe
+redirects and compressed/unrecognized content are rejected. Each page is limited
+to 15 seconds, 2 MiB and three redirects. Search support requires an actual
+completed Responses `web_search_call` with sources, followed by public-page
+verification. Failed reads and unsupported research are visible to the reviewer;
+no model-written citations are accepted as proof of search capability.
+
+Migration `20260920160000_seo_brief_generation` adds only nullable job columns;
+old keyword jobs remain valid. Apply migrations before starting the new API or
+worker. This development change does not enable scheduling, external indexing
+or publishing. The isolated integration suite requires a local database named
+`seo_brief_test` and runs with `jest --config test/jest-e2e.json seo-brief`.
+
+Editorial guidance: [Google AI content guidance](https://developers.google.com/search/docs/fundamentals/using-gen-ai-content)
+and [Bing webmaster guidelines](https://www.bing.com/webmasters/help/webmaster-guidelines-30fba23a).
+Text length and metadata length checks are internal editorial policy, not search
+ranking rules. Quality scores do not guarantee ranking or indexing.
 
 ## Administrator node page loading
 

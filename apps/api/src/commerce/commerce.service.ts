@@ -1220,6 +1220,9 @@ export class CommerceService {
           ultraPurchase?.resetAnchorAt ?? entitlementStartsAt,
         upgradeFromProductIdSnapshot: ultraPurchase?.productId,
         upgradeFromPriceCentsSnapshot: ultraPurchase?.priceCents,
+        note: standardPlanPurchase
+          ? `PLAN_ACTIVATION:${standardPlanPurchase.mode}`
+          : null,
         idempotencyKey,
         processedAt: purchasedAt,
       },
