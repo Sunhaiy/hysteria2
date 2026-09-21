@@ -20,6 +20,7 @@ import { KickService } from '../kick-service/kick-service.service';
 import type { PageQuery } from '../common/pagination';
 import {
   CustomerBalanceAdjustmentDto,
+  CustomerActivationDto,
   DeleteCustomerDto,
   CustomerPlanSwitchDto,
   CustomerQuotaOperationDto,
@@ -72,7 +73,10 @@ export class CustomerAdminController {
   }
 
   @Get(':id/entitlements')
-  entitlements(@Param('id') id: string, @Query() query: PageQuery) {
+  entitlements(
+    @Param('id') id: string,
+    @Query() query: PageQuery & { scope?: string },
+  ) {
     return this.customers.getCustomerEntitlements(id, query);
   }
 
@@ -164,11 +168,13 @@ export class CustomerAdminController {
       body.note,
       principal.sub,
       idempotencyKey,
+      body.expectedBalanceCents,
     );
   }
 
   @Post(':id/quota-buckets/:bucketId/adjustments')
   adjustQuota(
+    @Param('id') userId: string,
     @Param('bucketId') bucketId: string,
     @Body() body: CustomerQuotaAdjustmentDto,
     @CurrentPrincipal() principal: SessionPrincipal,
@@ -178,6 +184,32 @@ export class CustomerAdminController {
       body.remainingBytes,
       body.reason,
       principal.sub,
+      { userId, expectedRemainingBytes: body.expectedRemainingBytes },
+    );
+  }
+
+  @Get(':id/entitlements/:grantId/activation-preview')
+  activationPreview(
+    @Param('id') id: string,
+    @Param('grantId') grantId: string,
+  ) {
+    return this.customers.previewScheduledActivation(id, grantId);
+  }
+
+  @Post(':id/entitlements/:grantId/activate')
+  activate(
+    @Param('id') id: string,
+    @Param('grantId') grantId: string,
+    @Body() body: CustomerActivationDto,
+    @CurrentPrincipal() principal: SessionPrincipal,
+    @Headers('idempotency-key') key = '',
+  ) {
+    return this.customers.activateScheduledPlan(
+      id,
+      grantId,
+      body,
+      principal.sub,
+      key,
     );
   }
 
@@ -191,6 +223,7 @@ export class CustomerAdminController {
       id,
       body.trafficMultiplier,
       principal.sub,
+      { expectedMultiplier: body.expectedMultiplier, reason: body.reason },
     );
   }
 
@@ -201,6 +234,11 @@ export class CustomerAdminController {
     @CurrentPrincipal() principal: SessionPrincipal,
   ) {
     return this.customers.adjustAvailableQuota(id, body, principal.sub);
+  }
+
+  @Get(':id/plan-switch/preview')
+  previewSwitch(@Param('id') id: string, @Query('offerId') offerId: string) {
+    return this.commerce.previewComplimentaryPlan(id, offerId);
   }
 
   @Post(':id/plan-switch')
@@ -215,6 +253,7 @@ export class CustomerAdminController {
       body.offerId,
       principal.sub,
       idempotencyKey,
+      { expectedState: body.expectedState, reason: body.reason },
     );
   }
 }

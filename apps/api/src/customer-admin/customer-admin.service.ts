@@ -576,10 +576,22 @@ export class CustomerAdminService {
     return this.customerTraffic.daily(id, query);
   }
 
-  async getCustomerEntitlements(id: string, query: PageQuery) {
+  async getCustomerEntitlements(
+    id: string,
+    query: PageQuery & { scope?: string },
+  ) {
     await this.requireCustomer(id);
     const { page, pageSize, skip } = parsePage(query);
-    const where: Prisma.EntitlementGrantWhereInput = { userId: id };
+    const now = new Date();
+    const live = query.scope === 'current';
+    const where: Prisma.EntitlementGrantWhereInput = {
+      userId: id,
+      ...(live
+        ? { status: 'ACTIVE', endsAt: { gt: now } }
+        : query.scope === 'history'
+          ? { OR: [{ status: { not: 'ACTIVE' } }, { endsAt: { lte: now } }] }
+          : {}),
+    };
     const [grants, total] = await Promise.all([
       this.prisma.entitlementGrant.findMany({
         where,
@@ -587,15 +599,25 @@ export class CustomerAdminService {
           product: true,
           offer: true,
           accessProfile: true,
+          orders: {
+            select: {
+              id: true,
+              source: true,
+              status: true,
+              amountCents: true,
+              intervalMonthsSnapshot: true,
+            },
+            orderBy: { createdAt: 'desc' },
+          },
+          groupBuyBonusFor: { select: { id: true } },
           quotaBuckets: { orderBy: [{ startsAt: 'desc' }, { id: 'desc' }] },
         },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        skip,
-        take: pageSize,
+        skip: live ? undefined : skip,
+        take: live ? undefined : pageSize,
       }),
       this.prisma.entitlementGrant.count({ where }),
     ]);
-    const now = new Date();
     return pageResponse(
       grants.map((grant) => ({
         id: grant.id,
@@ -604,6 +626,54 @@ export class CustomerAdminService {
           grant.status === 'ACTIVE' && grant.endsAt <= now
             ? 'expired'
             : grant.status.toLowerCase(),
+        displayState:
+          grant.status !== 'ACTIVE'
+            ? grant.status.toLowerCase()
+            : grant.endsAt <= now
+              ? 'expired'
+              : grant.startsAt > now
+                ? 'scheduled'
+                : 'current',
+        group:
+          grant.product.series === 'ULTRA'
+            ? 'ultra'
+            : grant.kind === 'PLAN'
+              ? 'standard'
+              : grant.groupBuyBonusFor
+                ? 'reward'
+                : 'pack',
+        permanent: grant.endsAt.getUTCFullYear() >= 9999,
+        remainingDays: Math.max(
+          0,
+          Math.ceil((grant.endsAt.getTime() - now.getTime()) / 86400000),
+        ),
+        orders: grant.orders,
+        canAdjustValidity:
+          grant.kind === 'PLAN' &&
+          grant.status === 'ACTIVE' &&
+          grant.startsAt <= now &&
+          grant.endsAt > now &&
+          grant.endsAt.getUTCFullYear() < 9999,
+        canActivate:
+          grant.kind === 'PLAN' &&
+          grant.product.series === 'STANDARD' &&
+          grant.status === 'ACTIVE' &&
+          grant.startsAt > now,
+        nextResetAt:
+          grant.kind === 'PLAN' &&
+          grant.status === 'ACTIVE' &&
+          grant.startsAt <= now &&
+          grant.endsAt > now &&
+          grant.quotaCadenceSnapshot === 'MONTHLY_RESET'
+            ? (grant.quotaBuckets
+                .find(
+                  (b) =>
+                    b.startsAt <= now &&
+                    b.endsAt > now &&
+                    b.endsAt < grant.endsAt,
+                )
+                ?.endsAt.toISOString() ?? null)
+            : null,
         productId: grant.productId,
         productName: grant.product.name,
         offerId: grant.offerId,
@@ -615,6 +685,12 @@ export class CustomerAdminService {
         speedDownMbps: grant.speedDownMbpsSnapshot,
         deviceLimit: grant.deviceLimitSnapshot,
         buckets: grant.quotaBuckets.map((bucket) => ({
+          canAdjust:
+            grant.status === 'ACTIVE' &&
+            grant.startsAt <= now &&
+            grant.endsAt > now &&
+            bucket.startsAt <= now &&
+            bucket.endsAt > now,
           id: bucket.id,
           kind: bucket.kind.toLowerCase(),
           startsAt: bucket.startsAt.toISOString(),
@@ -858,7 +934,9 @@ export class CustomerAdminService {
   async getCustomerTimeline(id: string, query: PageQuery) {
     await this.requireCustomer(id);
     const { page, pageSize, skip } = parsePage(query);
-    const where = { targetId: id };
+    const where: Prisma.AuditLogWhereInput = {
+      OR: [{ targetId: id }, { metadata: { path: ['userId'], equals: id } }],
+    };
     const [events, total] = await Promise.all([
       this.prisma.auditLog.findMany({
         where,
@@ -1045,6 +1123,7 @@ export class CustomerAdminService {
     note: string | undefined,
     actorId: string,
     idempotencyKey: string,
+    expectedBalanceCents?: number,
   ) {
     if (!Number.isSafeInteger(deltaCents) || deltaCents === 0) {
       throw new BadRequestException('deltaCents must be a non-zero integer');
@@ -1058,6 +1137,30 @@ export class CustomerAdminService {
       try {
         return await this.prisma.$transaction(
           async (tx) => {
+            if (expectedBalanceCents !== undefined) {
+              if (!note?.trim())
+                throw new BadRequestException('请填写余额调整原因');
+              const replay = await tx.walletLedgerEntry.findUnique({
+                where: {
+                  userId_idempotencyKey: {
+                    userId: id,
+                    idempotencyKey: normalizedKey,
+                  },
+                },
+              });
+              if (
+                replay &&
+                (replay.amountCents !== deltaCents ||
+                  replay.kind !== 'ADJUST' ||
+                  replay.note !== auditNote)
+              )
+                throw new ConflictException('同一幂等标识不能用于不同余额调整');
+              const user = await tx.user.findUnique({ where: { id } });
+              if (!user || user.deletedAt)
+                throw new NotFoundException('用户不存在');
+              if (!replay && user.balanceCents !== expectedBalanceCents)
+                throw new ConflictException('余额已变化，请刷新后重新确认');
+            }
             const posting = await postWalletEntry(tx, {
               userId: id,
               actorId,
@@ -1100,7 +1203,15 @@ export class CustomerAdminService {
             },
           },
         });
-        if (replay) return replay;
+        if (replay) {
+          if (
+            replay.amountCents !== deltaCents ||
+            replay.kind !== 'ADJUST' ||
+            replay.note !== auditNote
+          )
+            throw new ConflictException('同一幂等标识不能用于不同余额调整');
+          return replay;
+        }
         if (attempt === 2) {
           throw new ConflictException('余额调整发生并发冲突，请重试');
         }
@@ -1114,12 +1225,34 @@ export class CustomerAdminService {
     remainingBytes: number,
     reason: string | undefined,
     actorId: string,
+    guard?: { userId: string; expectedRemainingBytes: number },
   ) {
     return this.entitlements.adjustQuotaBucketRemaining(
       bucketId,
       remainingBytes,
       reason,
       actorId,
+      guard,
+    );
+  }
+
+  previewScheduledActivation(userId: string, grantId: string) {
+    return this.entitlements.previewScheduledActivation(userId, grantId);
+  }
+
+  activateScheduledPlan(
+    userId: string,
+    grantId: string,
+    input: { expectedState: string; reason: string },
+    actorId: string,
+    key: string,
+  ) {
+    return this.entitlements.activateScheduledPlan(
+      userId,
+      grantId,
+      input,
+      actorId,
+      key,
     );
   }
 
@@ -1127,9 +1260,10 @@ export class CustomerAdminService {
     userId: string,
     multiplier: number,
     actorId: string,
+    guard?: { expectedMultiplier: number; reason: string },
   ) {
     return this.entitlements
-      .updateTrafficMultiplier(userId, multiplier, actorId)
+      .updateTrafficMultiplier(userId, multiplier, actorId, guard)
       .then((result) => ({
         userId,
         trafficMultiplier: result.userTrafficMultiplier,

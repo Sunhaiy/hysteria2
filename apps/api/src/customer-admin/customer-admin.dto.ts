@@ -22,6 +22,9 @@ export class CustomerStatusDto {
 
 export class CustomerBalanceAdjustmentDto {
   @IsInt()
+  @Min(0)
+  expectedBalanceCents!: number;
+  @IsInt()
   deltaCents!: number;
 
   @IsOptional()
@@ -33,6 +36,9 @@ export class CustomerBalanceAdjustmentDto {
 export class CustomerQuotaAdjustmentDto {
   @IsInt()
   @Min(0)
+  expectedRemainingBytes!: number;
+  @IsInt()
+  @Min(0)
   remainingBytes!: number;
 
   @IsOptional()
@@ -41,12 +47,36 @@ export class CustomerQuotaAdjustmentDto {
   reason?: string;
 }
 
+export class CustomerActivationDto {
+  @IsString()
+  @MaxLength(64)
+  expectedState!: string;
+
+  @IsString()
+  @MaxLength(240)
+  reason!: string;
+}
+
 export class CustomerPlanSwitchDto {
+  @IsString()
+  @MaxLength(12000)
+  expectedState!: string;
+
+  @IsString()
+  @MaxLength(240)
+  reason!: string;
+
   @IsString()
   offerId!: string;
 }
 
 export class CustomerTrafficPolicyDto {
+  @IsNumber()
+  expectedMultiplier!: number;
+
+  @IsString()
+  @MaxLength(240)
+  reason!: string;
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0.1)
   @Max(100)

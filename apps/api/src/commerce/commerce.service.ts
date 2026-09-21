@@ -362,11 +362,58 @@ export class CommerceService {
     throw new ConflictException('Checkout transaction could not be completed');
   }
 
+  async previewComplimentaryPlan(
+    userId: string,
+    offerId: string,
+    tx: Prisma.TransactionClient = this.prisma,
+  ) {
+    const offer = await tx.catalogOffer.findUnique({
+      where: { id: offerId },
+      include: { product: true },
+    });
+    if (
+      !offer ||
+      offer.product.kind !== 'PLAN' ||
+      offer.product.series !== 'STANDARD' ||
+      !offer.active ||
+      offer.archivedAt
+    )
+      throw new BadRequestException('请选择有效的普通套餐');
+    const grants = await tx.entitlementGrant.findMany({
+      where: {
+        userId,
+        kind: 'PLAN',
+        status: 'ACTIVE',
+        endsAt: { gt: new Date() },
+        product: { series: 'STANDARD' },
+      },
+      include: { product: true },
+      orderBy: { id: 'asc' },
+    });
+    const expectedState = JSON.stringify({
+      offerId,
+      offerUpdatedAt: offer.updatedAt,
+      grants: grants.map((g) => ({ id: g.id, updatedAt: g.updatedAt })),
+    });
+    return {
+      expectedState,
+      productName: offer.product.name,
+      offerName: offer.name,
+      ending: grants.map((g) => ({
+        id: g.id,
+        productName: g.product.name,
+        startsAt: g.startsAt.toISOString(),
+        endsAt: g.endsAt.toISOString(),
+      })),
+    };
+  }
+
   async grantComplimentaryPlan(
     userId: string,
     offerId: string,
     actorId: string,
     idempotencyKey: string,
+    confirmation?: { expectedState: string; reason: string },
   ) {
     return this.grantComplimentaryOffer(
       userId,
@@ -376,6 +423,7 @@ export class CommerceService {
       {
         actorId,
         auditAction: 'COMPLIMENTARY_PLAN_GRANTED',
+        confirmation,
       },
     );
   }
@@ -399,7 +447,11 @@ export class CommerceService {
     offerId: string,
     idempotencyKey: string,
     expectedKind: CatalogProductKind,
-    audit: { actorId?: string; auditAction: string },
+    audit: {
+      actorId?: string;
+      auditAction: string;
+      confirmation?: { expectedState: string; reason: string };
+    },
   ) {
     const normalizedKey = idempotencyKey.trim();
     if (!normalizedKey || normalizedKey.length > 120) {
@@ -420,7 +472,18 @@ export class CommerceService {
             if (existing) {
               return this.replayCheckout(existing, { offerId });
             }
-            return this.createOfferCheckout(
+            if (audit.confirmation) {
+              if (!audit.confirmation.reason.trim())
+                throw new BadRequestException('请填写赠送原因');
+              const preview = await this.previewComplimentaryPlan(
+                userId,
+                offerId,
+                tx,
+              );
+              if (preview.expectedState !== audit.confirmation.expectedState)
+                throw new ConflictException('套餐或商品已变化，请重新预览');
+            }
+            const result = await this.createOfferCheckout(
               tx,
               userId,
               { offerId },
@@ -432,6 +495,17 @@ export class CommerceService {
                 complimentaryAuditAction: audit.auditAction,
               },
             );
+            if (audit.confirmation)
+              await tx.auditLog.create({
+                data: {
+                  actorId: audit.actorId,
+                  action: 'customer.complimentary.confirmed',
+                  targetType: 'user',
+                  targetId: userId,
+                  metadata: { offerId, ...audit.confirmation },
+                },
+              });
+            return result;
           },
           { isolationLevel: 'Serializable' },
         );

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Drawer } from "@/components/drawer";
 import { apiRequest } from "@/lib/api";
-import { formatDateTime } from "@/lib/format";
+import { customerDateTime as formatDateTime } from "@/lib/customer-display";
 
 export function PlanValidityButton({
   userId,
@@ -18,7 +18,7 @@ export function PlanValidityButton({
 }) {
   const [open, setOpen] = useState(false);
   const [endsAt, setEndsAt] = useState("");
-  const [reason, setReason] = useState("");
+  const reason = "后台调整套餐有效期";
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   return (
@@ -32,7 +32,6 @@ export function PlanValidityButton({
               .toISOString()
               .slice(0, 16),
           );
-          setReason("");
           setError("");
           setOpen(true);
         }}
@@ -85,6 +84,10 @@ export function PlanValidityButton({
           }}
         >
           <p>当前到期时间：{formatDateTime(grant.endsAt)}</p>
+          <p>
+            调整后：
+            {endsAt ? formatDateTime(`${endsAt}:00+08:00`) : "请选择时间"}
+          </p>
           <label className="field">
             <span>新的到期时间（北京时间）</span>
             <input
@@ -95,25 +98,11 @@ export function PlanValidityButton({
               onChange={(e) => setEndsAt(e.target.value)}
             />
           </label>
-          <label className="field">
-            <span>调整原因</span>
-            <textarea
-              className="control"
-              required
-              minLength={3}
-              maxLength={500}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-            />
-          </label>
           <p className="muted">
             仅调整有效期，不清空已用流量、不改变月度重置锚点。不能与已预约套餐重叠。
           </p>
           {error && <p role="alert">{error}</p>}
-          <button
-            className="action-button"
-            disabled={busy || reason.trim().length < 3}
-          >
+          <button className="action-button" disabled={busy}>
             {busy ? "保存中…" : "保存有效期"}
           </button>
         </form>

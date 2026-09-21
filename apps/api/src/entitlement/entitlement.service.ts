@@ -1,5 +1,9 @@
 import { machineTrafficRate } from './machine-traffic-rate';
 import {
+  ScheduledPlanActivation,
+  type ActivationConfirmation,
+} from './scheduled-plan-activation';
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -55,6 +59,24 @@ type MeteredQuotaBucket = {
 export class EntitlementService {
   constructor(private readonly prisma: PrismaService) {}
 
+  previewScheduledActivation(userId: string, grantId: string) {
+    return new ScheduledPlanActivation(this.prisma, (at, months) =>
+      this.addUtcMonthsClamped(at, months),
+    ).preview(userId, grantId);
+  }
+
+  activateScheduledPlan(
+    userId: string,
+    grantId: string,
+    input: ActivationConfirmation,
+    actorId: string,
+    key: string,
+  ) {
+    return new ScheduledPlanActivation(this.prisma, (at, months) =>
+      this.addUtcMonthsClamped(at, months),
+    ).confirm(userId, grantId, input, actorId, key);
+  }
+
   async updatePlanValidity(
     userId: string,
     grantId: string,
@@ -96,6 +118,7 @@ export class EntitlementService {
             kind: 'PLAN',
             status: 'ACTIVE',
             id: { not: grantId },
+            product: { series: 'STANDARD' },
             startsAt: { lt: endsAt },
             endsAt: { gt: grant.startsAt },
           },
@@ -310,6 +333,11 @@ export class EntitlementService {
       include: { entitlementGrant: true },
     });
     const originalPlanGrant = order?.entitlementGrant;
+    // Payment snapshots remain immutable after an administrator changes actual validity.
+    const bonusEndsAt =
+      originalPlanGrant?.status === EntitlementGrantStatus.ACTIVE
+        ? originalPlanGrant.endsAt
+        : order?.entitlementExpiresAt;
     const bonusStartsAt = originalPlanGrant
       ? new Date(
           Math.max(
@@ -323,8 +351,8 @@ export class EntitlementService {
       order.userId !== input.userId ||
       !originalPlanGrant ||
       originalPlanGrant.userId !== input.userId ||
-      !order.entitlementExpiresAt ||
-      order.entitlementExpiresAt <= bonusStartsAt
+      !bonusEndsAt ||
+      bonusEndsAt <= bonusStartsAt
     ) {
       throw new ConflictException('Plan entitlement for bonus is unavailable');
     }
@@ -355,7 +383,7 @@ export class EntitlementService {
         kind: EntitlementGrantKind.TRAFFIC_PACK,
         status: EntitlementGrantStatus.ACTIVE,
         startsAt: bonusStartsAt,
-        endsAt: order.entitlementExpiresAt,
+        endsAt: bonusEndsAt,
         accessProfileId: planGrant.accessProfileId,
         speedUpMbpsSnapshot: planGrant.speedUpMbpsSnapshot,
         speedDownMbpsSnapshot: planGrant.speedDownMbpsSnapshot,
@@ -371,7 +399,7 @@ export class EntitlementService {
         grantId: grant.id,
         kind: QuotaBucketKind.TRAFFIC_PACK,
         startsAt: bonusStartsAt,
-        endsAt: order.entitlementExpiresAt,
+        endsAt: bonusEndsAt,
         grantedBytes: input.bytes,
         trafficMultiplierBasisPointsSnapshot:
           planGrant.trafficMultiplierBasisPointsSnapshot,
@@ -1282,6 +1310,7 @@ export class EntitlementService {
     userId: string,
     multiplier: number,
     actorId: string,
+    guard?: { expectedMultiplier: number; reason: string },
   ) {
     const basisPoints = Math.round(multiplier * 10_000);
     if (
@@ -1292,8 +1321,17 @@ export class EntitlementService {
       throw new BadRequestException('Traffic multiplier must be 0.1 to 100');
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.serializable(async (tx) => {
       const account = await this.ensureAccessAccount(userId, tx);
+      if (guard) {
+        if (!guard.reason.trim())
+          throw new BadRequestException('请填写倍率调整原因');
+        if (
+          (account.trafficMultiplierOverrideBasisPoints ?? 10000) !==
+          Math.round(guard.expectedMultiplier * 10000)
+        )
+          throw new ConflictException('倍率已变化，请刷新后重新确认');
+      }
       const updated = await tx.accessAccount.update({
         where: { id: account.id },
         data: {
@@ -1311,6 +1349,7 @@ export class EntitlementService {
             before:
               (account.trafficMultiplierOverrideBasisPoints ?? 10_000) / 10_000,
             after: basisPoints / 10_000,
+            ...(guard ? { reason: guard.reason.trim() } : {}),
           },
         },
       });
@@ -1331,6 +1370,7 @@ export class EntitlementService {
     remainingBytes: number,
     reason: string | undefined,
     actorId: string,
+    guard?: { userId: string; expectedRemainingBytes: number },
   ) {
     if (!Number.isSafeInteger(remainingBytes) || remainingBytes < 0) {
       throw new BadRequestException(
@@ -1344,16 +1384,65 @@ export class EntitlementService {
         include: { grant: true },
       });
       if (!bucket) throw new NotFoundException('Quota bucket not found');
+      if (guard) {
+        const now = new Date();
+        if (bucket.grant.userId !== guard.userId)
+          throw new NotFoundException('该用户没有此额度');
+        if (!reason?.trim()) throw new BadRequestException('请填写调整原因');
+        if (
+          bucket.grant.status !== 'ACTIVE' ||
+          bucket.grant.startsAt > now ||
+          bucket.grant.endsAt <= now ||
+          bucket.startsAt > now ||
+          bucket.endsAt <= now
+        )
+          throw new ConflictException('只能调整当前生效的额度');
+      }
       const before =
         bucket.grantedBytes > bucket.consumedBytes
           ? bucket.grantedBytes - bucket.consumedBytes
           : BigInt(0);
       const remaining = BigInt(remainingBytes);
+      if (guard && before !== BigInt(guard.expectedRemainingBytes))
+        throw new ConflictException('剩余额度已变化，请刷新后重新确认');
       const delta = remaining - before;
       const updated = await tx.quotaBucket.update({
         where: { id: bucketId },
         data: { grantedBytes: bucket.consumedBytes + remaining },
       });
+      // Mirror only this cycle; preserve consumed traffic and all validity dates.
+      if (bucket.grant.legacySubscriptionId) {
+        const cycle = await tx.subscriptionCycle.findUnique({
+          where: {
+            subscriptionId_startsAt: {
+              subscriptionId: bucket.grant.legacySubscriptionId,
+              startsAt: bucket.startsAt,
+            },
+          },
+        });
+        if (!cycle)
+          throw new ConflictException('订阅周期与权益不一致，请先核对');
+        await tx.subscriptionCycle.update({
+          where: { id: cycle.id },
+          data: {
+            adjustmentBytes:
+              cycle.consumedBytes + remaining - cycle.grantedBytes,
+          },
+        });
+      }
+      if (bucket.grant.legacyTrafficPackId) {
+        const pack = await tx.trafficPack.findUniqueOrThrow({
+          where: { id: bucket.grant.legacyTrafficPackId },
+        });
+        await tx.trafficPack.update({
+          where: { id: pack.id },
+          data: {
+            totalBytes: pack.totalBytes - pack.remainingBytes + remaining,
+            remainingBytes: remaining,
+            status: remaining > 0n ? 'ACTIVE' : 'EXHAUSTED',
+          },
+        });
+      }
       const adjustment = await tx.quotaAdjustment.create({
         data: {
           accessAccountId: bucket.grant.accessAccountId,

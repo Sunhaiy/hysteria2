@@ -222,12 +222,14 @@ test("admin navigation is grouped and nodes expose monthly traffic protection", 
 
 test("customer traffic statistics include an accounted-usage chart", async () => {
   const detail = await source("app/admin/customers/[id]/page.tsx");
+  const chart = await source("components/customer-traffic-chart.tsx");
+  const management = await source("components/customer-management.tsx");
 
-  assert.match(detail, /<EChart/);
-  assert.match(detail, /trafficChartOption/);
-  assert.match(detail, /accountedBytes/);
-  assert.match(detail, /所用机器倍率与用户倍率的较高值计费/);
-  assert.match(detail, /按所用机器计费/);
+  assert.match(detail, /<CustomerTrafficChart/);
+  assert.match(chart, /<EChart/);
+  assert.match(chart, /accountedBytes/);
+  assert.match(management, /计费取用户与机器倍率中的较高值/);
+  assert.match(await source("components/customer-overview.tsx"), /按所用机器计费/);
   assert.doesNotMatch(detail, /copy=\{`套餐倍率/);
 });
 
@@ -309,7 +311,10 @@ test("layout guards keep panel titles and plan selectors visible", async () => {
 
   assert.match(styles, /\.panel-title\s*\{[^}]*white-space:\s*nowrap/s);
   assert.match(panel, /allowOverflow/);
-  assert.match(customer, /title="套餐切换"[\s\S]*allowOverflow/);
+  assert.match(customer, /<CustomerManagement/);
+  const management = await source("components/customer-management.tsx");
+  assert.match(management, /<Drawer/);
+  assert.match(management, /<CustomSelect/);
 });
 
 test("CDKs expose renew and replace plan behavior", async () => {

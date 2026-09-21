@@ -11,7 +11,7 @@ const customers = await readFile(
   "utf8",
 );
 const customerDetail = await readFile(
-  new URL("../src/app/admin/customers/[id]/page.tsx", import.meta.url),
+  new URL("../src/components/customer-overview.tsx", import.meta.url),
   "utf8",
 );
 

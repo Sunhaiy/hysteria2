@@ -27,7 +27,7 @@ test("admin dashboard uses the dedicated projection and five operational metrics
 test("customer traffic, orders, and operations expose durable daily statistics", async () => {
   const [customer, orders, operations, financeRedirect, styles] =
     await Promise.all([
-      read("../src/app/admin/customers/[id]/page.tsx"),
+      read("../src/components/customer-traffic-chart.tsx"),
       read("../src/app/admin/orders/page.tsx"),
       read("../src/app/admin/operations/page.tsx"),
       read("../src/app/admin/finance/page.tsx"),
@@ -35,7 +35,7 @@ test("customer traffic, orders, and operations expose durable daily statistics",
     ]);
 
   assert.match(customer, /\/traffic\/daily\?/);
-  assert.match(customer, /"上传",\s*"下载",\s*"物理流量",\s*"计费流量"/);
+  assert.match(customer, /"上传",\s*"下载",\s*"实际传输量",\s*"倍率后计费量"/);
   assert.match(customer, /实际倍率/);
   assert.match(orders, /\/api\/admin\/finance\/annual-break-even\?year=/);
   assert.match(orders, /\/api\/admin\/finance\/annual-costs\//);
