@@ -22,12 +22,12 @@ test("member usage fills the available desktop table height with billed-only rec
   assert.match(usage, /pagination=\{\{/);
   assert.match(usage, /\/api\/portal\/node-status/);
   assert.match(usage, /portal-usage-detail-layout/);
-  assert.match(usage, /仅显示当前账号可用节点/);
-  assert.match(usage, /nodeStatus\.diagnosis\.title/);
-  assert.match(usage, /nodeStatus\.diagnosis\.message/);
-  assert.match(usage, /nodeStatus\.diagnosis\.kind !== "local_network_likely"/);
-  assert.match(usage, /服务异常/);
-  assert.match(usage, /状态过期/);
+  assert.match(usage, /仅展示当前账号有权限且检测正常的节点/);
+  assert.match(usage, /nodes\.filter\(\(node\) => node\.status === "healthy"\)/);
+  assert.match(usage, /availableNodes\.map/);
+  assert.match(usage, /暂无检测正常的可用节点/);
+  assert.match(usage, /setNodeStatus\(null\)/);
+  assert.doesNotMatch(usage, /nodeStatus\.diagnosis|服务异常|状态过期/);
   assert.match(usage, /setInterval/);
   assert.doesNotMatch(usage, /formatBytes\(item\.(?:txBytes|rxBytes)\)/);
   assert.doesNotMatch(usage, /item\.source/);

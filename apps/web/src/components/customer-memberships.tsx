@@ -231,6 +231,20 @@ export function CustomerMemberships({
             ) : null}
           </div>
           <div className="customer-grant-actions">
+            {!historical
+              ? active.map((bucket, index) => (
+                  <button
+                    key={bucket.id}
+                    className="action-button compact"
+                    title={`剩余 ${formatBytes(bucket.remainingBytes)} · 到期 ${entitlementDate(bucket.endsAt)}`}
+                    onClick={() => void open(grant, bucket)}
+                  >
+                    {active.length === 1
+                      ? "调整流量"
+                      : `调整流量 · 额度 ${index + 1}`}
+                  </button>
+                ))
+              : null}
             {!historical && grant.canAdjustValidity ? (
               <PlanValidityButton
                 userId={userId}
@@ -316,14 +330,6 @@ export function CustomerMemberships({
                         : " · 非当前可用额度"}
                     </p>
                   </div>
-                  {!historical && b.canAdjust ? (
-                    <button
-                      className="ghost-button compact"
-                      onClick={() => void open(grant, b)}
-                    >
-                      调整剩余额度
-                    </button>
-                  ) : null}
                 </div>
               ))}
             </div>

@@ -6,7 +6,6 @@ import { ConsoleShell } from "@/components/console-shell";
 import { DataTable } from "@/components/data-table";
 import { MetricCard } from "@/components/metric-card";
 import { Panel } from "@/components/panel";
-import { Icon } from "@/components/icon";
 import { PageSkeleton } from "@/components/skeleton";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
@@ -44,6 +43,7 @@ export default function PortalUsagePage() {
       setNodeStatus(status);
       setNodeStatusError(false);
     } catch {
+      setNodeStatus(null);
       setNodeStatusError(true);
     }
   }, [token]);
@@ -88,6 +88,9 @@ export default function PortalUsagePage() {
       window.clearInterval(intervalId);
     };
   }, [load, loadNodeStatus]);
+
+  const availableNodes =
+    nodeStatus?.nodes.filter((node) => node.status === "healthy") ?? [];
 
   const totalRecords = usage?.recent.length ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalRecords / pageSize));
@@ -226,63 +229,29 @@ export default function PortalUsagePage() {
 
             <Panel
               className="admin-data-panel portal-node-status-panel"
-              title="节点状态"
-              copy="仅显示当前账号可用节点"
+              title="可用节点"
+              copy="仅展示当前账号有权限且检测正常的节点"
               action={
-                nodeStatus ? (
-                  <span
-                    className={`badge ${
-                      nodeStatus.diagnosis.kind === "local_network_likely"
-                        ? "success"
-                        : nodeStatus.diagnosis.kind === "service_issue"
-                          ? "danger"
-                          : "warn"
-                    }`}
-                  >
-                    {nodeStatus.diagnosis.kind === "local_network_likely"
-                      ? "正常"
-                      : nodeStatus.diagnosis.kind === "service_issue"
-                        ? "异常"
-                        : "待确认"}
+                nodeStatus && availableNodes.length > 0 ? (
+                  <span className="badge success">
+                    {availableNodes.length} 个可用
                   </span>
                 ) : null
               }
             >
               {nodeStatus ? (
                 <>
-                  {nodeStatus.diagnosis.kind !== "local_network_likely" ? (
-                    <div
-                      className={`portal-node-diagnosis ${nodeStatus.diagnosis.kind}`}
-                      role="status"
-                    >
-                      <Icon name="warning" />
-                      <div>
-                        <strong>{nodeStatus.diagnosis.title}</strong>
-                        <p>{nodeStatus.diagnosis.message}</p>
-                      </div>
+                  {availableNodes.length === 0 ? (
+                    <div className="portal-node-status-loading" role="status">
+                      暂无检测正常的可用节点，请稍后刷新。
                     </div>
                   ) : null}
-
                   <div className="portal-node-status-list">
-                    {nodeStatus.nodes.map((node) => (
+                    {availableNodes.map((node) => (
                       <div className="portal-node-status-row" key={node.id}>
                         <div className="portal-node-status-heading">
                           <strong>{node.label}</strong>
-                          <span
-                            className={`badge ${
-                              node.status === "healthy"
-                                ? "success"
-                                : node.status === "unhealthy"
-                                  ? "danger"
-                                  : "warn"
-                            }`}
-                          >
-                            {node.status === "healthy"
-                              ? "服务正常"
-                              : node.status === "unhealthy"
-                                ? "服务异常"
-                                : "状态过期"}
-                          </span>
+                          <span className="badge success">服务正常</span>
                         </div>
                         <div className="portal-node-status-meta">
                           <span>

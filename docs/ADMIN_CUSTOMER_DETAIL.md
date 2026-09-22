@@ -24,6 +24,8 @@
 - 免费赠送是独立操作：先 `GET :id/plan-switch/preview?offerId=...` 查看将结束的当前/预约普通套餐，再 `POST :id/plan-switch` 携带 `{offerId, expectedState, reason}` 和幂等键。该操作仍新增免费订单，不能替代提前启用已购套餐。
 - 有效期调整继续复用原接口和并发校验，拒绝普通套餐预约重叠；Ultra 不作为普通套餐冲突项。
 
+提前启用已购套餐仅允许后台管理员操作，不向用户开放入口或接口；预约套餐仍按原定时间自动生效。
+
 ## 本地验证
 
 真实 PostgreSQL 用例在 `apps/api/test/customer-memberships.e2e-spec.ts`。数据库限定为 `127.0.0.1/seo_brief_test`，仅建立并清理专属测试实体，禁止指向生产库。覆盖日历边界、幂等并发、退款、权益共存、奖励、额度同步、余额和倍率冲突。

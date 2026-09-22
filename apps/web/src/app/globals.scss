@@ -11631,9 +11631,11 @@ select.control {
 
 .portal-membership-main {
   align-items: baseline;
+  min-width: 0;
 }
 
 .portal-membership-main strong {
+  min-width: 0;
   overflow: hidden;
   color: var(--text-primary);
   font-size: 23px;
@@ -11643,6 +11645,7 @@ select.control {
 }
 
 .portal-membership-main > span {
+  flex-shrink: 0;
   color: var(--text-secondary);
   font-size: var(--text-tiny);
   white-space: nowrap;
@@ -11667,6 +11670,9 @@ select.control {
 }
 
 .portal-membership-footnote {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
   color: var(--text-subtle);
   font-size: var(--text-tiny);
 }
@@ -11894,7 +11900,7 @@ select.control {
   white-space: nowrap;
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 1400px) {
   .portal-primary-metrics {
     grid-template-columns: minmax(0, 1fr) minmax(280px, 1fr);
   }

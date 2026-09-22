@@ -417,8 +417,7 @@ export default function PortalPage() {
                     </span>
                   </div>
                 </article>
-                {checkIn?.claimed ||
-                (checkIn?.enabled && checkIn.eligible) ? (
+                {checkIn?.claimed || (checkIn?.enabled && checkIn.eligible) ? (
                   <button
                     className={`portal-check-in-summary${checkIn.claimed ? " claimed" : ""}`}
                     type="button"
@@ -476,7 +475,9 @@ export default function PortalPage() {
                     <span className="badge success">正常使用中</span>
                   </div>
                   <div className="portal-membership-main">
-                    <strong>{overview.plan.name}</strong>
+                    <strong title={overview.plan.name}>
+                      {overview.plan.name}
+                    </strong>
                     <span>
                       {isPermanent
                         ? "永久有效"
@@ -503,7 +504,9 @@ export default function PortalPage() {
                         ? "永久会员权益"
                         : `到期 ${formatDateTime(overview.subscription.endsAt)}`}
                     </span>
-                    <span>{overview.nodeLabel ?? "节点待分配"}</span>
+                    <span title={overview.nodeLabel ?? "节点待分配"}>
+                      {overview.nodeLabel ?? "节点待分配"}
+                    </span>
                   </div>
                 </article>
               </section>
