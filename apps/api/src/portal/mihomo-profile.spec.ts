@@ -138,7 +138,7 @@ describe('buildMihomoProfile', () => {
     expect(profile.rules).toEqual(
       expect.arrayContaining([
         'RULE-SET,private,DIRECT',
-        'IP-CIDR,10.0.0.0/8,DIRECT,no-resolve',
+        'IP-CIDR,10.0.0.0/8,DIRECT',
         'RULE-SET,cn,DIRECT',
         'RULE-SET,cn-ip,DIRECT,no-resolve',
         'MATCH,节点选择',
@@ -147,6 +147,27 @@ describe('buildMihomoProfile', () => {
     expect(profile.rules.indexOf('RULE-SET,cn,DIRECT')).toBeLessThan(
       profile.rules.indexOf('MATCH,节点选择'),
     );
+  });
+
+  it.each([
+    'IP-CIDR,127.0.0.0/8',
+    'IP-CIDR,10.0.0.0/8',
+    'IP-CIDR,172.16.0.0/12',
+    'IP-CIDR,192.168.0.0/16',
+    'IP-CIDR,169.254.0.0/16',
+    'IP-CIDR6,::1/128',
+    'IP-CIDR6,fc00::/7',
+    'IP-CIDR6,fe80::/10',
+  ])('resolves private-domain targets before overseas routing: %s', (cidr) => {
+    const profile = parseProfile(buildMihomoProfile(credential, nodes));
+    const index = profile.rules.indexOf(`${cidr},DIRECT`);
+    expect(index).toBeGreaterThan(-1);
+    expect(index).toBeLessThan(
+      profile.rules.indexOf('DOMAIN-SUFFIX,chatgpt.com,AI 服务'),
+    );
+    expect(profile.rules).not.toContain(`${cidr},DIRECT,no-resolve`);
+    // The client retains its system/company DNS and any split-DNS overrides.
+    expect(profile).not.toHaveProperty('dns');
   });
 
   it('uses upstream MRS providers with persistent daily caching and a bootstrap proxy', () => {

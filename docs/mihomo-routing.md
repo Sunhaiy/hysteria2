@@ -30,6 +30,23 @@ the default node selector. Media and Telegram have independent selectors.
 Only the member's authorized endpoints are included. Existing failover and
 latency selection remain available; this is not an unlock or throughput test.
 
+Private IPv4/IPv6 CIDR rules intentionally omit `no-resolve`: a domain resolving
+to an intranet address must match DIRECT before any overseas/fallback rule.
+Literal private IPs also remain direct. Public-IP rules retain their existing
+policy. The subscription does not override client DNS: company-only domains
+still require the client's system/company DNS or a client-specific split-DNS
+policy. Removing `no-resolve` cannot make a public DNS server resolve private
+company names. Users must refresh the Clash subscription after deployment and
+use rule mode; global mode and client rule overrides can bypass this policy.
+
+The optional real-core regression runs entirely on ephemeral loopback ports,
+with a fixture DNS server and HTTP intranet; no production node is contacted:
+set `MIHOMO_TEST_BINARY` to an existing Mihomo executable, then run
+`pnpm --filter @hysteria/api exec jest --config test/jest-e2e.json mihomo-private-routing --runInBand`.
+It covers a domain resolving to a private IP, literal-IP access, and a public-IP
+domain that must not bypass proxy policy. Without that environment variable,
+the integration suite is skipped; profile unit tests still run normally.
+
 Providers refresh every 86400 seconds and use distinct persistent cache files.
 Downloads use the node selector, avoiding dependence on rule matching to reach
 GitHub. Cached data remains available if a subsequent update fails. A first
