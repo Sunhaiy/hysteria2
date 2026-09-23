@@ -47,6 +47,7 @@ type QualityReport = {
     maximumSimilarity: number;
   };
   editorialAudit?: EditorialAudit;
+  editorialReview?: { reviewedAt: string; revisionId: string };
 };
 
 type EditorialAudit = {
@@ -464,6 +465,12 @@ export default function AdminSeoPage() {
 
   async function mutateArticle(action: "publish" | "archive" | "schedule") {
     if (!token || !selected) return;
+    if (action === "publish" && JSON.stringify(draft) !== JSON.stringify(draftFromArticle(selected))) {
+      showToast("请先保存当前修改，再审核发布。", "error");
+      return;
+    }
+    const manualReview = action === "publish" && !selected.draftRevision?.qualityReport.passed;
+    if (manualReview && !window.confirm("AI 检查存在待确认项。请确认你已阅读当前草稿、核对事实与操作步骤，文章确实对读者有用。\n\n确认后按人工审核结果发布，系统仍会检查空内容、重复正文和绝对化承诺。是否发布？")) return;
     setBusy(true);
     try {
       await apiRequest(`/api/admin/seo/articles/${selected.id}/${action}`, {
@@ -472,7 +479,9 @@ export default function AdminSeoPage() {
         body:
           action === "schedule"
             ? { scheduledAt: new Date(scheduleAt).toISOString() }
-            : undefined,
+            : manualReview
+              ? { confirmEditorialReview: true, revisionId: selected.draftRevision?.id }
+              : undefined,
       });
       showToast(
         action === "publish"
@@ -819,13 +828,13 @@ export default function AdminSeoPage() {
                   <button
                     className="action-button"
                     disabled={
-                      busy || !selected.draftRevision || !quality?.passed
+                      busy || !selected.draftRevision
                     }
                     type="button"
                     onClick={() => void mutateArticle("publish")}
                   >
                     <Icon name="upload" />
-                    发布
+                    {quality?.passed ? "发布" : "人工审核并发布"}
                   </button>
                 ) : null}
               </div>
@@ -1087,7 +1096,7 @@ export default function AdminSeoPage() {
                 <div className="seo-review-grid">
                   <Panel
                     title="发布检查"
-                    copy={`质量分 ${quality?.score ?? 0}`}
+                    copy={`优化参考分 ${quality?.score ?? 0} · 不代表搜索排名`}
                   >
                     <div
                       className={`seo-quality-summary ${quality?.passed ? "passed" : "blocked"}`}
@@ -1097,7 +1106,7 @@ export default function AdminSeoPage() {
                           ? selected.draftRevision
                             ? "可以发布"
                             : "当前线上版本已通过检查"
-                          : "尚不能发布"}
+                          : "需人工确认或继续完善"}
                       </strong>
                       <span>
                         {quality?.metrics.plainTextLength ?? 0} 字 ·{" "}
@@ -1122,8 +1131,7 @@ export default function AdminSeoPage() {
                     {editorialAudit ? (
                       <div className="seo-editorial-audit">
                         <strong>
-                          独立审校
-                          {editorialAudit.passed ? "已通过" : "未通过"}
+                          {quality?.editorialReview ? "AI 原始审校记录 · 管理员已人工确认" : `独立审校${editorialAudit.passed ? "已通过" : "未通过"}`}
                         </strong>
                         <span>{editorialAudit.summary}</span>
                         <small>

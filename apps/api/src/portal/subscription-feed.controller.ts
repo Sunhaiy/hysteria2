@@ -1,4 +1,11 @@
-import { Controller, Get, Param, Query, Res } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Param,
+  Query,
+  Res,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import { PortalService } from './portal.service';
 import { webPublicUrl } from '../common/public-url';
@@ -48,8 +55,14 @@ export class SubscriptionFeedController {
     @Param('token') token: string,
     @Res({ passthrough: true }) response: Response,
     @Query('profile') profile?: string,
+    @Query('mode') mode?: string,
   ) {
-    const feed = await this.portalService.getMihomoSubscription(token);
+    if (mode && !['inline', 'provider'].includes(mode))
+      throw new BadRequestException('订阅模式无效');
+    const feed = await this.portalService.getMihomoSubscription(
+      token,
+      mode === 'inline' ? 'inline' : 'provider',
+    );
     const expiresAt = Math.floor(feed.expiresAt / 1000);
 
     response.set({
@@ -62,5 +75,24 @@ export class SubscriptionFeedController {
       'X-Content-Type-Options': 'nosniff',
     });
     return feed.content;
+  }
+
+  @Get(':token/clash/nodes')
+  async getMihomoProvider(
+    @Param('token') token: string,
+    @Res({ passthrough: true }) response: Response,
+    @Query('scope') scope?: string,
+  ) {
+    response.set({
+      'Content-Type': 'text/yaml; charset=utf-8',
+      'Cache-Control': 'private, no-store, max-age=0',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    if (scope && !['all', 'ai'].includes(scope))
+      throw new BadRequestException('节点分组无效');
+    return this.portalService.getMihomoProvider(
+      token,
+      scope === 'ai' ? 'ai' : 'all',
+    );
   }
 }

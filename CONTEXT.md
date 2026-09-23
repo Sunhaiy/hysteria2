@@ -32,6 +32,13 @@
 - A `SeoArticle` owns separate draft and published revision pointers. Editing,
   AI retry, cover regeneration, and version restore always create a new draft
   revision; public readers only receive the quality-checked published revision.
+  Editorial formatting, keyword placement, images and subjective numeric scores
+  are recommendations, not publication gates. AI factual/intent failures still
+  stop automatic publishing. An authenticated SEO editor can explicitly confirm
+  a specific draft for manual publication; current content checks still reject
+  empty/thin, highly repetitive/duplicate content and absolute service promises.
+  Manual review preserves the prior report, reviewer and time in the revision,
+  and compares the draft pointer again in the publication transaction.
 - New `SeoGenerationJob` snapshots opt into quality-gated automatic publishing from a keyword or explicit
   administrator-provided material/public reference URLs. Material jobs analyze
   their topic before assigning a keyword and use actor-scoped idempotency keys.
@@ -97,3 +104,8 @@
   published article titles; member data and support tickets are not inputs.
 
 See `docs/DOMAIN_MODEL.md` and `docs/adr/` for implementation details.
+
+Clash feeds use isolated HTTP node providers with a 900-second refresh. Existing
+imports need one complete profile refresh; `mode=inline` retains the legacy
+format. Provider refresh does not replace server-side access enforcement. See
+`docs/MIHOMO_PROVIDER_REFRESH.md`.

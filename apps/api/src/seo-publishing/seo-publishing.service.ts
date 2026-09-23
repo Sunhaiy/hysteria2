@@ -430,6 +430,7 @@ export class SeoPublishingService {
     actorId?: string,
     now = new Date(),
     expectedRevisionId?: string,
+    editorialConfirmation?: { confirmed?: boolean; revisionId?: string },
   ) {
     const article = await this.prisma.seoArticle.findUnique({
       where: { id },
@@ -439,8 +440,44 @@ export class SeoPublishingService {
       throw new NotFoundException('没有可发布的文章草稿');
     if (expectedRevisionId && article.draftRevision.id !== expectedRevisionId)
       throw new ConflictException('草稿已被编辑，自动发布已停止');
-    const report = article.draftRevision
+    let report = article.draftRevision
       .qualityReport as unknown as SeoQualityReport;
+    let manualReport: Prisma.InputJsonValue | undefined;
+    if (editorialConfirmation?.confirmed === true) {
+      if (!actorId || !editorialConfirmation.revisionId) {
+        throw new BadRequestException('人工审核发布需要管理员确认具体草稿版本');
+      }
+      if (editorialConfirmation.revisionId !== article.draftRevision.id) {
+        throw new ConflictException('草稿已更新，请重新查看并确认发布');
+      }
+      const revision = article.draftRevision;
+      const prepared = await this.prepareRevision(
+        {
+          ...revision,
+          category: article.category,
+          contentJson: revision.contentJson as Record<string, unknown>,
+          coverImageId: revision.coverImageId ?? undefined,
+          coverAlt: revision.coverAlt ?? undefined,
+        },
+        id,
+      );
+      const fresh = prepared.qualityReport as unknown as SeoQualityReport;
+      if (!fresh.passed || fresh.blockers.length) {
+        throw new BadRequestException(
+          `仍有必须处理的问题：${fresh.blockers.join('；')}`,
+        );
+      }
+      manualReport = {
+        ...fresh,
+        editorialReview: {
+          actorId,
+          reviewedAt: now.toISOString(),
+          revisionId: revision.id,
+          previousReport: revision.qualityReport,
+        },
+      };
+      report = fresh;
+    }
     if (report.passed !== true || report.blockers?.length) {
       throw new BadRequestException('文章尚未通过质量检查');
     }
@@ -489,7 +526,13 @@ export class SeoPublishingService {
       if (actorId) {
         await tx.seoArticleRevision.update({
           where: { id: article.draftRevision!.id },
-          data: { reviewedById: actorId, reviewedAt: now },
+          data: {
+            reviewedById: actorId,
+            reviewedAt: now,
+            ...(manualReport
+              ? { qualityReport: manualReport, qualityScore: report.score }
+              : {}),
+          },
         });
       }
       const updated = await tx.seoArticle.update({

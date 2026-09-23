@@ -1,4 +1,5 @@
 import { stringify } from 'yaml';
+import { createHash } from 'node:crypto';
 import { nodeDisplayName } from './node-display-name';
 
 export type MihomoNode = {
@@ -36,6 +37,76 @@ const aiAutomaticGroup = 'AI 自动优选';
 const aiSelectorGroup = 'AI 服务';
 const mediaGroup = '流媒体';
 const messagingGroup = 'Telegram';
+const allProvider = '素心节点';
+const aiProvider = '素心 AI 节点';
+
+export function buildMihomoProvider(
+  credential: MihomoCredential,
+  nodes: MihomoNode[],
+  scope: 'all' | 'ai' = 'all',
+) {
+  return stringify(
+    { proxies: providerProxies(credential, nodes, scope) },
+    { lineWidth: 0 },
+  );
+}
+
+function providerProxies(
+  credential: MihomoCredential,
+  nodes: MihomoNode[],
+  scope: 'all' | 'ai',
+) {
+  const names = uniqueProxyNames(nodes);
+  const aiOnly = scope === 'ai' && nodes.some(isAiNode);
+  const proxies = nodes.flatMap((node, index) => {
+    if (aiOnly && !isAiNode(node)) return [];
+    return [
+      node.protocol === 'VLESS_REALITY'
+        ? buildVlessProxy(names[index], credential, node)
+        : buildHysteriaProxy(names[index], credential, node),
+    ];
+  });
+  return proxies.length ? proxies : [{ name: '暂无可用节点', type: 'reject' }];
+}
+
+function buildNodeProviders(
+  url: string,
+  credential: MihomoCredential,
+  nodes: MihomoNode[],
+) {
+  return Object.fromEntries(
+    (
+      [
+        ['all', allProvider],
+        ['ai', aiProvider],
+      ] as const
+    ).map(([scope, name]) => {
+      const source = `${url}?scope=${scope}`;
+      const key = createHash('sha256')
+        .update(source)
+        .digest('hex')
+        .slice(0, 24);
+      return [
+        name,
+        {
+          type: 'http',
+          url: source,
+          interval: 900,
+          proxy: 'DIRECT',
+          path: `./proxy-providers/suxin-${key}.yaml`,
+          'health-check': {
+            enable: true,
+            url: healthCheckUrl,
+            interval: 300,
+            lazy: true,
+          },
+          // Bootstrap only: subsequent successful provider downloads replace this list.
+          payload: providerProxies(credential, nodes, scope),
+        },
+      ];
+    }),
+  );
+}
 
 // Upstream's native Mihomo MRS sets; client-side cache and daily refresh.
 const ruleSources = {
@@ -98,6 +169,7 @@ const aiRules = [
 export function buildMihomoProfile(
   credential: MihomoCredential,
   nodes: MihomoNode[],
+  providerUrl?: string,
 ) {
   const names = uniqueProxyNames(nodes);
   const proxies = nodes.map((node, index) =>
@@ -108,6 +180,9 @@ export function buildMihomoProfile(
   const aiProxyNames = nodes.flatMap((node, index) =>
     isAiNode(node) ? [names[index]] : [],
   );
+  const visibleNames = providerUrl ? [] : names;
+  const dynamicAll = providerUrl ? { use: [allProvider] } : {};
+  const dynamicAi = providerUrl ? { use: [aiProvider] } : {};
 
   const proxyGroups: Array<Record<string, unknown>> = [
     {
@@ -116,7 +191,7 @@ export function buildMihomoProfile(
       url: healthCheckUrl,
       interval: 180,
       lazy: true,
-      proxies: names,
+      ...(providerUrl ? dynamicAll : { proxies: names }),
     },
     {
       name: latencyGroup,
@@ -125,16 +200,17 @@ export function buildMihomoProfile(
       interval: 300,
       tolerance: 80,
       lazy: true,
-      proxies: names,
+      ...(providerUrl ? dynamicAll : { proxies: names }),
     },
     {
       name: selectorGroup,
       type: 'select',
-      proxies: [failoverGroup, latencyGroup, ...names, 'DIRECT'],
+      proxies: [failoverGroup, latencyGroup, ...visibleNames, 'DIRECT'],
+      ...dynamicAll,
     },
   ];
 
-  if (aiProxyNames.length) {
+  if (providerUrl || aiProxyNames.length) {
     proxyGroups.push({
       name: aiAutomaticGroup,
       type: 'url-test',
@@ -142,21 +218,25 @@ export function buildMihomoProfile(
       interval: 300,
       tolerance: 80,
       lazy: true,
-      proxies: aiProxyNames,
+      ...(providerUrl ? dynamicAi : { proxies: aiProxyNames }),
     });
   }
   proxyGroups.push({
     name: aiSelectorGroup,
     type: 'select',
-    proxies: aiProxyNames.length
-      ? [aiAutomaticGroup, ...aiProxyNames]
-      : [selectorGroup],
+    ...dynamicAi,
+    proxies: providerUrl
+      ? [aiAutomaticGroup]
+      : aiProxyNames.length
+        ? [aiAutomaticGroup, ...aiProxyNames]
+        : [selectorGroup],
   });
   for (const name of [mediaGroup, messagingGroup]) {
     proxyGroups.push({
       name,
       type: 'select',
-      proxies: [selectorGroup, latencyGroup, failoverGroup, ...names],
+      proxies: [selectorGroup, latencyGroup, failoverGroup, ...visibleNames],
+      ...dynamicAll,
     });
   }
 
@@ -172,7 +252,12 @@ export function buildMihomoProfile(
       'store-selected': true,
       'store-fake-ip': true,
     },
-    proxies,
+    proxies: providerUrl ? [] : proxies,
+    ...(providerUrl
+      ? {
+          'proxy-providers': buildNodeProviders(providerUrl, credential, nodes),
+        }
+      : {}),
     'proxy-groups': proxyGroups,
     'rule-providers': buildRuleProviders(),
     rules: [

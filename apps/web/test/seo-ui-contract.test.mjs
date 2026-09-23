@@ -105,7 +105,9 @@ test("published articles initialize preview and quality state without creating a
     /selected\?\.draftRevision \?\? selected\?\.publishedRevision \?\? null/,
   );
   assert.match(editor, /__html: currentRevision\.contentHtml/);
-  assert.match(editor, /!selected\.draftRevision \|\| !quality\?\.passed/);
+  assert.match(editor, /busy \|\| !selected\.draftRevision/);
+  assert.match(editor, /人工审核并发布/);
+  assert.match(editor, /confirmEditorialReview: true, revisionId: selected\.draftRevision\?\.id/);
   assert.match(editor, /onClick=\{\(\) => setView\(item\.value\)\}/);
   assert.match(editor, /独立审校/);
   assert.match(editor, /事实依据/);

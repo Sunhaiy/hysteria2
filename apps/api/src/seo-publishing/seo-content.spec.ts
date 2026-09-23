@@ -186,7 +186,7 @@ describe('SEO content boundary', () => {
     ]);
   });
 
-  it('blocks body images without meaningful alternative text', () => {
+  it('recommends meaningful alternative text for body images', () => {
     const repeated = '这是用于说明连接排查步骤的有效正文内容。'.repeat(90);
     const report = evaluateSeoDraft({
       title: 'Windows 客户端连接失败完整排查指南',
@@ -231,7 +231,7 @@ describe('SEO content boundary', () => {
     });
 
     expect(report.passed).toBe(false);
-    expect(report.blockers).toContain('正文图片必须填写替代文本');
+    expect(report.warnings).toContain('正文图片建议填写替代文本');
   });
 
   it('blocks unverifiable absolute service promises', () => {
@@ -285,7 +285,7 @@ describe('SEO content boundary', () => {
     expect(report.blockers).toContain('正文包含无法核实的绝对化承诺');
   });
 
-  it('blocks skipped or unsupported heading levels', () => {
+  it('recommends sequential heading levels', () => {
     const repeated = '按照客户端、订阅状态与本地网络顺序完成排查。'.repeat(90);
     const report = evaluateSeoDraft({
       title: '客户端连接失败完整排查指南',
@@ -338,8 +338,8 @@ describe('SEO content boundary', () => {
     });
 
     expect(report.passed).toBe(false);
-    expect(report.blockers).toContain(
-      '正文标题必须从二级标题开始，并按 H2 到 H4 逐级排列',
+    expect(report.warnings).toContain(
+      '正文标题建议从二级标题开始，并按 H2 到 H4 逐级排列',
     );
   });
 
@@ -409,8 +409,10 @@ describe('SEO content boundary', () => {
     expect(report.blockers).toContain(
       '正文存在大量重复句子，不能通过重复表达凑字数',
     );
-    expect(report.blockers).toContain('SEO 标题与现有文章重复');
-    expect(report.blockers).toContain('SEO 描述与现有文章重复');
+    expect(report.warnings).toContain('SEO 标题与现有文章重复，建议区分主题');
+    expect(report.warnings).toContain(
+      'SEO 描述与现有文章重复，建议突出本文内容',
+    );
   });
 
   it('merges independent editorial audit findings into the publish gate', () => {

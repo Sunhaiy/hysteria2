@@ -41,7 +41,7 @@ describe('SEO stage recovery', () => {
       intentCoverage: 90,
       evidenceCoverage: 90,
       actionabilityScore: 90,
-      originalityScore: 90,
+      originalityScore: 79,
     };
     const complete = jest
       .fn()
@@ -91,6 +91,7 @@ describe('SEO stage recovery', () => {
     expect(complete).toHaveBeenCalledTimes(5);
     expect(result.article.relatedArticleSlugs).toEqual(['real-guide']);
     expect(result.article.suggestedSlug).toBe('network-timeout');
+    expect(result.article.audit.passed).toBe(true);
     for (let index = 1; index <= 5; index += 1) {
       expect(complete).toHaveBeenNthCalledWith(
         index,

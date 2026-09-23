@@ -2,6 +2,45 @@ import { SubscriptionFeedController } from './subscription-feed.controller';
 import { webPublicUrl } from '../common/public-url';
 
 describe('SubscriptionFeedController', () => {
+  it('validates provider scopes and subscription modes and prevents shared caching', async () => {
+    const service = {
+      getMihomoProvider: jest.fn().mockResolvedValue('proxies: []'),
+      getMihomoSubscription: jest
+        .fn()
+        .mockResolvedValue({ content: 'inline', title: 'Test', expiresAt: 0 }),
+    };
+    const controller = new SubscriptionFeedController(service as never);
+    const response = { set: jest.fn() };
+    await expect(
+      controller.getMihomoProvider('token', response as never, 'bad'),
+    ).rejects.toThrow('节点分组无效');
+    expect(service.getMihomoProvider).not.toHaveBeenCalled();
+    await controller.getMihomoProvider('token', response as never, 'ai');
+    expect(service.getMihomoProvider).toHaveBeenCalledWith('token', 'ai');
+    expect(response.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        'Cache-Control': 'private, no-store, max-age=0',
+      }),
+    );
+    await expect(
+      controller.getMihomoSubscription(
+        'token',
+        response as never,
+        undefined,
+        'bad',
+      ),
+    ).rejects.toThrow('订阅模式无效');
+    await controller.getMihomoSubscription(
+      'token',
+      response as never,
+      undefined,
+      'inline',
+    );
+    expect(service.getMihomoSubscription).toHaveBeenCalledWith(
+      'token',
+      'inline',
+    );
+  });
   it('brands only versioned import links and exposes the login page', async () => {
     const feed = {
       content: 'proxies: []',

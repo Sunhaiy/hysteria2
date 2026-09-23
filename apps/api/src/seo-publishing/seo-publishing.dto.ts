@@ -221,6 +221,17 @@ export class SaveSeoArticleDto {
   coverAlt?: string;
 }
 
+export class PublishSeoArticleDto {
+  @IsOptional()
+  @IsBoolean()
+  confirmEditorialReview?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  revisionId?: string;
+}
+
 export class ScheduleSeoArticleDto {
   @IsDateString()
   scheduledAt!: string;

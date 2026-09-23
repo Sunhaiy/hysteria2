@@ -392,15 +392,15 @@ export function evaluateSeoDraft(input: {
     /(?:保姆级|全网最全|秒懂|必看)(?:教程|指南)?/i,
   ].some((pattern) => pattern.test(plainText));
   const compactLength = plainText.replace(/\s+/g, '').length;
-  if (compactLength < 600) {
+  if (compactLength < 120) {
     blockers.push('正文过短，尚不足以完整回答搜索问题');
   } else if (compactLength < 1_000) {
     warnings.push('正文较短，请确认已覆盖必要步骤、结果判断和适用限制');
   }
-  if (headingCount < 2) blockers.push('正文至少需要两个二级标题');
-  if (paragraphCount < 4) blockers.push('正文至少需要四个有效段落');
+  if (headingCount < 2) warnings.push('建议用二级标题划分内容');
+  if (paragraphCount < 4) warnings.push('建议分段呈现内容，便于阅读');
   if (actionListCount < 1) {
-    blockers.push('正文至少需要一个可执行的步骤或检查清单');
+    warnings.push('教程类文章建议使用步骤或检查清单');
   }
   if (
     invalidHeading ||
@@ -409,42 +409,49 @@ export function evaluateSeoDraft(input: {
       (level, index) => index > 0 && level > headingLevels[index - 1] + 1,
     )
   ) {
-    blockers.push('正文标题必须从二级标题开始，并按 H2 到 H4 逐级排列');
+    warnings.push('正文标题建议从二级标题开始，并按 H2 到 H4 逐级排列');
   }
-  if (internalLinkCount < 1) blockers.push('正文至少需要一个自然的站内链接');
+  if (internalLinkCount < 1) warnings.push('建议补充相关的站内链接');
+  if (
+    !input.title.trim() ||
+    !input.seoTitle.trim() ||
+    !input.metaDescription.trim()
+  ) {
+    blockers.push('文章标题、SEO 标题和 SEO 描述不能为空');
+  }
   if (input.title.trim().length < 8 || input.title.trim().length > 80) {
-    blockers.push('标题长度需要保持在 8 到 80 个字符之间');
+    warnings.push('标题建议保持在 8 到 80 个字符之间');
   }
   if (input.excerpt.trim().length < 20 || input.excerpt.trim().length > 300) {
-    blockers.push('摘要长度需要保持在 20 到 300 个字符之间');
+    warnings.push('摘要建议保持在 20 到 300 个字符之间');
   }
   if (input.seoTitle.trim().length < 8 || input.seoTitle.trim().length > 70) {
-    blockers.push('SEO 标题长度需要保持在 8 到 70 个字符之间');
+    warnings.push('SEO 标题建议保持在 8 到 70 个字符之间');
   }
   if (
     input.metaDescription.trim().length < 40 ||
     input.metaDescription.trim().length > 180
   ) {
-    blockers.push('SEO 描述长度需要保持在 40 到 180 个字符之间');
+    warnings.push('SEO 描述建议保持在 40 到 180 个字符之间');
   }
   if (keyword.length < 2) {
-    blockers.push('主关键词至少需要两个字符');
+    warnings.push('建议填写清晰的主关键词');
   } else {
     if (
       !normalize(input.title).includes(keyword) ||
       !normalize(input.seoTitle).includes(keyword)
     ) {
-      blockers.push('文章标题和 SEO 标题都需要自然包含主关键词');
+      warnings.push('建议让文章标题和 SEO 标题自然体现主关键词，无需精确重复');
     }
     if (!normalize(input.metaDescription).includes(keyword)) {
-      blockers.push('SEO 描述需要自然包含主关键词');
+      warnings.push('建议让 SEO 描述自然体现主题，无需精确重复主关键词');
     }
     if (!firstAnswer.includes(keyword)) {
       warnings.push('建议在正文开头自然回答并出现主关键词');
     }
   }
   if (uniqueRelatedKeywords.size < 2) {
-    blockers.push('至少需要两个不重复的相关关键词');
+    warnings.push('可补充相关关键词，不必为了数量重复填写');
   }
   if (uniqueTags.size < 2) warnings.push('建议填写至少两个不重复标签');
   if (
@@ -452,19 +459,19 @@ export function evaluateSeoDraft(input: {
       (existing) => normalize(existing) === normalize(input.seoTitle),
     )
   ) {
-    blockers.push('SEO 标题与现有文章重复');
+    warnings.push('SEO 标题与现有文章重复，建议区分主题');
   }
   if (
     input.existingMetaDescriptions?.some(
       (existing) => normalize(existing) === normalize(input.metaDescription),
     )
   ) {
-    blockers.push('SEO 描述与现有文章重复');
+    warnings.push('SEO 描述与现有文章重复，建议突出本文内容');
   }
   if (input.coverImageId && !input.coverAlt?.trim()) {
-    blockers.push('封面图片必须填写替代文本');
+    warnings.push('封面图片建议填写替代文本');
   }
-  if (bodyImageWithoutAlt) blockers.push('正文图片必须填写替代文本');
+  if (bodyImageWithoutAlt) warnings.push('正文图片建议填写替代文本');
   if (maximumSimilarity >= 0.72) {
     blockers.push('正文与现有文章过于相似，请改为更新原文章');
   }
@@ -474,11 +481,11 @@ export function evaluateSeoDraft(input: {
   if (sentences.length >= 8 && sentenceDiversity < 0.55) {
     blockers.push('正文存在大量重复句子，不能通过重复表达凑字数');
   }
-  if (emptyBoilerplate) blockers.push('正文包含空泛或标题党式套话');
+  if (emptyBoilerplate) warnings.push('建议精简空泛或标题党式套话');
   if (!input.coverImageId) warnings.push('建议补充 1600×900 的文章封面');
   const score = Math.max(0, 100 - blockers.length * 20 - warnings.length * 5);
   return {
-    passed: blockers.length === 0 && score >= 80,
+    passed: blockers.length === 0,
     score,
     blockers,
     warnings,

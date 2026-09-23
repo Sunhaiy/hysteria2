@@ -11,7 +11,7 @@ import { SettingsService } from '../settings/settings.service';
 import { buildPortalAlerts } from './portal-alerts';
 import { EntitlementService } from '../entitlement/entitlement.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { buildMihomoProfile } from './mihomo-profile';
+import { buildMihomoProfile, buildMihomoProvider } from './mihomo-profile';
 import { nodeDisplayName } from './node-display-name';
 import { apiPublicUrl } from '../common/public-url';
 import {
@@ -931,7 +931,10 @@ export class PortalService {
     };
   }
 
-  async getMihomoSubscription(tokenValue: string) {
+  async getMihomoSubscription(
+    tokenValue: string,
+    mode: 'provider' | 'inline' = 'provider',
+  ) {
     const bundle = await this.getSubscriptionAccessBundle(tokenValue);
     if (bundle.nodes.length === 0) {
       throw new NotFoundException('No active nodes are bound to this plan');
@@ -940,13 +943,41 @@ export class PortalService {
     const site = await this.settings.getSiteInfo();
     const consumedBytes = this.getConsumedBytes(bundle.subscription);
     return {
-      content: buildMihomoProfile(bundle.token, bundle.nodes),
+      content: buildMihomoProfile(
+        bundle.token,
+        bundle.nodes,
+        mode === 'inline'
+          ? undefined
+          : `${apiPublicUrl()}/subscribe/${encodeURIComponent(tokenValue)}/clash/nodes`,
+      ),
       title: site.name,
       expiresAt: new Date(bundle.subscription.endsAt).getTime(),
       consumedBytes,
       totalBytes: consumedBytes + bundle.trafficRemaining,
       nodeCount: bundle.nodes.length,
     };
+  }
+
+  async getMihomoProvider(tokenValue: string, scope: 'all' | 'ai') {
+    try {
+      const bundle = await this.getSubscriptionAccessBundle(tokenValue);
+      return buildMihomoProvider(bundle.token, bundle.nodes, scope);
+    } catch (error) {
+      // A valid identity without access must clear cached nodes; an outage must not.
+      if (
+        error instanceof NotFoundException &&
+        this.prisma &&
+        tokenValue.length >= 8 &&
+        tokenValue.length <= 256
+      ) {
+        const token = await this.prisma.accessToken.findUnique({
+          where: { token: tokenValue },
+        });
+        if (token && !token.revokedAt)
+          return buildMihomoProvider(token, [], scope);
+      }
+      throw error;
+    }
   }
 
   private async getSubscriptionAccessBundle(tokenValue: string) {

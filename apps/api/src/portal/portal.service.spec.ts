@@ -2,6 +2,48 @@ import { NotFoundException } from '@nestjs/common';
 import { PortalService } from './portal.service';
 
 describe('PortalService VLESS + REALITY access', () => {
+  it('rechecks provider access, distinguishes exhausted access from revoked tokens and outages', async () => {
+    const store = {
+      getAccessBundleByToken: jest
+        .fn()
+        .mockRejectedValue(new NotFoundException()),
+    };
+    const prisma = {
+      accessToken: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ token: 'valid-token', revokedAt: null }),
+      },
+    };
+    const service = new PortalService(
+      store as never,
+      {} as never,
+      {} as never,
+      undefined,
+      prisma as never,
+    );
+    await expect(
+      service.getMihomoProvider('valid-token', 'all'),
+    ).resolves.toContain('type: reject');
+    prisma.accessToken.findUnique.mockResolvedValueOnce({
+      token: 'valid-token',
+      revokedAt: new Date(),
+    });
+    await expect(
+      service.getMihomoProvider('valid-token', 'all'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    store.getAccessBundleByToken.mockRejectedValueOnce(
+      new Error('database unavailable'),
+    );
+    await expect(
+      service.getMihomoProvider('valid-token', 'all'),
+    ).rejects.toThrow('database unavailable');
+    expect(store.getAccessBundleByToken).toHaveBeenCalledTimes(3);
+    expect(prisma.accessToken.findUnique).toHaveBeenCalledTimes(2);
+    await expect(
+      service.getMihomoProvider('short', 'all'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
   it('never emits localhost subscription URLs when production public URL configuration is missing', async () => {
     const previousNodeEnv = process.env.NODE_ENV;
     const previousPublicUrl = process.env.API_PUBLIC_URL;

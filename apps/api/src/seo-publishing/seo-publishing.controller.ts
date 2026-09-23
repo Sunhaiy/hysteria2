@@ -26,6 +26,7 @@ import {
   FetchSeoModelsDto,
   GenerateSeoArticleDto,
   SaveSeoArticleDto,
+  PublishSeoArticleDto,
   ScheduleSeoArticleDto,
   SeoListQueryDto,
   UpdateSeoKeywordDto,
@@ -119,9 +120,13 @@ export class AdminSeoPublishingController {
   @Post('articles/:id/publish')
   publishArticle(
     @Param('id') id: string,
+    @Body() body: PublishSeoArticleDto,
     @CurrentPrincipal() principal: SessionPrincipal,
   ) {
-    return this.seo.publishArticle(id, principal.sub);
+    return this.seo.publishArticle(id, principal.sub, new Date(), undefined, {
+      confirmed: body?.confirmEditorialReview,
+      revisionId: body?.revisionId,
+    });
   }
 
   @Post('articles/:id/schedule')

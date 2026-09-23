@@ -1,5 +1,9 @@
 import { parse } from 'yaml';
-import { buildMihomoProfile, type MihomoNode } from './mihomo-profile';
+import {
+  buildMihomoProfile,
+  buildMihomoProvider,
+  type MihomoNode,
+} from './mihomo-profile';
 
 type ParsedMihomoProfile = {
   proxies: Array<Record<string, unknown> & { name: string }>;
@@ -326,5 +330,50 @@ describe('buildMihomoProfile', () => {
     expect(() =>
       buildMihomoProfile(credential, [{ ...nodes[0], realityPublicKey: null }]),
     ).toThrow('VLESS REALITY node US Primary is incomplete');
+  });
+
+  it('refreshes dynamic providers independently with isolated account cache paths', () => {
+    const dynamic = (url: string) =>
+      parse(buildMihomoProfile(credential, nodes, url)) as {
+        proxies: unknown[];
+        'proxy-providers': Record<
+          string,
+          { interval: number; url: string; path: string; payload: unknown[] }
+        >;
+        'proxy-groups': { use?: string[]; proxies?: string[] }[];
+        rules: string[];
+      };
+    const first = dynamic('https://example.test/subscribe/first/clash/nodes');
+    const second = dynamic('https://example.test/subscribe/second/clash/nodes');
+    expect(first.proxies).toEqual([]);
+    expect(first.rules).toEqual(
+      parseProfile(buildMihomoProfile(credential, nodes)).rules,
+    );
+    const all = first['proxy-providers']['素心节点'];
+    expect(all.interval).toBe(900);
+    expect(all.url).toBe(
+      'https://example.test/subscribe/first/clash/nodes?scope=all',
+    );
+    expect(all.path).not.toBe(second['proxy-providers']['素心节点'].path);
+    expect(all.payload).toEqual(
+      parseProfile(buildMihomoProfile(credential, nodes)).proxies,
+    );
+    expect(first['proxy-groups'].every((group) => group.use?.length)).toBe(
+      true,
+    );
+  });
+
+  it('preserves transport and names across AI subsets and rejects empty access', () => {
+    const all = parseProfile(buildMihomoProvider(credential, nodes)).proxies;
+    expect(
+      parseProfile(buildMihomoProvider(credential, nodes, 'ai')).proxies,
+    ).toEqual([all[0]]);
+    const japan = [nodes[1]];
+    expect(buildMihomoProvider(credential, japan, 'ai')).toBe(
+      buildMihomoProvider(credential, japan),
+    );
+    expect(parseProfile(buildMihomoProvider(credential, [])).proxies).toEqual([
+      { name: '暂无可用节点', type: 'reject' },
+    ]);
   });
 });

@@ -144,7 +144,7 @@ describe('SeoAiAdapter', () => {
       'metadata',
       'audit',
     ]);
-    expect(result.modelSnapshot.version).toBe('seo-zh-reader-first-v5');
+    expect(result.modelSnapshot.version).toBe('seo-zh-editorial-review-v6');
     expect(result.modelSnapshot.evidenceCount).toBe(1);
     expect(result.modelSnapshot.audit.passed).toBe(true);
 
@@ -157,7 +157,7 @@ describe('SeoAiAdapter', () => {
     expect(prompts[0]).toContain('目标搜索意图：定位连接失败原因');
     expect(prompts[1]).toContain('依据已经核验的计划写正文');
     expect(prompts[2]).toContain('正文已经定稿');
-    expect(prompts[3]).toContain('独立于作者的严格技术编辑');
+    expect(prompts[3]).toContain('独立于作者的实用技术编辑');
   });
 
   it('rejects site-specific claims without an exact public source quote', async () => {
