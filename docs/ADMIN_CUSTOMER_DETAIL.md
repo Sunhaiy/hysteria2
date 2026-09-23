@@ -2,6 +2,12 @@
 
 详情页默认总览；套餐、图表、管理抽屉分别由独立组件负责。图表使用每日聚合接口，默认 30 天，可选 7/90 天。显示日期统一为 Asia/Shanghai；永久权益显示“永久有效”。
 
+## 使用明细
+
+用户详情的“使用明细”标签独立按需加载采集批次，不用图表的每日合计替代明细。支持北京时间日期筛选、分页、最新采集或计费量排序，显示节点名称/地址、上传/下载、实际传输、历史倍率、计费量与超额度量。采集时间不是下载开始时间，接口不提供访问网站或文件明细。
+
+`GET /api/admin/customers/:id/traffic?date=YYYY-MM-DD&sort=latest&page=1&pageSize=20` 保留原分页调用；date 可省略，sort 支持 latest/largest。日期按 Asia/Shanghai 自然日过滤且拒绝无效日期。largest 按已保存的 accountedBytes 降序，缺失计费快照的历史记录排最后；历史倍率缺失显示“历史记录未保存”，不套用当前节点倍率。接口始终按路由用户过滤，仍受管理员认证保护。
+
 ## 权益投影
 
 `GET /api/admin/customers/:id/entitlements?scope=current` 返回全部当前和预约权益，不受历史分页影响。`scope=history&page=1&pageSize=10` 按需读取已取消、已过期权益。不指定 scope 保持原分页接口行为。

@@ -8,6 +8,7 @@ import { OrderRefundButton } from "@/components/order-refund-button";
 import { CustomerMemberships } from "@/components/customer-memberships";
 import { CustomerManagement } from "@/components/customer-management";
 import { CustomerTrafficChart } from "@/components/customer-traffic-chart";
+import { CustomerTrafficDetails } from "@/components/customer-traffic-details";
 import { DataTable } from "@/components/data-table";
 import { Icon } from "@/components/icon";
 import { CustomerOverview } from "@/components/customer-overview";
@@ -99,7 +100,7 @@ type Timeline = {
     afterRemainingBytes?: string;
   };
 };
-type View = "overview" | "entitlements" | "access" | "finance" | "timeline";
+type View = "overview" | "traffic" | "entitlements" | "access" | "finance" | "timeline";
 
 const emptyPage = <T,>(): PaginatedResponse<T> => ({
   items: [],
@@ -165,7 +166,7 @@ export default function CustomerDetailPage() {
   }, [loadSummary, reloadKey]);
 
   useEffect(() => {
-    if (!token || !params.id || view === "overview" || view === "entitlements")
+    if (!token || !params.id || view === "overview" || view === "entitlements" || view === "traffic")
       return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
@@ -441,6 +442,7 @@ export default function CustomerDetailPage() {
           {(
             [
               ["overview", "总览"],
+              ["traffic", "使用明细"],
               ["entitlements", "套餐与流量"],
               ["access", "连接与订阅"],
               ["finance", "订单与余额"],
@@ -497,6 +499,7 @@ export default function CustomerDetailPage() {
             </aside>
           </div>
         ) : null}
+        {view === "traffic" ? <CustomerTrafficDetails key={customer.id} userId={customer.id} token={token} /> : null}
         {view === "entitlements" ? (
           <CustomerMemberships
             userId={customer.id}

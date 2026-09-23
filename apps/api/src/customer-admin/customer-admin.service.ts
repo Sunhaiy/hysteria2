@@ -27,6 +27,11 @@ import { postWalletEntry } from '../wallet/wallet-ledger';
 import { EntitlementService } from '../entitlement/entitlement.service';
 import { closeGroupBuyParticipationForAccountDeletion } from '../group-buy/group-buy-account-cleanup';
 
+export interface CustomerTrafficQuery extends PageQuery {
+  date?: string;
+  sort?: string;
+}
+
 export interface CustomerQuery extends PageQuery {
   q?: string;
   status?: string;
@@ -821,18 +826,45 @@ export class CustomerAdminService {
     });
   }
 
-  async getCustomerTraffic(id: string, query: PageQuery) {
+  async getCustomerTraffic(id: string, query: CustomerTrafficQuery) {
     await this.requireCustomer(id);
     const { page, pageSize, skip } = parsePage(query);
-    const where = { userId: id };
+    const where: Prisma.UsageRollupWhereInput = { userId: id };
+    if (query.date) {
+      const date = new Date(`${query.date}T00:00:00Z`);
+      if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(query.date) ||
+        !Number.isFinite(date.getTime()) ||
+        date.toISOString().slice(0, 10) !== query.date
+      ) {
+        throw new BadRequestException('日期无效，请使用 YYYY-MM-DD 格式');
+      }
+      const start = date.getTime() - 8 * 60 * 60 * 1000;
+      where.bucketStart = {
+        gte: new Date(start),
+        lt: new Date(start + 86400000),
+      };
+    }
+    if (query.sort && !['latest', 'largest'].includes(query.sort)) {
+      throw new BadRequestException('排序方式无效');
+    }
     const [rollups, total] = await Promise.all([
       this.prisma.usageRollup.findMany({
         where,
         include: {
-          node: true,
-          allocations: { include: { quotaBucket: true } },
+          node: { select: { label: true, hostname: true } },
+          allocations: {
+            select: { quotaBucketId: true, accountedBytes: true },
+          },
         },
-        orderBy: [{ bucketStart: 'desc' }, { id: 'desc' }],
+        orderBy:
+          query.sort === 'largest'
+            ? [
+                { accountedBytes: { sort: 'desc', nulls: 'last' } },
+                { bucketStart: 'desc' },
+                { id: 'desc' },
+              ]
+            : [{ bucketStart: 'desc' }, { id: 'desc' }],
         skip,
         take: pageSize,
       }),
@@ -843,6 +875,14 @@ export class CustomerAdminService {
         id: rollup.id,
         nodeId: rollup.nodeId,
         nodeLabel: rollup.node.label,
+        nodeAddress: rollup.node.hostname,
+        txBytes: Number(rollup.txBytes),
+        rxBytes: Number(rollup.rxBytes),
+        multiplier:
+          rollup.multiplierBasisPoints == null
+            ? null
+            : rollup.multiplierBasisPoints / 10000,
+        overageBytes: Number(rollup.overageBytes),
         bucketStart: rollup.bucketStart.toISOString(),
         physicalBytes: Number(rollup.txBytes + rollup.rxBytes),
         accountedBytes: Number(

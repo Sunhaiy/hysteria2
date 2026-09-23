@@ -31,6 +31,7 @@ import {
 import {
   CustomerAdminService,
   type CustomerQuery,
+  type CustomerTrafficQuery,
 } from './customer-admin.service';
 import type { DailyTrafficQuery } from './customer-traffic.service';
 
@@ -108,7 +109,7 @@ export class CustomerAdminController {
   }
 
   @Get(':id/traffic')
-  traffic(@Param('id') id: string, @Query() query: PageQuery) {
+  traffic(@Param('id') id: string, @Query() query: CustomerTrafficQuery) {
     return this.customers.getCustomerTraffic(id, query);
   }
 
