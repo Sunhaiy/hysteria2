@@ -973,6 +973,11 @@ export class CreateRedemptionCodeDto {
   @IsOptional()
   @IsInt()
   @Min(1)
+  maxUsesPerUser?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
   count?: number;
 
   @IsOptional()
@@ -1015,6 +1020,11 @@ export class PurchaseTrafficPackDto {
 }
 
 export class UpdateRedemptionCodeDto {
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxUsesPerUser?: number;
+
   @IsOptional()
   @IsIn(['active', 'void'])
   status?: 'active' | 'void';

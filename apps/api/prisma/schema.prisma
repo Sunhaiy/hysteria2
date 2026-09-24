@@ -908,6 +908,7 @@ model RedemptionCode {
   discountCents        Int?
   planMode             RedemptionPlanMode   @default(RENEW)
   maxUses              Int                  @default(1)
+  maxUsesPerUser       Int                  @default(1)
   usedCount            Int                  @default(0)
   note                 String?
   expiresAt            DateTime?
@@ -934,11 +935,12 @@ model RedemptionUse {
   codeId     String
   userId     String
   orderId    String?
+  useNumber  Int            @default(1)
   redeemedAt DateTime       @default(now())
   code       RedemptionCode @relation(fields: [codeId], references: [id], onDelete: Cascade)
   user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([codeId, userId])
+  @@unique([codeId, userId, useNumber])
   @@index([codeId, redeemedAt])
 }
 

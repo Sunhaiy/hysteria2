@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { recordRedemptionUse } from '../commerce/redemption-usage';
 import {
   BadRequestException,
   ConflictException,
@@ -2188,6 +2189,7 @@ export class ControlPlaneStoreService {
     discountPercent?: number;
     discountCents?: number;
     maxUses?: number;
+    maxUsesPerUser?: number;
     count?: number;
     note?: string;
     expiresAt?: string;
@@ -2226,6 +2228,9 @@ export class ControlPlaneStoreService {
     }
 
     const maxUses = input.maxUses ?? 1;
+    const maxUsesPerUser = input.maxUsesPerUser ?? 1;
+    if (!Number.isSafeInteger(maxUsesPerUser) || maxUsesPerUser < 1)
+      throw new BadRequestException('每人使用次数必须为正整数');
     if (maxUses < 1) {
       throw new BadRequestException('使用次数至少为 1');
     }
@@ -2348,6 +2353,7 @@ export class ControlPlaneStoreService {
       discountCents:
         input.kind === 'discount' ? (input.discountCents ?? null) : null,
       maxUses,
+      maxUsesPerUser,
       note: input.note,
       expiresAt,
       createdById: input.createdById,
@@ -2406,8 +2412,13 @@ export class ControlPlaneStoreService {
 
   async patchRedemptionCode(
     codeId: string,
-    input: { status?: 'active' | 'void' },
+    input: { status?: 'active' | 'void'; maxUsesPerUser?: number },
   ) {
+    if (
+      input.maxUsesPerUser !== undefined &&
+      (!Number.isSafeInteger(input.maxUsesPerUser) || input.maxUsesPerUser < 1)
+    )
+      throw new BadRequestException('每人使用次数必须为正整数');
     const current = await this.prisma.redemptionCode.findUnique({
       where: { id: codeId },
       include: {
@@ -2445,6 +2456,7 @@ export class ControlPlaneStoreService {
       const updated = await this.prisma.redemptionCode.update({
         where: { id: codeId },
         data: this.withDefinedValues({
+          maxUsesPerUser: input.maxUsesPerUser,
           status: input.status
             ? this.toDbRedemptionCodeStatus(input.status)
             : undefined,
@@ -2556,17 +2568,20 @@ export class ControlPlaneStoreService {
           if (code.usedCount >= code.maxUses)
             throw new BadRequestException('兑换码已用完');
 
-          // One use per user per code.
-          const priorUse = await tx.redemptionUse.findUnique({
-            where: { codeId_userId: { codeId: code.id, userId } },
+          const priorUse = await tx.redemptionUse.count({
+            where: { codeId: code.id, userId },
           });
-          if (priorUse) throw new BadRequestException('你已经使用过这张兑换码');
+          if (priorUse >= code.maxUsesPerUser)
+            throw new BadRequestException(
+              '你已达到这张兑换码的每人使用次数上限',
+            );
 
           const reserved = await tx.redemptionCode.updateMany({
             where: {
               id: code.id,
               status: RedemptionCodeStatus.ACTIVE,
-              usedCount: { lt: code.maxUses },
+              usedCount: code.usedCount,
+              maxUsesPerUser: code.maxUsesPerUser,
             },
             data: { usedCount: { increment: 1 } },
           });
@@ -2601,13 +2616,15 @@ export class ControlPlaneStoreService {
               userId,
               amountCents: code.amountCents,
               kind: 'TOPUP',
-              idempotencyKey: `redemption:${code.id}`,
+              idempotencyKey: `redemption:${code.id}:${userId}:${priorUse + 1}`,
               note: `兑换码充值 ${code.code}`,
             });
           }
 
-          await tx.redemptionUse.create({
-            data: { codeId: code.id, userId, orderId: order?.id ?? null },
+          await recordRedemptionUse(tx, {
+            codeId: code.id,
+            userId,
+            orderId: order?.id ?? null,
           });
 
           if (onApplied) {
@@ -2748,10 +2765,10 @@ export class ControlPlaneStoreService {
     if (code.expiresAt && code.expiresAt.getTime() <= Date.now()) {
       throw new BadRequestException('折扣码已过期');
     }
-    const priorUse = await tx.redemptionUse.findUnique({
-      where: { codeId_userId: { codeId: code.id, userId } },
+    const priorUse = await tx.redemptionUse.count({
+      where: { codeId: code.id, userId },
     });
-    if (priorUse) {
+    if (priorUse >= code.maxUsesPerUser) {
       throw new BadRequestException('你已经使用过这张折扣码');
     }
 
@@ -2867,16 +2884,19 @@ export class ControlPlaneStoreService {
             where: { id: discountCodeId },
           });
           if (discountRecord) {
-            await tx.redemptionUse.create({
-              data: {
-                codeId: discountRecord.id,
-                userId,
-                orderId: order.id,
-              },
+            await recordRedemptionUse(tx, {
+              codeId: discountRecord.id,
+              userId,
+              orderId: order.id,
             });
             const nextUsed = discountRecord.usedCount + 1;
-            await tx.redemptionCode.update({
-              where: { id: discountRecord.id },
+            const updatedUses = await tx.redemptionCode.updateMany({
+              where: {
+                id: discountRecord.id,
+                usedCount: discountRecord.usedCount,
+                AND: [{ usedCount: { lt: discountRecord.maxUses } }],
+                status: RedemptionCodeStatus.ACTIVE,
+              },
               data: {
                 usedCount: nextUsed,
                 status:
@@ -2887,6 +2907,8 @@ export class ControlPlaneStoreService {
                 redeemedAt: timestamp,
               },
             });
+            if (updatedUses.count !== 1)
+              throw new ConflictException('兑换码发生并发兑换，请重试');
           }
         }
       });
@@ -3058,12 +3080,19 @@ export class ControlPlaneStoreService {
             where: { id: discountCodeId },
           });
           if (discountRecord) {
-            await tx.redemptionUse.create({
-              data: { codeId: discountRecord.id, userId, orderId: order.id },
+            await recordRedemptionUse(tx, {
+              codeId: discountRecord.id,
+              userId,
+              orderId: order.id,
             });
             const nextUsed = discountRecord.usedCount + 1;
-            await tx.redemptionCode.update({
-              where: { id: discountRecord.id },
+            const updatedUses = await tx.redemptionCode.updateMany({
+              where: {
+                id: discountRecord.id,
+                usedCount: discountRecord.usedCount,
+                AND: [{ usedCount: { lt: discountRecord.maxUses } }],
+                status: RedemptionCodeStatus.ACTIVE,
+              },
               data: {
                 usedCount: nextUsed,
                 status:
@@ -3074,6 +3103,8 @@ export class ControlPlaneStoreService {
                 redeemedAt: timestamp,
               },
             });
+            if (updatedUses.count !== 1)
+              throw new ConflictException('兑换码发生并发兑换，请重试');
           }
         }
       });
@@ -4008,6 +4039,7 @@ export class ControlPlaneStoreService {
       discountCents: code.discountCents,
       planMode: code.planMode.toLowerCase(),
       maxUses: code.maxUses,
+      maxUsesPerUser: code.maxUsesPerUser,
       usedCount: code.usedCount,
       note: code.note,
       expiresAt: code.expiresAt?.toISOString() ?? null,

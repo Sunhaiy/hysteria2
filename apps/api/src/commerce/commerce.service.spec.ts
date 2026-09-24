@@ -1363,7 +1363,7 @@ describe('CommerceService checkout', () => {
         }),
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
-      redemptionUse: { findUnique: jest.fn().mockResolvedValue(null) },
+      redemptionUse: { count: jest.fn().mockResolvedValue(0) },
     };
     const prisma = {
       $transaction: jest.fn((callback: (client: typeof tx) => unknown) =>

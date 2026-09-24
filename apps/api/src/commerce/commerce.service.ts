@@ -1,3 +1,4 @@
+import { recordRedemptionUse } from './redemption-usage';
 import {
   BadRequestException,
   ConflictException,
@@ -773,12 +774,10 @@ export class CommerceService {
     });
 
     if (discount) {
-      await tx.redemptionUse.create({
-        data: {
-          codeId: discount.codeId,
-          userId,
-          orderId: order.id,
-        },
+      await recordRedemptionUse(tx, {
+        codeId: discount.codeId,
+        userId,
+        orderId: order.id,
       });
     }
 
@@ -1312,8 +1311,10 @@ export class CommerceService {
       });
     }
     if (discount) {
-      await tx.redemptionUse.create({
-        data: { codeId: discount.codeId, userId, orderId: order.id },
+      await recordRedemptionUse(tx, {
+        codeId: discount.codeId,
+        userId,
+        orderId: order.id,
       });
     }
     if (options.externalPayment) {
@@ -1962,8 +1963,10 @@ export class CommerceService {
       note: `购买套餐 ${plan.name} · ${offer.name}`,
     });
     if (discount) {
-      await tx.redemptionUse.create({
-        data: { codeId: discount.codeId, userId, orderId: order.id },
+      await recordRedemptionUse(tx, {
+        codeId: discount.codeId,
+        userId,
+        orderId: order.id,
       });
     }
     await tx.paymentRecord.create({
@@ -2006,10 +2009,10 @@ export class CommerceService {
     ) {
       throw new BadRequestException('Discount code is not available');
     }
-    const priorUse = await tx.redemptionUse.findUnique({
-      where: { codeId_userId: { codeId: code.id, userId } },
+    const priorUse = await tx.redemptionUse.count({
+      where: { codeId: code.id, userId },
     });
-    if (priorUse) {
+    if (priorUse >= code.maxUsesPerUser) {
       throw new BadRequestException('Discount code was already used');
     }
 
@@ -2023,7 +2026,8 @@ export class CommerceService {
       where: {
         id: code.id,
         status: RedemptionCodeStatus.ACTIVE,
-        usedCount: { lt: code.maxUses },
+        usedCount: code.usedCount,
+        maxUsesPerUser: code.maxUsesPerUser,
       },
       data: { usedCount: { increment: 1 } },
     });
@@ -2051,10 +2055,10 @@ export class CommerceService {
     ) {
       throw new BadRequestException('Discount code is not available');
     }
-    const priorUse = await tx.redemptionUse.findUnique({
-      where: { codeId_userId: { codeId: code.id, userId } },
+    const priorUse = await tx.redemptionUse.count({
+      where: { codeId: code.id, userId },
     });
-    if (priorUse) {
+    if (priorUse >= code.maxUsesPerUser) {
       throw new BadRequestException('Discount code was already used');
     }
     return {

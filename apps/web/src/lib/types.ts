@@ -331,6 +331,7 @@ export interface RedemptionCodeRecord {
   discountPercent?: number | null;
   discountCents?: number | null;
   maxUses: number;
+  maxUsesPerUser: number;
   usedCount: number;
   note?: string | null;
   expiresAt?: string | null;

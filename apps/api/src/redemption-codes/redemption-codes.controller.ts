@@ -50,6 +50,7 @@ export class RedemptionCodesController {
       discountPercent: body.discountPercent,
       discountCents: body.discountCents,
       maxUses: body.maxUses,
+      maxUsesPerUser: body.maxUsesPerUser,
       count: body.count,
       note: body.note,
       expiresAt: body.expiresAt,
@@ -66,6 +67,7 @@ export class RedemptionCodesController {
   updateCode(@Param('id') id: string, @Body() body: UpdateRedemptionCodeDto) {
     return this.store.patchRedemptionCode(id, {
       status: body.status,
+      maxUsesPerUser: body.maxUsesPerUser,
     });
   }
 }

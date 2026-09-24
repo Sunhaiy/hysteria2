@@ -65,6 +65,7 @@ function emptyForm(catalogOfferId = "", trafficPackOfferId = "") {
     discountPercent: 20,
     discountAmountCents: 1000,
     maxUses: 1,
+    maxUsesPerUser: 1,
     count: 1,
     expiresAt: "",
     note: "",
@@ -93,6 +94,9 @@ export default function AdminRedemptionCodesPage() {
 
   const [usesDrawerOpen, setUsesDrawerOpen] = useState(false);
   const [usesCode, setUsesCode] = useState<RedemptionCodeRecord | null>(null);
+  const [limitCode, setLimitCode] = useState<RedemptionCodeRecord | null>(null);
+  const [userLimit, setUserLimit] = useState(1);
+  const [savingLimit, setSavingLimit] = useState(false);
   const [uses, setUses] = useState<RedemptionUseRecord[]>([]);
   const [usesLoading, setUsesLoading] = useState(false);
 
@@ -293,6 +297,7 @@ export default function AdminRedemptionCodesPage() {
                 ? form.discountAmountCents
                 : undefined,
             maxUses: form.maxUses,
+            maxUsesPerUser: form.maxUsesPerUser,
             count: form.count,
             expiresAt:
               form.expiresAt === "permanent"
@@ -343,6 +348,37 @@ export default function AdminRedemptionCodesPage() {
         msg: cause instanceof ApiError ? cause.message : "作废兑换码失败。",
         kind: "error",
       });
+    }
+  }
+
+  async function saveUserLimit() {
+    if (
+      !token ||
+      !limitCode ||
+      !Number.isSafeInteger(userLimit) ||
+      userLimit < 1
+    )
+      return;
+    setSavingLimit(true);
+    try {
+      await apiRequest(`/api/admin/redemption-codes/${limitCode.id}`, {
+        method: "PATCH",
+        token,
+        body: { maxUsesPerUser: userLimit },
+      });
+      setLimitCode(null);
+      setFeedback({
+        msg: "每人使用次数已更新，历史使用次数仍计入限制。",
+        kind: "success",
+      });
+      await load();
+    } catch (cause) {
+      setFeedback({
+        msg: cause instanceof ApiError ? cause.message : "修改次数限制失败。",
+        kind: "error",
+      });
+    } finally {
+      setSavingLimit(false);
     }
   }
 
@@ -518,11 +554,25 @@ export default function AdminRedemptionCodesPage() {
               </span>,
               <span key={`${item.id}-u`} className="mono">
                 {item.usedCount} / {item.maxUses}
+                <small className="fine-print">
+                  {" "}
+                  · 每人 {item.maxUsesPerUser ?? 1} 次
+                </small>
               </span>,
               <span key={`${item.id}-tl`}>
                 {item.expiresAt ? formatDateTime(item.expiresAt) : "不限时"}
               </span>,
               <div key={`${item.id}-act`} className="table-actions">
+                <button
+                  className="ghost-button compact"
+                  type="button"
+                  onClick={() => {
+                    setLimitCode(item);
+                    setUserLimit(item.maxUsesPerUser ?? 1);
+                  }}
+                >
+                  次数限制
+                </button>
                 <button
                   className="ghost-button compact"
                   type="button"
@@ -568,6 +618,44 @@ export default function AdminRedemptionCodesPage() {
         ) : null}
       </Panel>
 
+      <Drawer
+        open={Boolean(limitCode)}
+        onClose={() => {
+          if (!savingLimit) setLimitCode(null);
+        }}
+        title="修改每人使用次数"
+        footer={
+          <button
+            className="action-button"
+            type="button"
+            disabled={
+              savingLimit || !Number.isSafeInteger(userLimit) || userLimit < 1
+            }
+            onClick={() => void saveUserLimit()}
+          >
+            {savingLimit ? "保存中…" : "保存限制"}
+          </button>
+        }
+      >
+        <p>
+          {limitCode?.label} · 总使用 {limitCode?.usedCount} /{" "}
+          {limitCode?.maxUses} 次
+        </p>
+        <label className="field">
+          <span className="fine-print">每人可使用次数</span>
+          <input
+            className="control"
+            type="number"
+            min="1"
+            step="1"
+            value={userLimit}
+            onChange={(e) => setUserLimit(Number(e.target.value))}
+          />
+        </label>
+        <p className="fine-print">
+          历史兑换仍计入次数。调低上限不会撤回已发权益；总次数用完或已作废的码不会因此恢复。
+        </p>
+      </Drawer>
       <Drawer
         open={drawerOpen}
         onClose={requestClose}
@@ -810,7 +898,7 @@ export default function AdminRedemptionCodesPage() {
 
           <div className="two-col">
             <label className="field">
-              <span className="fine-print">每张可使用次数</span>
+              <span className="fine-print">每张码总使用次数</span>
               <input
                 className="control"
                 type="number"
@@ -823,7 +911,31 @@ export default function AdminRedemptionCodesPage() {
                   }))
                 }
               />
-              <span className="field-hint">同一会员每张码只能用一次</span>
+              <span className="field-hint">
+                所有会员合计，不因每人次数增加而提高。
+              </span>
+            </label>
+            <label className="field">
+              <span className="fine-print">每人可使用次数</span>
+              <input
+                className="control"
+                type="number"
+                min="1"
+                step="1"
+                value={form.maxUsesPerUser}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    maxUsesPerUser: Math.max(
+                      1,
+                      Math.round(Number(e.target.value)),
+                    ),
+                  }))
+                }
+              />
+              <span className="field-hint">
+                同一会员使用同一张码的上限，默认 1 次。
+              </span>
             </label>
             <label className="field">
               <span className="fine-print">生成数量（批量上架）</span>

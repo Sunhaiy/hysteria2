@@ -237,6 +237,7 @@ describe('Traffic pack product redemption', () => {
       discountCents: null,
       planMode: 'RENEW',
       maxUses: 1,
+      maxUsesPerUser: 1,
       usedCount: 0,
       note: null,
       expiresAt: null,
@@ -261,7 +262,7 @@ describe('Traffic pack product redemption', () => {
         updateMany: jest
           .fn()
           .mockResolvedValueOnce({ count: 0 })
-          .mockResolvedValueOnce({ count: 1 }),
+          .mockResolvedValue({ count: 1 }),
         update: jest.fn().mockResolvedValue({
           ...code,
           status: 'REDEEMED',
@@ -272,7 +273,7 @@ describe('Traffic pack product redemption', () => {
         }),
       },
       redemptionUse: {
-        findUnique: jest.fn().mockResolvedValue(null),
+        count: jest.fn().mockResolvedValue(0),
         create: jest.fn().mockResolvedValue({}),
       },
       manualOrder: {
@@ -403,6 +404,7 @@ describe('Traffic pack product redemption', () => {
       discountCents: null,
       planMode: 'RENEW',
       maxUses: 1,
+      maxUsesPerUser: 1,
       usedCount: 0,
       note: null,
       expiresAt: null,
@@ -436,7 +438,7 @@ describe('Traffic pack product redemption', () => {
         }),
       },
       redemptionUse: {
-        findUnique: jest.fn().mockResolvedValue(null),
+        count: jest.fn().mockResolvedValue(0),
         create: jest.fn().mockResolvedValue({}),
       },
       manualOrder: {

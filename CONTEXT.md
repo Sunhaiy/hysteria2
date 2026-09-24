@@ -9,6 +9,10 @@
 - A plan CDK references one `CatalogOffer` and has a `planMode`: `RENEW`
   extends the same active plan, while `REPLACE` starts the selected offer now
   and discards the old plan's remaining base duration and quota.
+- Each CDK has independent total (`maxUses`) and per-member (`maxUsesPerUser`)
+  lifetime limits. The per-member limit defaults to one and is editable without
+  clearing history. Each successful use has a unique member/use ordinal;
+  fulfillment and both limits are committed together. See `docs/CDK_USAGE_LIMITS.md`.
 - A `SupportTicket` is a member-owned support conversation. Member activity
   sets `WAITING_STAFF`, staff replies set `WAITING_MEMBER`, and closed tickets
   are immutable until an administrator reopens them.
