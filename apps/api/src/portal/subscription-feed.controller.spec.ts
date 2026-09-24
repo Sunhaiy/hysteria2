@@ -91,6 +91,10 @@ describe('SubscriptionFeedController', () => {
     );
 
     expect(content).toBe('proxies:\n  - name: US Primary\n');
+    expect(portalService.getMihomoSubscription).toHaveBeenCalledWith(
+      'hy2_0123456789abcdef01234567',
+      'inline',
+    );
     expect(response.set).toHaveBeenCalledWith(
       expect.objectContaining({
         'Content-Type': 'text/yaml; charset=utf-8',

@@ -933,7 +933,7 @@ export class PortalService {
 
   async getMihomoSubscription(
     tokenValue: string,
-    mode: 'provider' | 'inline' = 'provider',
+    mode: 'provider' | 'inline' = 'inline',
   ) {
     const bundle = await this.getSubscriptionAccessBundle(tokenValue);
     if (bundle.nodes.length === 0) {

@@ -61,7 +61,7 @@ export class SubscriptionFeedController {
       throw new BadRequestException('订阅模式无效');
     const feed = await this.portalService.getMihomoSubscription(
       token,
-      mode === 'inline' ? 'inline' : 'provider',
+      mode === 'provider' ? 'provider' : 'inline',
     );
     const expiresAt = Math.floor(feed.expiresAt / 1000);
 
