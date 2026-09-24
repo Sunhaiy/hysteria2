@@ -108,7 +108,7 @@ export function AnniversaryGiftDialog({
               </div>
             </div>
 
-            <span className="anniversary-gift-kicker">FIRST ANNIVERSARY</span>
+            <span className="anniversary-gift-kicker">{letter.kicker}</span>
             <h2 id="anniversary-gift-title">周年礼物已经到账</h2>
             <p id="anniversary-gift-copy" className="anniversary-gift-copy">
               感谢这一年的信任，这份礼物已经加入您的流量权益。
@@ -138,11 +138,11 @@ export function AnniversaryGiftDialog({
             <span className="anniversary-gift-kicker">{letter.kicker}</span>
             <div
               className="anniversary-gift-letter"
-              aria-label="一周年手写纪念卡"
+              aria-label={letter.title}
+              tabIndex={0}
             >
               <div className="anniversary-gift-letter-heading">
                 <span>{letter.eyebrow}</span>
-                <b aria-hidden="true">{letter.seal}</b>
               </div>
               <h2 id="anniversary-gift-title">{letter.title}</h2>
               <div

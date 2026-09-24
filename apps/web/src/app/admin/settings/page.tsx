@@ -395,7 +395,7 @@ export default function AdminSettingsPage() {
     );
   }
 
-  async function saveAnniversaryGift() {
+  async function saveAnniversaryGift(copyOnly = false) {
     if (!token) return;
     setSavingAnniversaryGift(true);
     setError(null);
@@ -404,8 +404,7 @@ export default function AdminSettingsPage() {
         method: "PATCH",
         token,
         body: {
-          anniversaryGiftEnabled,
-          anniversaryGiftOfferId,
+          ...(copyOnly ? {} : { anniversaryGiftEnabled, anniversaryGiftOfferId }),
           anniversaryGiftLetterKicker: anniversaryGiftLetter.kicker,
           anniversaryGiftLetterEyebrow: anniversaryGiftLetter.eyebrow,
           anniversaryGiftLetterSeal: anniversaryGiftLetter.seal,
@@ -420,7 +419,7 @@ export default function AdminSettingsPage() {
       });
       applySettings(data);
       showToast(
-        data.anniversaryGift?.enabled ? "周年礼物已启用" : "周年礼物已暂停",
+        copyOnly ? "感谢信已保存" : data.anniversaryGift?.enabled ? "周年礼物已启用" : "周年礼物已暂停",
       );
     } catch (cause) {
       setError(
@@ -1115,7 +1114,7 @@ export default function AdminSettingsPage() {
               </div>
               <div className="two-col">
                 <label className="field">
-                  <span className="fine-print">顶部英文</span>
+                  <span className="fine-print">顶部文字（可使用中文）</span>
                   <input
                     className="control"
                     value={anniversaryGiftLetter.kicker}
@@ -1143,21 +1142,7 @@ export default function AdminSettingsPage() {
                   />
                 </label>
                 <label className="field">
-                  <span className="fine-print">印章文字</span>
-                  <input
-                    className="control"
-                    value={anniversaryGiftLetter.seal}
-                    maxLength={8}
-                    onChange={(event) =>
-                      setAnniversaryGiftLetter((current) => ({
-                        ...current,
-                        seal: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-                <label className="field">
-                  <span className="fine-print">卡片标题</span>
+                  <span className="fine-print">感谢信标题</span>
                   <input
                     className="control"
                     value={anniversaryGiftLetter.title}
@@ -1199,6 +1184,9 @@ export default function AdminSettingsPage() {
                   />
                 </label>
               </div>
+              <button className="ghost-button" type="button" disabled={savingAnniversaryGift} onClick={() => void saveAnniversaryGift(true)}>
+                单独保存感谢信
+              </button>
               <label className="field">
                 <span className="fine-print">卡片正文</span>
                 <textarea

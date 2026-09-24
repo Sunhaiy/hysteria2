@@ -7538,7 +7538,21 @@ select.control {
 }
 
 .anniversary-gift-letter-stage {
+  min-height: 0;
+  max-height: min(740px, calc(100dvh - 100px));
+  grid-template-rows: auto minmax(0, 1fr) auto;
   animation: anniversary-letter-in 360ms ease-out both;
+}
+
+.anniversary-gift-dialog.letter-view {
+  width: min(680px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow: hidden;
+}
+
+.anniversary-gift-letter-stage > .anniversary-gift-kicker {
+  padding-inline: 34px;
+  overflow-wrap: anywhere;
 }
 
 .anniversary-gift-ticket-stage {
@@ -7548,9 +7562,15 @@ select.control {
 .anniversary-gift-letter {
   position: relative;
   display: grid;
-  gap: 16px;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+  overflow-wrap: anywhere;
+  gap: 20px;
   margin-top: 12px;
-  padding: 24px 26px 22px;
+  padding: 30px 32px;
   border: 1px solid var(--border-default);
   border-left: 4px solid var(--accent-500);
   border-radius: 6px;
@@ -7581,19 +7601,6 @@ select.control {
   letter-spacing: 0;
 }
 
-.anniversary-gift-letter-heading b {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--accent-500);
-  color: #fff;
-  font-family: "KaiTi", "STKaiti", "FangSong", serif;
-  font-size: 19px;
-  box-shadow: 0 8px 22px -12px var(--accent-500);
-}
-
 .anniversary-gift-letter h2 {
   margin: 0;
   font-family: "KaiTi", "STKaiti", "FangSong", serif;
@@ -7603,9 +7610,9 @@ select.control {
 
 .anniversary-gift-letter-message {
   display: grid;
-  gap: 9px;
+  gap: 16px;
   color: var(--text-secondary);
-  font-family: "KaiTi", "STKaiti", "FangSong", serif;
+  font-family: inherit;
   font-size: 16px;
   line-height: 1.85;
 }
@@ -8107,6 +8114,14 @@ select.control {
   .anniversary-gift-letter {
     gap: 13px;
     padding: 20px 18px 18px;
+  }
+
+  .anniversary-gift-letter-stage {
+    max-height: calc(100dvh - 60px);
+  }
+
+  .anniversary-gift-dialog.letter-view {
+    max-height: calc(100dvh - 20px);
   }
 
   .anniversary-gift-letter h2 {
