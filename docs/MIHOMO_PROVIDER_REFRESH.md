@@ -1,6 +1,8 @@
 # Mihomo 节点列表独立更新
 
-完整 Clash 订阅默认使用 HTTP `proxy-providers`：节点列表每 900 秒拉取，完整订阅继续通过 `Profile-Update-Interval: 12` 建议每 12 小时更新。完整订阅实际更新频率由客户端设置决定。
+完整 Clash 订阅默认恢复内嵌节点列表，兼容现有客户端。显式添加 `mode=provider` 才使用 HTTP `proxy-providers`：节点列表每 900 秒拉取，完整订阅继续通过 `Profile-Update-Interval: 12` 建议每 12 小时更新。完整订阅实际更新频率由客户端设置决定。
+
+2026-09-24：修复两个 provider 共享同名节点导致 Clash Verge 将节点显示为灰色 `ambiguous` 的问题。普通节点名称不变，AI 集合副本添加 ` · AI` 并检查名称唯一，空权限占位节点也使用不同名称。保持内嵌格式为默认，不自动重新启用 provider。真实内核测试同时检查跨集合身份唯一、手动选中及定时更新；不将其替代为所有客户端版本的界面验证。
 
 - 已导入用户需先刷新一次完整订阅；仅修改服务器不会改写客户端旧配置。
 - 全量节点：`GET /subscribe/:token/clash/nodes?scope=all`。

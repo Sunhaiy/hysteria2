@@ -138,6 +138,25 @@ const core = process.env.MIHOMO_TEST_BINARY;
     if (directory) await rm(directory, { recursive: true, force: true });
   });
   it('bootstraps offline, replaces nodes on timer, retains cache on failure and clears unavailable access without restarting', async () => {
+    // Clash Verge resolves provider members by name across every provider.
+    // Multiple candidates produce a disabled "ambiguous" tile.
+    const allNames = await names();
+    const aiNames = await names('素心 AI 节点');
+    expect(allNames.filter((name) => aiNames.includes(name))).toEqual([]);
+    for (const [groupName, target] of [
+      ['节点选择', allNames[0]],
+      ['AI 服务', aiNames[0]],
+    ]) {
+      const selected = await fetch(
+        `${controller}/proxies/${encodeURIComponent(groupName)}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: target }),
+        },
+      );
+      expect(selected.status).toBe(204);
+    }
     const pid = child.pid;
     failure = false;
     nodes = [{ ...node, label: 'US Replacement' }];

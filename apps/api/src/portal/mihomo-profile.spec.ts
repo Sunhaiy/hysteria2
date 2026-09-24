@@ -363,15 +363,20 @@ describe('buildMihomoProfile', () => {
     );
   });
 
-  it('preserves transport and names across AI subsets and rejects empty access', () => {
+  it('preserves transport while giving AI copies distinct identities, including empty access', () => {
     const all = parseProfile(buildMihomoProvider(credential, nodes)).proxies;
     expect(
       parseProfile(buildMihomoProvider(credential, nodes, 'ai')).proxies,
-    ).toEqual([all[0]]);
+    ).toEqual([{ ...all[0], name: `${all[0].name} · AI` }]);
     const japan = [nodes[1]];
-    expect(buildMihomoProvider(credential, japan, 'ai')).toBe(
-      buildMihomoProvider(credential, japan),
-    );
+    const fallback = parseProfile(buildMihomoProvider(credential, japan))
+      .proxies[0];
+    expect(
+      parseProfile(buildMihomoProvider(credential, japan, 'ai')).proxies,
+    ).toEqual([{ ...fallback, name: `${fallback.name} · AI` }]);
+    expect(
+      parseProfile(buildMihomoProvider(credential, [], 'ai')).proxies,
+    ).toEqual([{ name: '暂无可用 AI 节点', type: 'reject' }]);
     expect(parseProfile(buildMihomoProvider(credential, [])).proxies).toEqual([
       { name: '暂无可用节点', type: 'reject' },
     ]);

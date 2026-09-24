@@ -57,16 +57,35 @@ function providerProxies(
   scope: 'all' | 'ai',
 ) {
   const names = uniqueProxyNames(nodes);
+  // Verge resolves group members across providers by name. Give AI copies
+  // distinct identities while preserving the ordinary node display names.
+  const used = new Set(names);
+  const providerNames = names.map((name) => {
+    if (scope === 'all') return name;
+    const base = `${name} · AI`;
+    let candidate = base;
+    let suffix = 2;
+    while (used.has(candidate)) candidate = `${base} ${suffix++}`;
+    used.add(candidate);
+    return candidate;
+  });
   const aiOnly = scope === 'ai' && nodes.some(isAiNode);
   const proxies = nodes.flatMap((node, index) => {
     if (aiOnly && !isAiNode(node)) return [];
     return [
       node.protocol === 'VLESS_REALITY'
-        ? buildVlessProxy(names[index], credential, node)
-        : buildHysteriaProxy(names[index], credential, node),
+        ? buildVlessProxy(providerNames[index], credential, node)
+        : buildHysteriaProxy(providerNames[index], credential, node),
     ];
   });
-  return proxies.length ? proxies : [{ name: '暂无可用节点', type: 'reject' }];
+  return proxies.length
+    ? proxies
+    : [
+        {
+          name: scope === 'ai' ? '暂无可用 AI 节点' : '暂无可用节点',
+          type: 'reject',
+        },
+      ];
 }
 
 function buildNodeProviders(

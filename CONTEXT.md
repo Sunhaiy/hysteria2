@@ -105,7 +105,8 @@
 
 See `docs/DOMAIN_MODEL.md` and `docs/adr/` for implementation details.
 
-Clash feeds use isolated HTTP node providers with a 900-second refresh. Existing
-imports need one complete profile refresh; `mode=inline` retains the legacy
-format. Provider refresh does not replace server-side access enforcement. See
+Clash feeds default to inline nodes for client compatibility. Explicit
+`mode=provider` uses isolated HTTP node providers with a 900-second refresh;
+AI copies have distinct names to prevent Verge's ambiguous member resolution.
+Provider refresh does not replace server-side access enforcement. See
 `docs/MIHOMO_PROVIDER_REFRESH.md`.
