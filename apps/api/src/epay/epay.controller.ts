@@ -15,7 +15,11 @@ import { CurrentPrincipal } from '../common/current-principal.decorator';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import type { SessionPrincipal } from '../common/auth.types';
 import { webPublicUrl } from '../common/public-url';
-import { CreateEpayGatewayTestDto, CreateEpayPaymentDto } from './epay.dto';
+import {
+  CreateEpayGatewayTestDto,
+  CreateEpayPaymentDto,
+  CreateWalletTopupDto,
+} from './epay.dto';
 import {
   CreateGroupBuyPaymentDto,
   JoinGroupBuyPaymentDto,
@@ -25,6 +29,36 @@ import { EpayService } from './epay.service';
 @Controller('api')
 export class EpayController {
   constructor(private readonly epay: EpayService) {}
+
+  @Get('portal/wallet/topups')
+  @UseGuards(JwtAuthGuard)
+  recentWalletTopups(@CurrentPrincipal() principal: SessionPrincipal) {
+    return this.epay.recentWalletTopups(principal.sub);
+  }
+
+  @Post('portal/wallet/topups')
+  @UseGuards(JwtAuthGuard)
+  createWalletTopup(
+    @CurrentPrincipal() principal: SessionPrincipal,
+    @Body() body: CreateWalletTopupDto,
+    @Headers('idempotency-key') key = '',
+  ) {
+    return this.epay.createWalletTopup(
+      principal.sub,
+      body.amountCents,
+      body.paymentType,
+      key,
+    );
+  }
+
+  @Get('portal/wallet/topups/:id/checkout')
+  @UseGuards(JwtAuthGuard)
+  resumeWalletTopup(
+    @CurrentPrincipal() principal: SessionPrincipal,
+    @Param('id') id: string,
+  ) {
+    return this.epay.resumeWalletTopup(principal.sub, id);
+  }
 
   @Post('portal/payments/epay')
   @UseGuards(JwtAuthGuard)

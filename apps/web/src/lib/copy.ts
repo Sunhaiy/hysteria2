@@ -7,6 +7,7 @@ export interface NavItem {
 }
 
 export const adminNav: NavItem[] = [
+  {href:'/admin/holiday',label:'中秋·国庆活动',icon:'gift',meta:'2026',group:'节日活动'},
   {
     href: "/admin",
     label: "总览",
@@ -129,6 +130,7 @@ export const adminNav: NavItem[] = [
 ];
 
 export const portalNav: NavItem[] = [
+  {href:'/portal/holiday',label:'中秋·国庆活动',icon:'gift',meta:'限时',group:'节日活动'},
   { href: "/portal", label: "总览", icon: "portal_overview", meta: "HOME" },
   {
     href: "/portal/plans",

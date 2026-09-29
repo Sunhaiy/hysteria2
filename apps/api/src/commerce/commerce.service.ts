@@ -94,6 +94,11 @@ export interface GroupBuyWalletSettlementInput {
   paidAt: Date;
 }
 
+export type HolidayWalletSettlementInput = Omit<
+  GroupBuyWalletSettlementInput,
+  'memberId'
+> & { entryId: string };
+
 interface PlanResetSettlementInput {
   userId: string;
   offerId: string;
@@ -120,24 +125,28 @@ export class CommerceService {
     private readonly paymentAttempts?: PaymentAttemptLifecycleService,
   ) {}
 
-  async quoteCheckout(userId: string, input: CheckoutInput) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+  async quoteCheckout(
+    userId: string,
+    input: CheckoutInput,
+    client: Prisma.TransactionClient = this.prisma,
+  ) {
+    const user = await client.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
     if (user.status !== UserStatus.ACTIVE) {
       throw new BadRequestException('Account is not active');
     }
 
-    const product = await this.resolveQuoteProduct(input);
+    const product = await this.resolveQuoteProduct(input, client);
     const planReset =
       'offerId' in input && input.purchaseAction === 'plan_reset'
-        ? await this.resolvePlanReset(this.prisma, userId, input.offerId)
+        ? await this.resolvePlanReset(client, userId, input.offerId)
         : null;
     if (planReset && input.discountCode) {
       throw new BadRequestException('本期流量重置不支持叠加优惠码');
     }
     const ultraPurchase =
       !planReset && product.series === CatalogProductSeries.ULTRA
-        ? await this.resolveUltraPurchase(this.prisma, userId, {
+        ? await this.resolveUltraPurchase(client, userId, {
             id: product.productId,
             name: product.productName,
             priceCents: product.priceCents,
@@ -151,7 +160,7 @@ export class CommerceService {
       product.purchaseRules?.kind === CatalogProductKind.PLAN &&
       product.purchaseRules.legacyPlanId
         ? await this.resolveStandardPlanPurchasePolicy(
-            this.prisma,
+            client,
             userId,
             {
               productId: product.productId,
@@ -163,7 +172,7 @@ export class CommerceService {
         : null;
     if (product.purchaseRules && !ultraPurchase && !planReset) {
       await assertCatalogPurchaseEligibility(
-        this.prisma,
+        client,
         userId,
         product.purchaseRules,
       );
@@ -176,7 +185,7 @@ export class CommerceService {
     const discount =
       input.discountCode && !planReset
         ? await this.previewDiscount(
-            this.prisma,
+            client,
             userId,
             input.discountCode,
             payableBeforeDiscountCents,
@@ -627,6 +636,26 @@ export class CommerceService {
     );
   }
 
+  async fulfillHolidayWalletPayment(
+    tx: Prisma.TransactionClient,
+    input: HolidayWalletSettlementInput,
+  ) {
+    return this.createOfferCheckout(
+      tx,
+      input.userId,
+      { offerId: input.offerId },
+      `holiday-wallet:${input.entryId}`,
+      {
+        walletPayment: {
+          amountCents: input.amountCents,
+          basePriceCents: input.basePriceCents,
+          entitlementSnapshot: input.entitlementSnapshot,
+          paidAt: input.paidAt,
+        },
+      },
+    );
+  }
+
   private replayCheckout(
     existing: {
       id: string;
@@ -1011,7 +1040,9 @@ export class CommerceService {
       ? snapshot?.groupBuySettlementMode === 'ORIGINAL_PRICE_BALANCE_REBATE'
         ? snapshot.groupBuyOriginalPriceCents
         : snapshot?.groupBuyPriceCents
-      : payableBeforeDiscountCents;
+      : snapshot?.campaignId
+        ? snapshot.campaignPriceCents
+        : payableBeforeDiscountCents;
     if (
       chargedCents < 0 ||
       chargedCents > basePriceCents ||
@@ -1251,7 +1282,7 @@ export class CommerceService {
         basePriceCents,
         discountCents: options.complimentary
           ? basePriceCents
-          : options.externalPayment
+          : options.externalPayment || (settledPayment && snapshot?.campaignId)
             ? ultraPurchase?.mode === 'upgrade'
               ? 0
               : basePriceCents - chargedCents
@@ -2072,9 +2103,12 @@ export class CommerceService {
     };
   }
 
-  private async resolveQuoteProduct(input: CheckoutInput) {
+  private async resolveQuoteProduct(
+    input: CheckoutInput,
+    client: Prisma.TransactionClient = this.prisma,
+  ) {
     if ('offerId' in input) {
-      const offer = await this.prisma.catalogOffer.findUnique({
+      const offer = await client.catalogOffer.findUnique({
         where: { id: input.offerId },
         include: {
           product: {
@@ -2120,7 +2154,7 @@ export class CommerceService {
       };
     }
     if (input.kind === 'traffic_pack') {
-      const product = await this.prisma.trafficPackProduct.findUnique({
+      const product = await client.trafficPackProduct.findUnique({
         where: { id: input.productId },
         include: {
           accessProfile: {
@@ -2153,7 +2187,7 @@ export class CommerceService {
         purchaseRules: null,
       };
     }
-    const { plan, offer } = await this.resolvePlanOffer(this.prisma, input);
+    const { plan, offer } = await this.resolvePlanOffer(client, input);
     return {
       id: input.kind === 'plan' ? plan.id : offer.id,
       name: `${plan.name} · ${offer.name}`,

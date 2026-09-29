@@ -1058,6 +1058,24 @@ export class CustomerAdminService {
           throw new BadRequestException('Confirmation email does not match');
         }
 
+        if (
+          (await tx.holidayDrawTicket.count({
+            where: { userId: id, state: { in: ['RESERVED', 'AVAILABLE'] } },
+          })) ||
+          (await tx.holidayEntry.count({
+            where: {
+              userId: id,
+              OR: [
+                { status: { in: ['RESERVED', 'REFUND_PENDING'] } },
+                { status: 'APPLIED', drawState: 'AVAILABLE' },
+              ],
+            },
+          }))
+        ) {
+          throw new BadRequestException(
+            '该用户仍有待处理活动订单、退款或未使用抽奖机会，请先完成处理',
+          );
+        }
         const deletedAt = new Date();
         const groupCleanup = await closeGroupBuyParticipationForAccountDeletion(
           tx,

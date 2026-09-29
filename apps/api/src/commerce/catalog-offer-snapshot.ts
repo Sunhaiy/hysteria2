@@ -27,6 +27,8 @@ type SnapshotOffer = Prisma.CatalogOfferGetPayload<{
 }>;
 
 export interface CatalogOfferSnapshot {
+  campaignId?: string;
+  campaignPriceCents?: number;
   version: 1 | 2;
   offerId: string;
   offerSlug: string;

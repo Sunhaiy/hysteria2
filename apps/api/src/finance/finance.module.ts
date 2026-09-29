@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { HolidayModule } from '../holiday/holiday.module';
 import { FinanceController } from './finance.controller';
 import { FinanceService } from './finance.service';
 import { ReferralModule } from '../referrals/referral.module';
@@ -6,7 +7,7 @@ import { EntitlementModule } from '../entitlement/entitlement.module';
 import { GroupBuyModule } from '../group-buy/group-buy.module';
 
 @Module({
-  imports: [ReferralModule, EntitlementModule, GroupBuyModule],
+  imports: [ReferralModule, EntitlementModule, GroupBuyModule, HolidayModule],
   controllers: [FinanceController],
   providers: [FinanceService],
   exports: [FinanceService],

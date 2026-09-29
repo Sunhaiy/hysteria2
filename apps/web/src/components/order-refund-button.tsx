@@ -26,6 +26,7 @@ export function OrderRefundButton({
   const [method, setMethod] = useState("wallet");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState(false);
   const lock = useRef(false);
   const [error, setError] = useState("");
   const amount = order.amountCents - order.refundedCents;
@@ -45,11 +46,25 @@ export function OrderRefundButton({
     setBusy(true);
     setError("");
     try {
-      await apiRequest(`/api/admin/finance/orders/${order.id}/refunds`, {
-        token,
-        method: "POST",
-        body: { amountCents: amount, method, reason: reason.trim() },
-      });
+      const result = await apiRequest<{ status: string; reason?: string }>(
+        `/api/admin/finance/orders/${order.id}/refunds`,
+        {
+          token,
+          method: "POST",
+          body: { amountCents: amount, method, reason: reason.trim() },
+        },
+      );
+      if (result.status === "manual_review") {
+        setError(result.reason ?? "退款需要人工核验，尚未退款");
+        onComplete();
+        return;
+      }
+      if (result.status === "refund_pending") {
+        setPending(true);
+        setError("已提交原路退款，等待网关确认；请勿重复线下转账。");
+        onComplete();
+        return;
+      }
       setOpen(false);
       setConfirm(false);
       onComplete();
@@ -75,7 +90,7 @@ export function OrderRefundButton({
           setOpen(true);
           setConfirm(false);
           setReason("");
-          setMethod("wallet");
+          setMethod(order.productName.includes("充值") ? "original" : "wallet");
           setError("");
         }}
       >
@@ -97,20 +112,22 @@ export function OrderRefundButton({
           {confirm ? (
             <>
               <p>
-                {method === "wallet"
-                  ? "退款将进入用户站内余额，不会退回微信或支付宝。"
-                  : "确认你已在线下完成转账。此操作仅登记退款，不会再次转账。"}
+                {method === "original"
+                  ? "将先追回充值本金和活动奖励，再提交网关原路退款；网关确认前显示处理中。"
+                  : method === "wallet"
+                    ? "退款将进入用户站内余额，不会退回微信或支付宝。"
+                    : "确认你已在线下完成转账。此操作仅登记退款，不会再次转账。"}
               </p>
               <p>原因：{reason}</p>
               <button
                 className="action-button"
                 type="button"
-                disabled={busy}
+                disabled={busy || pending}
                 onClick={() => void submit()}
               >
                 {busy
                   ? "处理中…"
-                  : `确认${method === "wallet" ? "退回余额" : "已线下退款"} ${formatMoney(amount)}`}
+                  : `确认${method === "original" ? "申请原路退款" : method === "wallet" ? "退回余额" : "已线下退款"} ${formatMoney(amount)}`}
               </button>
               <button
                 className="ghost-button"
@@ -132,6 +149,9 @@ export function OrderRefundButton({
                 >
                   <option value="wallet">退回站内余额</option>
                   <option value="manual">登记已完成的线下退款</option>
+                  {order.productName.includes("充值") && (
+                    <option value="original">充值原路自动退款</option>
+                  )}
                 </select>
               </label>
               <label className="field">

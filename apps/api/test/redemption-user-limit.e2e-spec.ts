@@ -102,9 +102,9 @@ const url = process.env.CDK_TEST_DATABASE_URL;
       const a = await user(),
         c = await code(10, 2);
       await expect(
-        store.redeemRedemptionCode(a.id, c.code, undefined, async () => {
-          throw new Error('fulfillment failed');
-        }),
+        store.redeemRedemptionCode(a.id, c.code, undefined, () =>
+          Promise.reject(new Error('fulfillment failed')),
+        ),
       ).rejects.toThrow();
       expect(
         (await db.user.findUniqueOrThrow({ where: { id: a.id } })).balanceCents,

@@ -680,6 +680,8 @@ describe('CustomerAdminService account deletion', () => {
       deletedAt: null,
     };
     const tx = {
+      holidayEntry: { count: jest.fn().mockResolvedValue(0) },
+      holidayDrawTicket: { count: jest.fn().mockResolvedValue(0) },
       user: {
         findUnique: jest.fn().mockResolvedValue(user),
         update: jest.fn().mockResolvedValue({ ...user, status: 'BANNED' }),
@@ -831,5 +833,14 @@ describe('CustomerAdminService account deletion', () => {
 
     expect(tx.user.update).not.toHaveBeenCalled();
     expect(tx.accessToken.updateMany).not.toHaveBeenCalled();
+  });
+  it('rejects deletion while standalone invitation draw tickets are available', async () => {
+    const { service, tx, entitlements } = createDeletionHarness();
+    tx.holidayDrawTicket.count.mockResolvedValue(1);
+    await expect(
+      service.deleteCustomer('user_1', 'member@example.com', 'admin_1'),
+    ).rejects.toThrow('未使用抽奖机会');
+    expect(tx.user.update).not.toHaveBeenCalled();
+    expect(entitlements.revokeUserEntitlements).not.toHaveBeenCalled();
   });
 });

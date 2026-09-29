@@ -1,3 +1,4 @@
+import { refundWalletTopup } from '../wallet/wallet-topup';
 import {
   BadRequestException,
   Injectable,
@@ -11,6 +12,7 @@ import { ReferralService } from '../referrals/referral.service';
 import { EntitlementService } from '../entitlement/entitlement.service';
 import { GroupBuyService } from '../group-buy/group-buy.service';
 import { postWalletEntry } from '../wallet/wallet-ledger';
+import { HolidayService } from '../holiday/holiday.service';
 import type {
   CreateNodeCostDto,
   CreateRefundDto,
@@ -41,6 +43,7 @@ export class FinanceService {
     @Optional() private readonly referrals?: ReferralService,
     @Optional() private readonly entitlements?: EntitlementService,
     @Optional() private readonly groupBuys?: GroupBuyService,
+    @Optional() private readonly holiday?: HolidayService,
   ) {}
 
   async summary(query: FinanceQuery) {
@@ -302,6 +305,35 @@ export class FinanceService {
               );
             }
             const processedAt = new Date();
+            if (
+              order.kind === 'WALLET_TOPUP' &&
+              !(await tx.holidayEntry.findUnique({ where: { orderId } }))
+            )
+              return refundWalletTopup(
+                tx,
+                order,
+                input.amountCents,
+                input.method,
+                actorId,
+                input.reason,
+              );
+            if (input.method === 'original' && order.kind !== 'WALLET_TOPUP')
+              throw new BadRequestException('原路自动退款目前仅支持活动充值');
+            const holidayReview = await this.holiday?.reverse(
+              tx,
+              orderId,
+              refunded + input.amountCents === order.amountCents,
+              input.method,
+              actorId,
+            );
+            if (holidayReview)
+              return {
+                status: 'manual_review',
+                reason: holidayReview,
+                orderId,
+              };
+            if (order.kind === 'WALLET_TOPUP' && input.method === 'original')
+              return { status: 'refund_pending', orderId };
             const refund = await tx.refund.create({
               data: {
                 orderId,

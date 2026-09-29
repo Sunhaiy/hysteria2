@@ -1,0 +1,90 @@
+.wallet-topup-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 5px 4px 12px;
+  min-height: 36px;
+  border: 1px solid var(--border-default);
+  border-radius: 9px;
+  background: var(--surface-overlay), var(--bg-panel);
+}
+.wallet-topup-banner > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
+}
+.wallet-topup-banner strong {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-500);
+}
+.wallet-topup-banner .action-button {
+  min-height: 26px;
+  padding: 4px 10px;
+  font-size: 12px;
+  line-height: 18px;
+  border-radius: 6px;
+}
+.wallet-topup-summary strong {
+  font-size: 28px;
+  color: var(--accent-500);
+}
+.wallet-topup-banner span,
+.wallet-topup-banner small {
+  font-size: 12px;
+}
+.wallet-topup-form {
+  display: grid;
+  gap: 22px;
+  min-width: 0;
+}
+.wallet-topup-form p {
+  font-size: 13px;
+  line-height: 1.8;
+  margin: 0;
+}
+.wallet-topup-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.wallet-topup-presets,
+.wallet-topup-channels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.wallet-topup-form fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.wallet-topup-form legend {
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+.wallet-topup-channels label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  cursor: pointer;
+}
+.wallet-topup-channels .selected {
+  border-color: var(--accent-500);
+  background: color-mix(in srgb, var(--accent-500) 8%, var(--bg-panel));
+}
+.wallet-topup-channels input {
+  accent-color: var(--accent-500);
+}
+.wallet-topup-pending {
+  padding: 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+}

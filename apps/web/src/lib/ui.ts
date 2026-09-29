@@ -33,6 +33,8 @@ export function humanizeOrderKind(kind: string) {
       return "流量包";
     case "manual_credit":
       return "人工入账";
+    case "wallet_topup":
+      return "余额充值";
     default:
       return kind;
   }

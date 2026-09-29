@@ -43,6 +43,7 @@ enum OrderStatus {
 }
 
 enum OrderKind {
+  WALLET_TOPUP
   RENEWAL
   TRAFFIC_PACK
   MANUAL_CREDIT
@@ -261,6 +262,7 @@ enum PaymentFulfillmentStatus {
 }
 
 enum RefundMethod {
+  EPAY
   WALLET
   MANUAL
 }
@@ -357,6 +359,7 @@ enum EpayRefundStatus {
 }
 
 model User {
+  holidayEntries HolidayEntry[]
   id                           String                        @id @default(cuid())
   email                        String                        @unique
   displayName                  String
@@ -833,6 +836,7 @@ model QuotaAdjustment {
 }
 
 model ManualOrder {
+  holidayEntry HolidayEntry?
   id                                   String               @id @default(cuid())
   userId                               String
   processedById                        String?
@@ -891,6 +895,98 @@ model ManualOrder {
   @@index([status, source, processedAt, id])
   @@index([userId, createdAt, id])
   @@index([entitlementGrantId, createdAt])
+}
+
+model HolidayCampaign {
+  id                String @id
+  title             String
+  enabled           Boolean @default(false)
+  startsAt          DateTime
+  endsAt            DateTime
+  drawEndsAt        DateTime
+  giftBudgetCents   Int @default(100000)
+  reservedGiftCents Int @default(0)
+  reservedDraws     Int @default(0)
+  config            Json
+  prizeStock        Json
+  revision          Int @default(1)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  entries           HolidayEntry[]
+  drawTickets       HolidayDrawTicket[]
+  inviteRewards     HolidayInviteReward[]
+}
+
+model HolidayEntry {
+  id               String @id @default(cuid())
+  campaignId       String
+  userId           String
+  kind             String
+  tierId           String?
+  claimKey         String? @unique
+  offerId          String?
+  paymentType      String
+  idempotencyKey   String
+  attemptId        String? @unique
+  orderId          String? @unique
+  status           String @default("RESERVED")
+  amountCents      Int
+  giftCents        Int @default(0)
+  snapshot         Json
+  drawReserved     Boolean @default(false)
+  drawState        String @default("NONE")
+  drawKey          String? @unique
+  prizeCents       Int @default(0)
+  reviewReason     String?
+  createdAt        DateTime @default(now())
+  fulfilledAt      DateTime?
+  drawnAt          DateTime?
+  campaign         HolidayCampaign @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  user             User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  attempt          EpayPaymentAttempt? @relation(fields: [attemptId], references: [id], onDelete: Restrict)
+  order            ManualOrder? @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  drawTickets      HolidayDrawTicket[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([campaignId, userId, status])
+}
+
+model HolidayInviteReward {
+  id            String @id @default(cuid())
+  campaignId    String
+  inviterId     String
+  inviteeId     String
+  amountCents   Int
+  sourceOrderId String? @unique
+  status        String @default("PENDING")
+  reviewReason  String?
+  createdAt     DateTime @default(now())
+  rewardedAt    DateTime?
+  reversedAt    DateTime?
+  campaign      HolidayCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, inviteeId])
+  @@index([inviterId, status])
+}
+
+model HolidayDrawTicket {
+  id            String @id @default(cuid())
+  campaignId    String
+  userId        String
+  entryId       String?
+  sourceOrderId String?
+  source        String
+  sourceKey     String @unique
+  state         String @default("RESERVED")
+  drawKey       String? @unique
+  prizeCents    Int @default(0)
+  createdAt     DateTime @default(now())
+  drawnAt       DateTime?
+  campaign      HolidayCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  entry         HolidayEntry? @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, userId, state])
+  @@index([sourceOrderId])
 }
 
 model RedemptionCode {
@@ -1478,9 +1574,10 @@ model PaymentRecord {
 }
 
 model EpayPaymentAttempt {
+  holidayEntry HolidayEntry?
   id                     String                   @id @default(cuid())
   userId                 String
-  offerId                String
+  offerId                String?
   orderId                String?                  @unique
   merchantOrderNo        String                   @unique
   gatewayTradeNo         String?                  @unique
@@ -1512,7 +1609,7 @@ model EpayPaymentAttempt {
   createdAt              DateTime                 @default(now())
   updatedAt              DateTime                 @updatedAt
   user                   User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  offer                  CatalogOffer             @relation(fields: [offerId], references: [id], onDelete: Restrict)
+  offer                  CatalogOffer?            @relation(fields: [offerId], references: [id], onDelete: Restrict)
   order                  ManualOrder?             @relation(fields: [orderId], references: [id], onDelete: SetNull)
   groupBuyMember         GroupBuyMember?
   refundAttempt          EpayRefundAttempt?

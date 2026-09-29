@@ -12,8 +12,8 @@ export class CreateRefundDto {
   @Min(1)
   amountCents!: number;
 
-  @IsIn(['wallet', 'manual'])
-  method!: 'wallet' | 'manual';
+  @IsIn(['wallet', 'manual', 'original'])
+  method!: 'wallet' | 'manual' | 'original';
 
   @IsString()
   @MaxLength(240)

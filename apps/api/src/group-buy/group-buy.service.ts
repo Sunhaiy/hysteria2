@@ -1478,7 +1478,7 @@ export class GroupBuyService {
     includeBonus: boolean,
     bonusTrafficBytes = 0n,
   ) {
-    if (!attempt.gatewayTradeNo || !attempt.settledAt) {
+    if (!attempt.gatewayTradeNo || !attempt.settledAt || !attempt.offerId) {
       throw new ConflictException('拼团付款尚未结算');
     }
     const result = await this.commerce.fulfillEpayPayment(tx, {

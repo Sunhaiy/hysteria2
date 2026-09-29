@@ -26,7 +26,7 @@ type OrderRecord = {
   product: {
     id: string | null;
     name: string;
-    kind: "plan" | "traffic_pack";
+    kind: "plan" | "traffic_pack" | "wallet_topup";
     series?: "standard" | "ultra";
   };
   offer: { id: string; name: string; billingPeriod: string } | null;
@@ -98,7 +98,7 @@ type PaymentAttempt = {
   product: {
     id: string;
     name: string;
-    kind: "plan" | "traffic_pack";
+    kind: "plan" | "traffic_pack" | "wallet_topup";
     series?: "standard" | "ultra";
   };
   offer: { id: string; name: string; billingPeriod: string };
@@ -184,7 +184,7 @@ type Catalog = {
   products: Array<{
     id: string;
     name: string;
-    kind: "plan" | "traffic_pack";
+    kind: "plan" | "traffic_pack" | "wallet_topup";
     status: string;
   }>;
 };
@@ -784,6 +784,7 @@ export default function AdminOrdersPage() {
                 { value: "", label: "全部商品" },
                 { value: "plan", label: "套餐" },
                 { value: "traffic_pack", label: "流量包" },
+                { value: "wallet_topup", label: "余额充值" },
               ]}
             />
           </label>
@@ -914,7 +915,11 @@ export default function AdminOrdersPage() {
                   {order.operationLabel}
                 </span>
                 <span className="muted">
-                  {order.product.kind === "plan" ? "套餐" : "流量包"}
+                  {order.product.kind === "plan"
+                    ? "套餐"
+                    : order.product.kind === "wallet_topup"
+                      ? "余额充值"
+                      : "流量包"}
                   {order.offer ? ` · ${order.offer.name}` : ""}
                 </span>
               </div>,

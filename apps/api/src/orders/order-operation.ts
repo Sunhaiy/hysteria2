@@ -11,6 +11,7 @@ export function orderOperation(order: {
   groupBuyMember?: { entitlementSnapshot: Prisma.JsonValue } | null;
 }) {
   if (order.note === 'PLAN_QUOTA_RESET') return '流量重置';
+  if (order.kind === 'WALLET_TOPUP') return '余额充值';
   if (order.kind === 'TRAFFIC_PACK') return '流量包';
   const snapshot =
     order.epayPaymentAttempt?.entitlementSnapshot ??

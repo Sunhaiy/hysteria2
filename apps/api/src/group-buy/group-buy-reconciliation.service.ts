@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { HolidayService } from '../holiday/holiday.service';
 import {
   EpayPaymentStatus,
   EpayRefundStatus,
@@ -38,6 +39,7 @@ export class GroupBuyReconciliationService {
     private readonly prisma: PrismaService,
     private readonly groupBuys: GroupBuyService,
     private readonly cipher: SecretCipherService,
+    @Optional() private readonly holiday?: HolidayService,
   ) {}
 
   async reconcileDueRefunds(now = new Date()) {
@@ -396,6 +398,21 @@ export class GroupBuyReconciliationService {
           data: { fulfillmentStatus: PaymentFulfillmentStatus.REFUNDED },
         });
         if (!attempt.groupBuyMemberId) {
+          if (attempt.reasonCode === 'WALLET_TOPUP_REFUND') {
+            const payment = await tx.epayPaymentAttempt.findUniqueOrThrow({
+              where: { id: attempt.paymentAttemptId },
+            });
+            if (payment.orderId)
+              await tx.refund.updateMany({
+                where: {
+                  orderId: payment.orderId,
+                  status: 'PENDING',
+                  method: 'EPAY',
+                },
+                data: { status: 'APPLIED', processedAt: now },
+              });
+          }
+          await this.holiday?.confirmRefund(tx, attempt.paymentAttemptId);
           await tx.auditLog.create({
             data: {
               action: 'epay.compensation_refund_confirmed',
@@ -471,6 +488,14 @@ export class GroupBuyReconciliationService {
         where: { id: attempt.paymentAttemptId },
         data: { fulfillmentStatus: PaymentFulfillmentStatus.MANUAL_REVIEW },
       });
+      if (this.holiday)
+        await tx.holidayEntry.updateMany({
+          where: {
+            attemptId: attempt.paymentAttemptId,
+            status: 'REFUND_PENDING',
+          },
+          data: { reviewReason: message.slice(0, 500) },
+        });
       if (!attempt.groupBuyMemberId) return;
       const member = await tx.groupBuyMember.findUnique({
         where: { id: attempt.groupBuyMemberId },

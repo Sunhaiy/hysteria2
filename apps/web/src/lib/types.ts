@@ -295,7 +295,7 @@ export interface ManualOrderRecord {
   trafficPackProductId?: string | null;
   trafficPackProductName?: string | null;
   status: "pending" | "applied" | "void";
-  kind: "renewal" | "traffic_pack" | "manual_credit";
+  kind: "renewal" | "traffic_pack" | "manual_credit" | "wallet_topup";
   source?: "legacy" | "admin" | "wallet" | "cdk" | "payment";
   amountCents: number;
   basePriceCents?: number | null;

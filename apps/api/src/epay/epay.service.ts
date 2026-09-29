@@ -9,6 +9,16 @@ import {
 } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import {
+  fulfillWalletTopup,
+  isWalletTopup,
+  validateTopupAmount,
+  MAX_WALLET_CENTS,
+} from '../wallet/wallet-topup';
+import { HolidayService } from '../holiday/holiday.service';
+import { holidayTransaction } from '../holiday/holiday-transaction';
+import { snapshotHolidayInviteReward } from '../holiday/holiday-invite-draws';
+import type { HolidayPurchaseDto } from '../holiday/holiday.dto';
+import {
   type EpayGatewayTestAttempt,
   type EpayPaymentAttempt,
   EpayPaymentStatus,
@@ -69,7 +79,178 @@ export class EpayService {
     @Optional() private readonly groupBuys?: GroupBuyService,
     @Optional()
     private readonly paymentAttempts?: PaymentAttemptLifecycleService,
+    @Optional() private readonly holiday?: HolidayService,
   ) {}
+
+  async recentWalletTopups(userId: string) {
+    const attempts = await this.prisma.epayPaymentAttempt.findMany({
+      where: {
+        userId,
+        entitlementSnapshot: { path: ['purchaseMode'], equals: 'wallet_topup' },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+    });
+    return attempts.map((attempt) => this.presentStatus(attempt));
+  }
+
+  async resumeWalletTopup(userId: string, id: string) {
+    await this.getPayment(userId, id);
+    const attempt = await this.prisma.epayPaymentAttempt.findFirst({
+      where: { id, userId },
+    });
+    if (!attempt || !isWalletTopup(attempt.entitlementSnapshot))
+      throw new NotFoundException('充值订单不存在');
+    return this.presentAttempt(attempt);
+  }
+
+  async createWalletTopup(
+    userId: string,
+    amountCents: number,
+    paymentType: 'alipay' | 'wxpay',
+    key: string,
+  ) {
+    validateTopupAmount(amountCents);
+    const normalizedKey = key.trim();
+    if (!normalizedKey || normalizedKey.length > 100)
+      throw new BadRequestException('请提供有效的充值请求标识');
+    if (!['alipay', 'wxpay'].includes(paymentType))
+      throw new BadRequestException('请选择支付宝或微信支付');
+    const config = await this.requireConfiguredEpay(true);
+    for (let retry = 0; retry < 3; retry++) {
+      try {
+        const attempt = await this.prisma.$transaction(
+          async (tx) => {
+            const idempotencyKey = `wallet-topup:${normalizedKey}`;
+            const replay = await tx.epayPaymentAttempt.findUnique({
+              where: { userId_idempotencyKey: { userId, idempotencyKey } },
+            });
+            if (replay) {
+              if (
+                !isWalletTopup(replay.entitlementSnapshot) ||
+                replay.amountCents !== amountCents ||
+                replay.paymentType !== paymentType
+              )
+                throw new ConflictException(
+                  '该充值请求已用于其他金额或付款方式，请重新发起',
+                );
+              return replay;
+            }
+            const user = await tx.user.findUniqueOrThrow({
+              where: { id: userId },
+            });
+            if (
+              user.deletedAt ||
+              user.balanceCents + amountCents > MAX_WALLET_CENTS
+            )
+              throw new BadRequestException('账户无法接收该金额的充值');
+            const now = new Date();
+            await this.paymentAttempts?.abandonPendingPayments(tx, userId, now);
+            return tx.epayPaymentAttempt.create({
+              data: {
+                userId,
+                idempotencyKey,
+                merchantOrderNo: this.createMerchantOrderNo(now),
+                activeKey: activeEpayCheckoutKey(userId),
+                paymentType,
+                gatewayUrlSnapshot: config.gatewayUrl,
+                merchantIdSnapshot: config.merchantId,
+                merchantKeyCiphertext: this.cipher.encrypt(config.merchantKey!),
+                amountCents,
+                basePriceCents: amountCents,
+                currency: 'CNY',
+                productNameSnapshot: '账户余额充值',
+                entitlementSnapshot: {
+                  version: 1,
+                  purchaseMode: 'wallet_topup',
+                  holidayInviteRewardId: await snapshotHolidayInviteReward(
+                    tx,
+                    userId,
+                    now,
+                  ),
+                },
+                expiresAt: new Date(now.getTime() + PAYMENT_TTL_MS),
+              },
+            });
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+        return this.presentAttempt(attempt);
+      } catch (error) {
+        if (
+          (this.isRetryableTransactionError(error) ||
+            this.isUniqueConflict(error)) &&
+          retry < 2
+        )
+          continue;
+        throw error;
+      }
+    }
+    throw new ConflictException('充值请求正在处理中，请稍后重试');
+  }
+
+  async createHolidayPayment(
+    userId: string,
+    input: HolidayPurchaseDto,
+    key: string,
+  ) {
+    if (!this.holiday) throw new ServiceUnavailableException('活动模块不可用');
+    const config =
+      input.paymentType === 'wallet'
+        ? null
+        : await this.requireConfiguredEpay(true);
+    const result = await holidayTransaction(this.prisma, async (tx) => {
+      const entry = await this.holiday!.prepare(tx, userId, input, key);
+      if (entry.attemptId)
+        return {
+          attempt: await tx.epayPaymentAttempt.findUniqueOrThrow({
+            where: { id: entry.attemptId },
+          }),
+        };
+      if (entry.orderId) return { orderId: entry.orderId };
+      await this.paymentAttempts?.abandonPendingPayments(
+        tx,
+        userId,
+        new Date(),
+      );
+      if (input.paymentType === 'wallet')
+        return this.holiday!.fulfill(tx, entry, null, '', new Date());
+      const snap = entry.snapshot as Record<string, Prisma.JsonValue>,
+        now = new Date();
+      const attempt = await tx.epayPaymentAttempt.create({
+        data: {
+          userId,
+          offerId: entry.offerId,
+          merchantOrderNo: this.createMerchantOrderNo(now),
+          idempotencyKey: `holiday:${key}`,
+          activeKey: activeEpayCheckoutKey(userId),
+          paymentType: input.paymentType,
+          gatewayUrlSnapshot: config!.gatewayUrl,
+          merchantIdSnapshot: config!.merchantId,
+          merchantKeyCiphertext: this.cipher.encrypt(config!.merchantKey!),
+          amountCents: entry.amountCents,
+          basePriceCents: Number(snap.basePriceCents ?? entry.amountCents),
+          currency: 'CNY',
+          productNameSnapshot:
+            entry.kind === 'TOPUP'
+              ? '中秋国庆余额充值'
+              : `${typeof snap.productName === 'string' ? snap.productName : '活动套餐'} · 国庆专享`,
+          entitlementSnapshot: snap.catalog
+            ? (snap.catalog as Prisma.InputJsonValue)
+            : Prisma.DbNull,
+          expiresAt: new Date(now.getTime() + PAYMENT_TTL_MS),
+        },
+      });
+      await tx.holidayEntry.update({
+        where: { id: entry.id },
+        data: { attemptId: attempt.id },
+      });
+      return { attempt };
+    });
+    return 'attempt' in result
+      ? this.presentAttempt(result.attempt!)
+      : { ...result, status: 'settled' };
+  }
 
   async createPayment(
     userId: string,
@@ -757,9 +938,10 @@ export class EpayService {
             ) {
               return null;
             }
-            const snapshot = parseCatalogOfferSnapshot(
-              attempt.entitlementSnapshot,
-            );
+            const topup = isWalletTopup(attempt.entitlementSnapshot);
+            const snapshot = topup
+              ? null
+              : parseCatalogOfferSnapshot(attempt.entitlementSnapshot);
             if (attempt.status === EpayPaymentStatus.SETTLED) {
               return attempt.gatewayTradeNo === input.gatewayTradeNo
                 ? attempt
@@ -772,6 +954,46 @@ export class EpayService {
               );
             }
 
+            if (topup)
+              return fulfillWalletTopup(
+                tx,
+                attempt,
+                input.gatewayTradeNo,
+                input.paidAt,
+              );
+
+            const holidayEntry = this.holiday
+              ? await tx.holidayEntry.findUnique({
+                  where: { attemptId: attempt.id },
+                })
+              : null;
+            if (holidayEntry) {
+              const order = await this.holiday!.fulfill(
+                tx,
+                holidayEntry,
+                attempt,
+                input.gatewayTradeNo,
+                input.paidAt,
+              );
+              return tx.epayPaymentAttempt.update({
+                where: { id: attempt.id },
+                data: {
+                  orderId: order.orderId,
+                  gatewayTradeNo: input.gatewayTradeNo,
+                  status: 'SETTLED',
+                  fulfillmentStatus: 'APPLIED',
+                  activeKey: null,
+                  settledAt: input.paidAt,
+                  closedAt: null,
+                  lastSettlementError: null,
+                },
+              });
+            }
+            if (!attempt.offerId)
+              throw new PaymentFulfillmentRejectedError(
+                'INVALID_PRODUCT',
+                '订单商品关联缺失',
+              );
             if (snapshot?.purchaseMode === 'group_buy') {
               if (!this.groupBuys) {
                 throw new ServiceUnavailableException('拼团模块当前不可用');

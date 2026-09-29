@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
+import { grantHolidayInviteDraws } from '../holiday/holiday-invite-draws';
 
 interface CreateMemberInput {
   email: string;
@@ -34,61 +35,79 @@ export class MemberOnboardingService {
   }
 
   private async createMember(input: CreateMemberInput, inviteCode?: string) {
-    try {
-      return await this.prisma.$transaction(
-        async (tx) => {
-          const { referralConfig, referralCode } =
-            await this.resolveRegistrationInvite(tx, inviteCode);
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        return await this.prisma.$transaction(
+          async (tx) => {
+            const { referralConfig, referralCode } =
+              await this.resolveRegistrationInvite(tx, inviteCode);
 
-          const user = await tx.user.create({
-            data: {
-              email: input.email,
-              displayName: input.displayName,
-              passwordHash: input.passwordHash,
-              role: 'MEMBER',
-              status: 'ACTIVE',
-            },
-          });
-          await tx.accessAccount.create({ data: { userId: user.id } });
-          await tx.accessToken.create({
-            data: {
-              userId: user.id,
-              label: 'Primary access token',
-              token: randomBytes(32).toString('base64url'),
-            },
-          });
-
-          let referralStatus: 'pending' | null = null;
-          if (referralCode) {
-            await tx.referralAttribution.create({
+            const user = await tx.user.create({
               data: {
-                inviterId: referralCode.ownerId,
-                inviteeId: user.id,
-                referralCodeId: referralCode.id,
-                codeSnapshot: referralCode.code,
-                inviterRewardCents: 0,
-                inviterRewardBasisPoints:
-                  referralConfig.inviterRewardBasisPoints,
-                inviteeRewardBytes: BigInt(referralConfig.inviteeRewardBytes),
+                email: input.email,
+                displayName: input.displayName,
+                passwordHash: input.passwordHash,
+                role: 'MEMBER',
+                status: 'ACTIVE',
               },
             });
-            referralStatus = 'pending';
-          }
-          return { userId: user.id, referralStatus };
-        },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-      );
-    } catch (error: unknown) {
-      if (
-        error &&
-        typeof error === 'object' &&
-        'code' in error &&
-        error.code === 'P2002'
-      ) {
-        throw new ConflictException('该邮箱已注册，请直接登录');
+            await tx.accessAccount.create({ data: { userId: user.id } });
+            await tx.accessToken.create({
+              data: {
+                userId: user.id,
+                label: 'Primary access token',
+                token: randomBytes(32).toString('base64url'),
+              },
+            });
+
+            let referralStatus: 'pending' | null = null;
+            if (referralCode) {
+              await tx.referralAttribution.create({
+                data: {
+                  inviterId: referralCode.ownerId,
+                  inviteeId: user.id,
+                  referralCodeId: referralCode.id,
+                  codeSnapshot: referralCode.code,
+                  inviterRewardCents: 0,
+                  inviterRewardBasisPoints:
+                    referralConfig.inviterRewardBasisPoints,
+                  inviteeRewardBytes: BigInt(referralConfig.inviteeRewardBytes),
+                },
+              });
+              referralStatus = 'pending';
+              await grantHolidayInviteDraws(tx, user.id);
+            }
+            return { userId: user.id, referralStatus };
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+      } catch (error: unknown) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2034'
+        ) {
+          if (attempt === 7)
+            throw new ConflictException('注册繁忙，请稍后重试');
+          await new Promise((resolve) =>
+            setTimeout(
+              resolve,
+              25 * (attempt + 1) + Math.floor(Math.random() * 25),
+            ),
+          );
+          continue;
+        }
+        if (
+          error &&
+          typeof error === 'object' &&
+          'code' in error &&
+          error.code === 'P2002'
+        ) {
+          throw new ConflictException('该邮箱已注册，请直接登录');
+        }
+        throw error;
       }
-      throw error;
     }
+    throw new ConflictException('注册繁忙，请稍后重试');
   }
 
   private async resolveRegistrationInvite(

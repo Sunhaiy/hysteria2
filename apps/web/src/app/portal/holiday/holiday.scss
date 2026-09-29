@@ -1,0 +1,404 @@
+.holiday-storefront {
+  gap: 16px;
+  --holiday-tint: color-mix(in srgb, var(--accent-500) 8%, var(--bg-panel));
+  h2,
+  p {
+    margin: 0;
+  }
+  h2 {
+    font-size: 18px;
+    letter-spacing: -0.025em;
+  }
+  button {
+    white-space: nowrap;
+  }
+  .holiday-rules,
+  .holiday-activity {
+    border: 1px solid var(--border-default);
+    border-radius: 14px;
+    background: var(--surface-overlay), var(--bg-panel);
+    padding: 20px;
+    min-width: 0;
+  }
+  .holiday-rules > header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .holiday-rules header > span {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .holiday-rules > p {
+    font-size: 12px;
+    line-height: 1.8;
+    margin-top: 8px;
+  }
+  .holiday-saving {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 24px;
+    padding: 12px 16px;
+    margin-top: 12px;
+    border-radius: 9px;
+    background: transparent;
+    border-block: 1px solid var(--border-default);
+    border-radius: 0;
+  }
+  .holiday-saving strong {
+    display: block;
+    font-size: 21px;
+    color: var(--accent-500);
+  }
+  .holiday-saving-total {
+    min-width: 200px;
+  }
+  .holiday-saving-total > span {
+    margin: 0 0 5px;
+    color: var(--text-muted);
+  }
+  .holiday-saving-total > strong {
+    font-size: 30px;
+    line-height: 1.15;
+  }
+  .holiday-saving-total > small,
+  .holiday-saving-path > small {
+    display: block;
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.7;
+    margin-top: 6px;
+  }
+  .holiday-saving-path > strong {
+    font-size: 14px;
+    color: var(--text-primary);
+  }
+  .holiday-saving-path > p {
+    font-size: 12px;
+    margin-top: 5px;
+  }
+  .holiday-saving span {
+    display: block;
+    margin-top: 4px;
+    font-size: 11px;
+  }
+  .holiday-saving p {
+    font-size: 11px;
+    line-height: 1.8;
+  }
+  .holiday-saving-simple {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding-inline: 0;
+    border: 0;
+    .holiday-saving-total {
+      text-align: right;
+      min-width: 0;
+    }
+  }
+  details {
+    margin-top: 12px;
+    font-size: 12px;
+  }
+  summary {
+    cursor: pointer;
+    font-weight: 600;
+    width: fit-content;
+  }
+  .holiday-rule-details {
+    display: grid;
+    gap: 10px;
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-default);
+    line-height: 1.9;
+  }
+  .holiday-activities {
+    display: grid;
+    grid-template-columns: minmax(220px, 0.95fr) minmax(340px, 1.5fr) minmax(
+        210px,
+        0.9fr
+      );
+    gap: 14px;
+    align-items: stretch;
+  }
+  .holiday-activity {
+    padding: 14px;
+  }
+  .holiday-activity > header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-height: 30px;
+  }
+  .holiday-step {
+    font-size: 11px;
+    font-weight: 750;
+    color: var(--accent-500);
+  }
+  .holiday-caption {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.8;
+    margin-top: 8px;
+    margin-bottom: 12px;
+  }
+  .holiday-topups {
+    display: grid;
+    gap: 10px;
+  }
+  .holiday-topup-row {
+    border: 1px solid var(--border-default);
+    border-radius: 10px;
+    padding: 8px 10px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .holiday-topup-row strong {
+    font-size: 14px;
+  }
+  .holiday-topup-row em {
+    color: var(--accent-500);
+    font-style: normal;
+    white-space: nowrap;
+  }
+  .holiday-topup-row small {
+    display: block;
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .holiday-topup-row button,
+  .holiday-offer-row button {
+    padding: 5px 10px;
+    font-size: 12px;
+    min-height: 28px;
+  }
+  .holiday-periods {
+    margin-left: auto;
+    display: flex;
+    gap: 3px;
+  }
+  .holiday-periods button {
+    padding: 4px 10px;
+    font-size: 11px;
+    min-height: 28px;
+  }
+  .holiday-offer-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 10px;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-default);
+  }
+  .holiday-offer-row:last-child {
+    border-bottom: 0;
+  }
+  .holiday-offer-row strong {
+    display: block;
+    font-size: 14px;
+  }
+  .holiday-offer-row small {
+    display: block;
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    line-height: 1.5;
+  }
+  .holiday-offer-price {
+    text-align: right;
+  }
+  .holiday-offer-price strong {
+    color: var(--accent-500);
+    font-size: 17px;
+    font-variant-numeric: tabular-nums;
+  }
+  .holiday-draw-balance {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 8px;
+    padding: 16px 0;
+  }
+  .holiday-draw-balance strong {
+    font-size: 40px;
+    color: var(--accent-500);
+    line-height: 1;
+  }
+  .holiday-draw-balance span {
+    font-size: 12px;
+  }
+  .holiday-draw-button {
+    width: 100%;
+    margin: 4px 0 18px;
+  }
+  .holiday-prize-list > div {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 8px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--border-default);
+    font-size: 11px;
+  }
+  .holiday-prize-list small {
+    color: var(--text-muted);
+  }
+  .holiday-footnote {
+    font-size: 11px;
+    line-height: 1.8;
+    color: var(--text-muted);
+    margin-top: 14px;
+  }
+  > .holiday-card {
+    padding: 16px 20px;
+    border-radius: 14px;
+  }
+  .holiday-record {
+    margin-bottom: 0;
+    font-size: 12px;
+  }
+  .holiday-invite {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    border: 1px solid var(--border-default);
+    .holiday-invite-label,
+    strong {
+      color: var(--accent-500);
+      font-weight: 700;
+    }
+    .holiday-invite-label {
+      display: block;
+      font-size: 11px;
+      margin-bottom: 8px;
+    }
+    p {
+      font-size: 13px;
+      line-height: 1.8;
+      margin-top: 8px;
+    }
+    small {
+      display: block;
+      color: var(--text-muted);
+      font-size: 11px;
+      line-height: 1.8;
+      margin-top: 6px;
+    }
+    .action-button {
+      flex-shrink: 0;
+      text-decoration: none;
+    }
+  }
+  summary:focus-visible {
+    outline: 2px solid var(--accent-500);
+    outline-offset: 4px;
+  }
+}
+@media (min-width: 1200px) {
+  .holiday-storefront {
+    gap: 12px;
+    .holiday-rules {
+      padding: 12px 18px;
+    }
+    .holiday-saving {
+      padding: 6px 10px;
+      margin-top: 6px;
+      gap: 16px;
+    }
+    .holiday-saving-total > strong {
+      font-size: 26px;
+    }
+    .holiday-saving-total > small,
+    .holiday-saving-path > small {
+      margin-top: 3px;
+    }
+    .holiday-rules > p {
+      margin-top: 4px;
+    }
+    details {
+      margin-top: 6px;
+    }
+    .holiday-activities {
+      gap: 12px;
+    }
+    .holiday-invite {
+      padding: 10px 14px;
+    }
+    .holiday-invite p,
+    .holiday-invite small {
+      margin-top: 3px;
+    }
+    .holiday-topups {
+      gap: 6px;
+    }
+    .holiday-topup-row {
+      padding: 6px 10px;
+    }
+    .holiday-topup-row small {
+      margin-top: 3px;
+    }
+    .holiday-offer-row {
+      padding: 6px 0;
+    }
+    .holiday-caption {
+      margin-top: 6px;
+      margin-bottom: 8px;
+    }
+    .holiday-footnote {
+      margin-top: 8px;
+    }
+  }
+}
+@media (max-width: 1199px) {
+  .holiday-storefront {
+    .holiday-activities {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+    }
+    .holiday-activity:last-child {
+      grid-column: 1 / -1;
+    }
+    .holiday-saving {
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+  }
+}
+@media (max-width: 600px) {
+  .holiday-storefront {
+    .holiday-invite {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 14px;
+      .action-button {
+        text-align: center;
+      }
+    }
+    .holiday-activities {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .holiday-rules,
+    .holiday-activity {
+      padding: 16px;
+    }
+    .holiday-topup-row {
+      flex-wrap: nowrap;
+    }
+    .holiday-offer-row {
+      gap: 8px;
+    }
+  }
+}

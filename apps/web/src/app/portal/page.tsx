@@ -9,6 +9,7 @@ import { EChart } from "@/components/echart";
 import { Icon } from "@/components/icon";
 import { Panel } from "@/components/panel";
 import { PageSkeleton } from "@/components/skeleton";
+import { WalletTopup } from "@/components/wallet-topup";
 import { useAuth } from "@/components/auth-provider";
 import { useSite } from "@/components/site-provider";
 import { apiRequest, ApiError } from "@/lib/api";
@@ -249,6 +250,7 @@ export default function PortalPage() {
       scope="Member"
       navItems={portalNav}
       requireRole="member"
+      toolbarMeta={<WalletTopup onSettled={() => void load()} />}
       toolbarActions={
         <button
           className="toolbar-button"

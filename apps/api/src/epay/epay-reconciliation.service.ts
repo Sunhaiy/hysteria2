@@ -16,6 +16,7 @@ import {
 } from './epay-query';
 import { EpayService } from './epay.service';
 import { GroupBuyService } from '../group-buy/group-buy.service';
+import { HolidayService } from '../holiday/holiday.service';
 import {
   EpayCredentialSnapshotError,
   readEpayCredentialSnapshot,
@@ -39,6 +40,7 @@ export class EpayReconciliationService {
     private readonly epay: EpayService,
     private readonly cipher: SecretCipherService,
     @Optional() private readonly groupBuys?: GroupBuyService,
+    @Optional() private readonly holiday?: HolidayService,
   ) {}
 
   async reconcileDueAttempts() {
@@ -353,6 +355,7 @@ export class EpayReconciliationService {
       });
       if (updated.count > 0) {
         await this.groupBuys?.closePayment(tx, attempt.id);
+        await this.holiday?.closePayment(tx, attempt.id);
         await tx.auditLog.create({
           data: {
             action: 'EPAY_QUERY_CLOSED',

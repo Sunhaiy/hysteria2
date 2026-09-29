@@ -2,6 +2,11 @@
 
 ## Current product language
 
+- The autumn 2026 campaign is isolated behind `/portal/holiday` and `/admin/holiday`.
+  `HolidayEntry` reserves gift budget and draw capacity before checkout; online
+  top-ups use `WALLET_TOPUP` orders and the immutable wallet ledger. Activity plan
+  purchases reuse existing entitlement activation and refund rules. See
+  [holiday campaign operations](docs/HOLIDAY_CAMPAIGN.md). It defaults off.
 - A `CatalogProduct` is a member-facing plan or traffic-pack product.
 - A `CatalogOffer` is one purchasable month, quarter, or year. The offer owns
   its price, quota, and store URL. `CatalogProduct.storeUrl` is a compatibility

@@ -98,6 +98,7 @@ describe('ControlPlaneStoreService wallet compatibility ledger', () => {
         }),
       },
       redemptionUse: {
+        count: jest.fn().mockResolvedValue(0),
         findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({}),
       },
@@ -149,7 +150,7 @@ describe('ControlPlaneStoreService wallet compatibility ledger', () => {
         beforeBalanceCents: 2000,
         afterBalanceCents: 2500,
         kind: 'TOPUP',
-        idempotencyKey: 'redemption:balance-code-1',
+        idempotencyKey: 'redemption:balance-code-1:user-1:1',
         note: '兑换码充值 BALANCE500',
       },
     });

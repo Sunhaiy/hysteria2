@@ -18,6 +18,7 @@ describe('MemberOnboardingService', () => {
         : options.code,
     );
     const tx = {
+      holidayCampaign: { findUnique: jest.fn().mockResolvedValue(null) },
       referralCode: {
         findUnique: findReferralCode,
       },

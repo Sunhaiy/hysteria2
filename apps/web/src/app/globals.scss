@@ -11932,6 +11932,17 @@ select.control {
   }
 }
 
+@media (min-width: 1200px) and (max-width: 1400px) {
+  .portal-primary-metrics {
+    grid-template-columns: minmax(0, 1.45fr) minmax(160px, .75fr) minmax(250px, 1fr);
+  }
+  .portal-quota-summary {
+    grid-column: auto;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+}
+
 @media (max-width: 920px) {
   .portal-analytics {
     min-height: 0;
@@ -13074,6 +13085,28 @@ select.control {
   color: var(--ppanel-fg);
   text-decoration: none;
 }
+
+.holiday-page { display: grid; gap: 28px; min-width: 0; }
+.holiday-hero, .holiday-card { padding: clamp(20px, 3vw, 32px); border: 1px solid var(--border-default); border-radius: 20px; background: var(--bg-panel); min-width: 0; }
+.holiday-hero { border-top: 4px solid var(--accent-500); }
+.holiday-hero h2 { max-width: 700px; font-size: clamp(24px, 3vw, 38px); line-height: 1.35; margin-block: 18px; }
+.holiday-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,240px),1fr)); gap: 18px; }
+.holiday-section-head, .holiday-record { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+.holiday-card h3 { font-size: 22px; margin-block: 12px; }
+.holiday-card p, .holiday-hero p { margin-block: 12px; }
+.holiday-accent, .holiday-price { color: var(--accent-500); }
+.holiday-price { font-size: 32px; font-weight: 700; }
+.holiday-price small { font-size: 14px; }
+.holiday-prizes { display: grid; grid-template-columns: repeat(auto-fit,minmax(120px,1fr)); gap: 16px; margin-block: 20px; }
+.holiday-prizes small, .holiday-record small { display: block; margin-top: 8px; }
+.holiday-record { padding-block: 16px; border-bottom: 1px solid var(--border-default); overflow-wrap: anywhere; }
+.holiday-record .control { max-width: 100px; }
+.holiday-notice { padding: 16px; border: 1px solid var(--border-default); border-radius: 12px; overflow-wrap: anywhere; }
+.holiday-checkout { display: grid; gap: 22px; }
+.holiday-card .action-button { margin-top: 12px; }
+.holiday-drawing { display: inline-block; width: 10px; height: 10px; margin-inline: 12px; border-radius: 50%; background: var(--accent-500); animation: holiday-pulse 450ms ease-in-out infinite alternate; }
+@keyframes holiday-pulse { to { opacity: .35; transform: scale(.65); } }
+@media (prefers-reduced-motion: reduce) { .holiday-drawing { animation: none; } }
 
 .ppanel-brand strong {
   overflow: hidden;

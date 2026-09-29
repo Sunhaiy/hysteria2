@@ -222,14 +222,15 @@ export class OrderQueryService {
         ...this.presentAttempt(attempt),
         user: attempt.user,
         product: {
-          id: attempt.offer.product.id,
-          name: attempt.offer.product.name,
-          kind: attempt.offer.product.kind.toLowerCase(),
+          id: attempt.offer?.product.id ?? 'wallet-topup',
+          name: attempt.offer?.product.name ?? '余额充值',
+          kind: attempt.offer?.product.kind.toLowerCase() ?? 'wallet_topup',
         },
         offer: {
-          id: attempt.offer.id,
-          name: attempt.offer.name,
-          billingPeriod: attempt.offer.billingPeriod.toLowerCase(),
+          id: attempt.offer?.id ?? 'wallet-topup',
+          name: attempt.offer?.name ?? '余额充值',
+          billingPeriod:
+            attempt.offer?.billingPeriod.toLowerCase() ?? 'one_time',
         },
       })),
       total,
@@ -291,7 +292,7 @@ export class OrderQueryService {
     const status = this.enumValue(query.status, OrderStatus, '订单状态');
     const source = this.enumValue(query.source, OrderSource, '订单来源');
     const productKind = this.enumValue(
-      query.productKind,
+      query.productKind === 'wallet_topup' ? undefined : query.productKind,
       CatalogProductKind,
       '商品类型',
     );
@@ -326,6 +327,8 @@ export class OrderQueryService {
     if (productKind) {
       and.push({ catalogOffer: { product: { kind: productKind } } });
     }
+    if (query.productKind === 'wallet_topup')
+      and.push({ kind: 'WALLET_TOPUP' });
     if (query.productId?.trim()) {
       and.push({ catalogOffer: { productId: query.productId.trim() } });
     }
@@ -348,12 +351,24 @@ export class OrderQueryService {
     const q = query.q?.trim();
     const paymentType = this.paymentType(query.paymentType);
     const productKind = this.enumValue(
-      query.productKind,
+      query.productKind === 'wallet_topup' ? undefined : query.productKind,
       CatalogProductKind,
       '商品类型',
     );
     const status = this.enumValue(query.status, EpayPaymentStatus, '支付状态');
     const and: Prisma.EpayPaymentAttemptWhereInput[] = [];
+    if (query.productKind === 'wallet_topup')
+      and.push({
+        OR: [
+          { holidayEntry: { is: { kind: 'TOPUP' } } },
+          {
+            entitlementSnapshot: {
+              path: ['purchaseMode'],
+              equals: 'wallet_topup',
+            },
+          },
+        ],
+      });
     if (!status) {
       and.push({
         OR: [
@@ -463,9 +478,11 @@ export class OrderQueryService {
               : 'not_required';
     const productKind = order.catalogOffer?.product.kind
       ? order.catalogOffer.product.kind.toLowerCase()
-      : order.kind === 'TRAFFIC_PACK'
-        ? 'traffic_pack'
-        : 'plan';
+      : order.kind === 'WALLET_TOPUP'
+        ? 'wallet_topup'
+        : order.kind === 'TRAFFIC_PACK'
+          ? 'traffic_pack'
+          : 'plan';
     return {
       id: order.id,
       operationLabel: orderOperation(order),

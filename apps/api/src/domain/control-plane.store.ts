@@ -4434,8 +4434,10 @@ export class ControlPlaneStoreService {
 
   private fromDbOrderKind(
     kind: OrderKind,
-  ): 'renewal' | 'traffic_pack' | 'manual_credit' {
+  ): 'renewal' | 'traffic_pack' | 'manual_credit' | 'wallet_topup' {
     switch (kind) {
+      case OrderKind.WALLET_TOPUP:
+        return 'wallet_topup';
       case OrderKind.TRAFFIC_PACK:
         return 'traffic_pack';
       case OrderKind.MANUAL_CREDIT:
