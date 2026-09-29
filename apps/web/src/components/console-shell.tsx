@@ -20,6 +20,7 @@ export function ConsoleShell({
   toolbarMeta,
   toolbarActions,
   dataViewport = false,
+  backgroundImageUrl,
   children,
 }: {
   title: string;
@@ -30,6 +31,7 @@ export function ConsoleShell({
   toolbarMeta?: ReactNode;
   toolbarActions?: ReactNode;
   dataViewport?: boolean;
+  backgroundImageUrl?: string;
   children: ReactNode;
 }) {
   const { session, loading, logout } = useAuth();
@@ -58,7 +60,18 @@ export function ConsoleShell({
   }
 
   return (
-    <div className={`app-shell${dataViewport ? " data-shell" : ""}`}>
+    <div
+      className={`app-shell${dataViewport ? " data-shell" : ""}${backgroundImageUrl ? " has-page-background" : ""}`}
+    >
+      {backgroundImageUrl && (
+        <div
+          className="console-page-background"
+          aria-hidden="true"
+          style={{
+            backgroundImage: `linear-gradient(color-mix(in srgb, var(--bg-canvas) 48%, transparent), color-mix(in srgb, var(--bg-canvas) 48%, transparent)), url(${JSON.stringify(backgroundImageUrl)})`,
+          }}
+        />
+      )}
       <header className="mobile-console-header">
         <h1>{title}</h1>
         <button
@@ -99,16 +112,25 @@ export function ConsoleShell({
           </div>
           <div className="sidebar-user">
             <div>
-              <div className="sidebar-user-name">{session.user.displayName}</div>
+              <div className="sidebar-user-name">
+                {session.user.displayName}
+              </div>
               <div className="fine-print">{session.user.email}</div>
             </div>
           </div>
         </div>
 
-        <SidebarNav items={navItems} onNavigate={() => setMobileNavOpen(false)} />
+        <SidebarNav
+          items={navItems}
+          onNavigate={() => setMobileNavOpen(false)}
+        />
 
         <div className="sidebar-footer">
-          <Link href="/" className="ghost-button" onClick={() => setMobileNavOpen(false)}>
+          <Link
+            href="/"
+            className="ghost-button"
+            onClick={() => setMobileNavOpen(false)}
+          >
             <Icon name="home" />
             <span>返回入口</span>
           </Link>
@@ -135,8 +157,12 @@ export function ConsoleShell({
         >
           {toolbarMeta || toolbarActions ? (
             <div className="page-utility-bar">
-              {toolbarMeta ? <div className="topbar-meta">{toolbarMeta}</div> : null}
-              {toolbarActions ? <div className="topbar-actions">{toolbarActions}</div> : null}
+              {toolbarMeta ? (
+                <div className="topbar-meta">{toolbarMeta}</div>
+              ) : null}
+              {toolbarActions ? (
+                <div className="topbar-actions">{toolbarActions}</div>
+              ) : null}
             </div>
           ) : null}
           {children}

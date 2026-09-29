@@ -11,6 +11,7 @@ import {
   normalizeNotices,
 } from '../src/settings/subscription-notices.service';
 import { expiredMemberWhere } from '../src/entitlement/expired-member';
+import { campaignDeliveryError } from '../src/mail/mail.service';
 const url = process.env.CAMPAIGN_TEST_DATABASE_URL;
 (url ? describe : describe.skip)(
   'campaign features on isolated PostgreSQL',
@@ -209,6 +210,119 @@ const url = process.env.CAMPAIGN_TEST_DATABASE_URL;
       await service.processPending();
       expect(sendCampaign).toHaveBeenCalledTimes(1);
       expect((await service.detail(p.id)).counts.UNKNOWN).toBe(1);
+    });
+    it('pauses on SMTP authentication failure and only resumes untouched recipients after confirmation', async () => {
+      const users = await Promise.all([user(), user(), user()]);
+      const p = await service.preview(
+        { ...input, emails: users.map((u) => u.email).join(',') },
+        admin,
+        randomUUID(),
+      );
+      await service.queue(p.id, admin, true);
+      sendCampaign.mockRejectedValueOnce(
+        campaignDeliveryError({ code: 'EAUTH', responseCode: 535 }),
+      );
+      await service.processPending();
+      await service.processPending();
+      expect(sendCampaign).toHaveBeenCalledTimes(1);
+      expect(await service.detail(p.id)).toMatchObject({
+        status: 'PAUSED',
+        counts: { FAILED: 1, PENDING: 2 },
+      });
+      await expect(service.queue(p.id, admin, false)).rejects.toThrow('确认');
+      await service.queue(p.id, admin, true);
+      await service.processPending();
+      expect(sendCampaign).toHaveBeenCalledTimes(3);
+      expect(await service.detail(p.id)).toMatchObject({
+        status: 'COMPLETED',
+        counts: { FAILED: 1, SENT: 2 },
+      });
+      expect(
+        await db.auditLog.count({
+          where: { targetId: p.id, action: 'CAMPAIGN_MAIL_AUTO_PAUSED' },
+        }),
+      ).toBe(1);
+    });
+    it('can cancel a paused job without allowing a later resume', async () => {
+      const users = await Promise.all([user(), user()]);
+      const p = await service.preview(
+        { ...input, emails: users.map((u) => u.email).join(',') },
+        admin,
+        randomUUID(),
+      );
+      await service.queue(p.id, admin, true);
+      sendCampaign.mockRejectedValueOnce(
+        campaignDeliveryError({ code: 'EAUTH', responseCode: 535 }),
+      );
+      await service.processPending();
+      await service.cancel(p.id, admin);
+      await service.queue(p.id, admin, true);
+      await service.processPending();
+      expect(sendCampaign).toHaveBeenCalledTimes(1);
+      expect(await service.detail(p.id)).toMatchObject({
+        status: 'CANCELED',
+        counts: { FAILED: 1, SKIPPED: 1 },
+      });
+    });
+    it('keeps a concurrent cancellation when the in-flight SMTP call fails', async () => {
+      const users = await Promise.all([user(), user()]);
+      const p = await service.preview(
+        { ...input, emails: users.map((u) => u.email).join(',') },
+        admin,
+        randomUUID(),
+      );
+      await service.queue(p.id, admin, true);
+      sendCampaign.mockImplementationOnce(async () => {
+        await service.cancel(p.id, admin);
+        throw campaignDeliveryError({ code: 'EAUTH', responseCode: 535 });
+      });
+      await service.processPending();
+      expect(await service.detail(p.id)).toMatchObject({
+        status: 'CANCELED',
+        counts: { FAILED: 1, SKIPPED: 1 },
+      });
+    });
+    it('records recipient rejection as failed and continues other recipients', async () => {
+      const users = await Promise.all([user(), user()]);
+      const p = await service.preview(
+        { ...input, emails: users.map((u) => u.email).join(',') },
+        admin,
+        randomUUID(),
+      );
+      await service.queue(p.id, admin, true);
+      sendCampaign.mockRejectedValueOnce(
+        campaignDeliveryError({
+          command: 'RCPT TO',
+          responseCode: 550,
+          response: '550 User unknown',
+        }),
+      );
+      await service.processPending();
+      expect(await service.detail(p.id)).toMatchObject({
+        status: 'COMPLETED',
+        counts: { FAILED: 1, SENT: 1 },
+      });
+    });
+    it('pauses and audits when SMTP config disappears without claiming recipients', async () => {
+      const u = await user();
+      const p = await service.preview(
+        { ...input, emails: u.email },
+        admin,
+        randomUUID(),
+      );
+      await service.queue(p.id, admin, true);
+      isConfigured.mockResolvedValue(false);
+      await service.processPending();
+      expect(sendCampaign).not.toHaveBeenCalled();
+      expect(await service.detail(p.id)).toMatchObject({
+        status: 'PAUSED',
+        counts: { PENDING: 1 },
+      });
+      expect(
+        await db.auditLog.count({
+          where: { targetId: p.id, action: 'CAMPAIGN_MAIL_AUTO_PAUSED' },
+        }),
+      ).toBe(1);
     });
     it('supports signed idempotent unsubscribe and rejects tampering', async () => {
       const u = await user(),

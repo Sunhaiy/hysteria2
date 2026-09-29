@@ -7,7 +7,7 @@ import {
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { MailService } from '../mail/mail.service';
+import { CampaignDeliveryError, MailService } from '../mail/mail.service';
 import { expiredMemberWhere } from '../entitlement/expired-member';
 import { apiPublicUrl, webPublicUrl } from '../common/public-url';
 
@@ -227,18 +227,24 @@ export class CampaignMailService {
       const job = await tx.campaignMailJob.findUnique({ where: { id } });
       if (!job || job.actorId !== actorId)
         throw new NotFoundException('请由预览任务的管理员确认发送');
-      if (job.status !== 'DRAFT') return;
-      if (Date.now() - job.createdAt.getTime() > 3600000)
+      if (!['DRAFT', 'PAUSED'].includes(job.status)) return;
+      if (
+        job.status === 'DRAFT' &&
+        Date.now() - job.createdAt.getTime() > 3600000
+      )
         throw new ConflictException('预览已超过一小时，请重新预览收件范围');
       const updated = await tx.campaignMailJob.updateMany({
-        where: { id, status: 'DRAFT' },
+        where: { id, status: job.status },
         data: { status: 'QUEUED' },
       });
       if (updated.count)
         await tx.auditLog.create({
           data: {
             actorId,
-            action: 'CAMPAIGN_MAIL_QUEUED',
+            action:
+              job.status === 'PAUSED'
+                ? 'CAMPAIGN_MAIL_RESUMED'
+                : 'CAMPAIGN_MAIL_QUEUED',
             targetType: 'CampaignMailJob',
             targetId: id,
           },
@@ -249,7 +255,7 @@ export class CampaignMailService {
   async cancel(id: string, actorId: string) {
     await this.db.$transaction(async (tx) => {
       const result = await tx.campaignMailJob.updateMany({
-        where: { id, status: { in: ['DRAFT', 'QUEUED'] } },
+        where: { id, status: { in: ['DRAFT', 'QUEUED', 'PAUSED'] } },
         data: { status: 'CANCELED' },
       });
       if (result.count) {
@@ -281,7 +287,30 @@ export class CampaignMailService {
         error: '发送过程被中断，结果待核实；未自动重发',
       },
     });
-    if (!(await this.mail.isConfigured())) return;
+    if (!(await this.mail.isConfigured())) {
+      await this.db.$transaction(async (tx) => {
+        const jobs = await tx.campaignMailJob.findMany({
+          where: { status: 'QUEUED' },
+          select: { id: true },
+        });
+        for (const job of jobs) {
+          const changed = await tx.campaignMailJob.updateMany({
+            where: { id: job.id, status: 'QUEUED' },
+            data: { status: 'PAUSED' },
+          });
+          if (changed.count)
+            await tx.auditLog.create({
+              data: {
+                action: 'CAMPAIGN_MAIL_AUTO_PAUSED',
+                targetType: 'CampaignMailJob',
+                targetId: job.id,
+                metadata: { reason: 'SMTP_NOT_CONFIGURED' },
+              },
+            });
+        }
+      });
+      return;
+    }
     const pending = await this.db.campaignMailDelivery.findMany({
       where: { status: 'PENDING', job: { status: 'QUEUED' } },
       orderBy: { id: 'asc' },
@@ -329,16 +358,42 @@ export class CampaignMailService {
           messageId: `<campaign-${delivery.id}@${new URL(webPublicUrl()).hostname}>`,
         });
       } catch (error) {
-        await this.db.campaignMailDelivery.update({
-          where: { id: delivery.id },
-          data: {
-            status: 'UNKNOWN',
-            error:
-              error instanceof Error
-                ? error.message.slice(0, 200)
-                : '发送失败，结果待核实',
-          },
+        const definite =
+          error instanceof CampaignDeliveryError
+            ? error.definitive
+            : error instanceof BadRequestException;
+        const pause =
+          error instanceof CampaignDeliveryError
+            ? error.pauseQueue
+            : !(error instanceof BadRequestException);
+        await this.db.$transaction(async (tx) => {
+          await tx.campaignMailDelivery.update({
+            where: { id: delivery.id },
+            data: {
+              status: definite ? 'FAILED' : 'UNKNOWN',
+              error:
+                error instanceof Error
+                  ? error.message.slice(0, 200)
+                  : '发送结果待核实，已暂停',
+            },
+          });
+          if (pause) {
+            const changed = await tx.campaignMailJob.updateMany({
+              where: { id: delivery.jobId, status: 'QUEUED' },
+              data: { status: 'PAUSED' },
+            });
+            if (changed.count)
+              await tx.auditLog.create({
+                data: {
+                  action: 'CAMPAIGN_MAIL_AUTO_PAUSED',
+                  targetType: 'CampaignMailJob',
+                  targetId: delivery.jobId,
+                  metadata: { deliveryId: delivery.id, definitive: definite },
+                },
+              });
+          }
         });
+        if (pause) break;
         continue;
       }
       // Keep DB-write failure outside the SMTP catch; stale recovery marks it unknown.

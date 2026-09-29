@@ -3,9 +3,48 @@ import {
   classifyMailDeliveryError,
   mailRecipientValidationMessage,
   MailService,
+  CampaignDeliveryError,
 } from './mail.service';
 
 describe('MailService delivery errors', () => {
+  it('preserves definitive authentication failure for the campaign queue without leaking SMTP details', async () => {
+    const sendMail = jest.fn().mockRejectedValue({
+      code: 'EAUTH',
+      responseCode: 535,
+      response: '535 private@example.test secret-token',
+    });
+    const transport = jest
+      .spyOn(nodemailer, 'createTransport')
+      .mockReturnValue({ sendMail } as never);
+    try {
+      const service = new MailService({
+        getSmtpConfig: () =>
+          Promise.resolve({
+            configured: true,
+            host: 'smtp.test',
+            port: 465,
+            user: 'sender@test',
+            pass: 'secret',
+          }),
+      } as never);
+      const error = await service
+        .sendCampaign({
+          to: 'member@example.test',
+          subject: '活动',
+          body: '正文',
+          activityUrl: 'https://site.test',
+          unsubscribeUrl: 'https://site.test/unsubscribe',
+          messageId: '<test@site.test>',
+        })
+        .catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(CampaignDeliveryError);
+      expect(error).toMatchObject({ definitive: true, pauseQueue: true });
+      expect((error as Error).message).toContain('认证');
+      expect((error as Error).message).not.toMatch(/private|secret-token/);
+    } finally {
+      transport.mockRestore();
+    }
+  });
   it('requires SMTP for campaign mail instead of silently using the dev fallback', async () => {
     const service = new MailService({
       getSmtpConfig: () => Promise.resolve({ configured: false }),

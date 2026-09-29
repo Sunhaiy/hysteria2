@@ -16,6 +16,7 @@ type MailJob = {
 const labels: Record<string, string> = {
   DRAFT: "待确认",
   QUEUED: "发送中",
+  PAUSED: "异常暂停",
   COMPLETED: "已处理",
   CANCELED: "已取消",
   PENDING: "待发送",
@@ -228,38 +229,75 @@ export function CampaignMailPanel({ token }: { token: string | null }) {
       </p>
       {jobs.length ? (
         jobs.map((job) => (
-          <details key={job.id}>
-            <summary>
+          <article className="campaign-mail-record" key={job.id}>
+            <strong>
               {job.subject} · {labels[job.status] ?? job.status} ·{" "}
               {Object.entries(job.counts)
                 .map(([k, n]) => `${labels[k] ?? k} ${n}`)
                 .join(" / ")}
-            </summary>
-            <p style={{ whiteSpace: "pre-wrap" }}>{job.body}</p>
-            {job.issues.map((i) => (
-              <p key={i.email}>
-                {i.email}：{i.error}
+            </strong>
+            {job.status === "PAUSED" && (
+              <p role="status">
+                发件异常，任务已自动暂停。请检查 SMTP
+                授权与服务商限制；继续发送只处理尚未尝试的邮件，不重发失败或结果待核实的邮件。
               </p>
-            ))}
-            {["DRAFT", "QUEUED"].includes(job.status) && (
-              <button
-                className="action-button secondary"
-                disabled={busy}
-                onClick={() =>
-                  void action(async () => {
-                    await apiRequest(
-                      `/api/admin/campaign-mail/${job.id}/cancel`,
-                      { token, method: "POST" },
-                    );
-                    if (preview?.id === job.id) setPreview(null);
-                    await load();
-                  })
-                }
-              >
-                取消待发邮件
-              </button>
             )}
-          </details>
+            {["DRAFT", "QUEUED", "PAUSED"].includes(job.status) && (
+              <div className="campaign-mail-record-actions">
+                <button
+                  className="action-button secondary"
+                  disabled={busy}
+                  onClick={() =>
+                    void action(async () => {
+                      await apiRequest(
+                        `/api/admin/campaign-mail/${job.id}/cancel`,
+                        { token, method: "POST" },
+                      );
+                      if (preview?.id === job.id) setPreview(null);
+                      await load();
+                      setMessage(
+                        "已停止，剩余待发邮件不会继续发送。正在发送的邮件可能稍后返回结果。",
+                      );
+                    })
+                  }
+                >
+                  停止发送
+                </button>
+                {job.status === "PAUSED" && (
+                  <button
+                    className="action-button"
+                    disabled={busy}
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          "确认已检查发件服务？仅继续尚未尝试的邮件，不重发失败或结果待核实的邮件。",
+                        )
+                      )
+                        return;
+                      void action(async () => {
+                        await apiRequest(
+                          `/api/admin/campaign-mail/${job.id}/send`,
+                          { token, method: "POST", body: { confirmed: true } },
+                        );
+                        await load();
+                      });
+                    }}
+                  >
+                    确认继续待发邮件
+                  </button>
+                )}
+              </div>
+            )}
+            <details>
+              <summary>查看正文与失败原因</summary>
+              <p style={{ whiteSpace: "pre-wrap" }}>{job.body}</p>
+              {job.issues.map((i) => (
+                <p key={i.email}>
+                  {i.email}：{i.error}
+                </p>
+              ))}
+            </details>
+          </article>
         ))
       ) : (
         <p>暂无邮件任务。</p>

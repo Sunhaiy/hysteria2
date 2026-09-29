@@ -26,7 +26,10 @@
 任务与每人投递记录持久化，预览、确认和取消均有审计。后台 worker 每 10 秒领取
 至多 5 封，先原子领取再单独发送；重复确认和并发 worker 不重复发送同一投递。
 发送前再次检查账号、邮箱与退订状态。SMTP 未配置不会假报发送成功。
-SMTP 失败或进程中断的结果标为待核实，不自动重发，以免重复打扰。
+SMTP 明确拒绝的邮件标为失败；连接中断、超时或进程中断的结果标为待核实，均不自动重发。
+认证失败、服务连接异常或未配置 SMTP 时暂停任务，避免连续消耗整批收件人。
+暂停后由任务创建者确认继续，只处理尚未领取的邮件，失败和待核实邮件不会重发。
+任务卡片直接展示停止按钮；已取消任务不能恢复。自动暂停、继续及取消均记录审计。
 “邮件服务已接受”不是最终投递回执；应结合发件服务的投递日志核实。
 取消仅停止尚未领取的邮件，不撤回发送中或已发送的邮件。
 
@@ -54,5 +57,5 @@ List-Unsubscribe 一键退订。普通打开退订链接先显示确认页，避
 | GET /api/campaign-mail/unsubscribe/:userId/:signature | 公开签名链接，展示退订确认表单 |
 | POST /api/campaign-mail/unsubscribe/:userId/:signature | 公开签名链接，幂等退订，无需登录 |
 
-任务状态为 DRAFT、QUEUED、COMPLETED、CANCELED；投递状态为 PENDING、SENDING、
-SENT、UNKNOWN、SKIPPED。COMPLETED 表示处理结束，不表示所有邮件成功进入收件箱。
+任务状态为 DRAFT、QUEUED、PAUSED、COMPLETED、CANCELED；投递状态为 PENDING、SENDING、
+SENT、FAILED、UNKNOWN、SKIPPED。COMPLETED 表示处理结束，不表示所有邮件成功进入收件箱。

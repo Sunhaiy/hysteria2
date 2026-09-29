@@ -320,6 +320,20 @@ img {
   grid-template-columns: minmax(260px, 280px) minmax(0, 1fr);
 }
 
+.app-shell.has-page-background {
+  isolation: isolate;
+}
+
+.console-page-background {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
 .sidebar {
   position: sticky;
   top: 0;

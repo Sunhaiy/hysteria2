@@ -402,16 +402,6 @@
     }
   }
 }
-.holiday-storefront {
-  --holiday-image-overlay: color-mix(
-    in srgb,
-    var(--bg-base, #111) 48%,
-    transparent
-  );
-  background-size: cover;
-  background-position: center;
-  border-radius: 12px;
-}
 .holiday-checkout-content > p {
   margin: 0;
   color: var(--text-muted);
@@ -428,4 +418,15 @@
 .campaign-mail-panel details {
   padding-block: 12px;
   overflow-wrap: anywhere;
+}
+.campaign-mail-record {
+  padding-block: 16px;
+  border-top: 1px solid var(--border-default);
+  overflow-wrap: anywhere;
+}
+.campaign-mail-record-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-block: 12px;
 }

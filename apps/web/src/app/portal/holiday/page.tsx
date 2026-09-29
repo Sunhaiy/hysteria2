@@ -311,17 +311,13 @@ export default function HolidayPage() {
       scope="Member"
       navItems={portalNav}
       requireRole="member"
+      backgroundImageUrl={
+        c?.config.backgroundImageUrl
+          ? `${apiBaseUrl}${c.config.backgroundImageUrl}`
+          : undefined
+      }
     >
-      <div
-        className="holiday-page holiday-storefront"
-        style={
-          c?.config.backgroundImageUrl
-            ? {
-                backgroundImage: `linear-gradient(var(--holiday-image-overlay), var(--holiday-image-overlay)), url(${JSON.stringify(`${apiBaseUrl}${c.config.backgroundImageUrl}`)})`,
-              }
-            : undefined
-        }
-      >
+      <div className="holiday-page holiday-storefront">
         {error && (
           <div role="alert" className="holiday-notice">
             {error}

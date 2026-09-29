@@ -100,6 +100,37 @@ export function classifyMailDeliveryError(error: unknown) {
   return MAIL_DELIVERY_MESSAGES.unknown;
 }
 
+export class CampaignDeliveryError extends ServiceUnavailableException {
+  constructor(
+    message: string,
+    readonly definitive: boolean,
+    readonly pauseQueue: boolean,
+  ) {
+    super(message);
+  }
+}
+
+export function campaignDeliveryError(error: unknown) {
+  const details = (error ?? {}) as MailDeliveryError;
+  const code = safeErrorField(details.code).toUpperCase();
+  const responseCode = Number(details.responseCode) || 0;
+  if (code === 'EAUTH' || responseCode === 534 || responseCode === 535)
+    return new CampaignDeliveryError(
+      '发件服务拒绝账户认证（SMTP 535/534），本封未发送；任务已暂停，请核查授权码、SMTP权限或服务商风控。',
+      true,
+      true,
+    );
+  const recipientFailure =
+    ['RCPT TO', 'RCPT'].includes(
+      safeErrorField((error as { command?: unknown })?.command).toUpperCase(),
+    ) && responseCode >= 500;
+  return new CampaignDeliveryError(
+    classifyMailDeliveryError(error),
+    responseCode >= 400 && responseCode < 600,
+    !recipientFailure,
+  );
+}
+
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
@@ -228,7 +259,11 @@ export class MailService {
     const cfg = await this.settings.getSmtpConfig();
     if (!cfg.configured || !cfg.host || !cfg.user || !cfg.pass) {
       if (input.requireSmtp)
-        throw new ServiceUnavailableException('邮件服务未配置，未发送活动邮件');
+        throw new CampaignDeliveryError(
+          '邮件服务未配置，未发送活动邮件',
+          true,
+          true,
+        );
       // Dev fallback: surface in logs so the flow stays testable without SMTP.
       this.logger.warn(input.devNote);
       return;
@@ -265,6 +300,7 @@ export class MailService {
       this.logger.warn(
         `Email delivery failed (code=${safeErrorField(details.code) || 'unknown'}, responseCode=${safeErrorField(details.responseCode) || 'unknown'})`,
       );
+      if (input.requireSmtp) throw campaignDeliveryError(error);
       throw new ServiceUnavailableException(classifyMailDeliveryError(error));
     }
   }
