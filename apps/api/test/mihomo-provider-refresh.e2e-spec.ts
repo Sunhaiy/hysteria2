@@ -5,6 +5,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse, stringify } from 'yaml';
+import { noticeProxies } from '../src/settings/subscription-notices.service';
 import {
   buildMihomoProfile,
   buildMihomoProvider,
@@ -33,6 +34,7 @@ const core = process.env.MIHOMO_TEST_BINARY;
     region: 'US',
   };
   let nodes = [node];
+  let expiredNotices = false;
   let failure = true;
   let requests = 0;
   let child: ChildProcess;
@@ -47,6 +49,17 @@ const core = process.env.MIHOMO_TEST_BINARY;
       return;
     }
     res.setHeader('Content-Type', 'text/yaml');
+    if (expiredNotices) {
+      res.end(
+        stringify({
+          proxies: noticeProxies(
+            ['套餐已到期，请续费', '活动进行中'],
+            req.url?.includes('scope=ai') ? 'ai' : 'all',
+          ),
+        }),
+      );
+      return;
+    }
     res.end(
       buildMihomoProvider(
         credential,
@@ -199,6 +212,23 @@ const core = process.env.MIHOMO_TEST_BINARY;
     );
     const blocked = (await response.json()) as { proxies: { type: string }[] };
     expect(blocked.proxies[0].type.toLowerCase()).toContain('reject');
+    expiredNotices = true;
+    await eventually(
+      async () =>
+        (await names()).length === 2 &&
+        (await names()).every((n) => n.includes('[到期提示]')),
+    );
+    await eventually(async () =>
+      (await names('素心 AI 节点')).every((n) => n.includes('AI · [到期提示]')),
+    );
+    expect((await names()).filter((n) => allNames.includes(n))).toEqual([]);
+    expiredNotices = false;
+    nodes = [{ ...node, label: 'Renewed Real Node' }];
+    await eventually(
+      async () =>
+        (await names()).some((n) => n.includes('Renewed Real Node')) &&
+        !(await names()).some((n) => n.includes('[到期提示]')),
+    );
     expect(child.pid).toBe(pid);
     expect(child.exitCode).toBeNull();
   }, 40000);

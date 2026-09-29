@@ -1,5 +1,8 @@
 "use client";
+import "../../portal/holiday/holiday.scss";
 import { useCallback, useEffect, useState } from "react";
+import { SubscriptionNoticeSettings } from "@/components/subscription-notice-settings";
+import { CampaignMailPanel } from "@/components/campaign-mail-panel";
 import { ConsoleShell } from "@/components/console-shell";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest } from "@/lib/api";
@@ -69,6 +72,8 @@ export default function AdminHoliday() {
       requireRole="admin"
     >
       <div className="holiday-page">
+        <SubscriptionNoticeSettings token={token} />
+        <CampaignMailPanel token={token} />
         {message && (
           <p role="status" className="holiday-notice">
             {message}
@@ -80,6 +85,77 @@ export default function AdminHoliday() {
           <>
             <section className="holiday-card">
               <h2>活动设置</h2>
+              <label className="field">
+                活动背景图片（PNG、JPEG、WebP，最多10MB）
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  disabled={busy}
+                  onChange={async (event) => {
+                    const file = event.target.files?.[0];
+                    if (!file) return;
+                    event.target.value = "";
+                    if (file.size > 10 * 1024 * 1024) {
+                      setMessage("图片不能超过10MB");
+                      return;
+                    }
+                    setBusy(true);
+                    try {
+                      const body = new FormData();
+                      body.append("file", file);
+                      const image = await apiRequest<{ url: string }>(
+                        "/api/admin/settings/announcement/images",
+                        { token, method: "POST", body },
+                      );
+                      setForm((current) =>
+                        current
+                          ? {
+                              ...current,
+                              config: {
+                                ...current.config,
+                                backgroundImageUrl: new URL(
+                                  image.url,
+                                  window.location.origin,
+                                ).pathname,
+                              },
+                            }
+                          : current,
+                      );
+                      setMessage("图片已上传，请保存活动配置后生效。");
+                    } catch (e) {
+                      setMessage(e instanceof Error ? e.message : "上传失败");
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                />
+              </label>
+              {form.config.backgroundImageUrl && (
+                <>
+                  <div
+                    role="img"
+                    aria-label="活动背景预览"
+                    style={{
+                      height: 150,
+                      borderRadius: 12,
+                      backgroundSize: "cover",
+                      backgroundPosition: "center",
+                      backgroundImage: `url(${JSON.stringify(form.config.backgroundImageUrl)})`,
+                    }}
+                  />
+                  <button
+                    className="action-button secondary"
+                    onClick={() =>
+                      setForm({
+                        ...form,
+                        config: { ...form.config, backgroundImageUrl: "" },
+                      })
+                    }
+                  >
+                    移除背景图片
+                  </button>
+                </>
+              )}
               <label className="field">
                 好友首次充值邀请奖励（元，0表示关闭现金奖励）
                 <input

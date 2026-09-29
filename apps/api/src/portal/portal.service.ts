@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import QRCode from 'qrcode';
 import { CacheService } from '../cache/cache.service';
+import { SubscriptionNoticesService } from '../settings/subscription-notices.service';
 import {
   CommerceService,
   type CheckoutInput,
@@ -60,6 +61,7 @@ export class PortalService {
     @Optional() private readonly entitlements?: EntitlementService,
     @Optional() private readonly prisma?: PrismaService,
     @Optional() private readonly cache?: CacheService,
+    @Optional() private readonly notices?: SubscriptionNoticesService,
   ) {}
 
   getBranding() {
@@ -935,7 +937,18 @@ export class PortalService {
     tokenValue: string,
     mode: 'provider' | 'inline' = 'inline',
   ) {
-    const bundle = await this.getSubscriptionAccessBundle(tokenValue);
+    let bundle: Awaited<
+      ReturnType<PortalService['getSubscriptionAccessBundle']>
+    >;
+    try {
+      bundle = await this.getSubscriptionAccessBundle(tokenValue);
+    } catch (error) {
+      if (error instanceof NotFoundException && this.notices) {
+        const notice = await this.notices.feed(tokenValue);
+        if (notice) return notice;
+      }
+      throw error;
+    }
     if (bundle.nodes.length === 0) {
       throw new NotFoundException('No active nodes are bound to this plan');
     }
@@ -963,6 +976,10 @@ export class PortalService {
       const bundle = await this.getSubscriptionAccessBundle(tokenValue);
       return buildMihomoProvider(bundle.token, bundle.nodes, scope);
     } catch (error) {
+      if (error instanceof NotFoundException && this.notices) {
+        const notice = await this.notices.feed(tokenValue, scope);
+        if (notice) return notice.content;
+      }
       // A valid identity without access must clear cached nodes; an outage must not.
       if (
         error instanceof NotFoundException &&

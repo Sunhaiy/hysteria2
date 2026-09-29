@@ -359,6 +359,8 @@ enum EpayRefundStatus {
 }
 
 model User {
+  campaignMailDeliveries CampaignMailDelivery[]
+  campaignMailOptOut CampaignMailOptOut?
   holidayEntries HolidayEntry[]
   id                           String                        @id @default(cuid())
   email                        String                        @unique
@@ -1230,6 +1232,44 @@ model NodeRuntimeCommand {
 
 // Simple key-value store for admin-editable runtime settings (SMTP, feature
 // toggles like open registration). Secret values are masked when read back.
+model CampaignMailJob {
+  id             String                 @id @default(cuid())
+  actorId        String
+  idempotencyKey String
+  inputHash      String
+  audience       String
+  subject        String
+  body           String
+  status         String                 @default("DRAFT")
+  createdAt      DateTime               @default(now())
+  deliveries     CampaignMailDelivery[]
+
+  @@unique([actorId, idempotencyKey])
+  @@index([status, createdAt])
+}
+
+model CampaignMailDelivery {
+  id        String          @id @default(cuid())
+  jobId     String
+  userId    String
+  email     String
+  status    String          @default("PENDING")
+  startedAt DateTime?
+  sentAt    DateTime?
+  error     String?
+  job       CampaignMailJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, userId])
+  @@index([status, jobId])
+}
+
+model CampaignMailOptOut {
+  userId    String   @id
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
 model Setting {
   key       String   @id
   value     String

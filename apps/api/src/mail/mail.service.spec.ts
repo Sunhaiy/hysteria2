@@ -1,3 +1,4 @@
+import nodemailer from 'nodemailer';
 import {
   classifyMailDeliveryError,
   mailRecipientValidationMessage,
@@ -5,6 +6,69 @@ import {
 } from './mail.service';
 
 describe('MailService delivery errors', () => {
+  it('requires SMTP for campaign mail instead of silently using the dev fallback', async () => {
+    const service = new MailService({
+      getSmtpConfig: () => Promise.resolve({ configured: false }),
+    } as never);
+    await expect(
+      service.sendCampaign({
+        to: 'member@example.test',
+        subject: '活动',
+        body: '内容',
+        activityUrl: 'https://site.test/portal/holiday',
+        unsubscribeUrl: 'https://site.test/unsubscribe',
+        messageId: '<fixture@site.test>',
+      }),
+    ).rejects.toThrow('未发送活动邮件');
+  });
+  it('escapes campaign content and provides per-recipient unsubscribe and stable message IDs', async () => {
+    const sendMail = jest
+      .fn<
+        Promise<object>,
+        [
+          {
+            html: string;
+            headers: Record<string, string>;
+            messageId: string;
+            to: string;
+          },
+        ]
+      >()
+      .mockResolvedValue({});
+    const transport = jest
+      .spyOn(nodemailer, 'createTransport')
+      .mockReturnValue({ sendMail } as never);
+    try {
+      const service = new MailService({
+        getSmtpConfig: () =>
+          Promise.resolve({
+            configured: true,
+            host: 'smtp.test',
+            user: 'sender@test',
+            pass: 'test',
+            port: 465,
+          }),
+      } as never);
+      await service.sendCampaign({
+        to: 'member@example.test',
+        subject: '<img src=x>',
+        body: '<script>alert(1)</script>',
+        activityUrl: 'https://site.test/portal/holiday',
+        unsubscribeUrl: 'https://site.test/unsubscribe/signed',
+        messageId: '<fixture@site.test>',
+      });
+      const sent = sendMail.mock.calls[0][0];
+      expect(sent.html).not.toContain('<script>');
+      expect(sent.html).toContain('&lt;script&gt;');
+      expect(sent.headers['List-Unsubscribe']).toBe(
+        '<https://site.test/unsubscribe/signed>',
+      );
+      expect(sent.messageId).toBe('<fixture@site.test>');
+      expect(sent.to).toBe('member@example.test');
+    } finally {
+      transport.mockRestore();
+    }
+  });
   it.each([
     [
       { responseCode: 550, response: '550 5.1.1 User unknown' },

@@ -44,6 +44,8 @@ export class PublicAnnouncementImagesController {
     response.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     response.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     response.setHeader('ETag', image.etag);
-    response.type('image/webp').sendFile(image.path);
+    // The validated UUID resolves inside the owned image directory, which may
+    // live in a hidden worktree or mounted storage directory.
+    response.type('image/webp').sendFile(image.path, { dotfiles: 'allow' });
   }
 }

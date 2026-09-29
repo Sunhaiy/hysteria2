@@ -128,6 +128,7 @@ export class HolidayService {
       giftBudgetCents: 100000,
       revision: 0,
       config: {
+        backgroundImageUrl: '',
         inviteRewardCents: 500,
         tiers: [
           { id: '26', amountCents: 2600, giftCents: 500 },
@@ -362,6 +363,15 @@ export class HolidayService {
       end = new Date(input.endsAt),
       drawEnd = new Date(input.drawEndsAt),
       cfg = input.config;
+    if (
+      cfg.backgroundImageUrl !== undefined &&
+      (typeof cfg.backgroundImageUrl !== 'string' ||
+        (cfg.backgroundImageUrl !== '' &&
+          !/^\/api\/announcement-images\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+            cfg.backgroundImageUrl,
+          )))
+    )
+      throw new BadRequestException('请上传有效的活动背景图片');
     if (
       !Number.isFinite(+start) ||
       !Number.isFinite(+end) ||

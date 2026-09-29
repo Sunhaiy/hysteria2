@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ConsoleShell } from "@/components/console-shell";
 import { useAuth } from "@/components/auth-provider";
 import { Drawer } from "@/components/drawer";
+import { Icon } from "@/components/icon";
 import { CheckoutPaymentOptions } from "@/components/checkout-payment-options";
 import { bestHolidayBundle } from "@/lib/holiday-savings";
 import { apiRequest } from "@/lib/api";
@@ -310,7 +311,16 @@ export default function HolidayPage() {
       navItems={portalNav}
       requireRole="member"
     >
-      <div className="holiday-page holiday-storefront">
+      <div
+        className="holiday-page holiday-storefront"
+        style={
+          c?.config.backgroundImageUrl
+            ? {
+                backgroundImage: `linear-gradient(var(--holiday-image-overlay), var(--holiday-image-overlay)), url(${JSON.stringify(c.config.backgroundImageUrl)})`,
+              }
+            : undefined
+        }
+      >
         {error && (
           <div role="alert" className="holiday-notice">
             {error}
@@ -678,7 +688,7 @@ export default function HolidayPage() {
         }
       >
         {selection && (
-          <div className="checkout-dialog-content">
+          <div className="checkout-dialog-content holiday-checkout-content">
             {error && (
               <div className="feedback error" role="alert">
                 {error}
@@ -733,11 +743,20 @@ export default function HolidayPage() {
                               purchaseKey.current = crypto.randomUUID();
                             }}
                           >
-                            <strong>{label}</strong>
+                            <Icon
+                              name={
+                                mode === "scheduled_switch"
+                                  ? "schedule"
+                                  : "bolt"
+                              }
+                            />
                             <span>
-                              {mode === "scheduled_switch"
-                                ? "保留当前套餐剩余时间与流量"
-                                : "放弃旧套餐剩余时间与流量"}
+                              <strong>{label}</strong>
+                              <small>
+                                {mode === "scheduled_switch"
+                                  ? "保留当前套餐剩余时间与流量"
+                                  : "放弃旧套餐剩余时间与流量"}
+                              </small>
                             </span>
                           </button>
                         ))}

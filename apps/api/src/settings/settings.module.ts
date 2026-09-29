@@ -1,4 +1,6 @@
 import { Global, Module } from '@nestjs/common';
+import { SubscriptionNoticesController } from './subscription-notices.controller';
+import { SubscriptionNoticesService } from './subscription-notices.service';
 import { AdminSettingsController } from './admin-settings.controller';
 import { PublicSiteController } from './public-site.controller';
 import { SettingsService } from './settings.service';
@@ -15,6 +17,7 @@ import { AnnouncementImagesService } from './announcement-images.service';
 @Global()
 @Module({
   controllers: [
+    SubscriptionNoticesController,
     AdminSettingsController,
     PublicSiteController,
     AdminTutorialAssetsController,
@@ -22,7 +25,11 @@ import { AnnouncementImagesService } from './announcement-images.service';
     AdminAnnouncementImagesController,
     PublicAnnouncementImagesController,
   ],
-  providers: [SettingsService, AnnouncementImagesService],
-  exports: [SettingsService],
+  providers: [
+    SettingsService,
+    AnnouncementImagesService,
+    SubscriptionNoticesService,
+  ],
+  exports: [SettingsService, SubscriptionNoticesService],
 })
 export class SettingsModule {}

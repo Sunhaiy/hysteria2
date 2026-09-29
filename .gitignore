@@ -14,6 +14,7 @@ coverage
 !**/.env.example
 tmp
 output/
+apps/api/storage/
 ops/release/agent-inventory
 *.log
 *.tsbuildinfo

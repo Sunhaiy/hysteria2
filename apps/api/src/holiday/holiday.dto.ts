@@ -33,6 +33,7 @@ export class HolidayQuoteDto {
 }
 
 export type HolidayConfig = {
+  backgroundImageUrl?: string;
   inviteRewardCents?: number;
   tiers: { id: string; amountCents: number; giftCents: number }[];
   offers: { offerId: string; discountBasisPoints: number }[];

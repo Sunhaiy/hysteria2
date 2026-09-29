@@ -1,4 +1,5 @@
 export interface HolidayConfig {
+  backgroundImageUrl?: string;
   inviteRewardCents?: number;
   tiers: { id: string; amountCents: number; giftCents: number }[];
   offers: {

@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { CampaignMailService } from './campaign-mail/campaign-mail.service';
 import { TrafficAnalyticsService } from './traffic-analytics/traffic-analytics.service';
 import { NestFactory } from '@nestjs/core';
 import { OperationsService } from './operations/operations.service';
@@ -113,6 +114,7 @@ async function bootstrap() {
   const epayReconciliation = app.get(EpayReconciliationService);
   const groupBuyReconciliation = app.get(GroupBuyReconciliationService);
   const seoPublishing = app.get(SeoPublishingService);
+  const campaignMail = app.get(CampaignMailService);
   restoreInProgress = () => backups.isMaintenanceMode();
   const syncIntervalMs = intervalFromEnv(
     'NODE_SYNC_INTERVAL_MS',
@@ -240,6 +242,13 @@ async function bootstrap() {
   }
 
   tasks.push(
+    new RecurringTask(
+      'Campaign mail delivery',
+      10000,
+      180000,
+      () => campaignMail.processPending(),
+      false,
+    ),
     new RecurringTask(
       'Daily full-site backup',
       backupPollIntervalMs,

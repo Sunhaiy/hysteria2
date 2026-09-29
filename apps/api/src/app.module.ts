@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { CampaignMailModule } from './campaign-mail/campaign-mail.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -48,6 +49,7 @@ import { AgentUpdatesModule } from './agent-updates/agent-updates.module';
 
 @Module({
   imports: [
+    CampaignMailModule,
     AgentUpdatesModule,
     ConfigModule.forRoot({
       isGlobal: true,

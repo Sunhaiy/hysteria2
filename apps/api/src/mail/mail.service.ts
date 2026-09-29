@@ -175,12 +175,50 @@ export class MailService {
     });
   }
 
+  async sendCampaign(input: {
+    to: string;
+    subject: string;
+    body: string;
+    activityUrl: string;
+    unsubscribeUrl: string;
+    messageId: string;
+  }) {
+    const escape = (value: string) =>
+      value.replace(
+        /[&<>"']/g,
+        (c) =>
+          ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+          })[c]!,
+      );
+    await this.send({
+      to: input.to,
+      subject: input.subject,
+      requireSmtp: true,
+      messageId: input.messageId,
+      text: `${input.body}\n\n查看活动：${input.activityUrl}\n退订活动邮件：${input.unsubscribeUrl}`,
+      html: `<div style="font-family:system-ui,sans-serif;line-height:1.8;max-width:640px"><h1>${escape(input.subject)}</h1><div style="white-space:pre-wrap">${escape(input.body)}</div><p><a href="${escape(input.activityUrl)}">查看活动详情</a></p><hr><p><a href="${escape(input.unsubscribeUrl)}">退订活动邮件</a> · 不影响必要的服务通知</p></div>`,
+      headers: {
+        'List-Unsubscribe': `<${input.unsubscribeUrl}>`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      },
+      devNote: 'Campaign SMTP is not configured',
+    });
+  }
+
   private async send(input: {
     to: string;
     subject: string;
     text: string;
     html: string;
     devNote: string;
+    requireSmtp?: boolean;
+    messageId?: string;
+    headers?: Record<string, string>;
   }) {
     const recipientProblem = mailRecipientValidationMessage(input.to);
     if (recipientProblem) {
@@ -189,6 +227,8 @@ export class MailService {
 
     const cfg = await this.settings.getSmtpConfig();
     if (!cfg.configured || !cfg.host || !cfg.user || !cfg.pass) {
+      if (input.requireSmtp)
+        throw new ServiceUnavailableException('邮件服务未配置，未发送活动邮件');
       // Dev fallback: surface in logs so the flow stays testable without SMTP.
       this.logger.warn(input.devNote);
       return;
@@ -203,6 +243,9 @@ export class MailService {
         port: cfg.port,
         secure: cfg.port === 465, // 465 implicit TLS, 587/25 STARTTLS
         auth: { user: cfg.user, pass: cfg.pass },
+        connectionTimeout: 15000,
+        greetingTimeout: 15000,
+        socketTimeout: 30000,
       });
       this.signature = signature;
     }
@@ -214,6 +257,8 @@ export class MailService {
         subject: input.subject,
         text: input.text,
         html: input.html,
+        messageId: input.messageId,
+        headers: input.headers,
       });
     } catch (error) {
       const details = (error ?? {}) as MailDeliveryError;

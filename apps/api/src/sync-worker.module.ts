@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { CampaignMailModule } from './campaign-mail/campaign-mail.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
@@ -17,6 +18,7 @@ import { SeoPublishingModule } from './seo-publishing/seo-publishing.module';
 
 @Module({
   imports: [
+    CampaignMailModule,
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: [
