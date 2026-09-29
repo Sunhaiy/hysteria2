@@ -8,6 +8,7 @@ import { Icon } from "@/components/icon";
 import { CheckoutPaymentOptions } from "@/components/checkout-payment-options";
 import { bestHolidayBundle } from "@/lib/holiday-savings";
 import { apiRequest } from "@/lib/api";
+import { apiBaseUrl } from "@/lib/config";
 import { portalNav } from "@/lib/copy";
 import { formatMoney, formatBytes, formatDateTime } from "@/lib/format";
 import "./holiday.scss";
@@ -316,7 +317,7 @@ export default function HolidayPage() {
         style={
           c?.config.backgroundImageUrl
             ? {
-                backgroundImage: `linear-gradient(var(--holiday-image-overlay), var(--holiday-image-overlay)), url(${JSON.stringify(c.config.backgroundImageUrl)})`,
+                backgroundImage: `linear-gradient(var(--holiday-image-overlay), var(--holiday-image-overlay)), url(${JSON.stringify(`${apiBaseUrl}${c.config.backgroundImageUrl}`)})`,
               }
             : undefined
         }

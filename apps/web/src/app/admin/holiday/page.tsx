@@ -6,6 +6,7 @@ import { CampaignMailPanel } from "@/components/campaign-mail-panel";
 import { ConsoleShell } from "@/components/console-shell";
 import { useAuth } from "@/components/auth-provider";
 import { apiRequest } from "@/lib/api";
+import { apiBaseUrl } from "@/lib/config";
 import { adminNav } from "@/lib/copy";
 import { formatMoney } from "@/lib/format";
 import type { HolidayAdminView, HolidayCampaign } from "@/lib/holiday";
@@ -140,7 +141,7 @@ export default function AdminHoliday() {
                       borderRadius: 12,
                       backgroundSize: "cover",
                       backgroundPosition: "center",
-                      backgroundImage: `url(${JSON.stringify(form.config.backgroundImageUrl)})`,
+                      backgroundImage: `url(${JSON.stringify(`${apiBaseUrl}${form.config.backgroundImageUrl}`)})`,
                     }}
                   />
                   <button
