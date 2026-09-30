@@ -72,6 +72,74 @@ describe('buildMihomoProfile', () => {
     },
   ];
 
+  it('keeps four groups, prioritizes premium before backup, and isolates residential access', () => {
+    const mixed = [
+      { ...nodes[1], label: '[中级]备用' },
+      {
+        ...nodes[0],
+        label: '[su16][2.6x][住宅] 美国 · VLESS',
+        tags: ['residential'],
+        icon: '🏝️',
+      },
+      { ...nodes[0], label: '[su11][2x][顶级] 美国 · VLESS', icon: '✨' },
+    ];
+    const profile = parseProfile(buildMihomoProfile(credential, mixed));
+    expect(profile['proxy-groups'].map((g) => g.name)).toEqual([
+      '节点选择',
+      '自动优选',
+      '住宅线路',
+      'AI 服务',
+    ]);
+    expect(profile['proxy-groups'][1].proxies).toEqual([
+      profile.proxies[2].name,
+      profile.proxies[0].name,
+    ]);
+    expect(profile['proxy-groups'][2].proxies).toEqual([
+      profile.proxies[1].name,
+    ]);
+    expect(profile.proxies[1].name).toBe('🏝️ [su16][2.6x][住宅] 美国 · VLESS');
+    expect(profile.proxies[2].name).toBe('✨ [su11][2x][顶级] 美国 · VLESS');
+    expect(
+      parseProfile(
+        buildMihomoProvider(credential, mixed, 'automatic'),
+      ).proxies.map((p) => p.name),
+    ).toEqual(profile['proxy-groups'][1].proxies);
+    expect(
+      parseProfile(buildMihomoProvider(credential, mixed, 'residential'))
+        .proxies,
+    ).toEqual([profile.proxies[1]]);
+    expect(
+      parseProfile(buildMihomoProvider(credential, nodes, 'residential'))
+        .proxies,
+    ).toEqual([{ name: '暂无可用住宅节点', type: 'reject' }]);
+    expect(
+      parseProfile(buildMihomoProvider(credential, [mixed[1]], 'automatic'))
+        .proxies,
+    ).toEqual([{ name: '暂无可用普通节点', type: 'reject' }]);
+    expect(
+      parseProfile(buildMihomoProfile(credential, nodes))['proxy-groups'][2]
+        .proxies,
+    ).toEqual(['REJECT']);
+  });
+
+  it('keeps client DNS unchanged for both subscription formats including residential nodes', () => {
+    const mixed = [
+      ...nodes,
+      { ...nodes[0], label: '[住宅] 美国', tags: ['residential'] },
+    ];
+    for (const url of [undefined, 'https://example.test/nodes']) {
+      const profile = parseProfile(buildMihomoProfile(credential, mixed, url));
+      expect(profile).not.toHaveProperty('dns');
+      expect(profile).not.toHaveProperty('tun');
+      expect(profile['proxy-groups'].map((g) => g.name)).toEqual([
+        '节点选择',
+        '自动优选',
+        '住宅线路',
+        'AI 服务',
+      ]);
+    }
+  });
+
   it('emits Mihomo-compatible Hysteria 2 and VLESS REALITY proxies', () => {
     const profile = parseProfile(buildMihomoProfile(credential, nodes));
 
@@ -124,15 +192,15 @@ describe('buildMihomoProfile', () => {
 
   it('uses ordered automatic failover as the default selector', () => {
     const profile = parseProfile(buildMihomoProfile(credential, nodes));
-    const failover = profile['proxy-groups'][0];
-    const selector = profile['proxy-groups'][2];
+    const failover = profile['proxy-groups'][1];
+    const selector = profile['proxy-groups'][0];
 
     expect(failover.type).toBe('fallback');
     expect(failover.proxies).toEqual(
       profile.proxies.map((proxy) => proxy.name),
     );
-    expect(selector.proxies[0]).toBe('自动故障转移');
-    expect(selector.proxies).toContain('DIRECT');
+    expect(selector.proxies[0]).toBe('自动优选');
+    expect(selector.proxies).not.toContain('DIRECT');
     expect(profile.rules.at(-1)).toBe('MATCH,节点选择');
   });
 
@@ -170,7 +238,6 @@ describe('buildMihomoProfile', () => {
       profile.rules.indexOf('DOMAIN-SUFFIX,chatgpt.com,AI 服务'),
     );
     expect(profile.rules).not.toContain(`${cidr},DIRECT,no-resolve`);
-    // The client retains its system/company DNS and any split-DNS overrides.
     expect(profile).not.toHaveProperty('dns');
   });
 
@@ -220,8 +287,8 @@ describe('buildMihomoProfile', () => {
     }
     for (const rule of [
       'RULE-SET,ai,AI 服务',
-      'RULE-SET,youtube,流媒体',
-      'RULE-SET,telegram,Telegram',
+      'RULE-SET,youtube,节点选择',
+      'RULE-SET,telegram,节点选择',
       'RULE-SET,overseas,节点选择',
     ]) {
       expect(profile.rules.indexOf(rule)).toBeGreaterThan(-1);
@@ -231,7 +298,7 @@ describe('buildMihomoProfile', () => {
     }
   });
 
-  it('uses only authorized US nodes for the AI service group', () => {
+  it('makes AI follow the main selector with an explicit residential option', () => {
     const profile = parseProfile(buildMihomoProfile(credential, nodes));
     const usProxy = profile.proxies[0].name;
     const japanProxy = profile.proxies[1].name;
@@ -242,9 +309,9 @@ describe('buildMihomoProfile', () => {
       (group) => group.name === 'AI 服务',
     );
 
-    expect(aiAutomatic?.proxies).toEqual([usProxy]);
-    expect(aiAutomatic?.proxies).not.toContain(japanProxy);
-    expect(aiSelector?.proxies).toEqual(['AI 自动优选', usProxy]);
+    expect(aiAutomatic).toBeUndefined();
+    expect(usProxy).not.toBe(japanProxy);
+    expect(aiSelector?.proxies).toEqual(['节点选择', '住宅线路']);
     expect(profile.rules).toEqual(
       expect.arrayContaining([
         'DOMAIN-SUFFIX,chatgpt.com,AI 服务',
@@ -274,7 +341,7 @@ describe('buildMihomoProfile', () => {
     expect(
       profile['proxy-groups'].some((group) => group.name === 'AI 自动优选'),
     ).toBe(false);
-    expect(aiSelector?.proxies).toEqual(['节点选择']);
+    expect(aiSelector?.proxies).toEqual(['节点选择', '住宅线路']);
   });
 
   it('only references emitted proxies and acyclic proxy groups', () => {
@@ -358,9 +425,9 @@ describe('buildMihomoProfile', () => {
     expect(all.payload).toEqual(
       parseProfile(buildMihomoProfile(credential, nodes)).proxies,
     );
-    expect(first['proxy-groups'].every((group) => group.use?.length)).toBe(
-      true,
-    );
+    expect(
+      first['proxy-groups'].filter((group) => group.use?.length),
+    ).toHaveLength(3);
   });
 
   it('preserves transport while giving AI copies distinct identities, including empty access', () => {

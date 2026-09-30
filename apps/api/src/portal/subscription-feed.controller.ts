@@ -88,11 +88,13 @@ export class SubscriptionFeedController {
       'Cache-Control': 'private, no-store, max-age=0',
       'X-Content-Type-Options': 'nosniff',
     });
-    if (scope && !['all', 'ai'].includes(scope))
+    if (scope && !['all', 'ai', 'automatic', 'residential'].includes(scope))
       throw new BadRequestException('节点分组无效');
     return this.portalService.getMihomoProvider(
       token,
-      scope === 'ai' ? 'ai' : 'all',
+      scope === 'ai' || scope === 'automatic' || scope === 'residential'
+        ? scope
+        : 'all',
     );
   }
 }

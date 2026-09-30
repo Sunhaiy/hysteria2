@@ -30,20 +30,19 @@ type MihomoCredential = {
 };
 
 const healthCheckUrl = 'https://www.gstatic.com/generate_204';
-const failoverGroup = '自动故障转移';
-const latencyGroup = '延迟优选';
+const automaticGroup = '自动优选';
+const residentialGroup = '住宅线路';
 const selectorGroup = '节点选择';
-const aiAutomaticGroup = 'AI 自动优选';
 const aiSelectorGroup = 'AI 服务';
-const mediaGroup = '流媒体';
-const messagingGroup = 'Telegram';
 const allProvider = '素心节点';
-const aiProvider = '素心 AI 节点';
+const automaticProvider = '素心自动节点';
+const residentialProvider = '素心住宅节点';
+export type MihomoScope = 'all' | 'ai' | 'automatic' | 'residential';
 
 export function buildMihomoProvider(
   credential: MihomoCredential,
   nodes: MihomoNode[],
-  scope: 'all' | 'ai' = 'all',
+  scope: MihomoScope = 'all',
 ) {
   return stringify(
     { proxies: providerProxies(credential, nodes, scope) },
@@ -54,14 +53,25 @@ export function buildMihomoProvider(
 function providerProxies(
   credential: MihomoCredential,
   nodes: MihomoNode[],
-  scope: 'all' | 'ai',
+  scope: MihomoScope,
 ) {
-  const names = uniqueProxyNames(nodes);
+  const originalNames = uniqueProxyNames(nodes);
+  const namesByNode = new Map(
+    nodes.map((node, index) => [node, originalNames[index]]),
+  );
+  if (scope === 'automatic') {
+    nodes = nodes
+      .filter((node) => !isResidential(node))
+      .sort((a, b) => Number(isBackup(a)) - Number(isBackup(b)));
+  } else if (scope === 'residential') {
+    nodes = nodes.filter(isResidential);
+  }
+  const names = nodes.map((node) => namesByNode.get(node)!);
   // Verge resolves group members across providers by name. Give AI copies
   // distinct identities while preserving the ordinary node display names.
   const used = new Set(names);
   const providerNames = names.map((name) => {
-    if (scope === 'all') return name;
+    if (scope !== 'ai') return name;
     const base = `${name} · AI`;
     let candidate = base;
     let suffix = 2;
@@ -82,7 +92,14 @@ function providerProxies(
     ? proxies
     : [
         {
-          name: scope === 'ai' ? '暂无可用 AI 节点' : '暂无可用节点',
+          name:
+            scope === 'ai'
+              ? '暂无可用 AI 节点'
+              : scope === 'residential'
+                ? '暂无可用住宅节点'
+                : scope === 'automatic'
+                  ? '暂无可用普通节点'
+                  : '暂无可用节点',
           type: 'reject',
         },
       ];
@@ -97,7 +114,8 @@ function buildNodeProviders(
     (
       [
         ['all', allProvider],
-        ['ai', aiProvider],
+        ['automatic', automaticProvider],
+        ['residential', residentialProvider],
       ] as const
     ).map(([scope, name]) => {
       const source = `${url}?scope=${scope}`;
@@ -196,68 +214,47 @@ export function buildMihomoProfile(
       ? buildVlessProxy(names[index], credential, node)
       : buildHysteriaProxy(names[index], credential, node),
   );
-  const aiProxyNames = nodes.flatMap((node, index) =>
-    isAiNode(node) ? [names[index]] : [],
+  const automaticNodes = nodes
+    .map((node, index) => ({ node, name: names[index] }))
+    .filter(({ node }) => !isResidential(node))
+    .sort((a, b) => Number(isBackup(a.node)) - Number(isBackup(b.node)))
+    .map(({ name }) => name);
+  const residentialNames = nodes.flatMap((node, index) =>
+    isResidential(node) ? [names[index]] : [],
   );
   const visibleNames = providerUrl ? [] : names;
   const dynamicAll = providerUrl ? { use: [allProvider] } : {};
-  const dynamicAi = providerUrl ? { use: [aiProvider] } : {};
 
   const proxyGroups: Array<Record<string, unknown>> = [
     {
-      name: failoverGroup,
+      name: selectorGroup,
+      type: 'select',
+      proxies: [automaticGroup, residentialGroup, ...visibleNames],
+      ...dynamicAll,
+    },
+    {
+      name: automaticGroup,
       type: 'fallback',
       url: healthCheckUrl,
       interval: 180,
       lazy: true,
-      ...(providerUrl ? dynamicAll : { proxies: names }),
+      ...(providerUrl
+        ? { use: [automaticProvider] }
+        : { proxies: automaticNodes.length ? automaticNodes : ['REJECT'] }),
     },
     {
-      name: latencyGroup,
-      type: 'url-test',
-      url: healthCheckUrl,
-      interval: 300,
-      tolerance: 80,
-      lazy: true,
-      ...(providerUrl ? dynamicAll : { proxies: names }),
-    },
-    {
-      name: selectorGroup,
+      name: residentialGroup,
       type: 'select',
-      proxies: [failoverGroup, latencyGroup, ...visibleNames, 'DIRECT'],
-      ...dynamicAll,
+      ...(providerUrl
+        ? { use: [residentialProvider] }
+        : { proxies: residentialNames.length ? residentialNames : ['REJECT'] }),
+    },
+    {
+      name: aiSelectorGroup,
+      type: 'select',
+      proxies: [selectorGroup, residentialGroup],
     },
   ];
-
-  if (providerUrl || aiProxyNames.length) {
-    proxyGroups.push({
-      name: aiAutomaticGroup,
-      type: 'url-test',
-      url: healthCheckUrl,
-      interval: 300,
-      tolerance: 80,
-      lazy: true,
-      ...(providerUrl ? dynamicAi : { proxies: aiProxyNames }),
-    });
-  }
-  proxyGroups.push({
-    name: aiSelectorGroup,
-    type: 'select',
-    ...dynamicAi,
-    proxies: providerUrl
-      ? [aiAutomaticGroup]
-      : aiProxyNames.length
-        ? [aiAutomaticGroup, ...aiProxyNames]
-        : [selectorGroup],
-  });
-  for (const name of [mediaGroup, messagingGroup]) {
-    proxyGroups.push({
-      name,
-      type: 'select',
-      proxies: [selectorGroup, latencyGroup, failoverGroup, ...visibleNames],
-      ...dynamicAll,
-    });
-  }
 
   const profile = {
     'mixed-port': 7890,
@@ -283,10 +280,10 @@ export function buildMihomoProfile(
       ...privateNetworkRules,
       ...aiRules,
       `RULE-SET,ai,${aiSelectorGroup}`,
-      `RULE-SET,youtube,${mediaGroup}`,
-      `RULE-SET,netflix,${mediaGroup}`,
-      `RULE-SET,spotify,${mediaGroup}`,
-      `RULE-SET,telegram,${messagingGroup}`,
+      `RULE-SET,youtube,${selectorGroup}`,
+      `RULE-SET,netflix,${selectorGroup}`,
+      `RULE-SET,spotify,${selectorGroup}`,
+      `RULE-SET,telegram,${selectorGroup}`,
       `RULE-SET,overseas,${selectorGroup}`,
       'RULE-SET,cn,DIRECT',
       'RULE-SET,cn-ip,DIRECT,no-resolve',
@@ -295,6 +292,17 @@ export function buildMihomoProfile(
   };
 
   return stringify(profile, { lineWidth: 0 });
+}
+
+function isResidential(node: MihomoNode) {
+  return (
+    /住宅|家宽/.test(node.label) ||
+    (node.tags ?? []).some((tag) => /^(residential|home)$/i.test(tag))
+  );
+}
+
+function isBackup(node: MihomoNode) {
+  return /中级|备用/.test(node.label);
 }
 
 function isAiNode(node: MihomoNode) {
@@ -379,7 +387,12 @@ function uniqueProxyNames(nodes: MihomoNode[]) {
   return nodes.map((node) => {
     const protocol =
       node.protocol === 'VLESS_REALITY' ? 'VLESS Reality' : 'Hysteria 2';
-    const base = `${nodeDisplayName(node)} · ${protocol}`;
+    const display = nodeDisplayName(node);
+    const base = /·\s*(?:Hysteria\s*2|VLESS(?:\s*Reality)?)(?:\s*·|$)/i.test(
+      display,
+    )
+      ? display
+      : `${display} · ${protocol}`;
     let name = base;
     let suffix = 2;
     while (used.has(name)) name = `${base} ${suffix++}`;

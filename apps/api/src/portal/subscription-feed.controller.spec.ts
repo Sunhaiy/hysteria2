@@ -17,6 +17,10 @@ describe('SubscriptionFeedController', () => {
     expect(service.getMihomoProvider).not.toHaveBeenCalled();
     await controller.getMihomoProvider('token', response as never, 'ai');
     expect(service.getMihomoProvider).toHaveBeenCalledWith('token', 'ai');
+    for (const scope of ['automatic', 'residential']) {
+      await controller.getMihomoProvider('token', response as never, scope);
+      expect(service.getMihomoProvider).toHaveBeenCalledWith('token', scope);
+    }
     expect(response.set).toHaveBeenCalledWith(
       expect.objectContaining({
         'Cache-Control': 'private, no-store, max-age=0',

@@ -100,9 +100,7 @@ export default function PortalAccessPage() {
     >
       <Toast toast={toast} />
       {error ? <div className="feedback error">{error}</div> : null}
-      {loading && !access ? (
-        <PageSkeleton variant="detail" />
-      ) : null}
+      {loading && !access ? <PageSkeleton variant="detail" /> : null}
       {access ? (
         <section className="portal-access-layout">
           <div className="portal-access-main">
@@ -118,7 +116,8 @@ export default function PortalAccessPage() {
                       <span className="badge info">YAML</span>
                     </div>
                     <p className="fine-print">
-                      适用于 Clash Verge Rev、FlClash 和 Stash，包含自动故障转移。
+                      保留客户端原有
+                      DNS，默认优先顶级节点，中级作为备用，不自动使用住宅。
                     </p>
                     <label className="field">
                       <span className="fine-print">Mihomo YAML 订阅链接</span>

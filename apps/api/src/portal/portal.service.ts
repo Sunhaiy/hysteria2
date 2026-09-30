@@ -12,7 +12,11 @@ import { SettingsService } from '../settings/settings.service';
 import { buildPortalAlerts } from './portal-alerts';
 import { EntitlementService } from '../entitlement/entitlement.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { buildMihomoProfile, buildMihomoProvider } from './mihomo-profile';
+import {
+  buildMihomoProfile,
+  buildMihomoProvider,
+  type MihomoScope,
+} from './mihomo-profile';
 import { nodeDisplayName } from './node-display-name';
 import { apiPublicUrl } from '../common/public-url';
 import {
@@ -971,13 +975,16 @@ export class PortalService {
     };
   }
 
-  async getMihomoProvider(tokenValue: string, scope: 'all' | 'ai') {
+  async getMihomoProvider(tokenValue: string, scope: MihomoScope) {
     try {
       const bundle = await this.getSubscriptionAccessBundle(tokenValue);
       return buildMihomoProvider(bundle.token, bundle.nodes, scope);
     } catch (error) {
       if (error instanceof NotFoundException && this.notices) {
-        const notice = await this.notices.feed(tokenValue, scope);
+        const notice = await this.notices.feed(
+          tokenValue,
+          scope === 'ai' ? 'ai' : 'all',
+        );
         if (notice) return notice.content;
       }
       // A valid identity without access must clear cached nodes; an outage must not.
