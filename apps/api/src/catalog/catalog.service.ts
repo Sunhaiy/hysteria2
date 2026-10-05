@@ -24,8 +24,9 @@ import type {
   SaveCatalogProductDto,
 } from './catalog.dto';
 import { EntitlementService } from '../entitlement/entitlement.service';
+import { catalogLineTags } from './line-tags';
 
-const portalCatalogCacheKey = 'catalog:portal:v3';
+const portalCatalogCacheKey = 'catalog:portal:v4';
 const ultraAccessProfileId = 'catalog-ultra-shared';
 
 @Injectable()
@@ -970,6 +971,10 @@ export class CatalogService {
         referralEligible: product.referralEligible,
         accessProfileId: product.accessProfileId,
         access: {
+          lineTags: catalogLineTags(
+            product.kind,
+            directNodes.map((binding) => binding.node),
+          ),
           profileName: product.accessProfile?.name ?? null,
           speedUpMbps:
             product.speedUpMbps ?? product.accessProfile?.speedUpMbps ?? 0,

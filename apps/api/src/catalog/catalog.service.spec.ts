@@ -685,7 +685,7 @@ describe('CatalogService publishing rules', () => {
 
     await service.archiveOffer('offer_1');
 
-    expect(cache.del).toHaveBeenCalledWith('catalog:portal:v3');
+    expect(cache.del).toHaveBeenCalledWith('catalog:portal:v4');
   });
 
   it('returns only public plan fields for the landing page', async () => {
@@ -816,7 +816,7 @@ describe('CatalogService publishing rules', () => {
       where: { id: { in: ['plan_1', 'plan_2'] } },
       data: { homepageVisible: true },
     });
-    expect(cache.del).toHaveBeenCalledWith('catalog:portal:v3');
+    expect(cache.del).toHaveBeenCalledWith('catalog:portal:v4');
   });
 
   it('rejects homepage selections containing unavailable products', async () => {

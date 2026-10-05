@@ -10,6 +10,7 @@ import {
 } from "@/components/anniversary-gift-dialog";
 import { Icon } from "@/components/icon";
 import { Panel } from "@/components/panel";
+import { SubscriptionNoticeSettings } from "@/components/subscription-notice-settings";
 import { PageSkeleton } from "@/components/skeleton";
 import { useAuth } from "@/components/auth-provider";
 import { Toast, useToast } from "@/components/toast";
@@ -773,6 +774,7 @@ export default function AdminSettingsPage() {
         <PageSkeleton variant="settings" />
       ) : (
         <>
+          <SubscriptionNoticeSettings token={token} />
           <Panel
             title="站点资料"
             copy="统一管理站点名称、浏览器标签标题与标签图标。"

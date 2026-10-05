@@ -12127,6 +12127,14 @@ select.control {
   align-items: center;
 }
 
+.plan-line-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 24px;
+  margin-top: 10px;
+}
+
 .plan-card-copy > .panel-copy {
   display: -webkit-box;
   min-height: 36px;

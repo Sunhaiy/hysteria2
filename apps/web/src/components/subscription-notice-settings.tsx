@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api";
+import { Panel } from "@/components/panel";
 export function SubscriptionNoticeSettings({
   token,
 }: {
@@ -27,13 +28,12 @@ export function SubscriptionNoticeSettings({
     return () => controller.abort();
   }, [token]);
   return (
-    <section className="holiday-card">
-      <h2>Clash 到期提示节点</h2>
-      <p>
-        仅套餐已到期且没有其他有效权益时展示。提示节点不能连接，续费并刷新订阅后恢复真实节点；不会替换仍有效的套餐或流量包。
-      </p>
+    <Panel
+      title="Clash 到期提示节点"
+      copy="仅套餐已到期且没有其他有效权益时展示。提示节点不能连接，续费并刷新订阅后恢复真实节点；不会替换仍有效的套餐或流量包。"
+    >
       {config && (
-        <>
+        <div className="form-grid">
           <label>
             <input
               type="checkbox"
@@ -105,9 +105,9 @@ export function SubscriptionNoticeSettings({
           >
             保存到期提示
           </button>
-        </>
+        </div>
       )}
       {message && <p role="status">{message}</p>}
-    </section>
+    </Panel>
   );
 }

@@ -1,7 +1,6 @@
 "use client";
 import "../../portal/holiday/holiday.scss";
 import { useCallback, useEffect, useState } from "react";
-import { SubscriptionNoticeSettings } from "@/components/subscription-notice-settings";
 import { CampaignMailPanel } from "@/components/campaign-mail-panel";
 import { ConsoleShell } from "@/components/console-shell";
 import { useAuth } from "@/components/auth-provider";
@@ -73,7 +72,6 @@ export default function AdminHoliday() {
       requireRole="admin"
     >
       <div className="holiday-page">
-        <SubscriptionNoticeSettings token={token} />
         <CampaignMailPanel token={token} />
         {message && (
           <p role="status" className="holiday-notice">

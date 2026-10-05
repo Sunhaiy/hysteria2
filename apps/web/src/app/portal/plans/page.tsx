@@ -57,6 +57,7 @@ type Product = {
   };
   trafficReset: "monthly" | "never";
   access: {
+    lineTags?: string[];
     profileName?: string | null;
     speedUpMbps: number;
     speedDownMbps: number;
@@ -743,6 +744,22 @@ export default function PortalPlansPage() {
                   {product.description ||
                     (product.kind === "plan" ? "标准会员套餐" : "独立流量权益")}
                 </span>
+                {product.kind === "plan" ? (
+                  <div
+                    className="plan-line-tags"
+                    aria-label={
+                      product.access.lineTags?.length
+                        ? "套餐线路权益"
+                        : undefined
+                    }
+                  >
+                    {product.access.lineTags?.map((tag) => (
+                      <span className="badge success" key={tag}>
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </div>
             <div className="panel-body">
