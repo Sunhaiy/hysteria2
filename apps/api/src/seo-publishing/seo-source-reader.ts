@@ -2,7 +2,7 @@ import { lookup } from 'node:dns/promises';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { BlockList, isIP } from 'node:net';
-import { parse } from 'node-html-parser';
+import { parse, NodeType, type Node } from 'node-html-parser';
 import type { SeoPublicSource } from './seo-generation-pipeline';
 
 const blocked = new BlockList();
@@ -148,12 +148,11 @@ export async function readSeoSource(raw: string): Promise<SeoPublicSource> {
     document
       .querySelectorAll('script,style,noscript,nav,footer,header,form,iframe')
       .forEach((node) => node.remove());
-    const content = (
-      document.querySelector('main,article') ?? document
-    ).textContent
-      .replace(/\s+/g, ' ')
+    const content = sourceText(
+      document.querySelector('main,article') ?? document,
+    )
       .trim()
-      .slice(0, 16000);
+      .slice(0, 24000);
     if (content.length < 80)
       throw new Error('来源网页正文不足，请粘贴资料补充');
     return {
@@ -166,4 +165,23 @@ export async function readSeoSource(raw: string): Promise<SeoPublicSource> {
     };
   }
   throw new Error('来源重定向次数过多');
+}
+
+/** Preserve YAML indentation and shell line breaks from documentation. */
+export function sourceText(node: Node): string {
+  if (node.nodeType === NodeType.TEXT_NODE)
+    return node.textContent.replace(/\s+/g, ' ');
+  const tag = 'tagName' in node ? String(node.tagName).toLowerCase() : '';
+  if (tag === 'pre') {
+    // The parser treats <pre> as raw text by default; decode its nested <code>
+    // markup once, without collapsing whitespace or re-parsing decoded code.
+    const code =
+      'innerHTML' in node
+        ? parse(String(node.innerHTML)).textContent
+        : node.textContent;
+    return `\n\`\`\`\n${code}\n\`\`\`\n`;
+  }
+  if (tag === 'br') return '\n';
+  const text = node.childNodes.map(sourceText).join('');
+  return /^(p|div|section|li|h[1-6]|tr)$/.test(tag) ? `\n${text}\n` : text;
 }

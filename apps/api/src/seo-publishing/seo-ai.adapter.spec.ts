@@ -59,7 +59,7 @@ describe('SeoAiAdapter', () => {
               blocks: [
                 {
                   type: 'paragraph',
-                  text: '公开教程支持按顺序检查客户端与节点。',
+                  text: '先查客户端，再核对节点连接状态；详见[使用教程](https://example.test/api/tutorial-assets#macos)。',
                 },
               ],
             },
@@ -144,7 +144,7 @@ describe('SeoAiAdapter', () => {
       'metadata',
       'audit',
     ]);
-    expect(result.modelSnapshot.version).toBe('seo-zh-editorial-review-v6');
+    expect(result.modelSnapshot.version).toBe('seo-zh-practical-tutorial-v7');
     expect(result.modelSnapshot.evidenceCount).toBe(1);
     expect(result.modelSnapshot.audit.passed).toBe(true);
 
@@ -156,6 +156,8 @@ describe('SeoAiAdapter', () => {
     });
     expect(prompts[0]).toContain('目标搜索意图：定位连接失败原因');
     expect(prompts[1]).toContain('依据已经核验的计划写正文');
+    expect(prompts[1]).toContain('公开教程内容：按顺序检查客户端与节点。');
+    expect(prompts[1]).toContain('type=code');
     expect(prompts[2]).toContain('正文已经定稿');
     expect(prompts[3]).toContain('独立于作者的实用技术编辑');
   });

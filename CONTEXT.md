@@ -64,6 +64,14 @@
   Research reuses the configured
   upstream and is supported only after actual search tool output and safe source
   retrieval; model prose alone is not a capability signal.
+  The material entry also accepts a technology name or topic alone. Topic and
+  keyword jobs research deploy/use instructions, then give the writer the fetched
+  source text with code indentation preserved. Verified evidence may be
+  paraphrased; initial research gaps do not veto an otherwise passing final audit.
+  Generated inline Markdown links become sanitized Tiptap link marks; code stays
+  literal in code blocks. Published pages and admin previews enhance the same SSR
+  HTML with copy buttons. No production execution or test result is implied by AI
+  generation.
   Scheduled runs are idempotent per Asia/Shanghai calendar date and
   automatically publish only passing revisions. Historical job snapshots without
   autoPublish remain manual; generated revision IDs guard publishing and recovery.

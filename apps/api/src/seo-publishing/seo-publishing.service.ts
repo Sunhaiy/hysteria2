@@ -1619,7 +1619,7 @@ export class SeoPublishingService {
           }
           if (!checkpoints.research) {
             checkpoints.research = await this.ai.research(
-              checkpoints.analysis.searchIntent,
+              `${checkpoints.analysis.keyword}\n${checkpoints.analysis.searchIntent}`,
             );
             await saveProgress('补充来源');
           }
@@ -1689,6 +1689,12 @@ export class SeoPublishingService {
         }
         if (!keyword)
           throw new BadRequestException('任务关键词已删除，请重新提供资料');
+        if (!checkpoints.research) {
+          checkpoints.research = await this.ai.research(
+            `${keyword.keyword}\n${keyword.searchIntent ?? ''}`,
+          );
+          await saveProgress('补充来源');
+        }
         const generationInput = {
           keyword: keyword.keyword,
           category: keyword.category,
@@ -1702,7 +1708,10 @@ export class SeoPublishingService {
             .join('\n'),
           sources: checkpoints.sources
             ? [...checkpoints.sources, ...(checkpoints.research?.sources ?? [])]
-            : this.buildPublicSources(site, tutorials, new Date()),
+            : [
+                ...this.buildPublicSources(site, tutorials, new Date()),
+                ...(checkpoints.research?.sources ?? []),
+              ],
           existingArticles: existing.flatMap((article) =>
             article.publishedRevision
               ? [
@@ -1788,7 +1797,7 @@ export class SeoPublishingService {
         // Feed gaps into the independent evidence/draft/audit pass instead.
         const gaps = checkpoints.analysis?.missingInformation ?? [];
         if (
-          (!quality.passed || gaps.length || checkpoints.revisionFeedback) &&
+          (!quality.passed || checkpoints.revisionFeedback) &&
           !checkpoints.repairComplete
         ) {
           checkpoints.generated = generated;

@@ -90,7 +90,7 @@ export function SeoMaterialGeneration({
       .map((url) => url.trim())
       .filter(Boolean);
     if (!form.material.trim() && !referenceUrls.length) {
-      setError("请粘贴文字资料或填写参考链接。");
+      setError("请输入技术名称、主题或参考链接。");
       return;
     }
     if (referenceUrls.length > 5) {
@@ -143,26 +143,26 @@ export function SeoMaterialGeneration({
       : stages.findIndex((stage) => job?.progress?.startsWith(stage));
   return (
     <Panel
-      title="资料生成文章"
-      copy="粘贴资料或参考链接，AI 补充来源、撰写并自动修订；质量检查通过后自动发布，无法核实的内容保留草稿。"
+      title="主题生成教程"
+      copy="输入技术名称或主题，AI 自动查资料、生成完整教程并填写 SEO 信息。引用来源可点击，代码可复制；检查通过后自动发布。"
     >
       <div className="form-grid seo-article-fields">
         <label className="field span-2">
-          <span className="fine-print">文字资料</span>
+          <span className="fine-print">技术名称或主题</span>
           <textarea
             className="control"
-            rows={8}
+            rows={3}
             maxLength={30000}
             value={form.material}
             onChange={(event) =>
               setForm({ ...form, material: event.target.value })
             }
-            placeholder="产品说明、操作步骤、排查记录或写作素材，请勿填写用户隐私或密钥。"
+            placeholder="例如：Hysteria 2 部署教程、Clash Verge 导入订阅。也可粘贴补充资料，请勿填写隐私或密钥。"
             disabled={running}
           />
         </label>
         <label className="field span-2">
-          <span className="fine-print">参考链接（与文字资料至少填写一项）</span>
+          <span className="fine-print">参考链接（可选，也可只提供链接）</span>
           <textarea
             className="control"
             rows={3}

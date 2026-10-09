@@ -195,6 +195,23 @@ function textNode(text: string, marks?: TiptapMark[]): TiptapNode {
   return { type: 'text', text, ...(marks?.length ? { marks } : {}) };
 }
 
+/** Only inline links are interpreted; HTML and all other markup remain text. */
+function generatedInline(text: string): TiptapNode[] {
+  const result: TiptapNode[] = [];
+  const links = /\[([^\]\n]+)\]\((https?:\/\/[^\s<>]+|\/(?!\/)[^\s<>]*)\)/g;
+  let offset = 0;
+  for (const match of text.matchAll(links)) {
+    const href = safeUrl(match[2]);
+    if (!href) continue;
+    if (match.index > offset)
+      result.push(textNode(text.slice(offset, match.index)));
+    result.push(textNode(match[1], [{ type: 'link', attrs: { href } }]));
+    offset = match.index + match[0].length;
+  }
+  if (offset < text.length) result.push(textNode(text.slice(offset)));
+  return result;
+}
+
 export function buildGeneratedDocument(input: {
   lead?: string;
   sections: GeneratedSection[];
@@ -203,7 +220,7 @@ export function buildGeneratedDocument(input: {
   if (input.lead?.trim()) {
     content.push({
       type: 'paragraph',
-      content: [textNode(input.lead.trim())],
+      content: generatedInline(input.lead.trim()),
     });
   }
   for (const section of input.sections) {
@@ -216,13 +233,13 @@ export function buildGeneratedDocument(input: {
       if (block.type === 'paragraph' || block.type === 'blockquote') {
         content.push(
           block.type === 'paragraph'
-            ? { type: 'paragraph', content: [textNode(block.text.trim())] }
+            ? { type: 'paragraph', content: generatedInline(block.text.trim()) }
             : {
                 type: 'blockquote',
                 content: [
                   {
                     type: 'paragraph',
-                    content: [textNode(block.text.trim())],
+                    content: generatedInline(block.text.trim()),
                   },
                 ],
               },
@@ -232,7 +249,9 @@ export function buildGeneratedDocument(input: {
           type: block.type === 'bullets' ? 'bulletList' : 'orderedList',
           content: block.items.map((item) => ({
             type: 'listItem',
-            content: [{ type: 'paragraph', content: [textNode(item.trim())] }],
+            content: [
+              { type: 'paragraph', content: generatedInline(item.trim()) },
+            ],
           })),
         });
       } else if (block.type === 'code') {

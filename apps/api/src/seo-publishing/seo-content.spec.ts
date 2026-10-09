@@ -8,6 +8,39 @@ import {
 } from './seo-content';
 
 describe('SEO content boundary', () => {
+  it('renders generated citations as safe links while preserving literal multiline code', () => {
+    const code =
+      'server:\n  port: 443\n# [literal](https://example.com)\n<script>no execution</script>';
+    const html = renderTiptapHtml(
+      buildGeneratedDocument({
+        lead: '参考[官方文档](https://example.com/guide)。',
+        sections: [
+          {
+            heading: '配置',
+            blocks: [
+              {
+                type: 'paragraph',
+                text: '[错误链接](javascript:alert(1)) <script>alert(1)</script>',
+              },
+              {
+                type: 'ordered',
+                items: ['阅读[项目说明](https://example.com/readme)'],
+              },
+              { type: 'code', language: 'yaml', code },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(html).toContain('href="https://example.com/guide"');
+    expect(html).toContain('href="https://example.com/readme"');
+    expect(html).not.toContain('href="javascript:');
+    expect(html).not.toContain('<script>');
+    expect(html).toContain(
+      '<pre data-language="yaml"><code>server:\n  port: 443',
+    );
+    expect(html).toContain('# [literal](https://example.com)');
+  });
   it('renders supported Tiptap JSON and strips executable URLs', () => {
     const html = renderTiptapHtml({
       type: 'doc',

@@ -104,7 +104,7 @@ test("published articles initialize preview and quality state without creating a
     editor,
     /selected\?\.draftRevision \?\? selected\?\.publishedRevision \?\? null/,
   );
-  assert.match(editor, /__html: currentRevision\.contentHtml/);
+  assert.match(editor, /<SeoArticleContent html=\{currentRevision\.contentHtml\}/);
   assert.match(editor, /busy \|\| !selected\.draftRevision/);
   assert.match(editor, /人工审核并发布/);
   assert.match(editor, /confirmEditorialReview: true, revisionId: selected\.draftRevision\?\.id/);

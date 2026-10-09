@@ -2,16 +2,29 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { lookup } from 'node:dns/promises';
 import { request } from 'node:https';
+import { parse } from 'node-html-parser';
 import {
   isPublicSourceAddress,
   publicSourceUrl,
   readSeoSource,
+  sourceText,
 } from './seo-source-reader';
 
 jest.mock('node:dns/promises', () => ({ lookup: jest.fn() }));
 jest.mock('node:https', () => ({ request: jest.fn() }));
 
 describe('SEO public source boundary', () => {
+  it('preserves configuration indentation and separates documentation paragraphs', () => {
+    const content = sourceText(
+      parse(
+        '<main><p>Install the server.</p><pre><code>server:\n  port: 443\n  enabled: true</code></pre><p>Check its status.</p></main>',
+      ),
+    );
+    expect(content).toContain(
+      '```\nserver:\n  port: 443\n  enabled: true\n```',
+    );
+    expect(content).toContain('\nCheck its status.\n');
+  });
   beforeEach(() => jest.resetAllMocks());
   it.each([
     '127.0.0.1',

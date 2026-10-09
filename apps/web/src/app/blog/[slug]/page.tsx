@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound, permanentRedirect } from "next/navigation";
 import { PublicSiteFooter } from "@/components/public-site-footer";
 import { PublicSiteHeader } from "@/components/public-site-header";
+import { SeoArticleContent } from "@/components/seo-article-content";
 import {
   absolutePublicUrl,
   getPublishedArticle,
@@ -171,10 +172,7 @@ export default async function ArticlePage({
             ))}
           </aside>
           <div>
-            <div
-              className="seo-prose"
-              dangerouslySetInnerHTML={{ __html: article.contentHtml ?? "" }}
-            />
+            <SeoArticleContent html={article.contentHtml ?? ""} />
             {article.sources?.length ? (
               <section className="seo-article-sources">
                 <h2>资料依据</h2>

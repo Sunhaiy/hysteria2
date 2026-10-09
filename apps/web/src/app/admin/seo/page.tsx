@@ -9,6 +9,7 @@ import { ConsoleShell } from "@/components/console-shell";
 import { Icon } from "@/components/icon";
 import { Panel } from "@/components/panel";
 import { SeoMaterialGeneration } from "@/components/seo-material-generation";
+import { SeoArticleContent } from "@/components/seo-article-content";
 import { PageSkeleton } from "@/components/skeleton";
 import { Toast, useToast } from "@/components/toast";
 import { useAuth } from "@/components/auth-provider";
@@ -249,7 +250,7 @@ const EMPTY_ARTICLE: ArticleDraft = {
 
 const VIEW_LABELS: Array<{ value: View; label: string }> = [
   { value: "articles", label: "文章" },
-  { value: "materials", label: "资料生成文章" },
+  { value: "materials", label: "主题生成教程" },
   { value: "keywords", label: "关键词" },
   { value: "jobs", label: "任务" },
   { value: "analytics", label: "数据" },
@@ -1079,12 +1080,7 @@ export default function AdminSeoPage() {
                       <span>{draft.category}</span>
                       <h1>{draft.title}</h1>
                       <p>{draft.excerpt}</p>
-                      <div
-                        className="seo-prose"
-                        dangerouslySetInnerHTML={{
-                          __html: currentRevision.contentHtml,
-                        }}
-                      />
+                      <SeoArticleContent html={currentRevision.contentHtml} />
                     </article>
                   ) : (
                     <div className="empty-state">请先保存草稿再预览。</div>
@@ -1523,7 +1519,7 @@ export default function AdminSeoPage() {
                       </span>
                       <strong>
                         {job.keyword?.keyword ||
-                          (job.fromMaterial ? "资料生成文章" : "关键词已删除")}
+                          (job.fromMaterial ? "主题生成教程" : "关键词已删除")}
                       </strong>
                       {job.progress && <small>{job.progress}</small>}
                       <small>
