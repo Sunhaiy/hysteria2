@@ -44,7 +44,7 @@ export default function HolidayPage() {
     [period, setPeriod] = useState("QUARTERLY"),
     [selection, setSelection] = useState<Selection | null>(null),
     [quote, setQuote] = useState<Quote | null>(null),
-    [activation, setActivation] = useState("scheduled_switch"),
+    [activation, setActivation] = useState("immediate_switch"),
     [confirmed, setConfirmed] = useState(false),
     [paymentType, setPaymentType] = useState("alipay"),
     [busy, setBusy] = useState(false),
@@ -136,7 +136,7 @@ export default function HolidayPage() {
   function select(s: Selection) {
     setQuote(null);
     setSelection(s);
-    setActivation("scheduled_switch");
+    setActivation("immediate_switch");
     setConfirmed(false);
     setPaymentType("alipay");
     purchaseKey.current = crypto.randomUUID();
@@ -415,7 +415,7 @@ export default function HolidayPage() {
                   </p>
                   <p>
                     <strong>套餐生效：</strong>
-                    首次购买立即开通，同套餐续期不清空本周期已用流量；不同套餐默认到期切换，也可确认后立即切换。立即切换放弃旧套餐剩余时间与流量，不折现、不顺延。已有预约套餐时不能重复购买。
+                    首次购买立即开通，同套餐续期不清空本周期已用流量；不同套餐默认选择立即切换，需确认后付款，也可选择到期后切换。立即切换放弃旧套餐剩余时间与流量，不折现、不顺延。已有预约套餐时不能重复购买。
                   </p>
                   <p>
                     <strong>抽奖规则：</strong>
@@ -715,7 +715,7 @@ export default function HolidayPage() {
                     <section className="checkout-option-section">
                       <div className="checkout-section-heading">
                         <strong>套餐生效方式</strong>
-                        <span>默认到期后切换</span>
+                        <span>默认立即切换，需确认旧权益损失</span>
                       </div>
                       <div
                         className="checkout-purchase-action-options"
@@ -723,8 +723,8 @@ export default function HolidayPage() {
                         aria-label="套餐生效方式"
                       >
                         {[
-                          ["scheduled_switch", "到期后切换"],
                           ["immediate_switch", "立即切换"],
+                          ["scheduled_switch", "到期后切换"],
                         ].map(([mode, label]) => (
                           <button
                             key={mode}

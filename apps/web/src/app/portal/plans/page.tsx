@@ -239,7 +239,7 @@ export default function PortalPlansPage() {
     useState<CheckoutPaymentType>("balance");
   const [planActivation, setPlanActivation] = useState<
     "scheduled_switch" | "immediate_switch"
-  >("scheduled_switch");
+  >("immediate_switch");
   const [immediateSwitchConfirmed, setImmediateSwitchConfirmed] =
     useState(false);
   const [quote, setQuote] = useState<Quote | null>(null);
@@ -475,10 +475,10 @@ export default function PortalPlansPage() {
           : "balance"
         : "alipay",
     );
-    setPlanActivation("scheduled_switch");
+    setPlanActivation("immediate_switch");
     setImmediateSwitchConfirmed(false);
     setIdempotencyKey(crypto.randomUUID());
-    void fetchQuote(offer, "purchase", "scheduled_switch");
+    void fetchQuote(offer, "purchase", "immediate_switch");
   }
 
   function selectPaymentType(next: CheckoutPaymentType) {
@@ -496,7 +496,7 @@ export default function PortalPlansPage() {
     });
     setQuote(null);
     setError(null);
-    setPlanActivation("scheduled_switch");
+    setPlanActivation("immediate_switch");
     setImmediateSwitchConfirmed(false);
     setIdempotencyKey(crypto.randomUUID());
     if (
@@ -506,7 +506,7 @@ export default function PortalPlansPage() {
     ) {
       setPaymentType("balance");
     }
-    void fetchQuote(offer, "purchase", "scheduled_switch");
+    void fetchQuote(offer, "purchase", "immediate_switch");
   }
 
   async function selectPurchaseAction(
@@ -1089,13 +1089,31 @@ export default function PortalPlansPage() {
               <section className="checkout-option-section">
                 <div className="checkout-section-heading">
                   <strong>选择生效方式</strong>
-                  <span>默认保留当前套餐剩余时间</span>
+                  <span>默认立即切换，可选择保留当前套餐</span>
                 </div>
                 <div
                   className="checkout-purchase-action-options"
                   role="radiogroup"
                   aria-label="套餐生效方式"
                 >
+                  <button
+                    className={
+                      planActivation === "immediate_switch" ? "selected" : ""
+                    }
+                    type="button"
+                    disabled={busy}
+                    role="radio"
+                    aria-checked={planActivation === "immediate_switch"}
+                    onClick={() =>
+                      void selectPlanActivation("immediate_switch")
+                    }
+                  >
+                    <Icon name="bolt" />
+                    <span>
+                      <strong>立即切换</strong>
+                      <small>付款到账后立即使用新套餐</small>
+                    </span>
+                  </button>
                   <button
                     className={
                       planActivation === "scheduled_switch" ? "selected" : ""
@@ -1118,24 +1136,6 @@ export default function PortalPlansPage() {
                       </small>
                     </span>
                   </button>
-                  <button
-                    className={
-                      planActivation === "immediate_switch" ? "selected" : ""
-                    }
-                    type="button"
-                    disabled={busy}
-                    role="radio"
-                    aria-checked={planActivation === "immediate_switch"}
-                    onClick={() =>
-                      void selectPlanActivation("immediate_switch")
-                    }
-                  >
-                    <Icon name="bolt" />
-                    <span>
-                      <strong>立即切换</strong>
-                      <small>付款到账后立即使用新套餐</small>
-                    </span>
-                  </button>
                 </div>
                 {quote.planActivationMode === "immediate_switch" ? (
                   <label className="checkout-switch-confirmation">
@@ -1148,7 +1148,7 @@ export default function PortalPlansPage() {
                     />
                     <span>
                       我确认立即切换，当前 {quote.currentPlanName ?? "套餐"}
-                      剩余约 {quote.forfeitedDays ?? 0} 天将不折现、不顺延。
+                      剩余约 {quote.forfeitedDays ?? 0} 天及剩余流量将被放弃，不折现、不顺延。
                     </span>
                   </label>
                 ) : null}

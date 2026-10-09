@@ -76,7 +76,7 @@ test("member catalog presents the permanent Ultra series as one shared tier row"
   );
 });
 
-test("different plans default to a scheduled switch and require confirmation for an immediate switch", async () => {
+test("different plans offer both switch modes and require confirmation for an immediate switch", async () => {
   const [source, styles] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(stylesUrl, "utf8"),

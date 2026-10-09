@@ -12,8 +12,9 @@ import { useAuth } from "@/components/auth-provider";
 import { apiRequest, ApiError } from "@/lib/api";
 import type { Announcement } from "@/lib/announcement";
 import { portalNav } from "@/lib/copy";
-import { formatDateTime } from "@/lib/format";
-import type { PaginatedResponse } from "@/lib/types";
+import { formatDateTime, formatMoney } from "@/lib/format";
+import type { ManualOrderRecord, PaginatedResponse } from "@/lib/types";
+import { humanizeOrderKind } from "@/lib/ui";
 import { AnnouncementRichContent } from "@/components/announcement-rich-content";
 import {
   ticketCategoryName,
@@ -50,6 +51,9 @@ export default function PortalTicketsPage() {
   const [announcement, setAnnouncement] = useState<Announcement | null>(null);
   const [announcementOpen, setAnnouncementOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [orderContextError, setOrderContextError] = useState<string | null>(
+    null,
+  );
   const [feedback, setFeedback] = useState<string | null>(null);
 
   const load = useCallback(
@@ -101,6 +105,66 @@ export default function PortalTicketsPage() {
         if (!(cause instanceof DOMException && cause.name === "AbortError")) {
           setAnnouncement(null);
         }
+      });
+    return () => controller.abort();
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+    const openCreate = () => setCreateOpen(true);
+    window.addEventListener("portal:create-ticket", openCreate);
+    const url = new URL(window.location.href);
+    const timer = window.setTimeout(() => {
+      if (
+        url.searchParams.get("create") === "1" &&
+        !url.searchParams.has("orderId")
+      ) {
+        setCreateOpen(true);
+        url.searchParams.delete("create");
+        window.history.replaceState(window.history.state, "", url);
+      }
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("portal:create-ticket", openCreate);
+    };
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+    const orderId = new URLSearchParams(window.location.search).get("orderId");
+    if (!orderId) return;
+    const controller = new AbortController();
+    void apiRequest<ManualOrderRecord[]>("/api/portal/orders", {
+      token,
+      signal: controller.signal,
+    })
+      .then((orders) => {
+        if (controller.signal.aborted) return;
+        const order = orders.find((item) => item.id === orderId);
+        if (!order) {
+          setOrderContextError("未找到此订单，请从自己的订单记录重新进入。");
+          return;
+        }
+        setSubject(
+          `订单咨询：${order.planName ?? humanizeOrderKind(order.kind)}`,
+        );
+        setCategory("billing");
+        setMessage(
+          `订单编号：${order.id}\n订单类型：${humanizeOrderKind(order.kind)}\n金额：${formatMoney(order.amountCents)}\n\n请在这里描述遇到的问题：\n`,
+        );
+        setCreateOpen(true);
+        const url = new URL(window.location.href);
+        url.searchParams.delete("orderId");
+        window.history.replaceState(window.history.state, "", url);
+      })
+      .catch((cause) => {
+        if (controller.signal.aborted) return;
+        setOrderContextError(
+          cause instanceof ApiError
+            ? cause.message
+            : "订单信息加载失败，请重试。",
+        );
       });
     return () => controller.abort();
   }, [token]);
@@ -197,17 +261,10 @@ export default function PortalTicketsPage() {
       navItems={portalNav}
       requireRole="member"
       toolbarMeta={<span className="badge info">{data.total} 个工单</span>}
-      toolbarActions={
-        <button
-          className="action-button"
-          type="button"
-          onClick={() => setCreateOpen(true)}
-        >
-          <Icon name="add" />
-          新建工单
-        </button>
-      }
     >
+      {orderContextError ? (
+        <div className="feedback error">{orderContextError}</div>
+      ) : null}
       {announcement ? (
         <section
           className={`ticket-announcement${announcementOpen ? " is-open" : ""}`}

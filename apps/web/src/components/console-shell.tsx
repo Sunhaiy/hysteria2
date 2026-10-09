@@ -39,6 +39,7 @@ export function ConsoleShell({
   const router = useRouter();
   const pathname = usePathname();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const showSupport = requireRole === "member" && pathname !== "/portal";
 
   useEffect(() => {
     if (loading) {
@@ -155,13 +156,37 @@ export function ConsoleShell({
         <div
           className={`workspace-body${dataViewport ? " data-viewport" : ""}`}
         >
-          {toolbarMeta || toolbarActions ? (
+          {toolbarMeta || toolbarActions || showSupport ? (
             <div className="page-utility-bar">
               {toolbarMeta ? (
                 <div className="topbar-meta">{toolbarMeta}</div>
               ) : null}
-              {toolbarActions ? (
-                <div className="topbar-actions">{toolbarActions}</div>
+              {toolbarActions || showSupport ? (
+                <div className="topbar-actions">
+                  {toolbarActions}
+                  {showSupport ? (
+                    <Link
+                      className="ghost-button compact"
+                      href="/portal/tickets?create=1"
+                      onClick={(event) => {
+                        if (
+                          pathname === "/portal/tickets" &&
+                          !event.ctrlKey &&
+                          !event.metaKey &&
+                          !event.shiftKey &&
+                          !event.altKey
+                        ) {
+                          event.preventDefault();
+                          window.dispatchEvent(
+                            new Event("portal:create-ticket"),
+                          );
+                        }
+                      }}
+                    >
+                      有疑问，提交工单
+                    </Link>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           ) : null}

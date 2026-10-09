@@ -129,6 +129,7 @@ export default function PortalOrdersPage() {
               "金额",
               "处理时间",
               "备注",
+              "帮助",
             ]}
             rows={orders.map((order) => [
               humanizeOrderKind(order.kind),
@@ -144,6 +145,13 @@ export default function PortalOrdersPage() {
                 ? formatDateTime(order.processedAt)
                 : "等待处理",
               order.note ?? "-",
+              <Link
+                key={`support-${order.id}`}
+                className="ghost-button compact"
+                href={`/portal/tickets?orderId=${encodeURIComponent(order.id)}`}
+              >
+                有疑问，提交工单
+              </Link>,
             ])}
           />
         </Panel>

@@ -180,7 +180,7 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
     useState(false);
   const [planActivation, setPlanActivation] = useState<
     "scheduled_switch" | "immediate_switch"
-  >("scheduled_switch");
+  >("immediate_switch");
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -345,7 +345,7 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
     setError(null);
     setFeedback(null);
     setImmediateSwitchConfirmed(false);
-    setPlanActivation("scheduled_switch");
+    setPlanActivation("immediate_switch");
   }
 
   function selectPaymentType(next: "alipay" | "wxpay" | "balance") {
@@ -875,13 +875,31 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
               <section className="checkout-option-section">
                 <div className="checkout-section-heading">
                   <strong>选择生效方式</strong>
-                  <span>默认保留当前套餐剩余时间</span>
+                  <span>默认立即切换，可选择保留当前套餐</span>
                 </div>
                 <div
                   className="checkout-purchase-action-options"
                   role="radiogroup"
                   aria-label="拼团套餐生效方式"
                 >
+                  <button
+                    type="button"
+                    className={
+                      planActivation === "immediate_switch" ? "selected" : ""
+                    }
+                    role="radio"
+                    aria-checked={planActivation === "immediate_switch"}
+                    onClick={() => {
+                      setPlanActivation("immediate_switch");
+                      setImmediateSwitchConfirmed(false);
+                    }}
+                  >
+                    <Icon name="bolt" />
+                    <span>
+                      <strong>立即切换</strong>
+                      <small>支付确认后立即使用新套餐</small>
+                    </span>
+                  </button>
                   <button
                     type="button"
                     className={
@@ -902,24 +920,6 @@ export function GroupBuyExperience({ shareCode }: { shareCode?: string }) {
                         {formatDateTime(currentPlan.endsAt)}
                         ，届时自动启用新套餐
                       </small>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className={
-                      planActivation === "immediate_switch" ? "selected" : ""
-                    }
-                    role="radio"
-                    aria-checked={planActivation === "immediate_switch"}
-                    onClick={() => {
-                      setPlanActivation("immediate_switch");
-                      setImmediateSwitchConfirmed(false);
-                    }}
-                  >
-                    <Icon name="bolt" />
-                    <span>
-                      <strong>立即切换</strong>
-                      <small>支付确认后立即使用新套餐</small>
                     </span>
                   </button>
                 </div>
