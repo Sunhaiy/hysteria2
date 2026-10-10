@@ -9,6 +9,7 @@ import { createEpaySignature } from './epay-signature';
 import { PaymentFulfillmentRejectedError } from '../commerce/payment-fulfillment.error';
 
 describe('EpayService callbacks', () => {
+  afterEach(() => jest.useRealTimers());
   const cipher = {
     encrypt: jest.fn((value: string) => `enc:${value}`),
     decrypt: jest.fn((value: string) => value.replace(/^enc:/, '')),
@@ -59,6 +60,17 @@ describe('EpayService callbacks', () => {
   }
 
   it('creates and signs a plan reset with an isolated active key and entitlement snapshot', async () => {
+    jest
+      .useFakeTimers({
+        doNotFake: [
+          'setTimeout',
+          'clearTimeout',
+          'setImmediate',
+          'nextTick',
+          'performance',
+        ],
+      })
+      .setSystemTime(new Date('2026-09-15T00:00:00Z'));
     const offer = {
       id: 'offer_1',
       slug: 'spark-monthly',

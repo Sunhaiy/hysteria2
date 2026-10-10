@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { createHash } from 'node:crypto';
@@ -48,9 +49,6 @@ export class ScheduledPlanActivation {
         product: true,
         quotaBuckets: {
           orderBy: { id: 'asc' },
-          include: {
-            _count: { select: { allocations: true, adjustments: true } },
-          },
         },
         orders: {
           include: {
@@ -81,13 +79,22 @@ export class ScheduledPlanActivation {
       throw new ConflictException('无法从唯一有效购买订单确定完整购买周期');
     if (
       target.quotaBuckets.length !== 1 ||
-      target.quotaBuckets.some(
-        (b) =>
-          b.consumedBytes !== 0n ||
-          b._count.allocations ||
-          b._count.adjustments,
-      )
+      target.quotaBuckets.some((b) => b.consumedBytes !== 0n)
     )
+      throw new ConflictException('预约额度已使用或调整，不能自动提前启用');
+    // Nested relation counts aggregate the entire usage history in Prisma's
+    // generated SQL. Only existence on this reservation matters; use indexed,
+    // bounded reads inside the same transaction, including at confirmation.
+    const targetBucketId = target.quotaBuckets[0].id;
+    const allocation = await tx.usageAllocation.findFirst({
+      where: { quotaBucketId: targetBucketId },
+      select: { id: true },
+    });
+    const adjustment = await tx.quotaAdjustment.findFirst({
+      where: { quotaBucketId: targetBucketId },
+      select: { id: true },
+    });
+    if (allocation || adjustment)
       throw new ConflictException('预约额度已使用或调整，不能自动提前启用');
     if (
       grants.some((g) =>
@@ -119,9 +126,7 @@ export class ScheduledPlanActivation {
         },
       },
       include: {
-        quotaBuckets: {
-          include: { _count: { select: { allocations: true } } },
-        },
+        quotaBuckets: { orderBy: { id: 'asc' } },
       },
       orderBy: { id: 'asc' },
     });
@@ -130,10 +135,19 @@ export class ScheduledPlanActivation {
         (g) =>
           g.startsAt <= now ||
           g.quotaBuckets.length !== 1 ||
-          g.quotaBuckets.some(
-            (b) => b.consumedBytes !== 0n || b._count.allocations,
-          ),
+          g.quotaBuckets.some((b) => b.consumedBytes !== 0n),
       )
+    )
+      throw new ConflictException('关联奖励已生效或使用，请先核对');
+    const bonusBucketIds = bonuses.flatMap((g) =>
+      g.quotaBuckets.map((b) => b.id),
+    );
+    if (
+      bonusBucketIds.length &&
+      (await tx.usageAllocation.findFirst({
+        where: { quotaBucketId: { in: bonusBucketIds } },
+        select: { id: true },
+      }))
     )
       throw new ConflictException('关联奖励已生效或使用，请先核对');
     const current = grants.find((g) => g.startsAt <= now) ?? null;
@@ -165,14 +179,29 @@ export class ScheduledPlanActivation {
   }
 
   async preview(userId: string, grantId: string) {
-    return this.prisma.$transaction(
-      async (tx) => {
-        const now = new Date();
-        const state = await this.read(tx, userId, grantId, now);
-        return this.describe(state, now);
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
-    );
+    return this.prisma
+      .$transaction(
+        async (tx) => {
+          const now = new Date();
+          const state = await this.read(tx, userId, grantId, now);
+          return this.describe(state, now);
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+      )
+      .catch((error: unknown) => {
+        this.rethrowTimeout(error);
+        throw error;
+      });
+  }
+
+  private rethrowTimeout(error: unknown) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2028'
+    )
+      throw new ServiceUnavailableException(
+        '套餐操作暂时超时，请刷新套餐状态后重试；请勿重复创建订单',
+      );
   }
 
   private describe(
@@ -348,6 +377,7 @@ export class ScheduledPlanActivation {
           },
         );
       } catch (error) {
+        this.rethrowTimeout(error);
         if (
           !(error instanceof Prisma.PrismaClientKnownRequestError) ||
           !['P2034', 'P2002'].includes(error.code)

@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { EntitlementService } from '../src/entitlement/entitlement.service';
 import { CustomerAdminService } from '../src/customer-admin/customer-admin.service';
@@ -20,6 +20,7 @@ describe('customer memberships with PostgreSQL', () => {
   let currentId: string;
   let targetId: string;
   let orderId: string;
+  const queries: string[] = [];
   const prefix = `customer-test-${randomUUID()}`;
   const now = new Date('2028-01-31T04:00:00Z');
   const future = new Date('2028-03-01T04:00:00Z');
@@ -29,7 +30,11 @@ describe('customer memberships with PostgreSQL', () => {
     const url = new URL(process.env.DATABASE_URL ?? '');
     if (url.hostname !== '127.0.0.1' || url.pathname !== '/seo_brief_test')
       throw new Error('Requires isolated local seo_brief_test');
-    p = new PrismaClient();
+    const traced = new PrismaClient({
+      log: [{ emit: 'event', level: 'query' }],
+    });
+    traced.$on('query', (event) => queries.push(event.query));
+    p = traced;
     service = new EntitlementService(p as PrismaService);
     customers = new CustomerAdminService(
       p as PrismaService,
@@ -145,6 +150,7 @@ describe('customer memberships with PostgreSQL', () => {
   afterEach(async () => {
     jest.useRealTimers();
     if (!userId) return;
+    await p.usageRollup.deleteMany({ where: { userId } });
     await p.refund.deleteMany({ where: { order: { userId } } });
     await p.groupBuy.deleteMany({ where: { creatorId: userId } });
     await p.auditLog.deleteMany({
@@ -232,6 +238,112 @@ describe('customer memberships with PostgreSQL', () => {
       key,
     };
   }
+  it('previews without aggregating the entire historical allocation table', async () => {
+    queries.length = 0;
+    await service.previewScheduledActivation(userId, targetId);
+    const usageQueries = queries.filter((sql) =>
+      sql.includes('UsageAllocation'),
+    );
+    expect(usageQueries.length).toBeGreaterThan(0);
+    for (const sql of usageQueries) {
+      expect(sql).not.toMatch(/GROUP BY/);
+      expect(sql).toMatch(/WHERE .*quotaBucketId/);
+      expect(sql).toMatch(/LIMIT/);
+    }
+  });
+  async function recordAllocation(grantId: string) {
+    const bucket = await p.quotaBucket.findFirstOrThrow({ where: { grantId } });
+    await p.usageRollup.create({
+      data: {
+        userId,
+        nodeId,
+        bucketStart: now,
+        txBytes: 1n,
+        rxBytes: 0n,
+        source: 'activation-regression',
+        allocations: {
+          create: { quotaBucketId: bucket.id, accountedBytes: 1n },
+        },
+      },
+    });
+  }
+  it.each(['allocation', 'adjustment'])(
+    'rejects a new target %s even when consumedBytes is still zero',
+    async (kind) => {
+      const preview = await service.previewScheduledActivation(
+        userId,
+        targetId,
+      );
+      if (kind === 'allocation') await recordAllocation(targetId);
+      else {
+        const bucket = await p.quotaBucket.findFirstOrThrow({
+          where: { grantId: targetId },
+        });
+        await p.quotaAdjustment.create({
+          data: {
+            accessAccountId: accountId,
+            quotaBucketId: bucket.id,
+            mode: 'DELTA',
+            deltaBytes: 0n,
+            beforeRemainingBytes: 1000n,
+            afterRemainingBytes: 1000n,
+            reason: 'regression',
+          },
+        });
+      }
+      await expect(
+        service.previewScheduledActivation(userId, targetId),
+      ).rejects.toThrow('已使用或调整');
+      await expect(
+        service.activateScheduledPlan(
+          userId,
+          targetId,
+          {
+            expectedState: preview.expectedState,
+            reason: 'regression',
+          },
+          userId,
+          randomUUID(),
+        ),
+      ).rejects.toThrow('已使用或调整');
+      expect(
+        (
+          await p.entitlementGrant.findUniqueOrThrow({
+            where: { id: currentId },
+          })
+        ).status,
+      ).toBe('ACTIVE');
+    },
+  );
+  it('ignores current-plan allocation history during confirmation', async () => {
+    const preview = await service.previewScheduledActivation(userId, targetId);
+    await recordAllocation(currentId);
+    await service.activateScheduledPlan(
+      userId,
+      targetId,
+      {
+        expectedState: preview.expectedState,
+        reason: 'regression',
+      },
+      userId,
+      randomUUID(),
+    );
+  });
+  it('returns a Chinese retry message on transaction expiration', async () => {
+    const tx = jest.spyOn(p, '$transaction').mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('Transaction expired', {
+        code: 'P2028',
+        clientVersion: Prisma.prismaVersion.client,
+      }),
+    );
+    try {
+      await expect(
+        service.previewScheduledActivation(userId, targetId),
+      ).rejects.toThrow('套餐操作暂时超时');
+    } finally {
+      tx.mockRestore();
+    }
+  });
   it.each([
     [1, '2028-02-29T04:00:00.000Z'],
     [3, '2028-04-30T04:00:00.000Z'],
@@ -593,63 +705,79 @@ describe('customer memberships with PostgreSQL', () => {
       ),
     ).toBe(true);
   });
-  it('moves an earned group reward without issuing more quota or changing rate/access', async () => {
-    const bonus = await p.entitlementGrant.create({
-      data: {
-        userId,
-        accessAccountId: accountId,
-        productId,
-        kind: 'TRAFFIC_PACK',
-        startsAt: future,
-        endsAt: end,
-        accessProfileId: profileId,
-        speedUpMbpsSnapshot: 50,
-        speedDownMbpsSnapshot: 100,
-        deviceLimitSnapshot: 3,
-        trafficMultiplierBasisPointsSnapshot: 20000,
-        quotaBuckets: {
-          create: {
-            kind: 'TRAFFIC_PACK',
-            startsAt: future,
-            endsAt: end,
-            grantedBytes: 80n,
-            trafficMultiplierBasisPointsSnapshot: 20000,
+  it.each([false, true])(
+    'handles an earned group reward with allocation=%s',
+    async (hasAllocation) => {
+      const bonus = await p.entitlementGrant.create({
+        data: {
+          userId,
+          accessAccountId: accountId,
+          productId,
+          kind: 'TRAFFIC_PACK',
+          startsAt: future,
+          endsAt: end,
+          accessProfileId: profileId,
+          speedUpMbpsSnapshot: 50,
+          speedDownMbpsSnapshot: 100,
+          deviceLimitSnapshot: 3,
+          trafficMultiplierBasisPointsSnapshot: 20000,
+          quotaBuckets: {
+            create: {
+              kind: 'TRAFFIC_PACK',
+              startsAt: future,
+              endsAt: end,
+              grantedBytes: 80n,
+              trafficMultiplierBasisPointsSnapshot: 20000,
+            },
           },
         },
-      },
-    });
-    await p.groupBuy.create({
-      data: {
-        creatorId: userId,
-        campaignId,
-        shareCode: randomUUID(),
-        status: 'SUCCEEDED',
-        offerIdSnapshot: offerId,
-        productNameSnapshot: '验收套餐',
-        offerNameSnapshot: '季付',
-        priceCentsSnapshot: 3000,
-        entitlementSnapshot: {},
-        members: {
-          create: {
-            userId,
-            orderId,
-            bonusEntitlementGrantId: bonus.id,
-            status: 'FULFILLED',
+      });
+      await p.groupBuy.create({
+        data: {
+          creatorId: userId,
+          campaignId,
+          shareCode: randomUUID(),
+          status: 'SUCCEEDED',
+          offerIdSnapshot: offerId,
+          productNameSnapshot: '验收套餐',
+          offerNameSnapshot: '季付',
+          priceCentsSnapshot: 3000,
+          entitlementSnapshot: {},
+          members: {
+            create: {
+              userId,
+              orderId,
+              bonusEntitlementGrantId: bonus.id,
+              status: 'FULFILLED',
+            },
           },
         },
-      },
-    });
-    await confirm();
-    const actual = await p.entitlementGrant.findUniqueOrThrow({
-      where: { id: bonus.id },
-      include: { quotaBuckets: true },
-    });
-    expect(actual.startsAt).toEqual(now);
-    expect(actual.endsAt.toISOString()).toBe('2028-04-30T04:00:00.000Z');
-    expect(actual.accessProfileId).toBe(profileId);
-    expect(actual.trafficMultiplierBasisPointsSnapshot).toBe(20000);
-    expect(actual.quotaBuckets[0].grantedBytes).toBe(80n);
-  });
+      });
+      if (hasAllocation) {
+        await recordAllocation(bonus.id);
+        await expect(
+          service.previewScheduledActivation(userId, targetId),
+        ).rejects.toThrow('关联奖励');
+        return;
+      }
+      queries.length = 0;
+      await confirm();
+      for (const sql of queries.filter((query) =>
+        query.includes('UsageAllocation'),
+      )) {
+        expect(sql).not.toMatch(/GROUP BY/);
+      }
+      const actual = await p.entitlementGrant.findUniqueOrThrow({
+        where: { id: bonus.id },
+        include: { quotaBuckets: true },
+      });
+      expect(actual.startsAt).toEqual(now);
+      expect(actual.endsAt.toISOString()).toBe('2028-04-30T04:00:00.000Z');
+      expect(actual.accessProfileId).toBe(profileId);
+      expect(actual.trafficMultiplierBasisPointsSnapshot).toBe(20000);
+      expect(actual.quotaBuckets[0].grantedBytes).toBe(80n);
+    },
+  );
   it('adjusts only a current owned bucket and mirrors the legacy cycle', async () => {
     const bucket = await p.quotaBucket.findFirstOrThrow({
       where: { grantId: currentId },
