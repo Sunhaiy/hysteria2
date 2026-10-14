@@ -86,6 +86,7 @@ function fixture(
     subscription: { findFirst: jest.fn().mockResolvedValue(null) },
     groupBuyMember: { findUnique: jest.fn().mockResolvedValue(null) },
     catalogOffer: { findUnique: jest.fn().mockResolvedValue(offer) },
+    auditLog: { findFirst: jest.fn().mockResolvedValue(null) },
   };
   const oldKey = process.env.SETTINGS_ENCRYPTION_KEY;
   process.env.SETTINGS_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
@@ -97,6 +98,77 @@ function fixture(
 }
 
 describe('standard plan upgrade quote', () => {
+  it('accepts a paid scheduled plan after an audited early activation', async () => {
+    const f = fixture(
+      1,
+      '2026-10-12T08:38:26.331Z',
+      '2026-11-12T08:38:26.331Z',
+    );
+    f.order.entitlementExpiresAt = new Date('2026-12-12T02:07:56.495Z');
+    f.order.processedAt = new Date('2026-10-12T06:03:58.994Z');
+    f.order.note = 'PLAN_ACTIVATION:scheduled_switch';
+    f.tx.auditLog.findFirst.mockResolvedValue({ id: 'verified-activation' });
+    await expect(
+      f.policy.quote(
+        f.tx as never,
+        'user',
+        'target',
+        undefined,
+        new Date('2026-10-14'),
+      ),
+    ).resolves.toMatchObject({
+      data: { endsAt: f.grant.endsAt.toISOString(), sourcePaidCents: 10000 },
+    });
+    expect(f.tx.auditLog.findFirst).toHaveBeenCalledWith({
+      where: {
+        targetId: 'user',
+        targetType: 'user',
+        action: 'entitlement.scheduled.activated',
+        AND: [
+          { metadata: { path: ['result', 'grantId'], equals: 'grant' } },
+          { metadata: { path: ['result', 'orderId'], equals: 'original' } },
+          {
+            metadata: {
+              path: ['result', 'startsAt'],
+              equals: f.grant.startsAt.toISOString(),
+            },
+          },
+          {
+            metadata: {
+              path: ['result', 'endsAt'],
+              equals: f.grant.endsAt.toISOString(),
+            },
+          },
+          {
+            metadata: {
+              path: ['result', 'intervalMonths'],
+              equals: 1,
+            },
+          },
+          {
+            metadata: {
+              path: ['originalEndsAt'],
+              equals: f.order.entitlementExpiresAt.toISOString(),
+            },
+          },
+        ],
+      },
+      select: { id: true },
+    });
+  });
+  it('still rejects changed expiry without matching activation evidence', async () => {
+    const f = fixture();
+    f.order.entitlementExpiresAt = new Date('2027-02-01');
+    await expect(
+      f.policy.quote(
+        f.tx as never,
+        'user',
+        'target',
+        undefined,
+        new Date('2026-10-14'),
+      ),
+    ).rejects.toThrow('无法核实剩余实付价值');
+  });
   it('credits the actual discounted amount, not the current list price', async () => {
     const f = fixture();
     const at = new Date('2026-07-02T12:00:00Z');

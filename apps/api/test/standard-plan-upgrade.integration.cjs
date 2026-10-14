@@ -49,6 +49,37 @@ async function verify(m,target,payable,wallet){
 }
 (async()=>{
  const [source,target,higher]=await setup();
+ const visibility=await member(source);
+ const visible=()=>commerce.quoteCheckout(visibility.user.id,{offerId:target.offer.id});
+ assert.equal((await visible()).canUpgradePlan,true,'Higher same-period plan exposes upgrade');
+ assert.equal((await commerce.quoteCheckout(visibility.user.id,{offerId:source.offer.id})).canUpgradePlan,false,'Same plan hides upgrade');
+ for(const priceCents of [source.offer.priceCents,source.offer.priceCents-1]){
+  await db.catalogOffer.update({where:{id:target.offer.id},data:{priceCents}});
+  assert.equal((await visible()).canUpgradePlan,false,'Equal or cheaper plan hides upgrade');
+ }
+ await db.catalogOffer.update({where:{id:target.offer.id},data:{priceCents:target.offer.priceCents,billingPeriod:'MONTHLY',intervalMonths:1}});
+ assert.equal((await visible()).canUpgradePlan,false,'Different payment period hides upgrade');
+ await db.catalogOffer.update({where:{id:target.offer.id},data:{billingPeriod:'YEARLY',intervalMonths:12}});
+ await db.entitlementGrant.update({where:{id:visibility.grant.id},data:{endsAt:new Date(Date.now()-1000)}});
+ await db.subscription.update({where:{id:visibility.sub.id},data:{endsAt:new Date(Date.now()-1000)}});
+ assert.equal((await visible()).canUpgradePlan,false,'Expired plan hides upgrade');
+ const newcomer=await db.user.create({data:{email:randomUUID()+'@upgrade.invalid',displayName:'No plan',passwordHash:'not-a-real-login'}});
+ assert.equal((await commerce.quoteCheckout(newcomer.id,{offerId:target.offer.id})).canUpgradePlan,false,'No plan hides upgrade');
+ console.log('PASS upgrade visibility: higher only; no plan, expired, same, cheaper, equal and cross-period hidden');
+ const early=await member(source),oldExpiry=new Date(Date.UTC(now.getUTCFullYear()+1,1,1));
+ await db.manualOrder.update({where:{id:early.order.id},data:{entitlementExpiresAt:oldExpiry,note:'PLAN_ACTIVATION:scheduled_switch'}});
+ const earlyInput={offerId:target.offer.id,purchaseAction:'plan_upgrade'};
+ await assert.rejects(commerce.quoteCheckout(early.user.id,earlyInput),/无法核实剩余实付价值/);
+ const metadata={originalEndsAt:oldExpiry.toISOString(),result:{grantId:early.grant.id,orderId:early.order.id,startsAt:startsAt.toISOString(),endsAt:endsAt.toISOString(),intervalMonths:12}};
+ const activation=await db.auditLog.create({data:{action:'entitlement.scheduled.activated',targetType:'user',targetId:early.user.id,metadata:{...metadata,result:{...metadata.result,orderId:'different-order'}}}});
+ await assert.rejects(commerce.quoteCheckout(early.user.id,earlyInput),/无法核实剩余实付价值/);
+ await db.auditLog.update({where:{id:activation.id},data:{metadata}});
+ const earlyQuote=await commerce.quoteCheckout(early.user.id,earlyInput);
+ assert.equal(earlyQuote.canUpgradePlan,true);
+ await commerce.checkout(early.user.id,{...earlyInput,upgradeQuoteToken:earlyQuote.upgradeQuoteToken},'early-activation-upgrade');
+ await verify(early,target,earlyQuote.finalPriceCents,true);
+ assert.equal((await db.manualOrder.findUniqueOrThrow({where:{id:early.order.id}})).entitlementExpiresAt.toISOString(),oldExpiry.toISOString());
+ console.log('PASS audited early activation upgrades without rewriting payment snapshot; unmatched evidence rejected');
  const m=await member(source),q=await commerce.quoteCheckout(m.user.id,{offerId:target.offer.id,purchaseAction:'plan_upgrade'}),input={offerId:target.offer.id,purchaseAction:'plan_upgrade',upgradeQuoteToken:q.upgradeQuoteToken};
  const results=await Promise.all([commerce.checkout(m.user.id,input,'same-key'),commerce.checkout(m.user.id,input,'same-key')]);assert.equal(results[0].orderId,results[1].orderId);await verify(m,target,q.finalPriceCents,true);
  assert.equal(await db.walletLedgerEntry.count({where:{userId:m.user.id,kind:'PURCHASE'}}),1);

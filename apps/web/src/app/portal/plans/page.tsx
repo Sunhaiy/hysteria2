@@ -80,6 +80,7 @@ type Quote = {
   finalPriceCents: number;
   balanceCents: number;
   sufficient: boolean;
+  canUpgradePlan?: boolean;
   purchaseMode: "initial" | "upgrade" | "plan_reset" | "plan_upgrade";
   upgradeQuoteToken?: string;
   upgradeQuote?: {
@@ -1058,8 +1059,7 @@ export default function PortalPlansPage() {
                       : "一次购买永久有效，可直接使用商品绑定的节点。")}
               </p>
             </section>
-            {currentPlanName &&
-            !checkoutIsCurrentPlan &&
+            {quote?.canUpgradePlan === true &&
             checkout.product.series === "standard" &&
             checkout.product.kind === "plan" ? (
               <section className="checkout-option-section">

@@ -221,6 +221,25 @@ export class CommerceService {
       payableBeforeDiscountCents - (discount?.discountCents ?? 0),
       0,
     );
+    let canUpgradePlan = Boolean(planUpgrade);
+    if (
+      !planUpgrade &&
+      'offerId' in input &&
+      standardPlanPurchase?.currentPlan &&
+      standardPlanPurchase.mode !== 'renewal'
+    ) {
+      try {
+        await this.upgradePolicy().quote(client, userId, input.offerId);
+        canUpgradePlan = true;
+      } catch (error) {
+        // Ineligible upgrades stay hidden; infrastructure errors must not be masked.
+        if (
+          !(error instanceof BadRequestException) &&
+          !(error instanceof ConflictException)
+        )
+          throw error;
+      }
+    }
     return {
       kind: 'kind' in input ? input.kind : product.kind,
       productId: product.id,
@@ -239,6 +258,7 @@ export class CommerceService {
       finalPriceCents,
       balanceCents: user.balanceCents,
       sufficient: user.balanceCents >= finalPriceCents,
+      canUpgradePlan,
       upgradeQuoteToken: planUpgrade?.token ?? null,
       upgradeQuote: planUpgrade
         ? {

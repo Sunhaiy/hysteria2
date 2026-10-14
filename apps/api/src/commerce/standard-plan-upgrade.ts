@@ -151,10 +151,58 @@ export class StandardPlanUpgrade {
     if (
       !['PAYMENT', 'WALLET'].includes(original.source) ||
       original.amountCents <= 0 ||
-      original.entitlementExpiresAt?.getTime() !== g.endsAt.getTime() ||
+      original.intervalMonthsSnapshot == null ||
       original.intervalMonthsSnapshot !== g.offer.intervalMonths
     )
       throw new ConflictException('无法核实剩余实付价值，请联系客服核算');
+    let earlyActivationVerified = false;
+    if (original.entitlementExpiresAt?.getTime() !== g.endsAt.getTime()) {
+      // Early activation deliberately preserves the original payment snapshot.
+      // Accept its new interval only when the exact order/grant and dates are audited.
+      earlyActivationVerified = Boolean(
+        original.entitlementExpiresAt &&
+        (await tx.auditLog.findFirst({
+          where: {
+            action: 'entitlement.scheduled.activated',
+            targetType: 'user',
+            targetId: userId,
+            AND: [
+              { metadata: { path: ['result', 'grantId'], equals: g.id } },
+              {
+                metadata: { path: ['result', 'orderId'], equals: original.id },
+              },
+              {
+                metadata: {
+                  path: ['result', 'startsAt'],
+                  equals: g.startsAt.toISOString(),
+                },
+              },
+              {
+                metadata: {
+                  path: ['result', 'endsAt'],
+                  equals: g.endsAt.toISOString(),
+                },
+              },
+              {
+                metadata: {
+                  path: ['result', 'intervalMonths'],
+                  equals: original.intervalMonthsSnapshot,
+                },
+              },
+              {
+                metadata: {
+                  path: ['originalEndsAt'],
+                  equals: original.entitlementExpiresAt.toISOString(),
+                },
+              },
+            ],
+          },
+          select: { id: true },
+        })),
+      );
+      if (!earlyActivationVerified)
+        throw new ConflictException('无法核实剩余实付价值，请联系客服核算');
+    }
     const group = await tx.groupBuyMember.findUnique({
       where: { orderId: original.id },
     });
@@ -165,7 +213,7 @@ export class StandardPlanUpgrade {
     const day = expectedEnd.getUTCDate();
     expectedEnd.setUTCDate(1);
     expectedEnd.setUTCMonth(
-      expectedEnd.getUTCMonth() + original.intervalMonthsSnapshot!,
+      expectedEnd.getUTCMonth() + original.intervalMonthsSnapshot,
     );
     const lastDay = new Date(
       Date.UTC(expectedEnd.getUTCFullYear(), expectedEnd.getUTCMonth() + 1, 0),
@@ -176,6 +224,7 @@ export class StandardPlanUpgrade {
     // Admin free switches/validity edits must not silently change the purchased interval.
     if (
       Math.abs(anchor.getTime() - g.startsAt.getTime()) > 60_000 &&
+      !earlyActivationVerified &&
       !original.note?.startsWith('PLAN_ACTIVATION:scheduled_switch')
     )
       throw new ConflictException('套餐生效时间曾调整，请联系客服核算');
