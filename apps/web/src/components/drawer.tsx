@@ -66,7 +66,9 @@ export function Drawer({
       window.innerWidth - document.documentElement.clientWidth;
 
     document.documentElement.style.overflow = "hidden";
-    document.body.style.overflow = "hidden";
+    // Keep sticky navigation attached to the viewport. `hidden` turns body into
+    // a scroll container and shifts its sticky children when the page is scrolled.
+    document.body.style.overflow = "clip";
     if (scrollbarWidth > 0) {
       const currentPadding = Number.parseFloat(
         window.getComputedStyle(document.body).paddingRight,

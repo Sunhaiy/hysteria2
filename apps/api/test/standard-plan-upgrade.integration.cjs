@@ -80,6 +80,26 @@ async function verify(m,target,payable,wallet){
  await verify(early,target,earlyQuote.finalPriceCents,true);
  assert.equal((await db.manualOrder.findUniqueOrThrow({where:{id:early.order.id}})).entitlementExpiresAt.toISOString(),oldExpiry.toISOString());
  console.log('PASS audited early activation upgrades without rewriting payment snapshot; unmatched evidence rejected');
+ const gift=await member(source);
+ await db.manualOrder.update({where:{id:gift.order.id},data:{source:'ADMIN',amountCents:0,basePriceCents:15000,discountCents:15000}});
+ assert.equal((await commerce.quoteCheckout(gift.user.id,{offerId:target.offer.id})).canUpgradePlan,true);
+ const giftQuote=await commerce.quoteCheckout(gift.user.id,{offerId:target.offer.id,purchaseAction:'plan_upgrade'});
+ assert.equal(giftQuote.upgradeQuote.creditBasis,'admin_list_price');
+ const giftInput={offerId:target.offer.id,purchaseAction:'plan_upgrade',upgradeQuoteToken:giftQuote.upgradeQuoteToken};
+ const giftResults=await Promise.all([commerce.checkout(gift.user.id,giftInput,'gift-upgrade'),commerce.checkout(gift.user.id,giftInput,'gift-upgrade')]);
+ assert.equal(giftResults[0].orderId,giftResults[1].orderId);
+ await verify(gift,target,giftQuote.finalPriceCents,true);
+ const giftOriginal=await db.manualOrder.findUniqueOrThrow({where:{id:gift.order.id}});
+ assert.equal(giftOriginal.amountCents,0);assert.equal(giftOriginal.source,'ADMIN');assert.equal(giftOriginal.basePriceCents,15000);
+ const giftSecond=await commerce.quoteCheckout(gift.user.id,{offerId:higher.offer.id,purchaseAction:'plan_upgrade'});
+ assert.equal(giftSecond.upgradeQuote.creditBasis,'previous_upgrade');
+ assert(Math.abs(giftSecond.upgradeQuote.creditCents-giftQuote.upgradeQuote.targetRemainingCents)<=1);
+ await commerce.checkout(gift.user.id,{offerId:higher.offer.id,purchaseAction:'plan_upgrade',upgradeQuoteToken:giftSecond.upgradeQuoteToken},'gift-second-upgrade');
+ const twice=await db.quotaBucket.findUniqueOrThrow({where:{id:gift.bucket.id}});
+ assert.equal(twice.consumedBytes,80n*GiB);assert.equal(twice.grantedBytes,520n*GiB);
+ assert.equal((await db.entitlementGrant.findUniqueOrThrow({where:{id:gift.grant.id}})).endsAt.toISOString(),endsAt.toISOString());
+ assert.equal((await db.user.findUniqueOrThrow({where:{id:gift.user.id}})).balanceCents,100000-giftQuote.finalPriceCents-giftSecond.finalPriceCents);
+ console.log('PASS admin gift list-price credit, concurrent replay and two upgrades preserve real payment, used quota and expiry');
  const m=await member(source),q=await commerce.quoteCheckout(m.user.id,{offerId:target.offer.id,purchaseAction:'plan_upgrade'}),input={offerId:target.offer.id,purchaseAction:'plan_upgrade',upgradeQuoteToken:q.upgradeQuoteToken};
  const results=await Promise.all([commerce.checkout(m.user.id,input,'same-key'),commerce.checkout(m.user.id,input,'same-key')]);assert.equal(results[0].orderId,results[1].orderId);await verify(m,target,q.finalPriceCents,true);
  assert.equal(await db.walletLedgerEntry.count({where:{userId:m.user.id,kind:'PURCHASE'}}),1);
@@ -94,8 +114,10 @@ async function verify(m,target,payable,wallet){
  await assert.rejects(commerce.checkout(poor.user.id,{offerId:target.offer.id,purchaseAction:'plan_upgrade',upgradeQuoteToken:pq.upgradeQuoteToken},'poor'),/balance/i);
  assert.equal(await db.manualOrder.count({where:{userId:poor.user.id}}),1);assert.equal((await db.quotaBucket.findUniqueOrThrow({where:{id:poor.bucket.id}})).grantedBytes,170n*GiB);
  console.log('PASS competing orders charge once, insufficient balance rolls back, linked refunds require review');
- for(const channel of ['alipay','wxpay']){
-  const m=await member(source),q=await commerce.quoteCheckout(m.user.id,{offerId:target.offer.id,purchaseAction:'plan_upgrade'});
+ for(const channel of ['alipay','wxpay'])for(const complimentary of [false,true]){
+  const m=await member(source);
+  if(complimentary)await db.manualOrder.update({where:{id:m.order.id},data:{source:'ADMIN',amountCents:0,basePriceCents:15000,discountCents:15000}});
+  const q=await commerce.quoteCheckout(m.user.id,{offerId:target.offer.id,purchaseAction:'plan_upgrade'});
   const payment=await epay.createPayment(m.user.id,target.offer.id,'epay-key',undefined,channel,'plan_upgrade',undefined,q.upgradeQuoteToken);
   const attempt=await db.epayPaymentAttempt.findUniqueOrThrow({where:{id:payment.id}});
   const callback={merchantOrderNo:attempt.merchantOrderNo,gatewayTradeNo:randomUUID(),amountCents:attempt.amountCents,paymentType:channel,paidAt:new Date()};
@@ -103,7 +125,8 @@ async function verify(m,target,payable,wallet){
   const settled=await db.epayPaymentAttempt.findUniqueOrThrow({where:{id:attempt.id}});assert.equal(settled.fulfillmentStatus,'APPLIED');
   assert.equal((await epay.createPayment(m.user.id,target.offer.id,'epay-key',undefined,channel,'plan_upgrade',undefined,q.upgradeQuoteToken)).id,payment.id);
   await assert.rejects(epay.createPayment(m.user.id,target.offer.id,'epay-key',undefined,channel==='wxpay'?'alipay':'wxpay','plan_upgrade',undefined,q.upgradeQuoteToken));
-  console.log('PASS '+channel+' order creation, verified settlement, callback replay and immutable selection');
+  if(complimentary)assert.equal((await db.manualOrder.findUniqueOrThrow({where:{id:m.order.id}})).amountCents,0);
+  console.log('PASS '+channel+(complimentary?' complimentary':' paid')+' order creation, verified settlement, callback replay and immutable selection');
  }
  const c=await member(source),cq=await commerce.quoteCheckout(c.user.id,{offerId:target.offer.id,purchaseAction:'plan_upgrade'});
  const cp=await epay.createPayment(c.user.id,target.offer.id,'conflict',undefined,'alipay','plan_upgrade',undefined,cq.upgradeQuoteToken);

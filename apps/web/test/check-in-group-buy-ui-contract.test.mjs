@@ -140,7 +140,8 @@ test("group buying uses a dedicated route and explicit payment channel", () => {
   );
   const drawer = read("src/components/drawer.tsx");
   assert.match(drawer, /document\.documentElement\.style\.overflow = "hidden"/);
-  assert.match(drawer, /document\.body\.style\.overflow = "hidden"/);
+  // The root locks scrolling; body must not become a new sticky scroll ancestor.
+  assert.match(drawer, /document\.body\.style\.overflow = "clip"/);
   assert.match(drawer, /document\.documentElement\.style\.overflow = htmlOverflow/);
   assert.match(drawer, /document\.body\.style\.overflow = bodyOverflow/);
 });

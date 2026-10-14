@@ -263,6 +263,7 @@ export class CommerceService {
       upgradeQuote: planUpgrade
         ? {
             creditCents: planUpgrade.data.creditCents,
+            creditBasis: planUpgrade.data.creditBasis ?? 'actual_payment',
             targetRemainingCents: planUpgrade.data.targetRemainingCents,
             endsAt: planUpgrade.data.endsAt,
             expiresAt: planUpgrade.data.expiresAt,

@@ -23,6 +23,8 @@ export interface StandardUpgradeQuote {
   sourceProductId: string;
   sourceTrafficBytes: string;
   sourcePaidCents: number;
+  creditBasis?: 'actual_payment' | 'admin_list_price' | 'previous_upgrade';
+  creditBasisCents?: number;
   targetPriceCents: number;
   creditCents: number;
   targetRemainingCents: number;
@@ -148,9 +150,18 @@ export class StandardPlanUpgrade {
         '存在多笔续期或调整订单，暂需客服核算升级差价',
       );
     const original = originals[0];
+    const complimentary =
+      original.source === 'ADMIN' && original.amountCents === 0;
+    // Only the original order's immutable list-price snapshot may value a gift.
+    // Keep its recorded payment at zero; this is upgrade credit, not cash income.
+    const originalValueCents = complimentary
+      ? original.basePriceCents
+      : original.amountCents;
     if (
-      !['PAYMENT', 'WALLET'].includes(original.source) ||
-      original.amountCents <= 0 ||
+      (!complimentary && !['PAYMENT', 'WALLET'].includes(original.source)) ||
+      originalValueCents == null ||
+      !Number.isSafeInteger(originalValueCents) ||
+      originalValueCents <= 0 ||
       original.intervalMonthsSnapshot == null ||
       original.intervalMonthsSnapshot !== g.offer.intervalMonths
     )
@@ -240,6 +251,8 @@ export class StandardPlanUpgrade {
       up: g.speedUpMbpsSnapshot,
       down: g.speedDownMbpsSnapshot,
       devices: g.deviceLimitSnapshot,
+      // Preserve fingerprints of existing paid quotes across this additive rule.
+      ...(complimentary ? { adminListPrice: originalValueCents } : {}),
       bucket: [
         g.quotaBuckets[0].id,
         g.quotaBuckets[0].startsAt,
@@ -255,7 +268,15 @@ export class StandardPlanUpgrade {
         o.planUpgradeSnapshot,
       ]),
     });
-    return { user, grant: g, original, purchases, state };
+    return {
+      user,
+      grant: g,
+      original,
+      purchases,
+      state,
+      complimentary,
+      originalValueCents,
+    };
   }
 
   async quote(
@@ -312,8 +333,11 @@ export class StandardPlanUpgrade {
       throw new BadRequestException(
         '目标套餐包含更低的速率或设备限制，不支持自动升级',
       );
+    let creditBasis: NonNullable<StandardUpgradeQuote['creditBasis']> =
+      current.complimentary ? 'admin_list_price' : 'actual_payment';
+    let creditBasisCents = current.originalValueCents;
     let creditCents = remainingValue(
-      current.original.amountCents,
+      creditBasisCents,
       g.startsAt,
       g.endsAt,
       now,
@@ -327,6 +351,8 @@ export class StandardPlanUpgrade {
         previous.planUpgradeSnapshot as unknown as StandardUpgradeQuote;
       if (prior?.purpose !== 'standard-plan-upgrade-v1')
         throw new ConflictException('原升级快照缺失，请联系客服');
+      creditBasis = 'previous_upgrade';
+      creditBasisCents = prior.targetRemainingCents;
       creditCents = remainingValue(
         prior.targetRemainingCents,
         new Date(prior.quotedAt),
@@ -363,6 +389,8 @@ export class StandardPlanUpgrade {
       sourceProductId: g.productId,
       sourceTrafficBytes: g.trafficBytesSnapshot!.toString(),
       sourcePaidCents: current.original.amountCents,
+      creditBasis,
+      creditBasisCents,
       targetPriceCents: offer.priceCents,
       creditCents,
       targetRemainingCents,

@@ -40,6 +40,7 @@ function fixture(
     source: 'PAYMENT',
     status: 'APPLIED',
     amountCents: 10000,
+    basePriceCents: 15000,
     intervalMonthsSnapshot: months,
     processedAt: startsAt,
     createdAt: startsAt,
@@ -98,6 +99,65 @@ function fixture(
 }
 
 describe('standard plan upgrade quote', () => {
+  it('credits a complimentary admin plan at its original list price without recording fake payment', async () => {
+    const f = fixture();
+    f.order.source = 'ADMIN';
+    f.order.amountCents = 0;
+    // Subsequent catalog repricing must not rewrite the original gift value.
+    f.grant.offer.priceCents = 16000;
+    const { data } = await f.policy.quote(
+      f.tx as never,
+      'user',
+      'target',
+      undefined,
+      new Date('2026-07-02T12:00:00Z'),
+    );
+    expect(data).toMatchObject({
+      sourcePaidCents: 0,
+      creditBasis: 'admin_list_price',
+      creditBasisCents: 15000,
+      creditCents: 7500,
+      targetRemainingCents: 12000,
+      payableCents: 4500,
+      endsAt: '2027-01-01T00:00:00.000Z',
+    });
+  });
+  it('invalidates a gift upgrade quote if the original list-price snapshot changes', async () => {
+    const f = fixture();
+    f.order.source = 'ADMIN';
+    f.order.amountCents = 0;
+    const now = new Date('2026-10-14');
+    const q = await f.policy.quote(
+      f.tx as never,
+      'user',
+      'target',
+      undefined,
+      now,
+    );
+    f.order.basePriceCents += 100;
+    await expect(
+      f.policy.quote(f.tx as never, 'user', 'target', q.token, now),
+    ).rejects.toThrow('发生变化');
+  });
+  it.each(['missing-price', 'cdk', 'zero-payment'] as const)(
+    'does not infer complimentary credit for %s',
+    async (kind) => {
+      const f = fixture();
+      f.order.source =
+        kind === 'cdk' ? 'CDK' : kind === 'zero-payment' ? 'PAYMENT' : 'ADMIN';
+      f.order.amountCents = 0;
+      if (kind === 'missing-price') f.order.basePriceCents = 0;
+      await expect(
+        f.policy.quote(
+          f.tx as never,
+          'user',
+          'target',
+          undefined,
+          new Date('2026-10-14'),
+        ),
+      ).rejects.toThrow();
+    },
+  );
   it('accepts a paid scheduled plan after an audited early activation', async () => {
     const f = fixture(
       1,

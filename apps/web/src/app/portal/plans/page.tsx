@@ -85,6 +85,7 @@ type Quote = {
   upgradeQuoteToken?: string;
   upgradeQuote?: {
     creditCents: number;
+    creditBasis?: "actual_payment" | "admin_list_price" | "previous_upgrade";
     targetRemainingCents: number;
     remainingDays?: number;
     endsAt: string;
@@ -1447,7 +1448,13 @@ export default function PortalPlansPage() {
                   </strong>
                 </div>
                 <div className="saving">
-                  <span>旧套餐剩余实付抵扣</span>
+                  <span>
+                    {quote.upgradeQuote.creditBasis === "admin_list_price"
+                      ? "赠送套餐剩余标价抵扣"
+                      : quote.upgradeQuote.creditBasis === "previous_upgrade"
+                        ? "上次升级剩余价值抵扣"
+                        : "旧套餐剩余实付抵扣"}
+                  </span>
                   <strong>
                     −{formatMoney(quote.upgradeQuote.creditCents)}
                   </strong>

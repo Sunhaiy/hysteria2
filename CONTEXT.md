@@ -88,6 +88,9 @@
 
 - Standard plan upgrades preserve the original paid interval, quota consumption,
   and reset anchor. A signed 15-minute quote credits remaining actual paid value;
+  complimentary ADMIN orders instead credit their original list-price snapshot
+  without altering recorded payment or cash income. Subsequent upgrades credit
+  only the previous upgrade's remaining target value.
   the same grant receives only the quota difference. Complex renewal/refund/group
   histories require manual review. See `docs/STANDARD_PLAN_UPGRADE.md`.
 
