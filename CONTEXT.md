@@ -86,6 +86,11 @@
 
 ## Compatibility rules
 
+- Standard plan upgrades preserve the original paid interval, quota consumption,
+  and reset anchor. A signed 15-minute quote credits remaining actual paid value;
+  the same grant receives only the quota difference. Complex renewal/refund/group
+  histories require manual review. See `docs/STANDARD_PLAN_UPGRADE.md`.
+
 - Traffic billing uses max(NodeServer rate, member override), independently of
   old product/grant snapshots. Top-tier machines default to 2x, others to 1x;
   all protocols on one machine share the rate. Historical rollups are immutable.

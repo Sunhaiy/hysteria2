@@ -8,8 +8,13 @@ import {
 
 export class CheckoutDto {
   @IsOptional()
-  @IsIn(['purchase', 'plan_reset'])
-  purchaseAction?: 'purchase' | 'plan_reset';
+  @IsIn(['purchase', 'plan_reset', 'plan_upgrade'])
+  purchaseAction?: 'purchase' | 'plan_reset' | 'plan_upgrade';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(12000)
+  upgradeQuoteToken?: string;
 
   @IsOptional()
   @IsIn(['scheduled_switch', 'immediate_switch'])

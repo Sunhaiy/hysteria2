@@ -55,7 +55,13 @@ export interface CatalogOfferSnapshot {
   legacyPlanId: string | null;
   legacyPlanOfferId: string | null;
   legacyTrafficPackProductId: string | null;
-  purchaseMode?: 'initial' | 'upgrade' | 'plan_reset' | 'group_buy';
+  purchaseMode?:
+    | 'initial'
+    | 'upgrade'
+    | 'plan_reset'
+    | 'group_buy'
+    | 'plan_upgrade';
+  upgradeQuoteToken?: string | null;
   upgradeFromGrantId?: string | null;
   upgradeFromProductId?: string | null;
   upgradeFromPriceCents?: number | null;
@@ -82,7 +88,13 @@ export interface CatalogOfferSnapshot {
 }
 
 export interface CatalogOfferPurchaseContext {
-  purchaseMode: 'initial' | 'upgrade' | 'plan_reset' | 'group_buy';
+  purchaseMode:
+    | 'initial'
+    | 'upgrade'
+    | 'plan_reset'
+    | 'group_buy'
+    | 'plan_upgrade';
+  upgradeQuoteToken?: string | null;
   upgradeFromGrantId?: string | null;
   upgradeFromProductId?: string | null;
   upgradeFromPriceCents?: number | null;
@@ -150,6 +162,7 @@ export function snapshotCatalogOffer(
     legacyPlanOfferId: offer.legacyPlanOfferId,
     legacyTrafficPackProductId: offer.product.legacyTrafficPackProductId,
     purchaseMode: purchaseContext?.purchaseMode ?? 'initial',
+    upgradeQuoteToken: purchaseContext?.upgradeQuoteToken ?? null,
     upgradeFromGrantId: purchaseContext?.upgradeFromGrantId ?? null,
     upgradeFromProductId: purchaseContext?.upgradeFromProductId ?? null,
     upgradeFromPriceCents: purchaseContext?.upgradeFromPriceCents ?? null,

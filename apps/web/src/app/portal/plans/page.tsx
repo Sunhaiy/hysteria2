@@ -80,7 +80,17 @@ type Quote = {
   finalPriceCents: number;
   balanceCents: number;
   sufficient: boolean;
-  purchaseMode: "initial" | "upgrade" | "plan_reset";
+  purchaseMode: "initial" | "upgrade" | "plan_reset" | "plan_upgrade";
+  upgradeQuoteToken?: string;
+  upgradeQuote?: {
+    creditCents: number;
+    targetRemainingCents: number;
+    remainingDays?: number;
+    endsAt: string;
+    expiresAt: string;
+    sourceProductName: string;
+    extraTrafficBytes: string;
+  } | null;
   upgradeFromProductId?: string | null;
   upgradeFromProductName?: string | null;
   resetAnchorAt?: string | null;
@@ -233,7 +243,7 @@ export default function PortalPlansPage() {
   const [checkout, setCheckout] = useState<{
     product: Product;
     offer: Offer;
-    purchaseAction: "purchase" | "plan_reset";
+    purchaseAction: "purchase" | "plan_reset" | "plan_upgrade";
   } | null>(null);
   const [paymentType, setPaymentType] =
     useState<CheckoutPaymentType>("balance");
@@ -426,7 +436,7 @@ export default function PortalPlansPage() {
 
   async function fetchQuote(
     offer: Offer,
-    purchaseAction: "purchase" | "plan_reset" = "purchase",
+    purchaseAction: "purchase" | "plan_reset" | "plan_upgrade" = "purchase",
     activation: "scheduled_switch" | "immediate_switch" = planActivation,
   ): Promise<Quote | null> {
     if (!token) return null;
@@ -510,7 +520,7 @@ export default function PortalPlansPage() {
   }
 
   async function selectPurchaseAction(
-    purchaseAction: "purchase" | "plan_reset",
+    purchaseAction: "purchase" | "plan_reset" | "plan_upgrade",
   ) {
     if (!checkout || checkout.purchaseAction === purchaseAction) return;
     const offer =
@@ -527,7 +537,7 @@ export default function PortalPlansPage() {
     setError(null);
     setImmediateSwitchConfirmed(false);
     setIdempotencyKey(crypto.randomUUID());
-    if (purchaseAction === "plan_reset" && paymentType === "store") {
+    if (purchaseAction !== "purchase" && paymentType === "store") {
       setPaymentType("balance");
     }
     const nextQuote = await fetchQuote(offer, purchaseAction);
@@ -584,6 +594,10 @@ export default function PortalPlansPage() {
           body: {
             offerId: checkout.offer.id,
             purchaseAction: checkout.purchaseAction,
+            upgradeQuoteToken:
+              checkout.purchaseAction === "plan_upgrade"
+                ? quote?.upgradeQuoteToken
+                : undefined,
             planActivation:
               checkout.purchaseAction === "purchase"
                 ? planActivation
@@ -632,6 +646,10 @@ export default function PortalPlansPage() {
             offerId: checkout.offer.id,
             paymentType,
             purchaseAction: checkout.purchaseAction,
+            upgradeQuoteToken:
+              checkout.purchaseAction === "plan_upgrade"
+                ? quote?.upgradeQuoteToken
+                : undefined,
             planActivation:
               checkout.purchaseAction === "purchase"
                 ? planActivation
@@ -965,9 +983,11 @@ export default function PortalPlansPage() {
         onClose={closeCheckout}
         title={
           checkout
-            ? checkout.purchaseAction === "plan_reset"
-              ? `重置 ${checkout.product.name} 流量`
-              : `购买 ${checkout.product.name}`
+            ? checkout.purchaseAction === "plan_upgrade"
+              ? `升级至 ${checkout.product.name}`
+              : checkout.purchaseAction === "plan_reset"
+                ? `重置 ${checkout.product.name} 流量`
+                : `购买 ${checkout.product.name}`
             : "购买商品"
         }
         subtitle={
@@ -1038,6 +1058,55 @@ export default function PortalPlansPage() {
                       : "一次购买永久有效，可直接使用商品绑定的节点。")}
               </p>
             </section>
+            {currentPlanName &&
+            !checkoutIsCurrentPlan &&
+            checkout.product.series === "standard" &&
+            checkout.product.kind === "plan" ? (
+              <section className="checkout-option-section">
+                <div className="checkout-section-heading">
+                  <strong>购买方式</strong>
+                  <span>年付也能补差价升级</span>
+                </div>
+                <div
+                  className="checkout-purchase-action-options plan-upgrade-actions"
+                  role="radiogroup"
+                  aria-label="购买方式"
+                >
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={checkout.purchaseAction === "plan_upgrade"}
+                    className={
+                      checkout.purchaseAction === "plan_upgrade"
+                        ? "selected"
+                        : ""
+                    }
+                    disabled={busy}
+                    onClick={() => void selectPurchaseAction("plan_upgrade")}
+                  >
+                    <span>
+                      <strong>补差价升级</strong>
+                      <small>同周期升级，到期日不变，保留已用流量</small>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={checkout.purchaseAction === "purchase"}
+                    className={
+                      checkout.purchaseAction === "purchase" ? "selected" : ""
+                    }
+                    disabled={busy}
+                    onClick={() => void selectPurchaseAction("purchase")}
+                  >
+                    <span>
+                      <strong>重新购买</strong>
+                      <small>选择立即切换或到期切换</small>
+                    </span>
+                  </button>
+                </div>
+              </section>
+            ) : null}
             {checkoutIsCurrentPlan ? (
               <section className="checkout-option-section">
                 <div className="checkout-section-heading">
@@ -1148,7 +1217,8 @@ export default function PortalPlansPage() {
                     />
                     <span>
                       我确认立即切换，当前 {quote.currentPlanName ?? "套餐"}
-                      剩余约 {quote.forfeitedDays ?? 0} 天及剩余流量将被放弃，不折现、不顺延。
+                      剩余约 {quote.forfeitedDays ?? 0}{" "}
+                      天及剩余流量将被放弃，不折现、不顺延。
                     </span>
                   </label>
                 ) : null}
@@ -1205,7 +1275,7 @@ export default function PortalPlansPage() {
                   })}
                 </div>
               </section>
-            ) : (
+            ) : checkout.purchaseAction === "plan_reset" ? (
               <section className="checkout-option-section checkout-reset-preview">
                 <div className="checkout-section-heading">
                   <strong>本期重置结果</strong>
@@ -1232,14 +1302,15 @@ export default function PortalPlansPage() {
                   </span>
                 </div>
               </section>
-            )}
+            ) : null}
             <section className="checkout-option-section">
               <div className="checkout-section-heading">
                 <strong>选择支付方式</strong>
                 <span>余额即时到账，外部支付将在新页面完成</span>
               </div>
               <div className="checkout-payment-options" role="radiogroup">
-                {branding.checkoutMode === "store" ? (
+                {branding.checkoutMode === "store" &&
+                checkout.purchaseAction === "purchase" ? (
                   <button
                     className={paymentType === "store" ? "selected" : ""}
                     type="button"
@@ -1321,10 +1392,12 @@ export default function PortalPlansPage() {
               <div>
                 <span>有效期</span>
                 <strong>
-                  {checkout.purchaseAction === "plan_reset" &&
-                  quote?.resetExpiresAt
-                    ? formatDateTime(quote.resetExpiresAt)
-                    : durationName(checkout.offer)}
+                  {quote?.upgradeQuote
+                    ? formatDateTime(quote.upgradeQuote.endsAt)
+                    : checkout.purchaseAction === "plan_reset" &&
+                        quote?.resetExpiresAt
+                      ? formatDateTime(quote.resetExpiresAt)
+                      : durationName(checkout.offer)}
                 </strong>
               </div>
               <div>
@@ -1339,7 +1412,9 @@ export default function PortalPlansPage() {
                 <span>速率 / 设备</span>
                 <strong>
                   {formatSpeedLimit(checkout.product.access.speedDownMbps)} ·{" "}
-                  不限设备
+                  {checkout.product.access.deviceLimit > 0
+                    ? `${checkout.product.access.deviceLimit} 台设备`
+                    : "不限设备"}
                 </strong>
               </div>
             </div>
@@ -1356,7 +1431,56 @@ export default function PortalPlansPage() {
                 该流量包无需有效套餐，购买后即可使用商品绑定的节点，剩余流量永久有效。
               </div>
             ) : null}
-            {quote?.purchaseMode === "plan_reset" ? (
+            {quote?.upgradeQuote ? (
+              <section
+                className="checkout-price-summary plan-upgrade-summary"
+                aria-label="升级差价明细"
+              >
+                <div>
+                  <span>当前套餐</span>
+                  <strong>{quote.upgradeQuote.sourceProductName}</strong>
+                </div>
+                <div>
+                  <span>新套餐剩余期限价格</span>
+                  <strong>
+                    {formatMoney(quote.upgradeQuote.targetRemainingCents)}
+                  </strong>
+                </div>
+                <div className="saving">
+                  <span>旧套餐剩余实付抵扣</span>
+                  <strong>
+                    −{formatMoney(quote.upgradeQuote.creditCents)}
+                  </strong>
+                </div>
+                <div className="total">
+                  <span>应付升级差价</span>
+                  <strong>{formatMoney(quote.finalPriceCents)}</strong>
+                </div>
+                <p>
+                  付款后立即升级，到期日不变
+                  {quote.upgradeQuote.remainingDays != null
+                    ? `，剩余约 ${quote.upgradeQuote.remainingDays} 天`
+                    : ""}
+                  。本期增加{" "}
+                  {formatTrafficLimit(
+                    Number(quote.upgradeQuote.extraTrafficBytes),
+                  )}
+                  ，已用流量保留，下周期按新套餐重置。报价有效至{" "}
+                  {formatDateTime(quote.upgradeQuote.expiresAt)}。
+                </p>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  disabled={busy}
+                  onClick={() => {
+                    setIdempotencyKey(crypto.randomUUID());
+                    void fetchQuote(checkout.offer, "plan_upgrade");
+                  }}
+                >
+                  刷新升级报价
+                </button>
+              </section>
+            ) : quote?.purchaseMode === "plan_reset" ? (
               <div className="checkout-price-summary">
                 <div>
                   <span>套餐月付价</span>

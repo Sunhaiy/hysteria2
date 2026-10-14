@@ -227,6 +227,7 @@ export class PortalController {
         offerId: body.offerId,
         discountCode: body.discountCode,
         purchaseAction: body.purchaseAction,
+        upgradeQuoteToken: body.upgradeQuoteToken,
         planActivation: body.planActivation,
       };
     }

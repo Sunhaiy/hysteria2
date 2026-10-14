@@ -75,6 +75,7 @@ export class EpayController {
       body.paymentType,
       body.purchaseAction,
       body.planActivation,
+      body.upgradeQuoteToken,
     );
   }
 

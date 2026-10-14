@@ -258,8 +258,9 @@ export class EpayService {
     idempotencyKey: string,
     discountCode: string | undefined,
     paymentType: 'alipay' | 'wxpay',
-    purchaseAction: 'purchase' | 'plan_reset' = 'purchase',
+    purchaseAction: 'purchase' | 'plan_reset' | 'plan_upgrade' = 'purchase',
     planActivation?: PlanActivationPreference,
+    upgradeQuoteToken?: string,
   ) {
     const normalizedKey = idempotencyKey.trim();
     if (!normalizedKey || normalizedKey.length > 120) {
@@ -269,6 +270,26 @@ export class EpayService {
       throw new BadRequestException('易支付暂不支持优惠码');
     }
 
+    if (purchaseAction === 'plan_upgrade') {
+      if (!upgradeQuoteToken) throw new BadRequestException('请先确认升级报价');
+      const replay = await this.prisma.epayPaymentAttempt.findUnique({
+        where: {
+          userId_idempotencyKey: { userId, idempotencyKey: normalizedKey },
+        },
+      });
+      if (replay) {
+        const saved = parseCatalogOfferSnapshot(replay.entitlementSnapshot);
+        if (
+          replay.offerId !== offerId ||
+          replay.paymentType !== paymentType ||
+          saved?.purchaseMode !== 'plan_upgrade' ||
+          saved.upgradeQuoteToken !== upgradeQuoteToken
+        )
+          throw new ConflictException('幂等键已用于另一笔支付');
+        return this.presentAttempt(replay);
+      }
+    }
+
     const config = await this.requireConfiguredEpay(true);
     const selectedPaymentType = paymentType;
     const [quote, offer] = await Promise.all([
@@ -276,6 +297,7 @@ export class EpayService {
         offerId,
         purchaseAction,
         planActivation,
+        upgradeQuoteToken,
       }),
       this.prisma.catalogOffer.findUnique({
         where: { id: offerId },
@@ -317,6 +339,9 @@ export class EpayService {
                 replay.paymentType !== selectedPaymentType ||
                 this.paymentPurchaseAction(replay.entitlementSnapshot) !==
                   purchaseAction ||
+                (purchaseAction === 'plan_upgrade' &&
+                  parseCatalogOfferSnapshot(replay.entitlementSnapshot)
+                    ?.upgradeQuoteToken !== upgradeQuoteToken) ||
                 this.paymentPlanActivation(replay.entitlementSnapshot) !==
                   resolvedPlanActivation
               ) {
@@ -338,6 +363,9 @@ export class EpayService {
                 active.paymentType !== selectedPaymentType ||
                 this.paymentPurchaseAction(active.entitlementSnapshot) !==
                   purchaseAction ||
+                (purchaseAction === 'plan_upgrade' &&
+                  parseCatalogOfferSnapshot(active.entitlementSnapshot)
+                    ?.upgradeQuoteToken !== upgradeQuoteToken) ||
                 this.paymentPlanActivation(active.entitlementSnapshot) !==
                   resolvedPlanActivation
               ) {
@@ -377,6 +405,7 @@ export class EpayService {
                 productNameSnapshot: quote.productName,
                 entitlementSnapshot: snapshotCatalogOffer(currentOffer, {
                   purchaseMode: quote.purchaseMode,
+                  upgradeQuoteToken: quote.upgradeQuoteToken,
                   upgradeFromGrantId: quote.upgradeFromGrantId,
                   upgradeFromProductId: quote.upgradeFromProductId,
                   upgradeFromPriceCents: quote.upgradeFromPriceCents,
@@ -399,9 +428,11 @@ export class EpayService {
                 }) as unknown as Prisma.InputJsonValue,
                 expiresAt: this.paymentExpiry(
                   now,
-                  purchaseAction === 'plan_reset'
-                    ? quote.resetCycleEndsAt
-                    : null,
+                  purchaseAction === 'plan_upgrade'
+                    ? quote.upgradeQuote?.expiresAt
+                    : purchaseAction === 'plan_reset'
+                      ? quote.resetCycleEndsAt
+                      : null,
                 ),
               },
             });
@@ -426,6 +457,9 @@ export class EpayService {
               replay.paymentType !== selectedPaymentType ||
               this.paymentPurchaseAction(replay.entitlementSnapshot) !==
                 purchaseAction ||
+              (purchaseAction === 'plan_upgrade' &&
+                parseCatalogOfferSnapshot(replay.entitlementSnapshot)
+                  ?.upgradeQuoteToken !== upgradeQuoteToken) ||
               this.paymentPlanActivation(replay.entitlementSnapshot) !==
                 resolvedPlanActivation
             ) {
@@ -1395,9 +1429,12 @@ export class EpayService {
 
   private paymentPurchaseAction(value: Prisma.JsonValue | null) {
     try {
-      return parseCatalogOfferSnapshot(value)?.purchaseMode === 'plan_reset'
-        ? ('plan_reset' as const)
-        : ('purchase' as const);
+      const mode = parseCatalogOfferSnapshot(value)?.purchaseMode;
+      return mode === 'plan_upgrade'
+        ? ('plan_upgrade' as const)
+        : mode === 'plan_reset'
+          ? ('plan_reset' as const)
+          : ('purchase' as const);
     } catch {
       return 'purchase' as const;
     }

@@ -1,5 +1,11 @@
 import { recordRedemptionUse } from './redemption-usage';
 import {
+  StandardPlanUpgrade,
+  UPGRADE_NOTE,
+  upgradeFingerprint,
+} from './standard-plan-upgrade';
+import { SecretCipherService } from '../security/secret-cipher.service';
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -55,7 +61,8 @@ export type CheckoutInput =
   | {
       offerId: string;
       discountCode?: string;
-      purchaseAction?: 'purchase' | 'plan_reset';
+      purchaseAction?: 'purchase' | 'plan_reset' | 'plan_upgrade';
+      upgradeQuoteToken?: string;
       planActivation?: PlanActivationPreference;
     }
   | { kind: 'plan'; productId: string; discountCode?: string }
@@ -123,7 +130,13 @@ export class CommerceService {
     @Optional() private readonly referrals?: ReferralService,
     @Optional()
     private readonly paymentAttempts?: PaymentAttemptLifecycleService,
+    @Optional() private readonly cipher?: SecretCipherService,
   ) {}
+
+  private upgradePolicy() {
+    if (!this.cipher) throw new ConflictException('升级报价服务不可用');
+    return new StandardPlanUpgrade(this.cipher);
+  }
 
   async quoteCheckout(
     userId: string,
@@ -137,6 +150,17 @@ export class CommerceService {
     }
 
     const product = await this.resolveQuoteProduct(input, client);
+    const planUpgrade =
+      'offerId' in input && input.purchaseAction === 'plan_upgrade'
+        ? await this.upgradePolicy().quote(
+            client,
+            userId,
+            input.offerId,
+            input.upgradeQuoteToken,
+          )
+        : null;
+    if (planUpgrade && input.discountCode)
+      throw new BadRequestException('补差价升级不叠加优惠码');
     const planReset =
       'offerId' in input && input.purchaseAction === 'plan_reset'
         ? await this.resolvePlanReset(client, userId, input.offerId)
@@ -155,6 +179,7 @@ export class CommerceService {
         : null;
     const standardPlanPurchase =
       !planReset &&
+      !planUpgrade &&
       'offerId' in input &&
       product.series === CatalogProductSeries.STANDARD &&
       product.purchaseRules?.kind === CatalogProductKind.PLAN &&
@@ -179,6 +204,7 @@ export class CommerceService {
     }
 
     const payableBeforeDiscountCents =
+      planUpgrade?.data.payableCents ??
       planReset?.payableCents ??
       ultraPurchase?.payableCents ??
       product.priceCents;
@@ -198,10 +224,12 @@ export class CommerceService {
     return {
       kind: 'kind' in input ? input.kind : product.kind,
       productId: product.id,
-      productName: planReset
-        ? `${product.productName} · 本期流量重置`
-        : product.name,
-      basePriceCents: product.priceCents,
+      productName: planUpgrade
+        ? `${product.productName} · 补差价升级`
+        : planReset
+          ? `${product.productName} · 本期流量重置`
+          : product.name,
+      basePriceCents: planUpgrade?.data.targetPriceCents ?? product.priceCents,
       discountCents: planReset
         ? product.priceCents - planReset.payableCents
         : (discount?.discountCents ?? 0),
@@ -211,9 +239,30 @@ export class CommerceService {
       finalPriceCents,
       balanceCents: user.balanceCents,
       sufficient: user.balanceCents >= finalPriceCents,
-      purchaseMode: planReset
-        ? ('plan_reset' as const)
-        : (ultraPurchase?.mode ?? ('initial' as const)),
+      upgradeQuoteToken: planUpgrade?.token ?? null,
+      upgradeQuote: planUpgrade
+        ? {
+            creditCents: planUpgrade.data.creditCents,
+            targetRemainingCents: planUpgrade.data.targetRemainingCents,
+            endsAt: planUpgrade.data.endsAt,
+            expiresAt: planUpgrade.data.expiresAt,
+            sourceProductName: planUpgrade.data.sourceProductName,
+            remainingDays: Math.ceil(
+              (new Date(planUpgrade.data.endsAt).getTime() -
+                new Date(planUpgrade.data.quotedAt).getTime()) /
+                86_400_000,
+            ),
+            extraTrafficBytes: (
+              BigInt(planUpgrade.data.target.trafficBytes) -
+              BigInt(planUpgrade.data.sourceTrafficBytes)
+            ).toString(),
+          }
+        : null,
+      purchaseMode: planUpgrade
+        ? ('plan_upgrade' as const)
+        : planReset
+          ? ('plan_reset' as const)
+          : (ultraPurchase?.mode ?? ('initial' as const)),
       upgradeFromGrantId: ultraPurchase?.grantId ?? null,
       upgradeFromProductId: ultraPurchase?.productId ?? null,
       upgradeFromProductName: ultraPurchase?.productName ?? null,
@@ -550,10 +599,29 @@ export class CommerceService {
       },
     });
     if (existing) {
-      return this.replayCheckout(existing, { offerId: input.offerId });
+      return this.replayCheckout(existing, {
+        offerId: input.offerId,
+        purchaseAction:
+          parseCatalogOfferSnapshot(input.entitlementSnapshot)?.purchaseMode ===
+          'plan_upgrade'
+            ? 'plan_upgrade'
+            : 'purchase',
+      });
     }
     try {
       const snapshot = parseCatalogOfferSnapshot(input.entitlementSnapshot);
+      if (snapshot?.purchaseMode === 'plan_upgrade') {
+        if (!snapshot.upgradeQuoteToken)
+          throw new ConflictException('缺少升级支付快照');
+        return await this.fulfillStandardUpgrade(
+          tx,
+          input.userId,
+          input.offerId,
+          snapshot.upgradeQuoteToken,
+          idempotencyKey,
+          input,
+        );
+      }
       if (snapshot?.purchaseMode === 'plan_reset') {
         return await this.fulfillPlanReset(
           tx,
@@ -663,6 +731,8 @@ export class CommerceService {
       planOfferId: string | null;
       trafficPackProductId: string | null;
       catalogOfferId?: string | null;
+      note?: string | null;
+      planUpgradeSnapshot?: Prisma.JsonValue | null;
     },
     input: CheckoutInput,
   ): CheckoutResult {
@@ -674,7 +744,18 @@ export class CommerceService {
           : input.kind === 'plan_offer'
             ? existing.planOfferId === input.productId
             : existing.trafficPackProductId === input.productId;
-    if (!sameProduct) {
+    const storedUpgrade = existing.planUpgradeSnapshot as {
+      quoteTokenHash?: string;
+    } | null;
+    if (
+      !sameProduct ||
+      ('offerId' in input &&
+        ((input.purchaseAction === 'plan_upgrade') !==
+          Boolean(existing.note?.startsWith(UPGRADE_NOTE)) ||
+          (input.upgradeQuoteToken &&
+            storedUpgrade?.quoteTokenHash !==
+              upgradeFingerprint(input.upgradeQuoteToken))))
+    ) {
       throw new ConflictException(
         'Idempotency-Key was already used for another product',
       );
@@ -698,6 +779,17 @@ export class CommerceService {
     idempotencyKey: string,
   ): Promise<CheckoutResult> {
     if ('offerId' in input) {
+      if (input.purchaseAction === 'plan_upgrade') {
+        if (!input.upgradeQuoteToken || input.discountCode)
+          throw new BadRequestException('请先获取补差价升级报价，不支持优惠码');
+        return this.fulfillStandardUpgrade(
+          tx,
+          userId,
+          input.offerId,
+          input.upgradeQuoteToken,
+          idempotencyKey,
+        );
+      }
       if (input.purchaseAction === 'plan_reset') {
         return this.createWalletPlanReset(tx, userId, input, idempotencyKey);
       }
@@ -1446,6 +1538,108 @@ export class CommerceService {
       productName: `${offer.product.name} · ${offer.name}`,
       chargedCents,
       entitlementExpiresAt: order.entitlementExpiresAt?.toISOString(),
+    };
+  }
+
+  private async fulfillStandardUpgrade(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    offerId: string,
+    token: string,
+    key: string,
+    external?: EpaySettlementInput,
+  ): Promise<CheckoutResult> {
+    const policy = this.upgradePolicy();
+    const q = policy.decode(token);
+    const now = new Date();
+    const current = await policy.read(tx, userId, now);
+    policy.assertCurrent(q, current, userId, offerId, now, !external);
+    if (
+      external &&
+      (external.amountCents !== q.payableCents ||
+        external.basePriceCents !== q.targetPriceCents ||
+        external.paidAt > new Date(q.expiresAt))
+    )
+      throw new ConflictException('升级订单金额或支付时间与报价不符');
+    if (!this.entitlements) throw new ConflictException('权益服务不可用');
+    if (!(await this.resolveServiceableNodeId(tx, q.target.accessProfileId)))
+      throw new ConflictException('目标套餐暂无可用节点');
+    const order = await tx.manualOrder.create({
+      data: {
+        userId,
+        kind: 'RENEWAL',
+        source: external ? 'PAYMENT' : 'WALLET',
+        status: 'APPLIED',
+        catalogOfferId: offerId,
+        planId: q.target.legacyPlanId,
+        planOfferId: q.target.legacyPlanOfferId,
+        amountCents: q.payableCents,
+        basePriceCents: q.targetRemainingCents,
+        discountCents: q.creditCents,
+        currency: q.target.currency,
+        productNameSnapshot: `${q.target.productName} · 补差价升级`,
+        productSlugSnapshot: q.target.productSlug,
+        entitlementExpiresAt: new Date(q.endsAt),
+        entitlementGrantId: q.grantId,
+        billingPeriodSnapshot: q.target.billingPeriod,
+        intervalMonthsSnapshot: q.target.intervalMonths,
+        trafficBytes: BigInt(q.target.trafficBytes),
+        accessProfileIdSnapshot: q.target.accessProfileId,
+        speedUpMbpsSnapshot: q.target.speedUpMbps,
+        speedDownMbpsSnapshot: q.target.speedDownMbps,
+        deviceLimitSnapshot: q.target.deviceLimit,
+        quotaCadenceSnapshot: 'MONTHLY_RESET',
+        resetAnchorAtSnapshot: current.grant.resetAnchorAt,
+        upgradeFromProductIdSnapshot: q.sourceProductId,
+        upgradeFromPriceCentsSnapshot: q.creditCents,
+        note: UPGRADE_NOTE + 'v1',
+        planUpgradeSnapshot: JSON.parse(
+          JSON.stringify({ ...q, quoteTokenHash: upgradeFingerprint(token) }),
+        ) as Prisma.InputJsonValue,
+        idempotencyKey: key,
+        processedAt: now,
+      },
+    });
+    if (!external)
+      await postWalletEntry(tx, {
+        userId,
+        orderId: order.id,
+        amountCents: -q.payableCents,
+        kind: 'PURCHASE',
+        idempotencyKey: key,
+        note: `补差价升级 ${q.sourceProductName} → ${q.target.productName}`,
+        actorId: userId,
+      });
+    await this.entitlements.upgradeStandardPlan(tx, q, order.id, now);
+    await tx.paymentRecord.create({
+      data: {
+        orderId: order.id,
+        userId,
+        source: external ? 'EPAY' : 'WALLET',
+        status: 'SETTLED',
+        amountCents: q.payableCents,
+        currency: q.target.currency,
+        externalRef: external?.gatewayTradeNo,
+        paidAt: external?.paidAt ?? now,
+        reconciledAt: now,
+      },
+    });
+    await tx.auditLog.create({
+      data: {
+        actorId: userId,
+        action: 'STANDARD_PLAN_UPGRADED',
+        targetType: 'ManualOrder',
+        targetId: order.id,
+        metadata: JSON.parse(JSON.stringify(q)) as Prisma.InputJsonValue,
+      },
+    });
+    return {
+      orderId: order.id,
+      replayed: false,
+      kind: 'plan_offer',
+      productName: q.target.productName,
+      chargedCents: q.payableCents,
+      entitlementExpiresAt: q.endsAt,
     };
   }
 

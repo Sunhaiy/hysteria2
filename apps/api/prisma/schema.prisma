@@ -871,6 +871,7 @@ model ManualOrder {
   resetAnchorAtSnapshot                DateTime?
   upgradeFromProductIdSnapshot         String?
   upgradeFromPriceCentsSnapshot        Int?
+  planUpgradeSnapshot                 Json?
   entitlementGrantId                   String?
   idempotencyKey                       String?
   note                                 String?

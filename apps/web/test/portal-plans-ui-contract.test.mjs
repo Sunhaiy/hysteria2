@@ -85,7 +85,7 @@ test("different plans offer both switch modes and require confirmation for an im
   assert.match(source, /"scheduled_switch" \| "immediate_switch"/);
   assert.match(source, /到期后切换/);
   assert.match(source, /立即切换/);
-  assert.match(source, /剩余约 \{quote\.forfeitedDays \?\? 0\} 天/);
+  assert.match(source, /剩余约 \{quote\.forfeitedDays \?\? 0\}(?:\s|\{" "\})+天/);
   assert.match(source, /!immediateSwitchConfirmed/);
   assert.match(source, /planActivation:/);
   assert.match(styles, /\.checkout-switch-confirmation\s*\{/);

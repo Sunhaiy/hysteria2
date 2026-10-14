@@ -1,0 +1,35 @@
+.checkout-purchase-action-options.plan-upgrade-actions > button {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.checkout-price-summary.plan-upgrade-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+
+  > div {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    border-right: 0;
+    padding: 12px 16px;
+    min-width: 0;
+  }
+
+  strong {
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+
+  > p {
+    margin: 0;
+    padding: 12px 16px;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--muted);
+  }
+
+  > button {
+    margin: 8px 16px 16px;
+  }
+}

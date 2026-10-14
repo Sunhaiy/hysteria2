@@ -11,6 +11,7 @@ export function orderOperation(order: {
   groupBuyMember?: { entitlementSnapshot: Prisma.JsonValue } | null;
 }) {
   if (order.note === 'PLAN_QUOTA_RESET') return '流量重置';
+  if (order.note?.startsWith('STANDARD_PLAN_UPGRADE:')) return '补差价升级';
   if (order.kind === 'WALLET_TOPUP') return '余额充值';
   if (order.kind === 'TRAFFIC_PACK') return '流量包';
   const snapshot =
@@ -28,6 +29,7 @@ export function orderOperation(order: {
     immediate_switch: '立即切换',
     plan_reset: '流量重置',
     upgrade: '升级',
+    plan_upgrade: '补差价升级',
   };
   if (typeof mode === 'string' && labels[mode]) return labels[mode];
   if (order.upgradeFromProductIdSnapshot) return '升级';

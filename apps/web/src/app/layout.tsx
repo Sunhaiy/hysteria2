@@ -11,6 +11,7 @@ import {
 } from "@/lib/seo";
 import "./globals.scss";
 import "./seo.scss";
+import "./plan-upgrade.scss";
 
 // Apply the stored theme before paint to avoid a flash of the wrong theme.
 const themeBootstrap = `(function(){try{var t=localStorage.getItem('theme');if(t!=='dark'&&t!=='light')t='light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();`;

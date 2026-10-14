@@ -291,6 +291,20 @@ export class FinanceService {
             if (!order || order.status !== 'APPLIED') {
               throw new NotFoundException('未找到已到账的订单');
             }
+            if (
+              order.entitlementGrantId &&
+              (await tx.manualOrder.findFirst({
+                where: {
+                  entitlementGrantId: order.entitlementGrantId,
+                  note: { startsWith: 'STANDARD_PLAN_UPGRADE:' },
+                },
+                select: { id: true },
+              }))
+            ) {
+              throw new BadRequestException(
+                '该套餐已补差价升级，原订单与升级订单需合并人工核算退款，不能单笔自动退款',
+              );
+            }
             if (!['PAYMENT', 'WALLET'].includes(order.source)) {
               throw new BadRequestException('仅在线支付或余额购买订单支持退款');
             }

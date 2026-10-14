@@ -1,4 +1,5 @@
 import { machineTrafficRate } from './machine-traffic-rate';
+import type { StandardUpgradeQuote } from '../commerce/standard-plan-upgrade';
 import {
   ScheduledPlanActivation,
   type ActivationConfirmation,
@@ -58,6 +59,62 @@ type MeteredQuotaBucket = {
 @Injectable()
 export class EntitlementService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /** Change the existing grant; historical buckets, usage and reset anchors survive. */
+  async upgradeStandardPlan(
+    tx: Prisma.TransactionClient,
+    q: StandardUpgradeQuote,
+    orderId: string,
+    at: Date,
+  ) {
+    const grant = await tx.entitlementGrant.findFirstOrThrow({
+      where: { id: q.grantId, userId: q.userId, status: 'ACTIVE' },
+    });
+    const bucket = await tx.quotaBucket.findFirst({
+      where: { grantId: grant.id, startsAt: { lte: at }, endsAt: { gt: at } },
+    });
+    if (
+      !bucket ||
+      !grant.legacySubscriptionId ||
+      !q.target.legacyPlanId ||
+      grant.productId !== q.sourceProductId ||
+      grant.endsAt.toISOString() !== q.endsAt
+    )
+      throw new ConflictException('升级权益已变化');
+    const extra = BigInt(q.target.trafficBytes) - BigInt(q.sourceTrafficBytes);
+    await this.creditQuotaBucket(tx, {
+      bucketId: bucket.id,
+      bytes: extra,
+      at,
+      reason: '补差价升级套餐额度差额',
+      idempotencyKey: `plan-upgrade:${orderId}`,
+    });
+    await tx.entitlementGrant.update({
+      where: { id: grant.id },
+      data: {
+        productId: q.target.productId,
+        offerId: q.target.offerId,
+        accessProfileId: q.target.accessProfileId,
+        trafficBytesSnapshot: BigInt(q.target.trafficBytes),
+        priceCentsSnapshot: q.targetPriceCents,
+        speedUpMbpsSnapshot: q.target.speedUpMbps,
+        speedDownMbpsSnapshot: q.target.speedDownMbps,
+        deviceLimitSnapshot: q.target.deviceLimit,
+      },
+    });
+    await tx.subscription.update({
+      where: { id: grant.legacySubscriptionId },
+      data: {
+        planId: q.target.legacyPlanId,
+        planOfferId: q.target.legacyPlanOfferId,
+        includedTrafficBytes: BigInt(q.target.trafficBytes),
+        speedUpMbpsSnapshot: q.target.speedUpMbps,
+        speedDownMbpsSnapshot: q.target.speedDownMbps,
+        deviceLimitSnapshot: q.target.deviceLimit,
+      },
+    });
+    // The next provisioning sweep reads the updated grant/profile; never change member rates.
+  }
 
   previewScheduledActivation(userId: string, grantId: string) {
     return new ScheduledPlanActivation(this.prisma, (at, months) =>
