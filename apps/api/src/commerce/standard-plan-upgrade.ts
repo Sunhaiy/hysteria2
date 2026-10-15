@@ -9,6 +9,7 @@ import {
 } from './catalog-offer-snapshot';
 
 export const UPGRADE_NOTE = 'STANDARD_PLAN_UPGRADE:';
+export const STANDARD_UPGRADE_FEE_CENTS = 500;
 export interface StandardUpgradeQuote {
   purpose: 'standard-plan-upgrade-v1';
   userId: string;
@@ -28,6 +29,7 @@ export interface StandardUpgradeQuote {
   targetPriceCents: number;
   creditCents: number;
   targetRemainingCents: number;
+  upgradeFeeCents?: number;
   payableCents: number;
   target: CatalogOfferSnapshot;
 }
@@ -366,9 +368,10 @@ export class StandardPlanUpgrade {
       g.endsAt,
       now,
     );
-    const payableCents = targetRemainingCents - creditCents;
-    if (payableCents <= 0)
+    const differenceCents = targetRemainingCents - creditCents;
+    if (differenceCents <= 0)
       throw new BadRequestException('当前无需补差或剩余期限过短，请联系客服');
+    const payableCents = differenceCents + STANDARD_UPGRADE_FEE_CENTS;
     const q: StandardUpgradeQuote = {
       purpose: 'standard-plan-upgrade-v1',
       userId,
@@ -394,6 +397,7 @@ export class StandardPlanUpgrade {
       targetPriceCents: offer.priceCents,
       creditCents,
       targetRemainingCents,
+      upgradeFeeCents: STANDARD_UPGRADE_FEE_CENTS,
       payableCents,
       target,
     };

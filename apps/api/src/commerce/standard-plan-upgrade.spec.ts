@@ -95,10 +95,77 @@ function fixture(
   cipher.onModuleInit();
   if (oldKey === undefined) delete process.env.SETTINGS_ENCRYPTION_KEY;
   else process.env.SETTINGS_ENCRYPTION_KEY = oldKey;
-  return { tx, grant, order, offer, policy: new StandardPlanUpgrade(cipher) };
+  return {
+    tx,
+    grant,
+    order,
+    offer,
+    cipher,
+    policy: new StandardPlanUpgrade(cipher),
+  };
 }
 
 describe('standard plan upgrade quote', () => {
+  it('honours a previously signed fee-free quote without retroactive charges', async () => {
+    const f = fixture();
+    const now = new Date('2026-07-02T12:00:00Z');
+    const { data } = await f.policy.quote(
+      f.tx as never,
+      'user',
+      'target',
+      undefined,
+      now,
+    );
+    delete data.upgradeFeeCents;
+    data.payableCents = data.targetRemainingCents - data.creditCents;
+    const token = f.cipher.encrypt(JSON.stringify(data));
+    const replay = await f.policy.quote(
+      f.tx as never,
+      'user',
+      'target',
+      token,
+      now,
+    );
+    expect(replay.data.payableCents).toBe(7000);
+    expect(replay.data.upgradeFeeCents).toBeUndefined();
+  });
+  it('charges once per new upgrade and never credits a previous service fee', async () => {
+    const f = fixture();
+    const now = new Date('2026-07-02T12:00:00Z');
+    const { data } = await f.policy.quote(
+      f.tx as never,
+      'user',
+      'target',
+      undefined,
+      now,
+    );
+    f.grant.orders.push({
+      ...f.order,
+      id: 'upgrade',
+      note: 'STANDARD_PLAN_UPGRADE:test',
+      amountCents: data.payableCents,
+      planUpgradeSnapshot: data,
+    } as typeof f.order);
+    f.offer.priceCents = 30000;
+    const next = await f.policy.quote(
+      f.tx as never,
+      'user',
+      'target',
+      undefined,
+      now,
+    );
+    expect(next.data.creditCents).toBe(12000);
+    expect(next.data.targetRemainingCents).toBe(15000);
+    expect(next.data.payableCents).toBe(3500);
+    const replay = await f.policy.quote(
+      f.tx as never,
+      'user',
+      'target',
+      next.token,
+      now,
+    );
+    expect(replay.data.payableCents).toBe(3500);
+  });
   it('credits a complimentary admin plan at its original list price without recording fake payment', async () => {
     const f = fixture();
     f.order.source = 'ADMIN';
@@ -118,7 +185,8 @@ describe('standard plan upgrade quote', () => {
       creditBasisCents: 15000,
       creditCents: 7500,
       targetRemainingCents: 12000,
-      payableCents: 4500,
+      upgradeFeeCents: 500,
+      payableCents: 5000,
       endsAt: '2027-01-01T00:00:00.000Z',
     });
   });
@@ -241,7 +309,8 @@ describe('standard plan upgrade quote', () => {
     );
     expect(q.data.creditCents).toBe(5000);
     expect(q.data.targetRemainingCents).toBe(12000);
-    expect(q.data.payableCents).toBe(7000);
+    expect(q.data.upgradeFeeCents).toBe(500);
+    expect(q.data.payableCents).toBe(7500);
     expect(q.data.endsAt).toBe('2027-01-01T00:00:00.000Z');
     expect(f.policy.decode(q.token)).toEqual(q.data);
   });

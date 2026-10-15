@@ -87,6 +87,7 @@ type Quote = {
     creditCents: number;
     creditBasis?: "actual_payment" | "admin_list_price" | "previous_upgrade";
     targetRemainingCents: number;
+    upgradeFeeCents?: number;
     remainingDays?: number;
     endsAt: string;
     expiresAt: string;
@@ -1459,8 +1460,12 @@ export default function PortalPlansPage() {
                     −{formatMoney(quote.upgradeQuote.creditCents)}
                   </strong>
                 </div>
+                <div>
+                  <span>升级手续费</span>
+                  <strong>{formatMoney(quote.upgradeQuote.upgradeFeeCents ?? 0)}</strong>
+                </div>
                 <div className="total">
-                  <span>应付升级差价</span>
+                  <span>升级合计应付</span>
                   <strong>{formatMoney(quote.finalPriceCents)}</strong>
                 </div>
                 <p>
