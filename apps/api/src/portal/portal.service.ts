@@ -49,6 +49,7 @@ const PORTAL_NODE_STATUS_CACHE_SECONDS = 30;
 
 interface HealthSnapshotRow {
   nodeId: string;
+  serverId?: string | null;
   healthy: boolean;
   latencyMs: number | null;
   checkedAt: Date;
@@ -122,7 +123,7 @@ export class PortalService {
 
   async getNodeStatus(userId: string, now = new Date()) {
     return this.cachedPortalRead(
-      `portal:node-status:v2:${userId}`,
+      `portal:node-status:v3:${userId}`,
       PORTAL_NODE_STATUS_CACHE_SECONDS,
       () => this.getNodeStatusUncached(userId, now),
     );
@@ -164,6 +165,7 @@ export class PortalService {
       Prisma.sql`
         SELECT
           node.id AS "nodeId",
+          node."serverId",
           snapshot.healthy,
           snapshot."latencyMs",
           snapshot."checkedAt"
@@ -192,13 +194,70 @@ export class PortalService {
           ],
         ]),
     );
-    return this.buildNodeStatusResponse(
+    const serverIds = [
+      ...new Set(
+        healthRows.flatMap((row) => (row.serverId ? [row.serverId] : [])),
+      ),
+    ];
+    const serverLatency = new Map(
+      await Promise.all(
+        serverIds.map(async (serverId) => {
+          const snapshot = await this.cachedPortalRead(
+            `portal:server-latency:v1:${serverId}`,
+            PORTAL_NODE_STATUS_CACHE_SECONDS,
+            async () => {
+              // Reuse one stable representative's existing worker probe. Never probe
+              // from a member request, nor infer other protocols' health from this.
+              const rows = await this.prisma!.$queryRaw<
+                Array<{ latencyMs: number | null; checkedAt: Date }>
+              >(Prisma.sql`
+            SELECT health."latencyMs", health."checkedAt"
+            FROM "NodeHealthSnapshot" health
+            WHERE health."nodeId" = (
+              SELECT id FROM "Node"
+              WHERE "serverId" = ${serverId} AND active = TRUE
+              ORDER BY id LIMIT 1
+            ) AND health."agentReachable" = TRUE
+            ORDER BY health."checkedAt" DESC LIMIT 1
+          `);
+              return rows[0]
+                ? {
+                    latencyMs: rows[0].latencyMs,
+                    checkedAt: rows[0].checkedAt.toISOString(),
+                  }
+                : null;
+            },
+          );
+          return [serverId, snapshot] as const;
+        }),
+      ),
+    );
+    const response = this.buildNodeStatusResponse(
       [...accessibleNodes.values()].map((node) => ({
         ...node,
         healthSnapshots: healthByNodeId.get(node.id) ?? [],
       })),
       now,
     );
+    const serverByNode = new Map(
+      healthRows.map((row) => [row.nodeId, row.serverId]),
+    );
+    return {
+      ...response,
+      nodes: response.nodes.map((node) => {
+        const serverId = serverByNode.get(node.id);
+        const sample = serverId ? serverLatency.get(serverId) : null;
+        const fresh =
+          sample &&
+          now.getTime() - new Date(sample.checkedAt).getTime() <=
+            NODE_HEALTH_FRESHNESS_MS;
+        return {
+          ...node,
+          serverLatencyMs: fresh ? sample.latencyMs : null,
+          serverCheckedAt: sample?.checkedAt ?? null,
+        };
+      }),
+    };
   }
 
   private async cachedPortalRead<T>(

@@ -823,6 +823,74 @@ describe('PortalService VLESS + REALITY access', () => {
     expect(serialized).not.toContain('secret-token');
   });
 
+  it.each([30, 600])(
+    'shares a server sample across protocols and concurrent users (age %is)',
+    async (age) => {
+      const now = new Date('2026-09-09T05:00:00Z');
+      const nodes = [
+        { id: 'hy', label: 'HY' },
+        { id: 'vl', label: 'VL' },
+      ];
+      const store = { getAccessBundle: jest.fn().mockResolvedValue({ nodes }) };
+      let serverReads = 0;
+      const prisma = {
+        $queryRaw: jest
+          .fn()
+          .mockImplementation(async (sql: { strings: string[] }) => {
+            if (sql.strings.join('').includes('INNER JOIN LATERAL'))
+              return nodes.map((n, i) => ({
+                nodeId: n.id,
+                serverId: 'server',
+                healthy: i === 0,
+                latencyMs: i + 10,
+                checkedAt: now,
+              }));
+            serverReads++;
+            await new Promise((resolve) => setImmediate(resolve));
+            return [
+              {
+                latencyMs: 42,
+                checkedAt: new Date(now.getTime() - age * 1000),
+              },
+            ];
+          }),
+      };
+      const memory = new Map<string, string>();
+      const cache = {
+        get: (key: string) => Promise.resolve(memory.get(key)),
+        set: (key: string, value: string) => {
+          memory.set(key, value);
+          return Promise.resolve();
+        },
+      };
+      const service = new PortalService(
+        store as never,
+        {} as never,
+        {} as never,
+        undefined,
+        prisma as never,
+        cache as never,
+      );
+      const results = await Promise.all(
+        ['u1', 'u2', 'u3'].map((id) => service.getNodeStatus(id, now)),
+      );
+      expect(serverReads).toBe(1);
+      for (const result of results)
+        expect(result.nodes).toEqual([
+          expect.objectContaining({
+            id: 'hy',
+            status: 'healthy',
+            serverLatencyMs: age === 30 ? 42 : null,
+          }),
+          expect.objectContaining({
+            id: 'vl',
+            status: 'unhealthy',
+            serverLatencyMs: age === 30 ? 42 : null,
+          }),
+        ]);
+    },
+  );
+
   it('points users to their local network when every accessible node is healthy', async () => {
     const now = new Date('2026-09-09T05:00:00.000Z');
     const store = {

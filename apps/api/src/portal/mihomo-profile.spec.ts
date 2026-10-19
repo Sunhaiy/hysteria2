@@ -86,7 +86,7 @@ describe('buildMihomoProfile', () => {
     const profile = parseProfile(buildMihomoProfile(credential, mixed));
     expect(profile['proxy-groups'].map((g) => g.name)).toEqual([
       '节点选择',
-      '自动优选',
+      '普通线路',
       '住宅线路',
       'AI 服务',
     ]);
@@ -133,7 +133,7 @@ describe('buildMihomoProfile', () => {
       expect(profile).not.toHaveProperty('tun');
       expect(profile['proxy-groups'].map((g) => g.name)).toEqual([
         '节点选择',
-        '自动优选',
+        '普通线路',
         '住宅线路',
         'AI 服务',
       ]);
@@ -190,16 +190,21 @@ describe('buildMihomoProfile', () => {
     }
   });
 
-  it('uses ordered automatic failover as the default selector', () => {
+  it('uses manual groups without background endpoint probes', () => {
     const profile = parseProfile(buildMihomoProfile(credential, nodes));
     const failover = profile['proxy-groups'][1];
     const selector = profile['proxy-groups'][0];
 
-    expect(failover.type).toBe('fallback');
+    expect(failover.type).toBe('select');
+    for (const group of profile['proxy-groups']) {
+      expect(group.type).toBe('select');
+      expect(group).not.toHaveProperty('url');
+      expect(group).not.toHaveProperty('interval');
+    }
     expect(failover.proxies).toEqual(
       profile.proxies.map((proxy) => proxy.name),
     );
-    expect(selector.proxies[0]).toBe('自动优选');
+    expect(selector.proxies[0]).toBe('普通线路');
     expect(selector.proxies).not.toContain('DIRECT');
     expect(profile.rules.at(-1)).toBe('MATCH,节点选择');
   });
@@ -418,6 +423,9 @@ describe('buildMihomoProfile', () => {
     );
     const all = first['proxy-providers']['素心节点'];
     expect(all.interval).toBe(900);
+    for (const provider of Object.values(first['proxy-providers'])) {
+      expect(provider).toMatchObject({ 'health-check': { enable: false } });
+    }
     expect(all.url).toBe(
       'https://example.test/subscribe/first/clash/nodes?scope=all',
     );

@@ -230,7 +230,7 @@ export default function PortalUsagePage() {
             <Panel
               className="admin-data-panel portal-node-status-panel"
               title="可用节点"
-              copy="仅展示当前账号有权限且检测正常的节点"
+              copy="仅展示有权限且检测正常的节点。服务端探测延迟为主站到同台服务器代表入口的检测耗时，不代表你的本地延迟；刷新仅读取缓存，不触发节点测速。"
               action={
                 nodeStatus && availableNodes.length > 0 ? (
                   <span className="badge success">
@@ -259,8 +259,11 @@ export default function PortalUsagePage() {
                               ? `检测 ${formatDateTime(node.checkedAt)}`
                               : "暂无检测记录"}
                           </span>
-                          {node.latencyMs !== null ? (
-                            <span>服务检测 {node.latencyMs} ms</span>
+                          {node.serverLatencyMs != null ? (
+                            <span>服务端探测延迟 {node.serverLatencyMs} ms</span>
+                          ) : <span>服务端探测延迟暂无新数据</span>}
+                          {node.serverCheckedAt ? (
+                            <span>服务器采样 {formatDateTime(node.serverCheckedAt)}</span>
                           ) : null}
                         </div>
                       </div>

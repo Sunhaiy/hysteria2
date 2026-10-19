@@ -669,6 +669,8 @@ export interface PortalNodeStatusResponse {
     status: "healthy" | "unhealthy" | "stale";
     checkedAt: string | null;
     latencyMs: number | null;
+    serverLatencyMs?: number | null;
+    serverCheckedAt?: string | null;
   }>;
 }
 

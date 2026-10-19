@@ -30,7 +30,7 @@ type MihomoCredential = {
 };
 
 const healthCheckUrl = 'https://www.gstatic.com/generate_204';
-const automaticGroup = '自动优选';
+const automaticGroup = '普通线路';
 const residentialGroup = '住宅线路';
 const selectorGroup = '节点选择';
 const aiSelectorGroup = 'AI 服务';
@@ -132,7 +132,7 @@ function buildNodeProviders(
           proxy: 'DIRECT',
           path: `./proxy-providers/suxin-${key}.yaml`,
           'health-check': {
-            enable: true,
+            enable: false,
             url: healthCheckUrl,
             interval: 300,
             lazy: true,
@@ -234,10 +234,7 @@ export function buildMihomoProfile(
     },
     {
       name: automaticGroup,
-      type: 'fallback',
-      url: healthCheckUrl,
-      interval: 180,
-      lazy: true,
+      type: 'select',
       ...(providerUrl
         ? { use: [automaticProvider] }
         : { proxies: automaticNodes.length ? automaticNodes : ['REJECT'] }),
