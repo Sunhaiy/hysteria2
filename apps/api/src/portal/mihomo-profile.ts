@@ -291,14 +291,14 @@ export function buildMihomoProfile(
   return stringify(profile, { lineWidth: 0 });
 }
 
-function isResidential(node: MihomoNode) {
+export function isResidential(node: MihomoNode) {
   return (
     /住宅|家宽/.test(node.label) ||
     (node.tags ?? []).some((tag) => /^(residential|home)$/i.test(tag))
   );
 }
 
-function isBackup(node: MihomoNode) {
+export function isBackup(node: MihomoNode) {
   return /中级|备用/.test(node.label);
 }
 

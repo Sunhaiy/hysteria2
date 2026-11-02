@@ -10468,6 +10468,16 @@ select.control {
   min-width: 0;
 }
 
+.subscription-method-grid-three > .subscription-method:nth-child(3) {
+  grid-column: 1 / -1;
+}
+
+.subscription-method-grid.subscription-method-grid-three > .subscription-method {
+  padding: 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+}
+
 .subscription-method + .subscription-method {
   padding-left: 20px;
   border-left: 1px solid var(--border-default);

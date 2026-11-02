@@ -107,9 +107,9 @@ export default function PortalAccessPage() {
             <div className="portal-access-subscriptions">
               <Panel
                 title="订阅链接"
-                copy="按客户端选择对应格式，两种订阅都会在刷新时同步后台节点变化。"
+                copy="按客户端选择对应格式，刷新订阅即可同步后台节点变化。"
               >
-                <div className="subscription-method-grid">
+                <div className="subscription-method-grid subscription-method-grid-three">
                   <section className="subscription-method">
                     <div className="subscription-method-heading">
                       <h4>Clash / Mihomo</h4>
@@ -173,6 +173,55 @@ export default function PortalAccessPage() {
                       </div>
                     </label>
                   </section>
+                  {access.surgeSubscriptionUrl ? (
+                    <section className="subscription-method">
+                      <div className="subscription-method-heading">
+                        <h4>Surge</h4>
+                        <span className="badge info">HY2 专用</span>
+                      </div>
+                      <p className="fine-print">
+                        支持 iOS 5.8.0+ / Mac 5.4.0+，仅包含兼容的 Hysteria2
+                        节点。
+                      </p>
+                      {(access.surgeNodeCount ?? 0) > 0 ? (
+                        <>
+                          <label className="field">
+                            <span className="fine-print">
+                              Surge 配置订阅链接
+                            </span>
+                            <div className="subscription-link-row">
+                              <input
+                                className="control mono"
+                                value={access.surgeSubscriptionUrl}
+                                readOnly
+                              />
+                              <button
+                                className="action-button"
+                                type="button"
+                                onClick={() =>
+                                  void copySubscription(
+                                    access.surgeSubscriptionUrl!,
+                                    "Surge 订阅链接",
+                                  )
+                                }
+                              >
+                                复制
+                              </button>
+                            </div>
+                          </label>
+                          <p className="fine-print">
+                            在 Surge 的配置页面选择「从 URL
+                            下载」，粘贴此链接导入。 配置支持自动更新，需打开
+                            Surge 主应用；也可手动更新。
+                          </p>
+                        </>
+                      ) : (
+                        <p className="fine-print">
+                          当前套餐暂无兼容 Surge 的 HY2 节点，请使用其他客户端。
+                        </p>
+                      )}
+                    </section>
+                  ) : null}
                 </div>
                 <p className="fine-print subscription-security-note">
                   订阅链接包含接入凭据，请勿转发给他人。

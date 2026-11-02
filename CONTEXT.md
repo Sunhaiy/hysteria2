@@ -99,6 +99,8 @@
   all protocols on one machine share the rate. Historical rollups are immutable.
 
 - `/subscribe/{token}` remains the v2rayN/Hiddify subscription.
+- `/subscribe/{token}/surge` is the Surge managed profile for compatible HY2
+  nodes. It reuses access resolution and credentials; see `docs/SURGE_SUBSCRIPTION.md`.
 - `/subscribe/{token}/clash` is the Clash/Mihomo subscription with automatic
   node selection. Both are generated from current serviceable nodes on every
   refresh.

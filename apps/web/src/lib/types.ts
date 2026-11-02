@@ -682,6 +682,9 @@ export interface PortalAccessResponse {
   subscriptionQrCode: string;
   mihomoSubscriptionUrl: string;
   mihomoSubscriptionQrCode: string;
+  surgeSubscriptionUrl?: string;
+  surgeSubscriptionPath?: string;
+  surgeNodeCount?: number;
   configSnippet: string;
   nodeLabel: string;
   protocol: "hysteria2" | "vless_reality";

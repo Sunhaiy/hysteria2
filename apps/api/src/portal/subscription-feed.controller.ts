@@ -50,6 +50,25 @@ export class SubscriptionFeedController {
     return feed.content;
   }
 
+  @Get(':token/surge')
+  async getSurgeSubscription(
+    @Param('token') token: string,
+    @Res({ passthrough: true }) response: Response,
+    @Query('profile') profile?: string,
+  ) {
+    const feed = await this.portalService.getSurgeSubscription(token);
+    response.set({
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'private, no-store, max-age=0',
+      ...profileHeaders(profile, feed.title, 'surge.conf'),
+      'Profile-Update-Interval': '12',
+      'Subscription-Userinfo': `upload=0; download=${feed.consumedBytes}; total=${feed.totalBytes}; expire=${Math.floor(feed.expiresAt / 1000)}`,
+      'X-Subscription-Node-Count': String(feed.nodeCount),
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return feed.content;
+  }
+
   @Get(':token/clash')
   async getMihomoSubscription(
     @Param('token') token: string,

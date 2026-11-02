@@ -18,6 +18,7 @@ import {
   type MihomoScope,
 } from './mihomo-profile';
 import { nodeDisplayName } from './node-display-name';
+import { buildSurgeProfile, isSurgeCompatible } from './surge-profile';
 import { apiPublicUrl } from '../common/public-url';
 import {
   calculateMembershipJourney,
@@ -741,6 +742,7 @@ export class PortalService {
     const subscriptionBasePath = `/subscribe/${bundle.token.token}`;
     const subscriptionPath = `${subscriptionBasePath}?profile=2`;
     const mihomoSubscriptionPath = `${subscriptionBasePath}/clash?profile=2`;
+    const surgeSubscriptionPath = `${subscriptionBasePath}/surge?profile=2`;
     const publicBaseUrl = apiPublicUrl();
     const subscriptionUrl = `${publicBaseUrl}${subscriptionPath}`;
     const mihomoSubscriptionUrl = `${publicBaseUrl}${mihomoSubscriptionPath}`;
@@ -768,6 +770,9 @@ export class PortalService {
       subscriptionQrCode,
       mihomoSubscriptionUrl,
       mihomoSubscriptionQrCode,
+      surgeSubscriptionUrl: `${publicBaseUrl}${surgeSubscriptionPath}`,
+      surgeSubscriptionPath,
+      surgeNodeCount: bundle.nodes.filter(isSurgeCompatible).length,
       configSnippet,
       nodeLabel: bundle.node.label,
       protocol:
@@ -993,6 +998,28 @@ export class PortalService {
       totalBytes:
         this.getConsumedBytes(bundle.subscription) + bundle.trafficRemaining,
       nodeCount: uris.length,
+    };
+  }
+
+  async getSurgeSubscription(tokenValue: string) {
+    const bundle = await this.getSubscriptionAccessBundle(tokenValue);
+    const nodes = bundle.nodes.filter(isSurgeCompatible);
+    if (!nodes.length) {
+      throw new NotFoundException('当前套餐暂无兼容 Surge 的 Hysteria2 节点');
+    }
+    const site = await this.settings.getSiteInfo();
+    const consumedBytes = this.getConsumedBytes(bundle.subscription);
+    return {
+      content: buildSurgeProfile(
+        bundle.token,
+        nodes,
+        `${apiPublicUrl()}/subscribe/${encodeURIComponent(tokenValue)}/surge?profile=2`,
+      ),
+      title: site.name,
+      expiresAt: new Date(bundle.subscription.endsAt).getTime(),
+      consumedBytes,
+      totalBytes: consumedBytes + bundle.trafficRemaining,
+      nodeCount: nodes.length,
     };
   }
 
