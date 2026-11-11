@@ -22,6 +22,7 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "test:billing": "node test/traffic-billing.integration.cjs",
     "test:traffic-ack": "node test/traffic-ack.integration.cjs",
+    "test:reporting": "node --test test/reporting-queries.test.cjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -52,6 +53,7 @@
     "yaml": "^2.9.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.3.14",
     "@eslint/eslintrc": "^3.2.0",
     "@eslint/js": "^9.18.0",
     "@nestjs/cli": "^11.0.0",

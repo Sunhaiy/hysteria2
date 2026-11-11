@@ -8,6 +8,7 @@ import { hasFreshUserSync } from '../domain/node-sync-health';
 import { OnlinePresenceService } from '../domain/online-presence.service';
 import { NodeAdapterRegistry } from '../integrations/node.adapter';
 import { MonitoringService } from '../monitoring/monitoring.service';
+import { latestNodeHealth } from '../monitoring/latest-node-history';
 import { PrismaService } from '../prisma/prisma.service';
 import { KickService } from '../kick-service/kick-service.service';
 import {
@@ -199,7 +200,6 @@ export class OperationsService {
         where: { retiredAt: null },
         include: {
           server: true,
-          healthSnapshots: { orderBy: { checkedAt: 'desc' }, take: 1 },
         },
         orderBy: [{ serverId: 'asc' }, { protocol: 'asc' }, { id: 'asc' }],
       }),
@@ -216,6 +216,10 @@ export class OperationsService {
         _count: { _all: true },
       }),
     ]);
+    const healthByNode = await latestNodeHealth(
+      this.prisma,
+      nodes.map((node) => node.id),
+    );
     return {
       generatedAt: new Date().toISOString(),
       freshnessSeconds: presenceFreshnessMs / 1000,
@@ -231,7 +235,7 @@ export class OperationsService {
         )
         .reduce((sum, alert) => sum + alert._count._all, 0),
       nodes: nodes.map((node) => {
-        const health = node.healthSnapshots[0];
+        const health = healthByNode.get(node.id);
         return {
           id: node.id,
           serverId: node.serverId,

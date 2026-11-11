@@ -63,6 +63,7 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      - run: pnpm --filter @hysteria/api test:reporting
       - name: Verify retired updater removal and migration staging
         env:
           RETIREMENT_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hysteria2_test
