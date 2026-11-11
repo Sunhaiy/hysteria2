@@ -57,6 +57,7 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      - run: pnpm --filter @hysteria/api test:reporting
       - run: pnpm --filter @hysteria/api test:e2e
       - run: pnpm build
       - name: Package Linux release artifact
