@@ -10,6 +10,7 @@ import {
   buildMihomoProfile,
   buildMihomoProvider,
   type MihomoNode,
+  type MihomoScope,
 } from '../src/portal/mihomo-profile';
 
 const core = process.env.MIHOMO_TEST_BINARY;
@@ -33,7 +34,10 @@ const core = process.env.MIHOMO_TEST_BINARY;
     vlessFlow: null,
     region: 'US',
   };
-  let nodes = [node];
+  let nodes = [
+    node,
+    { ...node, label: 'Residential First', tags: ['residential'] },
+  ];
   let expiredNotices = false;
   let failure = true;
   let requests = 0;
@@ -52,10 +56,7 @@ const core = process.env.MIHOMO_TEST_BINARY;
     if (expiredNotices) {
       res.end(
         stringify({
-          proxies: noticeProxies(
-            ['套餐已到期，请续费', '活动进行中'],
-            req.url?.includes('scope=ai') ? 'ai' : 'all',
-          ),
+          proxies: noticeProxies(['套餐已到期，请续费', '活动进行中'], 'all'),
         }),
       );
       return;
@@ -64,7 +65,9 @@ const core = process.env.MIHOMO_TEST_BINARY;
       buildMihomoProvider(
         credential,
         nodes,
-        req.url?.includes('scope=ai') ? 'ai' : 'all',
+        new URL(req.url!, 'http://localhost').searchParams.get(
+          'scope',
+        ) as MihomoScope,
       ),
     );
   });
@@ -91,7 +94,7 @@ const core = process.env.MIHOMO_TEST_BINARY;
     }
     throw new Error(`Provider update timed out: ${logs}`);
   }
-  async function names(provider = '素心节点') {
+  async function names(provider = '素心自动节点') {
     const response = await fetch(
       `${controller}/providers/proxies/${encodeURIComponent(provider)}`,
       { signal: AbortSignal.timeout(1000) },
@@ -154,11 +157,12 @@ const core = process.env.MIHOMO_TEST_BINARY;
     // Clash Verge resolves provider members by name across every provider.
     // Multiple candidates produce a disabled "ambiguous" tile.
     const allNames = await names();
-    const aiNames = await names('素心 AI 节点');
+    const aiNames = await names('素心住宅节点');
     expect(allNames.filter((name) => aiNames.includes(name))).toEqual([]);
     for (const [groupName, target] of [
       ['节点选择', allNames[0]],
-      ['AI 服务', aiNames[0]],
+      ['住宅线路', aiNames[0]],
+      ['AI 服务', '住宅线路'],
     ]) {
       const selected = await fetch(
         `${controller}/proxies/${encodeURIComponent(groupName)}`,
@@ -189,15 +193,13 @@ const core = process.env.MIHOMO_TEST_BINARY;
     failure = false;
     nodes = [{ ...node, label: 'Japan Only', region: 'JP' }];
     await eventually(async () =>
-      (await names('素心 AI 节点')).every((name) =>
-        name.includes('Japan Only'),
-      ),
+      (await names()).every((name) => name.includes('Japan Only')),
     );
     nodes.push({ ...node, label: 'US New' });
     await eventually(async () => {
-      const ai = await names('素心 AI 节点');
+      const ai = await names('素心住宅节点');
       const all = await names();
-      return all.length === 2 && ai.length === 1 && ai[0].includes('US New');
+      return all.length === 2 && ai.join(',') === '暂无可用住宅节点';
     });
     const groupResponse = await fetch(
       `${controller}/proxies/${encodeURIComponent('节点选择')}`,
@@ -206,9 +208,11 @@ const core = process.env.MIHOMO_TEST_BINARY;
     expect(group.all).toEqual(expect.arrayContaining(await names()));
     expect(group.all.some((name) => name.includes('Replacement'))).toBe(false);
     nodes = [];
-    await eventually(async () => (await names()).join(',') === '暂无可用节点');
+    await eventually(
+      async () => (await names()).join(',') === '暂无可用普通节点',
+    );
     const response = await fetch(
-      `${controller}/providers/proxies/${encodeURIComponent('素心节点')}`,
+      `${controller}/providers/proxies/${encodeURIComponent('素心自动节点')}`,
     );
     const blocked = (await response.json()) as { proxies: { type: string }[] };
     expect(blocked.proxies[0].type.toLowerCase()).toContain('reject');
@@ -219,7 +223,7 @@ const core = process.env.MIHOMO_TEST_BINARY;
         (await names()).every((n) => n.includes('[到期提示]')),
     );
     await eventually(async () =>
-      (await names('素心 AI 节点')).every((n) => n.includes('AI · [到期提示]')),
+      (await names('素心住宅节点')).every((n) => n.includes('[到期提示]')),
     );
     expect((await names()).filter((n) => allNames.includes(n))).toEqual([]);
     expiredNotices = false;
