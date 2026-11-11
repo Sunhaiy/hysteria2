@@ -72,7 +72,7 @@ describe('buildMihomoProfile', () => {
     },
   ];
 
-  it('keeps four groups, prioritizes premium before backup, and isolates residential access', () => {
+  it('preserves manual groups, prioritizes premium before backup, and isolates residential access', () => {
     const mixed = [
       { ...nodes[1], label: '[中级]备用' },
       {
@@ -89,6 +89,8 @@ describe('buildMihomoProfile', () => {
       '普通线路',
       '住宅线路',
       'AI 服务',
+      '自动优选',
+      '故障转移',
     ]);
     expect(profile['proxy-groups'][1].proxies).toEqual([
       profile.proxies[2].name,
@@ -117,9 +119,10 @@ describe('buildMihomoProfile', () => {
         .proxies,
     ).toEqual([{ name: '暂无可用普通节点', type: 'reject' }]);
     expect(
-      parseProfile(buildMihomoProfile(credential, nodes))['proxy-groups'][2]
-        .proxies,
-    ).toEqual(['REJECT']);
+      parseProfile(buildMihomoProfile(credential, nodes))['proxy-groups'].some(
+        (group) => group.name === '住宅线路',
+      ),
+    ).toBe(false);
   });
 
   it('keeps client DNS unchanged for both subscription formats including residential nodes', () => {
@@ -136,6 +139,8 @@ describe('buildMihomoProfile', () => {
         '普通线路',
         '住宅线路',
         'AI 服务',
+        '自动优选',
+        '故障转移',
       ]);
     }
   });
@@ -190,13 +195,15 @@ describe('buildMihomoProfile', () => {
     }
   });
 
-  it('uses manual groups without background endpoint probes', () => {
+  it('keeps manual selection as the default while offering optional lazy probes', () => {
     const profile = parseProfile(buildMihomoProfile(credential, nodes));
     const failover = profile['proxy-groups'][1];
     const selector = profile['proxy-groups'][0];
 
     expect(failover.type).toBe('select');
-    for (const group of profile['proxy-groups']) {
+    for (const group of profile['proxy-groups'].filter(
+      (g) => g.type === 'select',
+    )) {
       expect(group.type).toBe('select');
       expect(group).not.toHaveProperty('url');
       expect(group).not.toHaveProperty('interval');
@@ -316,7 +323,7 @@ describe('buildMihomoProfile', () => {
 
     expect(aiAutomatic).toBeUndefined();
     expect(usProxy).not.toBe(japanProxy);
-    expect(aiSelector?.proxies).toEqual(['节点选择', '住宅线路']);
+    expect(aiSelector?.proxies).toEqual(['节点选择']);
     expect(profile.rules).toEqual(
       expect.arrayContaining([
         'DOMAIN-SUFFIX,chatgpt.com,AI 服务',
@@ -346,7 +353,7 @@ describe('buildMihomoProfile', () => {
     expect(
       profile['proxy-groups'].some((group) => group.name === 'AI 自动优选'),
     ).toBe(false);
-    expect(aiSelector?.proxies).toEqual(['节点选择', '住宅线路']);
+    expect(aiSelector?.proxies).toEqual(['节点选择']);
   });
 
   it('only references emitted proxies and acyclic proxy groups', () => {
@@ -421,21 +428,21 @@ describe('buildMihomoProfile', () => {
     expect(first.rules).toEqual(
       parseProfile(buildMihomoProfile(credential, nodes)).rules,
     );
-    const all = first['proxy-providers']['素心节点'];
+    const all = first['proxy-providers']['素心自动节点'];
     expect(all.interval).toBe(900);
     for (const provider of Object.values(first['proxy-providers'])) {
       expect(provider).toMatchObject({ 'health-check': { enable: false } });
     }
     expect(all.url).toBe(
-      'https://example.test/subscribe/first/clash/nodes?scope=all',
+      'https://example.test/subscribe/first/clash/nodes?scope=automatic',
     );
-    expect(all.path).not.toBe(second['proxy-providers']['素心节点'].path);
+    expect(all.path).not.toBe(second['proxy-providers']['素心自动节点'].path);
     expect(all.payload).toEqual(
       parseProfile(buildMihomoProfile(credential, nodes)).proxies,
     );
     expect(
       first['proxy-groups'].filter((group) => group.use?.length),
-    ).toHaveLength(3);
+    ).toHaveLength(4);
   });
 
   it('preserves transport while giving AI copies distinct identities, including empty access', () => {

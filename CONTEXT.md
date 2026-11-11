@@ -101,8 +101,10 @@
 - `/subscribe/{token}` remains the v2rayN/Hiddify subscription.
 - `/subscribe/{token}/surge` is the Surge managed profile for compatible HY2
   nodes. It reuses access resolution and credentials; see `docs/SURGE_SUBSCRIPTION.md`.
-- `/subscribe/{token}/clash` is the Clash/Mihomo subscription with automatic
-  node selection. Both are generated from current serviceable nodes on every
+- `/subscribe/{token}/clash` is the Clash/Mihomo subscription with manual
+  selection by default and optional ordinary-node automation. Empty residential
+  choices are omitted; see `docs/MIHOMO_SUBSCRIPTION_SAFETY.md`.
+  Both are generated from current serviceable nodes on every
   refresh.
 - Mihomo routing uses MetaCubeX/meta-rules-dat MRS providers with daily client
   refresh and persistent caching, plus separate AI, media, and Telegram groups.
