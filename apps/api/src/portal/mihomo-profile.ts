@@ -31,10 +31,11 @@ type MihomoCredential = {
 
 const healthCheckUrl = 'https://www.gstatic.com/generate_204';
 const automaticGroup = '普通线路';
+const latencyGroup = '自动优选';
+const fallbackGroup = '故障转移';
 const residentialGroup = '住宅线路';
 const selectorGroup = '节点选择';
 const aiSelectorGroup = 'AI 服务';
-const allProvider = '素心节点';
 const automaticProvider = '素心自动节点';
 const residentialProvider = '素心住宅节点';
 export type MihomoScope = 'all' | 'ai' | 'automatic' | 'residential';
@@ -113,35 +114,40 @@ function buildNodeProviders(
   return Object.fromEntries(
     (
       [
-        ['all', allProvider],
         ['automatic', automaticProvider],
         ['residential', residentialProvider],
       ] as const
-    ).map(([scope, name]) => {
-      const source = `${url}?scope=${scope}`;
-      const key = createHash('sha256')
-        .update(source)
-        .digest('hex')
-        .slice(0, 24);
-      return [
-        name,
-        {
-          type: 'http',
-          url: source,
-          interval: 900,
-          proxy: 'DIRECT',
-          path: `./proxy-providers/suxin-${key}.yaml`,
-          'health-check': {
-            enable: false,
-            url: healthCheckUrl,
-            interval: 300,
-            lazy: true,
+    )
+      .filter(([scope]) =>
+        nodes.some((node) =>
+          scope === 'residential' ? isResidential(node) : !isResidential(node),
+        ),
+      )
+      .map(([scope, name]) => {
+        const source = `${url}?scope=${scope}`;
+        const key = createHash('sha256')
+          .update(source)
+          .digest('hex')
+          .slice(0, 24);
+        return [
+          name,
+          {
+            type: 'http',
+            url: source,
+            interval: 900,
+            proxy: 'DIRECT',
+            path: `./proxy-providers/suxin-${key}.yaml`,
+            'health-check': {
+              enable: false,
+              url: healthCheckUrl,
+              interval: 300,
+              lazy: true,
+            },
+            // Bootstrap only: subsequent successful provider downloads replace this list.
+            payload: providerProxies(credential, nodes, scope),
           },
-          // Bootstrap only: subsequent successful provider downloads replace this list.
-          payload: providerProxies(credential, nodes, scope),
-        },
-      ];
-    }),
+        ];
+      }),
   );
 }
 
@@ -223,34 +229,87 @@ export function buildMihomoProfile(
     isResidential(node) ? [names[index]] : [],
   );
   const visibleNames = providerUrl ? [] : names;
-  const dynamicAll = providerUrl ? { use: [allProvider] } : {};
+  const hasOrdinary = automaticNodes.length > 0;
+  const hasResidential = residentialNames.length > 0;
+  const routeGroups = [
+    ...(hasOrdinary ? [automaticGroup] : []),
+    ...(hasResidential ? [residentialGroup] : []),
+  ];
+  const ordinaryMembers = providerUrl
+    ? { use: [automaticProvider] }
+    : { proxies: automaticNodes };
+  // Reuse disjoint providers: duplicate copies of a node across providers are
+  // ambiguous in Clash Verge. Keep each node's existing display name instead.
+  const dynamicAll =
+    providerUrl && nodes.length
+      ? {
+          use: [
+            ...(hasOrdinary ? [automaticProvider] : []),
+            ...(hasResidential ? [residentialProvider] : []),
+          ],
+        }
+      : {};
 
   const proxyGroups: Array<Record<string, unknown>> = [
     {
       name: selectorGroup,
       type: 'select',
-      proxies: [automaticGroup, residentialGroup, ...visibleNames],
+      // Preserve the manual default and directly selected node names on refresh.
+      proxies: nodes.length
+        ? [
+            ...routeGroups,
+            ...visibleNames,
+            ...(hasOrdinary ? [latencyGroup, fallbackGroup] : []),
+          ]
+        : ['REJECT'],
       ...dynamicAll,
     },
-    {
-      name: automaticGroup,
-      type: 'select',
-      ...(providerUrl
-        ? { use: [automaticProvider] }
-        : { proxies: automaticNodes.length ? automaticNodes : ['REJECT'] }),
-    },
-    {
-      name: residentialGroup,
-      type: 'select',
-      ...(providerUrl
-        ? { use: [residentialProvider] }
-        : { proxies: residentialNames.length ? residentialNames : ['REJECT'] }),
-    },
+    ...(hasOrdinary
+      ? [
+          {
+            name: automaticGroup,
+            type: 'select',
+            ...ordinaryMembers,
+          },
+        ]
+      : []),
+    ...(hasResidential
+      ? [
+          {
+            name: residentialGroup,
+            type: 'select',
+            ...(providerUrl
+              ? { use: [residentialProvider] }
+              : { proxies: residentialNames }),
+          },
+        ]
+      : []),
     {
       name: aiSelectorGroup,
       type: 'select',
-      proxies: [selectorGroup, residentialGroup],
+      proxies: [selectorGroup, ...(hasResidential ? [residentialGroup] : [])],
     },
+    ...(hasOrdinary
+      ? [
+          {
+            name: latencyGroup,
+            type: 'url-test',
+            ...ordinaryMembers,
+            url: healthCheckUrl,
+            interval: 300,
+            tolerance: 50,
+            lazy: true,
+          },
+          {
+            name: fallbackGroup,
+            type: 'fallback',
+            ...ordinaryMembers,
+            url: healthCheckUrl,
+            interval: 300,
+            lazy: true,
+          },
+        ]
+      : []),
   ];
 
   const profile = {
@@ -347,7 +406,9 @@ function buildHysteriaProxy(
     'client-fingerprint': 'chrome',
     obfs: node.obfsPassword ? 'salamander' : undefined,
     'obfs-password': node.obfsPassword ?? undefined,
-    'ca-sha256': node.pinSHA256 ?? undefined,
+    // Mihomo's HY2 adapter reads fingerprint; ca-sha256 is silently ignored.
+    // Pin verification also runs when ordinary CA verification is skipped.
+    fingerprint: node.pinSHA256 ?? undefined,
   });
 }
 
