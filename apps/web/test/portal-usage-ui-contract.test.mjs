@@ -22,7 +22,7 @@ test("member usage fills the available desktop table height with billed-only rec
   assert.match(usage, /pagination=\{\{/);
   assert.match(usage, /\/api\/portal\/node-status/);
   assert.match(usage, /portal-usage-detail-layout/);
-  assert.match(usage, /仅展示当前账号有权限且检测正常的节点/);
+  assert.match(usage, /仅展示有权限且检测正常的节点/);
   assert.match(usage, /nodes\.filter\(\(node\) => node\.status === "healthy"\)/);
   assert.match(usage, /availableNodes\.map/);
   assert.match(usage, /暂无检测正常的可用节点/);

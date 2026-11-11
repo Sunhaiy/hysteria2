@@ -250,31 +250,43 @@ export class TrafficAnalyticsService {
           AND node."createdAt" < ${range.to}
           AND (node."retiredAt" IS NULL OR node."retiredAt" >= ${range.from})
       ),
+      daily_usage AS (
+        -- Bound each ledger read to one indexed day. Aggregate before joining
+        -- inventory, so millions of rows do not repeat timezone work and joins.
+        SELECT day."start", usage.*
+        FROM generate_series(
+          ${range.from}::timestamptz AT TIME ZONE 'UTC',
+          (${range.to}::timestamptz AT TIME ZONE 'UTC') - interval '1 day',
+          interval '1 day'
+        ) day("start")
+        JOIN LATERAL (
+          SELECT r."nodeId",
+            SUM(r."txBytes")::bigint AS "txBytes",
+            SUM(r."rxBytes")::bigint AS "rxBytes",
+            SUM(COALESCE(r."rawBytes", r."txBytes" + r."rxBytes"))::bigint AS "physicalBytes"
+          FROM "UsageRollup" r
+          WHERE r."bucketStart" >= day."start"
+            AND r."bucketStart" < day."start" + interval '1 day'
+            AND (r."txBytes" > 0 OR r."rxBytes" > 0 OR r."rawBytes" > 0)
+          GROUP BY r."nodeId"
+        ) usage ON TRUE
+      ),
       daily_traffic AS (
         SELECT
           COALESCE(server."id", node."id") AS "serverId",
           to_char(
-            date_trunc(
-              'day',
-              r."bucketStart" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Shanghai'
-            ),
+            usage."start" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Shanghai',
             'YYYY-MM-DD'
           ) AS "date",
-          COALESCE(SUM(r."txBytes"), 0)::bigint AS "txBytes",
-          COALESCE(SUM(r."rxBytes"), 0)::bigint AS "rxBytes",
-          COALESCE(SUM(COALESCE(r."rawBytes", r."txBytes" + r."rxBytes")), 0)::bigint AS "physicalBytes"
-        FROM "UsageRollup" r
-        JOIN "Node" node ON node."id" = r."nodeId"
+          SUM(usage."txBytes")::bigint AS "txBytes",
+          SUM(usage."rxBytes")::bigint AS "rxBytes",
+          SUM(usage."physicalBytes")::bigint AS "physicalBytes"
+        FROM daily_usage usage
+        JOIN "Node" node ON node."id" = usage."nodeId"
         LEFT JOIN "NodeServer" server ON server."id" = node."serverId"
-        WHERE r."bucketStart" >= ${range.from}
-          AND r."bucketStart" < ${range.to}
-          AND (r."txBytes" > 0 OR r."rxBytes" > 0 OR r."rawBytes" > 0)
         GROUP BY
           COALESCE(server."id", node."id"),
-          date_trunc(
-            'day',
-            r."bucketStart" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Shanghai'
-          )
+          usage."start"
       )
       SELECT
         inventory."serverId",
