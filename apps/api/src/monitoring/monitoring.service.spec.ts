@@ -29,6 +29,17 @@ function createFixture(input?: {
   const findById = (id: string) =>
     [...alerts.values()].find((alert) => alert.id === id);
   const prisma = {
+    $queryRaw: jest.fn().mockImplementation(() =>
+      Promise.resolve(
+        (input?.nodes ?? []).flatMap((value) => {
+          const node = value as { id: string; healthSnapshots: object[] };
+          return node.healthSnapshots.map((row) => ({
+            ...row,
+            nodeId: node.id,
+          }));
+        }),
+      ),
+    ),
     $executeRaw: jest.fn().mockImplementation(() => {
       if (nodeEmailClaimed) return Promise.resolve(0);
       nodeEmailClaimed = true;

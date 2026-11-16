@@ -165,7 +165,7 @@ describe('TrafficAnalyticsService', () => {
     const [query] = queryRaw.mock.calls[0] ?? [];
     const sql = query?.strings.join('') ?? '';
     expect(sql).toContain(
-      `r."bucketStart" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Shanghai'`,
+      `usage."start" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Shanghai'`,
     );
     expect(sql).toContain(
       'SUM(COALESCE(r."rawBytes", r."txBytes" + r."rxBytes"))',

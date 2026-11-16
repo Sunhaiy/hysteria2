@@ -8,6 +8,7 @@ import {
 } from '@prisma/client';
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { latestNodeChecks, latestNodeHealth } from './latest-node-history';
 
 interface CheckResult {
   fingerprint: string;
@@ -55,8 +56,6 @@ export class MonitoringService {
       this.prisma.node.findMany({
         where: { retiredAt: null },
         include: {
-          serviceChecks: { orderBy: { checkedAt: 'desc' }, take: 1 },
-          healthSnapshots: { orderBy: { checkedAt: 'desc' }, take: 1 },
           onlinePresence: {
             where: { observedAt: { gte: new Date(now.getTime() - 45_000) } },
           },
@@ -72,6 +71,10 @@ export class MonitoringService {
         },
       }),
     ]);
+    const healthByNode = await latestNodeHealth(
+      this.prisma,
+      nodes.map((node) => node.id),
+    );
     const results: CheckResult[] = [];
     for (const node of nodes) {
       const syncDelaySeconds = node.lastSyncAt
@@ -82,7 +85,7 @@ export class MonitoringService {
         : null;
       const managed =
         node.active && node.lifecycleStatus !== NodeLifecycleStatus.DISABLED;
-      const health = node.healthSnapshots[0];
+      const health = healthByNode.get(node.id);
       const healthStale =
         !health || now.getTime() - health.checkedAt.getTime() > 180_000;
       const offline =
@@ -249,12 +252,15 @@ export class MonitoringService {
       }),
       this.prisma.node.findMany({
         where: { retiredAt: null },
-        include: { serviceChecks: { orderBy: { checkedAt: 'desc' }, take: 1 } },
       }),
       this.prisma.nodeServer.count({
         where: { active: true, retiredAt: null },
       }),
     ]);
+    const checksByNode = await latestNodeChecks(
+      this.prisma,
+      nodes.map((node) => node.id),
+    );
     return {
       checkIntervalSeconds: 60,
       open: alerts.filter((alert) => alert.status === MonitorAlertStatus.OPEN)
@@ -273,10 +279,10 @@ export class MonitoringService {
         id: node.id,
         label: node.label,
         lifecycleStatus: node.lifecycleStatus.toLowerCase(),
-        healthy: node.serviceChecks[0]?.healthy ?? null,
-        onlineUsers: node.serviceChecks[0]?.onlineUsers ?? 0,
-        syncDelaySeconds: node.serviceChecks[0]?.syncDelaySeconds ?? null,
-        checkedAt: node.serviceChecks[0]?.checkedAt.toISOString() ?? null,
+        healthy: checksByNode.get(node.id)?.healthy ?? null,
+        onlineUsers: checksByNode.get(node.id)?.onlineUsers ?? 0,
+        syncDelaySeconds: checksByNode.get(node.id)?.syncDelaySeconds ?? null,
+        checkedAt: checksByNode.get(node.id)?.checkedAt.toISOString() ?? null,
       })),
       alerts: alerts.map((alert) => ({
         id: alert.id,
