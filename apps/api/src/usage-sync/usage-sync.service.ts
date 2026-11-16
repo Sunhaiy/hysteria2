@@ -93,71 +93,83 @@ export class UsageSyncService {
     node: Awaited<ReturnType<NodeControlService['getNodeForControl']>> & object,
     provision = true,
   ) {
+    let provisionedUsers = 0;
+    let impactedUsers: string[] = [];
+    let trafficError: unknown;
     try {
-      let provisionedUsers = 0;
-
-      const batch = await this.nodeClient.claimTrafficBatch(node);
-      // Different nodes often meter the same accounts in different orders.
-      // Keep remote collection concurrent but serialize worker-owned billing.
-      const imported = this.trafficImportTail
-        .catch(() => undefined)
-        .then(() => this.entitlements.applyTrafficBatch(node.id, batch));
-      this.trafficImportTail = imported;
-      const applied = await imported;
-      const impactedUsers = applied.impactedUsers;
-
-      const restrictionChecks = [];
-      for (const userId of impactedUsers) {
-        restrictionChecks.push({
-          userId,
-          restricted: !(await this.entitlements.getNodeAccess(userId, node.id))
-            .allowed,
-        });
-      }
-
-      await Promise.all(
-        restrictionChecks
-          .filter((item) => item.restricted)
-          .map(async (item) => {
-            // Queue must be durable before the import is acknowledged.
-            await this.enforcement.enqueue(item.userId, node.id);
-          }),
-      );
-
-      await this.nodeClient.acknowledgeTrafficBatch(node, batch.id);
-      await this.store.acknowledgeTrafficBatch(node.id, batch.id);
-      await this.nodes.markTrafficSyncSuccess(node.id);
-
-      if (provision && node.protocol === 'vless_reality') {
-        const users = await this.entitlements.getNodeProvisioningUsers(node.id);
-        await this.nodeClient.syncUsers(
-          node,
-          users.map((user) => ({
-            ...user,
-            email: user.userId,
-            flow: node.vlessFlow ?? 'xtls-rprx-vision',
-          })),
-        );
-        provisionedUsers = users.length;
-      }
-      if (provision) await this.nodes.markUserSyncSuccess(node.id);
-
-      return {
-        nodeId: node.id,
-        protocol: node.protocol,
-        provisionedUsers,
-        impactedUsers: impactedUsers.length,
-      };
+      impactedUsers = await this.importTraffic(node);
     } catch (error) {
+      trafficError = error;
+    }
+    // Provisioning must not depend on traffic collection: a broken traffic
+    // endpoint would otherwise block new buyers and leave revoked users in Xray.
+    // It runs after a successful import so this batch's exhausted users are out.
+    let provisionError: unknown;
+    if (provision) {
       try {
-        await this.nodes.markSyncFailure(node.id, error);
+        if (node.protocol === 'vless_reality') {
+          const users = await this.entitlements.getNodeProvisioningUsers(
+            node.id,
+          );
+          await this.nodeClient.syncUsers(
+            node,
+            users.map((user) => ({
+              ...user,
+              email: user.userId,
+              flow: node.vlessFlow ?? 'xtls-rprx-vision',
+            })),
+          );
+          provisionedUsers = users.length;
+        }
+        await this.nodes.markUserSyncSuccess(node.id);
+      } catch (error) {
+        provisionError = error;
+      }
+    }
+    const failure = trafficError ?? provisionError;
+    if (failure !== undefined) {
+      try {
+        await this.nodes.markSyncFailure(node.id, failure);
       } catch (markError) {
         this.logger.warn(
           `Failed to record sync error for node ${node.id}: ${String(markError)}`,
         );
       }
-      throw error;
+      throw failure instanceof Error
+        ? failure
+        : new Error(JSON.stringify(failure));
     }
+    return {
+      nodeId: node.id,
+      protocol: node.protocol,
+      provisionedUsers,
+      impactedUsers: impactedUsers.length,
+    };
+  }
+
+  private async importTraffic(
+    node: Awaited<ReturnType<NodeControlService['getNodeForControl']>> & object,
+  ) {
+    const batch = await this.nodeClient.claimTrafficBatch(node);
+    // Different nodes often meter the same accounts in different orders.
+    // Keep remote collection concurrent but serialize worker-owned billing.
+    const imported = this.trafficImportTail
+      .catch(() => undefined)
+      .then(() => this.entitlements.applyTrafficBatch(node.id, batch));
+    this.trafficImportTail = imported;
+    const { impactedUsers } = await imported;
+
+    for (const userId of impactedUsers) {
+      if (!(await this.entitlements.getNodeAccess(userId, node.id)).allowed) {
+        // Queue must be durable before the import is acknowledged.
+        await this.enforcement.enqueue(userId, node.id);
+      }
+    }
+
+    await this.nodeClient.acknowledgeTrafficBatch(node, batch.id);
+    await this.store.acknowledgeTrafficBatch(node.id, batch.id);
+    await this.nodes.markTrafficSyncSuccess(node.id);
+    return impactedUsers;
   }
 
   private withNodeLock<T>(

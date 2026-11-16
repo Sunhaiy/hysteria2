@@ -192,3 +192,67 @@ databaseTests('QuotaEnforcementService PostgreSQL integration', () => {
     expect(kick.mock.calls.some(([n]) => n.id === 'new-node')).toBe(false);
   });
 });
+
+describe('QuotaEnforcementService online checks', () => {
+  const observedAt = new Date('2026-11-16T10:00:00.000Z');
+  const setup = (task: Record<string, unknown> | null) => {
+    const upsert = jest.fn().mockResolvedValue({ id: 'task' });
+    const access = jest.fn().mockResolvedValue({ allowed: false });
+    const service = new QuotaEnforcementService(
+      {
+        onlinePresence: {
+          findMany: jest
+            .fn()
+            .mockResolvedValue([
+              { id: 'p1', userId: 'u1', nodeId: 'n1', observedAt },
+            ]),
+        },
+        nodeAccessRevocation: {
+          findMany: jest
+            .fn()
+            .mockResolvedValue(
+              task ? [{ userId: 'u1', nodeId: 'n1', ...task }] : [],
+            ),
+          upsert,
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        node: { findMany: jest.fn().mockResolvedValue([{ id: 'n1' }]) },
+      } as never,
+      {} as never,
+      { getNodeAccess: access } as never,
+      {} as never,
+    );
+    return { service, upsert, access };
+  };
+
+  it('does not re-kick for presence observed before the last successful kick', async () => {
+    const { service, upsert, access } = setup({
+      status: 'SUCCEEDED',
+      completedAt: new Date(observedAt.getTime() + 1_000),
+    });
+    await service.checkOnlineUsers();
+    expect(access).not.toHaveBeenCalled();
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it('does not duplicate an already queued disconnect', async () => {
+    const { service, upsert } = setup({ status: 'PENDING', completedAt: null });
+    await service.checkOnlineUsers();
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it('re-queues when the user is observed online after the kick', async () => {
+    const { service, upsert } = setup({
+      status: 'SUCCEEDED',
+      completedAt: new Date(observedAt.getTime() - 1_000),
+    });
+    await service.checkOnlineUsers();
+    expect(upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it('queues a denied user with no prior task', async () => {
+    const { service, upsert } = setup(null);
+    await service.checkOnlineUsers();
+    expect(upsert).toHaveBeenCalledTimes(1);
+  });
+});

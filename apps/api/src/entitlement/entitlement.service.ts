@@ -31,7 +31,6 @@ import type {
 } from './entitlement.dto';
 
 const multiplierScale = BigInt(10_000);
-const nodeProvisioningAccessConcurrency = 2;
 const trafficImportTransactionTimeoutMs = 30_000;
 
 type DbClient = PrismaService | Prisma.TransactionClient;
@@ -2108,32 +2107,164 @@ export class EntitlementService {
   }
 
   async getNodeProvisioningUsers(nodeId: string) {
+    // Prepare only missing periods. Existing periods need no per-user upserts.
+    // This snapshot is local to one node sync under the worker's node lock;
+    // permissions are never cached between syncs or across revocations.
+    const now = new Date();
+    const currentPeriod = { startsAt: { lte: now }, endsAt: { gt: now } };
+    const [missingBuckets, missingCycles] = await Promise.all([
+      this.prisma.entitlementGrant.findMany({
+        where: {
+          status: EntitlementGrantStatus.ACTIVE,
+          ...currentPeriod,
+          user: { status: UserStatus.ACTIVE },
+          OR: [
+            { quotaCadenceSnapshot: QuotaCadence.MONTHLY_RESET },
+            { quotaCadenceSnapshot: null, kind: EntitlementGrantKind.PLAN },
+          ],
+          quotaBuckets: { none: currentPeriod },
+        },
+        distinct: ['userId'],
+        select: { userId: true },
+      }),
+      this.prisma.subscription.findMany({
+        where: {
+          status: SubscriptionStatus.ACTIVE,
+          ...currentPeriod,
+          user: { status: UserStatus.ACTIVE },
+          entitlementGrant: null,
+          cycles: { none: currentPeriod },
+        },
+        distinct: ['userId'],
+        select: { userId: true },
+      }),
+    ]);
+    for (const row of missingBuckets)
+      await this.ensureV2CurrentBuckets(row.userId);
+    for (const row of missingCycles) await this.ensureCurrentCycles(row.userId);
+
+    const [grants, subscriptions, packs] = await Promise.all([
+      this.prisma.entitlementGrant.findMany({
+        where: { status: EntitlementGrantStatus.ACTIVE, ...currentPeriod },
+        select: {
+          userId: true,
+          kind: true,
+          product: { select: { requiresActivePlan: true } },
+          quotaBuckets: {
+            where: currentPeriod,
+            select: { grantedBytes: true, consumedBytes: true },
+          },
+          accessProfile: {
+            select: {
+              nodeBindings: {
+                where: {
+                  nodeId,
+                  node: { active: true, lifecycleStatus: 'ACTIVE' },
+                },
+                select: { nodeId: true },
+              },
+            },
+          },
+        },
+      }),
+      this.prisma.subscription.findMany({
+        where: { status: SubscriptionStatus.ACTIVE, ...currentPeriod },
+        select: {
+          userId: true,
+          nodeId: true,
+          entitlementGrant: { select: { id: true } },
+          plan: {
+            select: {
+              accessProfile: {
+                select: {
+                  active: true,
+                  nodeBindings: {
+                    where: { nodeId, node: { active: true } },
+                    select: { nodeId: true },
+                  },
+                },
+              },
+            },
+          },
+          cycles: {
+            where: currentPeriod,
+            take: 1,
+            select: {
+              grantedBytes: true,
+              adjustmentBytes: true,
+              consumedBytes: true,
+            },
+          },
+        },
+      }),
+      this.prisma.trafficPack.findMany({
+        where: {
+          entitlementGrant: null,
+          status: TrafficPackStatus.ACTIVE,
+          remainingBytes: { gt: BigInt(0) },
+          OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+          AND: [
+            {
+              OR: [
+                {
+                  accessProfile: {
+                    active: true,
+                    nodeBindings: { some: { nodeId, node: { active: true } } },
+                  },
+                },
+                { accessProfileId: null, subscription: { nodeId } },
+              ],
+            },
+          ],
+        },
+        select: { userId: true },
+      }),
+    ]);
+    const activePlanUsers = new Set([
+      ...grants
+        .filter((grant) => grant.kind === EntitlementGrantKind.PLAN)
+        .map((grant) => grant.userId),
+      ...subscriptions.map((subscription) => subscription.userId),
+    ]);
+    const allowed = new Set(packs.map((pack) => pack.userId));
+    for (const grant of grants) {
+      if (
+        (!grant.product.requiresActivePlan ||
+          activePlanUsers.has(grant.userId)) &&
+        grant.accessProfile.nodeBindings.length > 0 &&
+        grant.quotaBuckets.some(
+          (bucket) => bucket.grantedBytes > bucket.consumedBytes,
+        )
+      )
+        allowed.add(grant.userId);
+    }
+    for (const subscription of subscriptions) {
+      const profile = subscription.plan.accessProfile;
+      const cycle = subscription.cycles[0];
+      if (
+        !subscription.entitlementGrant &&
+        (subscription.nodeId === nodeId ||
+          (profile?.active && profile.nodeBindings.length > 0)) &&
+        cycle &&
+        this.cycleRemaining(cycle) > BigInt(0)
+      )
+        allowed.add(subscription.userId);
+    }
+    if (allowed.size === 0) return [];
     const tokens = await this.prisma.accessToken.findMany({
-      where: { revokedAt: null, user: { status: UserStatus.ACTIVE } },
+      where: {
+        revokedAt: null,
+        userId: { in: [...allowed] },
+        user: { status: UserStatus.ACTIVE },
+      },
       distinct: ['userId'],
       orderBy: { createdAt: 'asc' },
       select: { userId: true, vlessUuid: true },
     });
-    const decisions = [];
-    for (
-      let offset = 0;
-      offset < tokens.length;
-      offset += nodeProvisioningAccessConcurrency
-    ) {
-      decisions.push(
-        ...(await Promise.all(
-          tokens
-            .slice(offset, offset + nodeProvisioningAccessConcurrency)
-            .map(async (token) => ({
-              token,
-              access: await this.getNodeAccess(token.userId, nodeId),
-            })),
-        )),
-      );
-    }
-    return decisions
-      .filter((item) => item.access.allowed)
-      .map((item) => ({ userId: item.token.userId, id: item.token.vlessUuid }));
+    return tokens.map((token) => ({
+      userId: token.userId,
+      id: token.vlessUuid,
+    }));
   }
 
   private async applyUserTraffic(

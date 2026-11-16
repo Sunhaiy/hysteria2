@@ -97,6 +97,10 @@
 - Traffic billing uses max(NodeServer rate, member override), independently of
   old product/grant snapshots. Top-tier machines default to 2x, others to 1x;
   all protocols on one machine share the rate. Historical rollups are immutable.
+- Residential nodes are restricted to Plus, Prime, Max/Elite, and Spark, across
+  both Hysteria2 and VLESS. Go, Start, Pro, Boost, and standalone traffic-pack
+  profiles must not gain residential access. Preserve this policy when replacing
+  machines, including the SU23 replacement requested on 2026-11-07.
 
 - `/subscribe/{token}` remains the v2rayN/Hiddify subscription.
 - `/subscribe/{token}/surge` is the Surge managed profile for compatible HY2

@@ -44,7 +44,36 @@ export class QuotaEnforcementService {
     });
     this.presenceCursor =
       rows.length === 100 ? rows[rows.length - 1].id : undefined;
+    const existing = rows.length
+      ? await this.prisma.nodeAccessRevocation.findMany({
+          where: {
+            OR: rows.map((row) => ({ userId: row.userId, nodeId: row.nodeId })),
+          },
+          select: {
+            userId: true,
+            nodeId: true,
+            status: true,
+            completedAt: true,
+          },
+        })
+      : [];
+    const tasks = new Map(
+      existing.map((task) => [`${task.userId}:${task.nodeId}`, task]),
+    );
     for (const row of rows) {
+      // Presence outlives a disconnect by up to the freshness window. Only an
+      // observation made after the last successful kick proves a reconnect;
+      // otherwise every pass would re-kick the user on every node.
+      const task = tasks.get(`${row.userId}:${row.nodeId}`);
+      if (
+        task &&
+        (task.status === 'PENDING' ||
+          task.status === 'RUNNING' ||
+          (task.status === 'SUCCEEDED' &&
+            task.completedAt &&
+            task.completedAt >= row.observedAt))
+      )
+        continue;
       if (
         !(await this.entitlements.getNodeAccess(row.userId, row.nodeId)).allowed
       ) {
@@ -83,16 +112,32 @@ export class QuotaEnforcementService {
 
   async processDue(limit = 50) {
     const now = new Date();
+    const activeNodes = await this.prisma.node.findMany({
+      where: { active: true, retiredAt: null },
+      select: { id: true },
+    });
+    const activeIds = activeNodes.map((node) => node.id);
+    const due = {
+      OR: [
+        { status: 'PENDING', nextAttemptAt: { lte: now } },
+        { status: 'RUNNING', leaseUntil: { lte: now } },
+      ],
+    };
+    // Unreachable retired machines must not occupy the entire active-node batch.
     const tasks = await this.prisma.nodeAccessRevocation.findMany({
-      where: {
-        OR: [
-          { status: 'PENDING', nextAttemptAt: { lte: now } },
-          { status: 'RUNNING', leaseUntil: { lte: now } },
-        ],
-      },
+      where: { ...due, nodeId: { in: activeIds } },
       orderBy: [{ nextAttemptAt: 'asc' }, { id: 'asc' }],
       take: limit,
     });
+    if (tasks.length < limit) {
+      tasks.push(
+        ...(await this.prisma.nodeAccessRevocation.findMany({
+          where: { ...due, nodeId: { notIn: activeIds } },
+          orderBy: [{ nextAttemptAt: 'asc' }, { id: 'asc' }],
+          take: limit - tasks.length,
+        })),
+      );
+    }
     // A bounded batch keeps a slow endpoint from delaying all other machines.
     for (let offset = 0; offset < tasks.length; offset += 4) {
       await Promise.all(
@@ -116,6 +161,7 @@ export class QuotaEnforcementService {
           if (!claimed.count) return;
           const owned = { id: task.id, status: 'RUNNING', leaseToken: token };
           await this.withNodeLock(task.nodeId, async () => {
+            let inactiveTarget = false;
             try {
               const node = await this.nodes.getNodeForControl(task.nodeId);
               if (!node) {
@@ -130,13 +176,18 @@ export class QuotaEnforcementService {
                 });
                 return;
               }
+              inactiveTarget = !node.active;
               // Never rely on the permission decision saved at enqueue time. A pack,
               // renewal, check-in or an administrative credit can restore access.
-              const access = await this.entitlements.getNodeAccess(
-                task.userId,
-                task.nodeId,
-              );
-              if (node.active && access.allowed) {
+              if (
+                node.active &&
+                (
+                  await this.entitlements.getNodeAccess(
+                    task.userId,
+                    task.nodeId,
+                  )
+                ).allowed
+              ) {
                 await this.prisma.nodeAccessRevocation.updateMany({
                   where: owned,
                   data: {
@@ -154,7 +205,22 @@ export class QuotaEnforcementService {
                 where: { ...owned, leaseUntil: { gt: new Date() } },
               });
               if (!stillOwned) return;
-              await this.adapters.kickUsers(node, [task.userId]);
+              let confirmedStopped = false;
+              if (inactiveTarget) {
+                // Disabled in the panel alone is not evidence of disconnection.
+                // Only a live management response with no running core suffices.
+                const runtime = await this.adapters
+                  .getServiceStatus(node)
+                  .catch(() => null);
+                confirmedStopped =
+                  !!runtime &&
+                  runtime.status === 'inactive' &&
+                  runtime.mainPid === 0 &&
+                  Math.abs(Date.now() - Date.parse(runtime.observedAt)) <
+                    30_000;
+              }
+              if (!confirmedStopped)
+                await this.adapters.kickUsers(node, [task.userId]);
               await this.prisma.nodeAccessRevocation.updateMany({
                 where: owned,
                 data: {
@@ -169,8 +235,9 @@ export class QuotaEnforcementService {
               const message =
                 error instanceof Error ? error.message : String(error);
               const delay = Math.min(
-                60_000,
-                2_000 * 2 ** Math.min(task.attempts, 5),
+                inactiveTarget ? 3_600_000 : 60_000,
+                (inactiveTarget ? 60_000 : 2_000) *
+                  2 ** Math.min(task.attempts, 6),
               );
               await this.prisma.nodeAccessRevocation.updateMany({
                 where: owned,

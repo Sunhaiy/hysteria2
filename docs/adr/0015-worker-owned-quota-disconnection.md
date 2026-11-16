@@ -6,9 +6,16 @@ collection does not prove a depleted user was disconnected.
 Usage sync persists NodeAccessRevocation work before acknowledging restricted
 traffic. A failed queue write leaves the batch replayable. Tasks coalesce by
 user/endpoint, retain retry backoff, use compare-and-set leases, and recover after
-worker crashes. Failures retry indefinitely with a capped 60-second delay and
+worker crashes. Active endpoint failures retry indefinitely with a capped 60-second delay and
 remain queryable with attempts/lastError; first and sixth failures enter audit.
 No in-memory-only retry or swallowing kicked:false constitutes completion.
+
+Active endpoints have priority over disabled endpoints in each retry batch.
+Disabled endpoint failures retain durable retries with a capped one-hour delay,
+so retired unreachable machines cannot monopolize enforcement. Panel-disabled
+alone never means disconnected: only a fresh live service response reporting
+inactive with main PID zero can complete without a kick. Permission checks remain
+mandatory for active endpoints; disabled endpoints do not need quota resolution.
 
 Candidate nodes include every active nonretired node and the reporting endpoint,
 not only historical PlanBinding rows. Before each attempt the worker resolves
@@ -31,4 +38,3 @@ still permits in-flight bytes; this is not node-local hard quota enforcement.
 Validation covers the real PostgreSQL migration, concurrent task claims, expired
 leases, cross-worker restart, retry without new usage, restoration before retry,
 different valid node access, plus live two-user protocol sessions.
-

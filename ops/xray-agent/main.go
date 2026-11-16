@@ -33,6 +33,7 @@ import (
 const maxBodyBytes = 2 << 20
 
 var validSystemdUnit = regexp.MustCompile(`^[A-Za-z0-9_.@:-]+\.service$`)
+var validProvisionedUUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 type provisionedUser struct {
 	UserID string `json:"userId"`
@@ -586,6 +587,15 @@ func (a *agent) syncUsers(w http.ResponseWriter, r *http.Request) {
 		if user.Flow == "" {
 			user.Flow = "xtls-rprx-vision"
 		}
+		// Validate the whole request before removing any live account.
+		if !validProvisionedUUID.MatchString(user.ID) || user.Flow != "xtls-rprx-vision" {
+			writeError(w, http.StatusBadRequest, "each user requires a UUID and supported flow")
+			return
+		}
+		if previous, duplicate := desiredByEmail[user.Email]; duplicate && previous != user {
+			writeError(w, http.StatusBadRequest, "conflicting credentials for one email")
+			return
+		}
 		desiredByEmail[user.Email] = user
 	}
 
@@ -600,15 +610,29 @@ func (a *agent) syncUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing := make(map[string]struct{}, len(existingResult.Users))
+	existing := make(map[string]*vless.Account, len(existingResult.Users))
 	for _, user := range existingResult.Users {
-		existing[user.Email] = struct{}{}
+		if user.Account == nil {
+			writeError(w, http.StatusBadGateway, "inbound user has no account")
+			return
+		}
+		account, err := user.Account.GetInstance()
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "cannot decode inbound account")
+			return
+		}
+		vlessAccount, ok := account.(*vless.Account)
+		if !ok {
+			writeError(w, http.StatusBadGateway, "inbound account is not VLESS")
+			return
+		}
+		existing[user.Email] = vlessAccount
 	}
 
 	added := 0
 	removed := 0
-	for email := range existing {
-		if _, keep := desiredByEmail[email]; keep {
+	for email, account := range existing {
+		if wanted, keep := desiredByEmail[email]; keep && strings.EqualFold(account.Id, wanted.ID) && account.Flow == wanted.Flow {
 			continue
 		}
 		if err := a.requireSessionRevocation(ctx); err != nil {
@@ -620,6 +644,7 @@ func (a *agent) syncUsers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		removed++
+		delete(existing, email)
 	}
 	for email, user := range desiredByEmail {
 		if _, present := existing[email]; present {

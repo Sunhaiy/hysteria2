@@ -1002,29 +1002,213 @@ describe('EntitlementService V2', () => {
     expect(packQuery.where.entitlementGrant).toBeNull();
   });
 
-  it('bounds node provisioning access checks to protect small database pools', async () => {
+  it('batches provisioning permissions without per-token access queries', async () => {
     const tokens = Array.from({ length: 8 }, (_, index) => ({
       userId: `user_${index}`,
       vlessUuid: `uuid_${index}`,
     }));
     const prisma = {
       accessToken: { findMany: jest.fn().mockResolvedValue(tokens) },
+      entitlementGrant: {
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([])
+          .mockResolvedValue(
+            tokens.map((token) => ({
+              userId: token.userId,
+              kind: 'PLAN',
+              product: { requiresActivePlan: false },
+              quotaBuckets: [{ grantedBytes: 100n, consumedBytes: 0n }],
+              accessProfile: { nodeBindings: [{ nodeId: 'node_1' }] },
+            })),
+          ),
+      },
+      subscription: { findMany: jest.fn().mockResolvedValue([]) },
+      trafficPack: { findMany: jest.fn().mockResolvedValue([]) },
     };
     const service = new EntitlementService(prisma as never);
-    let inFlight = 0;
-    let peakInFlight = 0;
-    jest.spyOn(service, 'getNodeAccess').mockImplementation(async () => {
-      inFlight += 1;
-      peakInFlight = Math.max(peakInFlight, inFlight);
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      inFlight -= 1;
-      return { allowed: true, reason: 'ok' } as never;
-    });
+    const access = jest.spyOn(service, 'getNodeAccess');
 
     await expect(service.getNodeProvisioningUsers('node_1')).resolves.toEqual(
       tokens.map((token) => ({ userId: token.userId, id: token.vlessUuid })),
     );
-    expect(peakInFlight).toBeLessThanOrEqual(2);
+    expect(access).not.toHaveBeenCalled();
+    expect(prisma.accessToken.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          revokedAt: null,
+          userId: { in: tokens.map((t) => t.userId) },
+          user: { status: 'ACTIVE' },
+        },
+      }),
+    );
+  });
+
+  it('keeps plan dependencies, profile bindings, depletion and migrated legacy grants in provisioning decisions', async () => {
+    const grant = (userId: string, overrides = {}) => ({
+      userId,
+      kind: 'TRAFFIC_PACK',
+      product: { requiresActivePlan: false },
+      quotaBuckets: [{ grantedBytes: 100n, consumedBytes: 10n }],
+      accessProfile: { nodeBindings: [{ nodeId: 'residential' }] },
+      ...overrides,
+    });
+    const dependent = { product: { requiresActivePlan: true } };
+    const depleted = {
+      quotaBuckets: [{ grantedBytes: 100n, consumedBytes: 100n }],
+    };
+    const subscription = (userId: string, overrides = {}) => ({
+      userId,
+      nodeId: 'residential',
+      entitlementGrant: null,
+      plan: { accessProfile: null },
+      cycles: [
+        { grantedBytes: 100n, adjustmentBytes: 20n, consumedBytes: 110n },
+      ],
+      ...overrides,
+    });
+    const prisma = {
+      entitlementGrant: {
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([])
+          .mockResolvedValue([
+            grant('permanent'),
+            grant('depleted', depleted),
+            grant('wrong-profile', { accessProfile: { nodeBindings: [] } }),
+            grant('pack-no-plan', dependent),
+            grant('pack-with-plan', dependent),
+            grant('pack-with-plan', {
+              ...depleted,
+              kind: 'PLAN',
+              accessProfile: { nodeBindings: [] },
+            }),
+            grant('pack-legacy-plan', dependent),
+          ]),
+      },
+      subscription: {
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([])
+          .mockResolvedValue([
+            subscription('legacy-positive-adjustment'),
+            subscription('legacy-empty', { cycles: [] }),
+            subscription('migrated', { entitlementGrant: { id: 'v2' } }),
+            subscription('legacy-inactive-profile', {
+              nodeId: 'other',
+              plan: {
+                accessProfile: {
+                  active: false,
+                  nodeBindings: [{ nodeId: 'residential' }],
+                },
+              },
+            }),
+            subscription('legacy-profile', {
+              nodeId: 'other',
+              plan: {
+                accessProfile: {
+                  active: true,
+                  nodeBindings: [{ nodeId: 'residential' }],
+                },
+              },
+            }),
+            subscription('pack-legacy-plan', { nodeId: 'other', cycles: [] }),
+          ]),
+      },
+      trafficPack: {
+        findMany: jest.fn().mockResolvedValue([{ userId: 'legacy-pack' }]),
+      },
+      accessToken: {
+        findMany: jest
+          .fn()
+          .mockImplementation(
+            ({ where }: { where: { userId: { in: string[] } } }) =>
+              Promise.resolve(
+                where.userId.in.map((userId: string) => ({
+                  userId,
+                  vlessUuid: userId,
+                })),
+              ),
+          ),
+      },
+    };
+    const service = new EntitlementService(prisma as never);
+    const users = await service.getNodeProvisioningUsers('residential');
+    expect(users.map((u) => u.userId).sort()).toEqual([
+      'legacy-pack',
+      'legacy-positive-adjustment',
+      'legacy-profile',
+      'pack-legacy-plan',
+      'pack-with-plan',
+      'permanent',
+    ]);
+    const grantCalls = prisma.entitlementGrant.findMany.mock
+      .calls as unknown[][];
+    const packCalls = prisma.trafficPack.findMany.mock.calls as unknown[][];
+    expect(grantCalls[1][0]).toMatchObject({
+      where: {
+        status: 'ACTIVE',
+        startsAt: { lte: expect.any(Date) as unknown },
+        endsAt: { gt: expect.any(Date) as unknown },
+      },
+      select: {
+        accessProfile: {
+          select: {
+            nodeBindings: {
+              where: {
+                nodeId: 'residential',
+                node: { active: true, lifecycleStatus: 'ACTIVE' },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(packCalls[0][0]).toMatchObject({
+      where: { entitlementGrant: null, remainingBytes: { gt: 0n } },
+    });
+  });
+
+  it('prepares missing reset periods before reading provisioning quota', async () => {
+    let bucketsReady = false;
+    let cyclesReady = false;
+    const prisma = {
+      entitlementGrant: {
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([{ userId: 'reset' }])
+          .mockImplementation(() => {
+            expect(bucketsReady).toBe(true);
+            return Promise.resolve([]);
+          }),
+      },
+      subscription: {
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([{ userId: 'legacy-reset' }])
+          .mockImplementation(() => {
+            expect(cyclesReady).toBe(true);
+            return Promise.resolve([]);
+          }),
+      },
+      trafficPack: { findMany: jest.fn().mockResolvedValue([]) },
+      accessToken: { findMany: jest.fn() },
+    };
+    const service = new EntitlementService(prisma as never);
+    jest
+      .spyOn(service as never, 'ensureV2CurrentBuckets' as never)
+      .mockImplementation((() => {
+        bucketsReady = true;
+        return Promise.resolve();
+      }) as never);
+    jest
+      .spyOn(service as never, 'ensureCurrentCycles' as never)
+      .mockImplementation((() => {
+        cyclesReady = true;
+        return Promise.resolve();
+      }) as never);
+    await expect(service.getNodeProvisioningUsers('node')).resolves.toEqual([]);
+    expect(prisma.accessToken.findMany).not.toHaveBeenCalled();
   });
 
   it('allows a production-sized traffic import to outlive the default interactive transaction timeout', async () => {

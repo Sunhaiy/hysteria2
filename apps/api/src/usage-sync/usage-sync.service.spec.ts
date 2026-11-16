@@ -256,6 +256,64 @@ describe('UsageSyncService', () => {
     });
   });
 
+  it('still provisions users when traffic collection fails', async () => {
+    const node = {
+      id: 'node_vless',
+      protocol: 'vless_reality',
+      vlessFlow: 'xtls-rprx-vision',
+      active: true,
+    };
+    const nodes = {
+      getNodesForControl: jest.fn().mockResolvedValue([node]),
+      markUserSyncSuccess: jest.fn().mockResolvedValue(undefined),
+      markTrafficSyncSuccess: jest.fn().mockResolvedValue(undefined),
+      markSyncFailure: jest.fn().mockResolvedValue(undefined),
+    };
+    const nodeClient = {
+      syncUsers: jest.fn().mockResolvedValue({ added: 1, removed: 0 }),
+      claimTrafficBatch: jest
+        .fn()
+        .mockRejectedValue(new Error('traffic endpoint 502')),
+      acknowledgeTrafficBatch: jest.fn(),
+    };
+    const entitlements = {
+      getNodeProvisioningUsers: jest
+        .fn()
+        .mockResolvedValue([{ userId: 'usr_new', id: 'uuid-new' }]),
+      applyTrafficBatch: jest.fn(),
+      getNodeAccess: jest.fn(),
+    };
+    const service = new UsageSyncService(
+      {} as never,
+      nodeClient as never,
+      {
+        withNodeLock: (_id: string, work: () => Promise<unknown>) => work(),
+        enqueue: jest.fn(),
+      } as never,
+      entitlements as never,
+      nodes as never,
+    );
+
+    const result = await service.syncAllNodes();
+
+    expect(nodeClient.syncUsers).toHaveBeenCalledWith(node, [
+      {
+        userId: 'usr_new',
+        id: 'uuid-new',
+        email: 'usr_new',
+        flow: 'xtls-rprx-vision',
+      },
+    ]);
+    expect(nodes.markUserSyncSuccess).toHaveBeenCalledWith('node_vless');
+    expect(nodes.markTrafficSyncSuccess).not.toHaveBeenCalled();
+    expect(nodes.markSyncFailure).toHaveBeenCalledWith(
+      'node_vless',
+      expect.objectContaining({ message: 'traffic endpoint 502' }),
+    );
+    expect(result[0]).toMatchObject({ nodeId: 'node_vless' });
+    expect(String((result[0] as { error?: string }).error)).toContain('502');
+  });
+
   it('serializes node syncs to preserve database capacity for user requests', async () => {
     const nodes = ['node_a', 'node_b', 'node_c'].map((id) => ({
       id,

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ControlPlaneStoreService } from '../domain/control-plane.store';
 import { NodeControlService } from '../domain/node-control.service';
 import { EntitlementService } from '../entitlement/entitlement.service';
@@ -67,10 +67,18 @@ export class HysteriaAuthService {
       );
       return { ok: false as const, reason: access.reason };
     }
-    await Promise.all([
+    // The access decision above must succeed. Optional observation writes must
+    // not turn a verified allowed decision into an authentication outage.
+    const telemetry = await Promise.allSettled([
       this.store.markTokenUsed(token.id),
       this.recordDecision(input, token.id, user.id, node.id, true, 'ok'),
     ]);
+    if (telemetry.some((result) => result.status === 'rejected')) {
+      Logger.warn(
+        'Allowed authentication telemetry could not be persisted',
+        HysteriaAuthService.name,
+      );
+    }
     return { ok: true as const, id: user.id };
   }
 

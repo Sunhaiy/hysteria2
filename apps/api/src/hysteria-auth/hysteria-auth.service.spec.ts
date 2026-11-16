@@ -99,4 +99,47 @@ describe('HysteriaAuthService', () => {
     expect(store.getCurrentOnlineCount).not.toHaveBeenCalled();
     expect(store.isRecentReconnect).not.toHaveBeenCalled();
   });
+
+  it('preserves an allowed decision when optional auth telemetry fails', async () => {
+    store.findAccessToken.mockResolvedValue({ id: 'token', userId: 'user' });
+    store.getNodeForControl.mockResolvedValue({
+      id: 'node',
+      active: true,
+      protocol: 'hysteria2',
+    });
+    store.getSessionIdentity.mockResolvedValue({
+      id: 'user',
+      status: 'active',
+    });
+    entitlements.getNodeAccess.mockResolvedValue({ allowed: true });
+    store.markTokenUsed.mockRejectedValueOnce(
+      new Error('telemetry write failed'),
+    );
+    store.recordAuthEvent.mockRejectedValueOnce(
+      new Error('audit write failed'),
+    );
+    await expect(
+      service.authorize({ nodeId: 'node', tokenValue: 'test' }),
+    ).resolves.toEqual({ ok: true, id: 'user' });
+  });
+
+  it('still fails closed when the entitlement lookup fails', async () => {
+    store.findAccessToken.mockResolvedValue({ id: 'token', userId: 'user' });
+    store.getNodeForControl.mockResolvedValue({
+      id: 'node',
+      active: true,
+      protocol: 'hysteria2',
+    });
+    store.getSessionIdentity.mockResolvedValue({
+      id: 'user',
+      status: 'active',
+    });
+    entitlements.getNodeAccess.mockRejectedValueOnce(
+      new Error('entitlement unavailable'),
+    );
+    await expect(
+      service.authorize({ nodeId: 'node', tokenValue: 'test' }),
+    ).rejects.toThrow('entitlement unavailable');
+    expect(store.markTokenUsed).not.toHaveBeenCalled();
+  });
 });

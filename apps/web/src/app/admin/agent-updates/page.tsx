@@ -63,6 +63,13 @@ const states: Record<string, string> = {
   RUNNING: "逐台发布中",
 };
 const endpoint = "/api/admin/agent-updates";
+const inFlight = [
+  "DOWNLOADING",
+  "VERIFYING",
+  "INSTALLING",
+  "CHECKING",
+  "ROLLING_BACK",
+];
 
 export default function AgentUpdatesPage() {
   const { token } = useAuth();
@@ -127,27 +134,79 @@ export default function AgentUpdatesPage() {
       setNotice("版本已签名保存，可以选择节点发布。");
     });
   }
+  function downloadConfig(config: { id: string }) {
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(config, null, 2)], {
+        type: "application/json",
+      }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `agent-enrollment-${config.id}.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
   function enroll(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const body = Object.fromEntries(new FormData(event.currentTarget));
     void action(async () => {
-      const config = await apiRequest<{ id: string }>(
-        `${endpoint}/installations`,
-        { method: "POST", token, body },
-      );
-      const url = URL.createObjectURL(
-        new Blob([JSON.stringify(config, null, 2)], {
-          type: "application/json",
+      downloadConfig(
+        await apiRequest<{ id: string }>(`${endpoint}/installations`, {
+          method: "POST",
+          token,
+          body,
         }),
       );
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `agent-enrollment-${config.id}.json`;
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
       setNotice(
         "登记配置已下载，含一次性凭据。请按安装说明在对应节点安装更新器，连接后即可下发版本。",
       );
+    });
+  }
+  function reissue(item: Installation) {
+    if (
+      !window.confirm(
+        `为 ${item.server.name}（${item.serviceUnit}）重新生成凭据？旧凭据立即失效，需要把新配置重新安装到该节点。`,
+      )
+    )
+      return;
+    void action(async () => {
+      downloadConfig(
+        await apiRequest<{ id: string }>(
+          `${endpoint}/installations/${item.id}/reissue`,
+          { method: "POST", token },
+        ),
+      );
+      setNotice("新凭据配置已下载，请在该节点重新执行安装器。");
+    });
+  }
+  function disable(item: Installation) {
+    if (
+      !window.confirm(
+        `停用 ${item.server.name}（${item.serviceUnit}）的更新器？它排队中的任务会被取消，之后无法领取新任务。`,
+      )
+    )
+      return;
+    void action(async () => {
+      await apiRequest(`${endpoint}/installations/${item.id}/disable`, {
+        method: "POST",
+        token,
+      });
+      setNotice("更新器已停用。需要恢复时可重新生成凭据。");
+    });
+  }
+  function abandon(job: UpdateJob, name: string) {
+    if (
+      !window.confirm(
+        `确认 ${name} 已不会再执行这次更新（例如机器已下线或已人工恢复）？任务将标记为失败并释放全局更新名额，本批次后续节点不会执行。`,
+      )
+    )
+      return;
+    void action(async () => {
+      await apiRequest(`${endpoint}/jobs/${job.id}/abandon`, {
+        method: "POST",
+        token,
+      });
+      setNotice("任务已人工终止，请到该机器确认 Agent 实际运行版本。");
     });
   }
   function publish() {
@@ -281,6 +340,7 @@ export default function AgentUpdatesPage() {
                   <th>架构</th>
                   <th>当前版本</th>
                   <th>最近连接</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -317,6 +377,32 @@ export default function AgentUpdatesPage() {
                       {item.lastSeenAt
                         ? formatDateTime(item.lastSeenAt)
                         : "等待首次安装"}
+                      {!item.enabled && (
+                        <>
+                          <br />
+                          <small>已停用</small>
+                        </>
+                      )}
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="ghost-button compact"
+                        disabled={busy}
+                        onClick={() => reissue(item)}
+                      >
+                        {item.enabled ? "重发凭据" : "重新启用"}
+                      </button>
+                      {item.enabled && (
+                        <button
+                          type="button"
+                          className="ghost-button compact"
+                          disabled={busy}
+                          onClick={() => disable(item)}
+                        >
+                          停用
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -339,7 +425,7 @@ export default function AgentUpdatesPage() {
         </Panel>
         <Panel
           title="发布进度"
-          copy="每 5 秒刷新；状态为节点最后一次确认的结果。离线节点恢复连接后继续原任务。"
+          copy="每 5 秒刷新；状态为节点最后一次确认的结果。离线节点恢复连接后继续原任务；确认机器已永久失联时可人工终止，释放更新名额。"
         >
           {!data?.rollouts.length && <p className="panel-copy">暂无发布记录</p>}
           {data?.rollouts.map((rollout) => (
@@ -373,16 +459,33 @@ export default function AgentUpdatesPage() {
                 )}
               </div>
               <ul>
-                {rollout.jobs.map((job) => (
-                  <li key={job.id}>
-                    {job.position + 1}.{" "}
-                    {data.installations.find((i) => i.id === job.installationId)
-                      ?.server.name ?? job.installationId}{" "}
-                    → {rollout.release.version} ·{" "}
-                    {states[job.status] ?? job.status}
-                    {job.message && <p className="panel-copy">{job.message}</p>}
-                  </li>
-                ))}
+                {rollout.jobs.map((job) => {
+                  const name =
+                    data.installations.find((i) => i.id === job.installationId)
+                      ?.server.name ?? job.installationId;
+                  return (
+                    <li key={job.id}>
+                      {job.position + 1}. {name} → {rollout.release.version} ·{" "}
+                      {states[job.status] ?? job.status}
+                      {inFlight.includes(job.status) && (
+                        <>
+                          {" "}
+                          <button
+                            type="button"
+                            className="ghost-button compact"
+                            disabled={busy}
+                            onClick={() => abandon(job, name)}
+                          >
+                            人工终止
+                          </button>
+                        </>
+                      )}
+                      {job.message && (
+                        <p className="panel-copy">{job.message}</p>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             </section>
           ))}

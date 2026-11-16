@@ -323,6 +323,129 @@ export class AgentUpdatesService {
     });
   }
 
+  // There is deliberately no lease expiry (ADR 0016). After investigating a lost
+  // machine, an administrator explicitly releases the fleet slot it holds.
+  async abandonJob(id: string, actorId: string) {
+    return this.locked(async (tx) => {
+      const job = await tx.agentUpdateJob.findUnique({ where: { id } });
+      if (!job) throw new NotFoundException('更新任务不存在。');
+      if (job.status === 'QUEUED')
+        throw new ConflictException('排队中的任务请使用停止发布。');
+      if (terminalUpdateStates.includes(job.status))
+        throw new ConflictException('任务已经结束。');
+      await tx.agentUpdateJob.update({
+        where: { id },
+        data: {
+          status: 'FAILED',
+          activeKey: null,
+          finishedAt: new Date(),
+          message: `管理员人工终止（原状态 ${job.status}），请到机器上确认 Agent 实际版本。`,
+        },
+      });
+      await tx.agentRollout.updateMany({
+        where: { id: job.rolloutId, status: 'RUNNING' },
+        data: { status: 'PAUSED' },
+      });
+      await tx.agentUpdateJob.updateMany({
+        where: { rolloutId: job.rolloutId, status: 'QUEUED' },
+        data: {
+          status: 'CANCELED',
+          activeKey: null,
+          finishedAt: new Date(),
+          message: '前一台更新被人工终止，后续节点未执行。',
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: 'agent.update.abandon',
+          targetType: 'AgentUpdateJob',
+          targetId: id,
+          metadata: {
+            installationId: job.installationId,
+            previousStatus: job.status,
+          },
+        },
+      });
+      return { ok: true };
+    });
+  }
+
+  async disableInstallation(id: string, actorId: string) {
+    return this.locked(async (tx) => {
+      const installation = await tx.agentInstallation.findUnique({
+        where: { id },
+      });
+      if (!installation) throw new NotFoundException('更新器不存在。');
+      const inFlight = await tx.agentUpdateJob.findFirst({
+        where: { activeKey: id, status: { not: 'QUEUED' } },
+        select: { id: true },
+      });
+      if (inFlight)
+        throw new ConflictException(
+          '这台机器有执行中的更新，请先人工终止该任务。',
+        );
+      await tx.agentUpdateJob.updateMany({
+        where: { activeKey: id, status: 'QUEUED' },
+        data: {
+          status: 'CANCELED',
+          activeKey: null,
+          finishedAt: new Date(),
+          message: '更新器已停用',
+        },
+      });
+      await tx.agentInstallation.update({
+        where: { id },
+        data: { enabled: false },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: 'agent.installation.disable',
+          targetType: 'AgentInstallation',
+          targetId: id,
+        },
+      });
+      return { ok: true };
+    });
+  }
+
+  // Rotates the machine credential, e.g. after a lost token or a reinstall.
+  // The previous token stops working immediately.
+  async reissueToken(id: string, actorId: string) {
+    return this.locked(async (tx) => {
+      const installation = await tx.agentInstallation.findUnique({
+        where: { id },
+        include: { server: { select: { retiredAt: true } } },
+      });
+      if (!installation) throw new NotFoundException('更新器不存在。');
+      if (installation.server.retiredAt)
+        throw new ConflictException('服务器已停用，不能重新登记。');
+      const key = await this.signingKey(tx);
+      const token = randomBytes(32).toString('base64url');
+      const row = await tx.agentInstallation.update({
+        where: { id },
+        data: { tokenHash: hash(token), enabled: true },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: 'agent.installation.reissue',
+          targetType: 'AgentInstallation',
+          targetId: id,
+        },
+      });
+      return {
+        id: row.id,
+        token,
+        apiBaseUrl: apiPublicUrl(),
+        publicKey: key.publicKey,
+        architecture: row.architecture,
+        serviceUnit: row.serviceUnit,
+      };
+    });
+  }
+
   async authenticate(authorization?: string) {
     if (!authorization?.startsWith('Bearer '))
       throw new UnauthorizedException('更新器身份验证失败。');

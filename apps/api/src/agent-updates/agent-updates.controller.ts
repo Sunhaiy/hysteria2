@@ -73,6 +73,24 @@ export class AdminAgentUpdatesController {
   ) {
     return this.updates.cancelRollout(id, actor.sub);
   }
+  @Post('jobs/:id/abandon') abandon(
+    @Param('id') id: string,
+    @CurrentPrincipal() actor: SessionPrincipal,
+  ) {
+    return this.updates.abandonJob(id, actor.sub);
+  }
+  @Post('installations/:id/disable') disable(
+    @Param('id') id: string,
+    @CurrentPrincipal() actor: SessionPrincipal,
+  ) {
+    return this.updates.disableInstallation(id, actor.sub);
+  }
+  @Post('installations/:id/reissue') reissue(
+    @Param('id') id: string,
+    @CurrentPrincipal() actor: SessionPrincipal,
+  ) {
+    return this.updates.reissueToken(id, actor.sub);
+  }
 }
 
 @Controller('api/agent-updater')

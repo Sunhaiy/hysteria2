@@ -266,6 +266,49 @@ integration('Agent updates PostgreSQL integration', () => {
       ),
     ).rejects.toThrow('在线');
   });
+  it('releases a lost machine slot only through explicit abandonment', async () => {
+    const rollout = await create();
+    const claim = await service.poll(a.id, heartbeat);
+    await expect(service.disableInstallation(a.id, 'admin')).rejects.toThrow(
+      '人工终止',
+    );
+    await service.abandonJob(claim.job!.id, 'admin');
+    expect(
+      (await db.agentRollout.findUniqueOrThrow({ where: { id: rollout.id } }))
+        .status,
+    ).toBe('PAUSED');
+    expect(
+      await db.agentUpdateJob.count({ where: { activeKey: { not: null } } }),
+    ).toBe(0);
+    await expect(service.abandonJob(claim.job!.id, 'admin')).rejects.toThrow(
+      '已经结束',
+    );
+    await expect(
+      service.report(a.id, claim.job!.id, {
+        ...heartbeat,
+        status: 'VERIFYING',
+        message: '',
+      }),
+    ).rejects.toThrow();
+  });
+  it('disables and re-enrolls an installation with a rotated credential', async () => {
+    await create();
+    await service.disableInstallation(b.id, 'admin');
+    expect(
+      (
+        await db.agentUpdateJob.findFirstOrThrow({
+          where: { installationId: b.id },
+        })
+      ).status,
+    ).toBe('CANCELED');
+    await expect(service.authenticate(`Bearer ${b.token}`)).rejects.toThrow();
+    const reissued = await service.reissueToken(b.id, 'admin');
+    expect(reissued.token).not.toBe(b.token);
+    await expect(service.authenticate(`Bearer ${b.token}`)).rejects.toThrow();
+    expect((await service.authenticate(`Bearer ${reissued.token}`)).id).toBe(
+      b.id,
+    );
+  });
   it.each(['FAILED', 'ROLLED_BACK'])(
     'stops later nodes after %s',
     async (status) => {

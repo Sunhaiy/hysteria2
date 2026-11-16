@@ -25,7 +25,11 @@ At most one job is in flight fleet-wide. The first selected installation is the
 canary. Only confirmed success allows the next position to start. Failure pauses
 the rollout and cancels queued jobs. Cancellation never interrupts an in-flight
 replacement. There is deliberately no lease expiration: offline is not proof
-that an installation stopped executing. An uncertain task keeps its slot.
+that an installation stopped executing. An uncertain task keeps its slot until
+an administrator, after investigating the machine, explicitly abandons it; that
+marks it FAILED, pauses its rollout and cancels queued jobs. An installation with
+no in-flight job can be disabled. Reissuing rotates its token and re-enables it,
+which covers lost credentials and reinstalls without a second enrollment.
 
 The updater persists intent before replacement. Old binaries remain available;
 the Agent entry is an atomically switched symlink. It verifies the signed
