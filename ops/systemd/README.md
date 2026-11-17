@@ -18,6 +18,7 @@ NODE_SYNC_ENABLED=true
 NODE_OPERATIONS_ENABLED=true
 NODE_SYNC_INTERVAL_MS=60000
 NODE_SYNC_TIMEOUT_MS=120000
+NODE_USER_SYNC_STALE_SECONDS=600
 NODE_PRESENCE_INTERVAL_MS=15000
 NODE_HEALTH_INTERVAL_MS=60000
 NODE_CHECK_REQUEST_POLL_MS=2000
@@ -43,6 +44,17 @@ BACKUP_RESTORE_ENABLED=true
 BACKUP_MAINTENANCE_DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/postgres
 ```
 
+User synchronization and traffic collection retain separate success times and
+errors. VLESS readiness also requires a successful user sync within
+`NODE_USER_SYNC_STALE_SECONDS` (default 600, minimum 60); native Hysteria HTTP
+authentication does not require a provisioned user list. A successful traffic
+poll must never hide a failed or stale VLESS user refresh.
+
+The database regression test is opt-in: set `NODE_SYNC_DATABASE_TEST=1` and
+`NODE_SYNC_TEST_DATABASE_URL` to an isolated loopback PostgreSQL instance, then
+run `pnpm --filter @hysteria/api exec jest --runInBand node-sync-health.integration.spec.ts`.
+It creates and drops its own random schema and refuses non-loopback hosts.
+
 Keep `EPAY_RECONCILIATION_ENABLED=false` during a dark deployment. Enable it
 only after both ¥0.01 channel tests have been created and the merchant query
 endpoint has returned a correctly signed result for them. This flag starts the
@@ -62,6 +74,22 @@ Run exactly one `hysteria2-sync-worker.service` instance. During a release,
 stop the old worker only after the new API and web health checks pass, then
 start the new worker before switching the `current` symlink. Do not restart the
 Hysteria2 or Xray units as part of this procedure.
+
+The worker stops scheduling new tasks on SIGTERM and drains in-flight work
+before closing database connections. Its systemd unit disables automatic
+SIGKILL after the stop timeout. Require the old worker PID to be gone before
+starting its replacement; a stop timeout is a blocked cutover, not permission
+to overlap collectors or force-kill a traffic import. The first upgrade from
+an older worker without this drain behavior requires supervised quiescence of
+its active collection/import work before stopping it.
+
+`POST /api/admin/nodes/:id/sync` returns HTTP 202 after queuing a request. Only
+the worker consumes it, in batches of four at two-second intervals. Requests
+expire after 120 seconds, duplicates for one node coalesce, and failed manual
+runs fall back to the normal synchronization schedule. Production rejects a
+request if the shared Redis queue is unavailable; it never queues only in API
+process memory. The worker also retries inactive-node traffic acknowledgements
+every 60 seconds without claiming new traffic or provisioning users.
 
 Verify that both processes loaded the selected release rather than a stale
 working directory:

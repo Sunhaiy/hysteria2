@@ -12,6 +12,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SecretCipherService } from '../security/secret-cipher.service';
+import { hasFreshUserSync } from './node-sync-health';
 
 const onlinePresenceFreshnessMs = 45_000;
 const syncFreshnessMs = 150_000;
@@ -287,22 +288,26 @@ export class NodeControlService {
   }
 
   async markUserSyncSuccess(nodeId: string) {
-    await this.prisma.node.update({
-      where: { id: nodeId },
-      data: { lastUserSyncAt: new Date() },
-    });
+    await this.prisma.$executeRaw`
+      UPDATE "Node"
+      SET "lastUserSyncAt" = CURRENT_TIMESTAMP AT TIME ZONE 'UTC',
+          "lastUserSyncError" = NULL,
+          "lastSyncError" = "lastTrafficSyncError",
+          "updatedAt" = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
+      WHERE "id" = ${nodeId}
+    `;
   }
 
   async markTrafficSyncSuccess(nodeId: string) {
-    const syncedAt = new Date();
-    await this.prisma.node.update({
-      where: { id: nodeId },
-      data: {
-        lastTrafficAt: syncedAt,
-        lastSyncAt: syncedAt,
-        lastSyncError: null,
-      },
-    });
+    await this.prisma.$executeRaw`
+      UPDATE "Node"
+      SET "lastTrafficAt" = CURRENT_TIMESTAMP AT TIME ZONE 'UTC',
+          "lastSyncAt" = CURRENT_TIMESTAMP AT TIME ZONE 'UTC',
+          "lastTrafficSyncError" = NULL,
+          "lastSyncError" = "lastUserSyncError",
+          "updatedAt" = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
+      WHERE "id" = ${nodeId}
+    `;
   }
 
   async markPresenceSuccess(nodeId: string) {
@@ -312,12 +317,33 @@ export class NodeControlService {
     });
   }
 
-  async markSyncFailure(nodeId: string, cause: unknown) {
-    const message = cause instanceof Error ? cause.message : String(cause);
-    await this.prisma.node.update({
-      where: { id: nodeId },
-      data: { lastSyncError: message.slice(0, 1000) },
-    });
+  async markSyncFailure(
+    nodeId: string,
+    cause: unknown,
+    scope: 'traffic' | 'users' = 'traffic',
+  ) {
+    const message = (
+      cause instanceof Error ? cause.message : String(cause)
+    ).slice(0, 1000);
+    // Compose the compatibility error in the same UPDATE as the scoped state.
+    // Concurrent traffic/user results cannot clear each other's failures.
+    if (scope === 'users') {
+      await this.prisma.$executeRaw`
+        UPDATE "Node"
+        SET "lastUserSyncError" = ${message},
+            "lastSyncError" = ${message},
+            "updatedAt" = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
+        WHERE "id" = ${nodeId}
+      `;
+    } else {
+      await this.prisma.$executeRaw`
+        UPDATE "Node"
+        SET "lastTrafficSyncError" = ${message},
+            "lastSyncError" = COALESCE("lastUserSyncError", ${message}),
+            "updatedAt" = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
+        WHERE "id" = ${nodeId}
+      `;
+    }
   }
 
   private async presentNode(node: Prisma.NodeGetPayload<object>) {
@@ -365,13 +391,16 @@ export class NodeControlService {
         continue;
       latestUsers.set(item.userId, item.concurrentClients);
     }
+    const syncError =
+      node.lastUserSyncError ?? node.lastTrafficSyncError ?? node.lastSyncError;
     const monitoringStatus = !node.active
       ? 'disabled'
-      : node.lastSyncError
+      : syncError
         ? 'error'
         : !node.lastSyncAt
           ? 'unknown'
-          : node.lastSyncAt.getTime() >= Date.now() - syncFreshnessMs
+          : node.lastSyncAt.getTime() >= Date.now() - syncFreshnessMs &&
+              hasFreshUserSync(node.protocol, node.lastUserSyncAt)
             ? 'online'
             : 'stale';
     return {
@@ -413,7 +442,9 @@ export class NodeControlService {
       speedDownMbps: node.speedDownMbps,
       monitoringStatus,
       lastSyncAt: node.lastSyncAt?.toISOString() ?? null,
-      lastSyncError: node.lastSyncError,
+      lastSyncError: syncError,
+      lastUserSyncError: node.lastUserSyncError,
+      lastTrafficSyncError: node.lastTrafficSyncError,
       lastUserSyncAt: node.lastUserSyncAt?.toISOString() ?? null,
       lastTrafficAt: node.lastTrafficAt?.toISOString() ?? null,
       lastPresenceAt: node.lastPresenceAt?.toISOString() ?? null,

@@ -21,6 +21,6 @@ ops/release/agent-inventory
 .DS_Store
 Thumbs.db
 
-# Python bytecode (ops/agent-updater installer tests)
+# Python bytecode
 __pycache__/
 *.pyc

@@ -244,6 +244,8 @@ export interface NodeRecord {
   monitoringStatus: "online" | "stale" | "error" | "unknown" | "disabled";
   lastSyncAt?: string | null;
   lastSyncError?: string | null;
+  lastUserSyncError?: string | null;
+  lastTrafficSyncError?: string | null;
   concurrentUsers: number;
   createdAt: string;
   updatedAt: string;

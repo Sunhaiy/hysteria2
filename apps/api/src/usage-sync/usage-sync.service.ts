@@ -12,6 +12,7 @@ import {
 import { NodeControlService } from '../domain/node-control.service';
 import { EntitlementService } from '../entitlement/entitlement.service';
 import { NodeAdapterRegistry } from '../integrations/node.adapter';
+import { UnknownTrafficAcknowledgementError } from '../integrations/node-traffic-client.service';
 import { QuotaEnforcementService } from '../kick-service/quota-enforcement.service';
 
 @Injectable()
@@ -19,6 +20,11 @@ export class UsageSyncService {
   private readonly logger = new Logger(UsageSyncService.name);
   private readonly activeNodeSyncs = new Map<string, Promise<unknown>>();
   private trafficImportTail: Promise<unknown> = Promise.resolve();
+  private readonly unknownAckWarnings = new Map<string, number>();
+  private readonly deferredAcknowledgements = new Map<
+    string,
+    { nodeId: string; externalId: string; retryAt: number }
+  >();
 
   constructor(
     private readonly store: ControlPlaneStoreService,
@@ -89,6 +95,29 @@ export class UsageSyncService {
     }
   }
 
+  async reconcileInactiveNodeAcknowledgements() {
+    const nodes = (await this.nodes.getNodesForControl()).filter(
+      (node) => !node.active,
+    );
+    for (let offset = 0; offset < nodes.length; offset += 2) {
+      await Promise.all(
+        nodes.slice(offset, offset + 2).map(async (node) => {
+          try {
+            await this.withNodeLock(
+              node.id,
+              () => this.reconcileTrafficAcknowledgements(node),
+              'ack',
+            );
+          } catch (error) {
+            this.logger.warn(
+              `Traffic acknowledgement recovery failed on ${node.id}: ${String(error)}`,
+            );
+          }
+        }),
+      );
+    }
+  }
+
   private async syncNodeRecord(
     node: Awaited<ReturnType<NodeControlService['getNodeForControl']>> & object,
     provision = true,
@@ -128,12 +157,18 @@ export class UsageSyncService {
     }
     const failure = trafficError ?? provisionError;
     if (failure !== undefined) {
-      try {
-        await this.nodes.markSyncFailure(node.id, failure);
-      } catch (markError) {
-        this.logger.warn(
-          `Failed to record sync error for node ${node.id}: ${String(markError)}`,
-        );
+      for (const [scope, cause] of [
+        ['traffic', trafficError],
+        ['users', provisionError],
+      ] as const) {
+        if (cause === undefined) continue;
+        try {
+          await this.nodes.markSyncFailure(node.id, cause, scope);
+        } catch (markError) {
+          this.logger.warn(
+            `Failed to record ${scope} sync error for node ${node.id}: ${String(markError)}`,
+          );
+        }
       }
       throw failure instanceof Error
         ? failure
@@ -150,6 +185,7 @@ export class UsageSyncService {
   private async importTraffic(
     node: Awaited<ReturnType<NodeControlService['getNodeForControl']>> & object,
   ) {
+    await this.reconcileTrafficAcknowledgements(node);
     const batch = await this.nodeClient.claimTrafficBatch(node);
     // Different nodes often meter the same accounts in different orders.
     // Keep remote collection concurrent but serialize worker-owned billing.
@@ -165,11 +201,64 @@ export class UsageSyncService {
         await this.enforcement.enqueue(userId, node.id);
       }
     }
+    await this.store.markTrafficEnforcementQueued(node.id, batch.id);
 
     await this.nodeClient.acknowledgeTrafficBatch(node, batch.id);
     await this.store.acknowledgeTrafficBatch(node.id, batch.id);
     await this.nodes.markTrafficSyncSuccess(node.id);
     return impactedUsers;
+  }
+
+  private async reconcileTrafficAcknowledgements(
+    node: Awaited<ReturnType<NodeControlService['getNodeForControl']>> & object,
+  ) {
+    const deferredIds: string[] = [];
+    for (const [key, receipt] of this.deferredAcknowledgements) {
+      if (receipt.retryAt <= Date.now())
+        this.deferredAcknowledgements.delete(key);
+      else if (receipt.nodeId === node.id) deferredIds.push(receipt.externalId);
+    }
+    const pending = await this.store.getPendingTrafficAcknowledgements(
+      node.id,
+      deferredIds,
+    );
+    for (const batch of pending) {
+      if (!batch.enforcementQueuedAt) {
+        for (const { userId } of batch.rollups) {
+          if (!(await this.entitlements.getNodeAccess(userId, node.id)).allowed)
+            await this.enforcement.enqueue(userId, node.id);
+        }
+        await this.store.markTrafficEnforcementQueued(
+          node.id,
+          batch.externalId,
+        );
+      }
+      try {
+        await this.nodeClient.acknowledgeTrafficBatch(node, batch.externalId);
+        await this.store.acknowledgeTrafficBatch(node.id, batch.externalId);
+      } catch (error) {
+        if (!(error instanceof UnknownTrafficAcknowledgementError)) throw error;
+        if (this.deferredAcknowledgements.size >= 1024) {
+          const oldest = [...this.deferredAcknowledgements.keys()][0];
+          if (oldest) this.deferredAcknowledgements.delete(oldest);
+        }
+        this.deferredAcknowledgements.set(`${node.id}:${batch.externalId}`, {
+          nodeId: node.id,
+          externalId: batch.externalId,
+          retryAt: Date.now() + 60_000,
+        });
+        // Old Agents have no durable receipt history. Keep these rows APPLIED
+        // for investigation; never invent an ACK, replay billing, or starve
+        // fresh traffic behind unverifiable history.
+        const lastWarning = this.unknownAckWarnings.get(node.id) ?? 0;
+        if (Date.now() - lastWarning > 60_000) {
+          this.logger.warn(
+            `Historical traffic acknowledgement requires reconciliation on ${node.id}`,
+          );
+          this.unknownAckWarnings.set(node.id, Date.now());
+        }
+      }
+    }
   }
 
   private withNodeLock<T>(

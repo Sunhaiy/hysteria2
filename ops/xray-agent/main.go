@@ -9,14 +9,18 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	proxymancommand "github.com/xtls/xray-core/app/proxyman/command"
@@ -50,6 +54,7 @@ type agent struct {
 	stateFile        string
 	mu               sync.Mutex
 	pending          *trafficBatch
+	lastAckID        string
 	services         map[string]string
 	manager          serviceManager
 	controlMu        sync.Mutex
@@ -159,9 +164,43 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	log.Printf("Xray control agent listening on %s for inbound %q", listen, inboundTag)
-	if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+	stopContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	listener, err := net.Listen("tcp", listen)
+	if err != nil {
 		log.Fatal(err)
+	}
+	log.Printf("Xray control agent listening on %s for inbound %q", listen, inboundTag)
+	if err := serveAgent(stopContext, server, listener, 20*time.Second); err != nil {
+		_ = conn.Close()
+		log.Fatal(err)
+	}
+}
+
+func serveAgent(ctx context.Context, server *http.Server, listener net.Listener, shutdownTimeout time.Duration) error {
+	served := make(chan error, 1)
+	go func() { served <- server.Serve(listener) }()
+	select {
+	case err := <-served:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		// Shutdown closes listeners immediately but waits for active handlers.
+		// Keep the process and its Xray gRPC connection alive until that wait ends.
+		drainContext, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := server.Shutdown(drainContext); err != nil {
+			_ = server.Close()
+			<-served
+			return fmt.Errorf("drain agent HTTP requests: %w", err)
+		}
+		err := <-served
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
 	}
 }
 
@@ -445,17 +484,36 @@ func (a *agent) acknowledgeTraffic(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(w, r, &input); err != nil {
 		return
 	}
+	if strings.TrimSpace(input.ID) == "" {
+		writeError(w, http.StatusBadRequest, "traffic batch id is required")
+		return
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if input.ID == a.lastAckID && (a.pending == nil || a.pending.ID != input.ID) {
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
 	if a.pending == nil || input.ID != a.pending.ID {
 		writeError(w, http.StatusConflict, "traffic batch is not pending")
+		return
+	}
+	// Record the ACK before removing pending traffic so a lost response can be
+	// retried after restart. The sidecar preserves the old pending-file format.
+	if err := a.persistLastAcknowledgement(input.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if err := os.Remove(a.stateFile); err != nil && !os.IsNotExist(err) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if err := syncStateDirectory(a.stateFile); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	a.pending = nil
+	a.lastAckID = input.ID
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -498,6 +556,20 @@ func (a *agent) collectTraffic(
 }
 
 func (a *agent) loadPendingBatch() error {
+	ackRaw, err := os.ReadFile(a.stateFile + ".last-ack")
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err == nil {
+		var receipt acknowledgeRequest
+		if err := json.Unmarshal(ackRaw, &receipt); err != nil {
+			return err
+		}
+		if strings.TrimSpace(receipt.ID) == "" {
+			return errors.New("invalid persisted acknowledgement")
+		}
+		a.lastAckID = receipt.ID
+	}
 	raw, err := os.ReadFile(a.stateFile)
 	if os.IsNotExist(err) {
 		return nil
@@ -517,18 +589,56 @@ func (a *agent) loadPendingBatch() error {
 }
 
 func (a *agent) persistPendingBatch(batch *trafficBatch) error {
-	if err := os.MkdirAll(filepath.Dir(a.stateFile), 0o700); err != nil {
-		return err
-	}
 	raw, err := json.Marshal(batch)
 	if err != nil {
 		return err
 	}
-	temporary := a.stateFile + ".tmp"
-	if err := os.WriteFile(temporary, raw, 0o600); err != nil {
+	return persistTrafficState(a.stateFile, raw)
+}
+
+func (a *agent) persistLastAcknowledgement(id string) error {
+	raw, err := json.Marshal(acknowledgeRequest{ID: id})
+	if err != nil {
 		return err
 	}
-	return os.Rename(temporary, a.stateFile)
+	return persistTrafficState(a.stateFile+".last-ack", raw)
+}
+
+func persistTrafficState(name string, raw []byte) error {
+	if err := os.MkdirAll(filepath.Dir(name), 0o700); err != nil {
+		return err
+	}
+	temporary := name + ".tmp"
+	file, err := os.OpenFile(temporary, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err = file.Write(raw); err == nil {
+		err = file.Sync()
+	}
+	closeErr := file.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if err := os.Rename(temporary, name); err != nil {
+		return err
+	}
+	return syncStateDirectory(name)
+}
+
+func syncStateDirectory(name string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	directory, err := os.Open(filepath.Dir(name))
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }
 
 func randomID() string {

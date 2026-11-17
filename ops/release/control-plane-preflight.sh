@@ -31,7 +31,18 @@ cd "$release_dir"
 test -f apps/api/prisma/migrations/20260825120000_node_runtime_control/migration.sql
 test -f apps/api/dist/src/main.js
 test -f apps/web/.next/BUILD_ID
-pnpm --filter @hysteria/api exec prisma migrate status
+case "${MIGRATION_PHASE:-complete}" in
+  expand)
+    "$node_bin" ops/release/staged-migrations.mjs expand-status "$release_dir"
+    ;;
+  complete)
+    pnpm --filter @hysteria/api exec prisma migrate status
+    ;;
+  *)
+    echo "MIGRATION_PHASE must be expand or complete" >&2
+    exit 2
+    ;;
+esac
 "$node_bin" apps/api/prisma/verify-runtime-agent-inventory.js "$agent_checks_file"
 curl --silent --show-error --fail --max-time 10 "$api_url" >/dev/null
 curl --silent --show-error --fail --max-time 10 "$web_url" >/dev/null
@@ -119,6 +130,10 @@ while IFS='|' read -r label base_url secret service expected_status; do
         const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
         if (value.sessionRevocation !== "suxin-session-revoke-v1") {
           console.error("Running VLESS core does not confirm live session revocation");
+          process.exit(1);
+        }
+        if (value.trafficAcknowledgement !== "suxin-traffic-ack-v1") {
+          console.error("Running Agent does not confirm durable traffic acknowledgement recovery");
           process.exit(1);
         }
       ' "$capabilities_file"

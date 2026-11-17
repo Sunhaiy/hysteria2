@@ -5,6 +5,7 @@ import { NestFactory } from '@nestjs/core';
 import { OperationsService } from './operations/operations.service';
 import { SyncWorkerModule } from './sync-worker.module';
 import { UsageSyncService } from './usage-sync/usage-sync.service';
+import { NodeSyncRequestService } from './usage-sync/node-sync-request.service';
 import { NodeRuntimeCommandService } from './node-ops/node-runtime-command.service';
 import { NodeTrafficGuardService } from './node-ops/node-traffic-guard.service';
 import { BackupService } from './backups/backup.service';
@@ -29,7 +30,7 @@ function retentionDaysFromEnv(name: string, fallback: number) {
   return Number.isFinite(configured) ? Math.max(configured, 1) : fallback;
 }
 
-class RecurringTask {
+export class RecurringTask {
   private timer: NodeJS.Timeout | undefined;
   private inFlight: Promise<void> | undefined;
   private stopped = false;
@@ -47,9 +48,12 @@ class RecurringTask {
     else this.schedule();
   }
 
-  stop() {
+  stop(): Promise<void> {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
+    // A timeout only ends the scheduler's wait. The underlying operation may
+    // still own a reset/apply/ACK sequence and must settle before DB teardown.
+    return this.inFlight?.catch(() => undefined) ?? Promise.resolve();
   }
 
   private schedule() {
@@ -106,6 +110,7 @@ class RecurringTask {
 async function bootstrap() {
   const app = await NestFactory.createApplicationContext(SyncWorkerModule);
   const sync = app.get(UsageSyncService);
+  const syncRequests = app.get(NodeSyncRequestService);
   const enforcement = app.get(QuotaEnforcementService);
   const operations = app.get(OperationsService);
   const runtime = app.get(NodeRuntimeCommandService);
@@ -200,6 +205,24 @@ async function bootstrap() {
     process.env.NODE_SYNC_ENABLED === 'true' ||
     process.env.HYSTERIA_SYNC_ENABLED === 'true';
   if (syncEnabled) {
+    tasks.push(
+      new RecurringTask(
+        'Manual node sync request polling',
+        2_000,
+        120_000,
+        async () => {
+          await syncRequests.processPending();
+        },
+      ),
+      new RecurringTask(
+        'Traffic acknowledgement recovery',
+        60_000,
+        120_000,
+        async () => {
+          await sync.reconcileInactiveNodeAcknowledgements();
+        },
+      ),
+    );
     tasks.push(
       new RecurringTask('Quota disconnect retry', 2_000, 120_000, async () => {
         await enforcement.processDue();
@@ -476,8 +499,10 @@ async function bootstrap() {
   const shutdown = async (signal: string) => {
     if (stopping) return;
     stopping = true;
-    for (const task of tasks) task.stop();
-    logger.log(`Stopping after ${signal}`);
+    const draining = tasks.map((task) => task.stop());
+    logger.log(`Draining active work after ${signal}`);
+    await Promise.all(draining);
+    logger.log('Active work drained; closing worker resources');
     await app.close();
   };
 
@@ -487,9 +512,11 @@ async function bootstrap() {
   for (const task of tasks) task.start();
 }
 
-void bootstrap().catch((error: unknown) => {
-  logger.error(
-    `Worker startup failed: ${error instanceof Error ? error.stack : String(error)}`,
-  );
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  void bootstrap().catch((error: unknown) => {
+    logger.error(
+      `Worker startup failed: ${error instanceof Error ? error.stack : String(error)}`,
+    );
+    process.exitCode = 1;
+  });
+}

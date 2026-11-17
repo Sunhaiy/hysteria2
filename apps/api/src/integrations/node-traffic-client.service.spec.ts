@@ -1,11 +1,65 @@
 import type { HttpService } from '@nestjs/axios';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
 import {
   NodeTrafficClientService,
   type TrafficNode,
 } from './node-traffic-client.service';
 
 describe('NodeTrafficClientService runtime control', () => {
+  it.each([401, 429, 500, 502, undefined])(
+    'does not clear native counters after a failed durable claim (%s)',
+    async (status) => {
+      const error = Object.assign(new Error('claim failed'), {
+        response: status ? { status } : undefined,
+      });
+      const http = {
+        post: jest.fn().mockReturnValue(throwError(() => error)),
+        get: jest.fn().mockReturnValue(of({ data: {} })),
+      };
+      const client = new NodeTrafficClientService(
+        http as unknown as HttpService,
+      );
+      await expect(
+        client.claimTrafficBatch({
+          id: 'hy',
+          protocol: 'hysteria2',
+          hostname: 'node.invalid',
+          port: 443,
+          trafficApiBaseUrl: 'http://stats.invalid',
+          trafficApiSecret: 'fixture',
+        }),
+      ).rejects.toBe(error);
+      expect(http.get).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([404, 405])(
+    'retains native Hysteria support for unsupported claim (%s)',
+    async (status) => {
+      const http = {
+        post: jest
+          .fn()
+          .mockReturnValue(throwError(() => ({ response: { status } }))),
+        get: jest
+          .fn()
+          .mockReturnValue(of({ data: { user: { tx: 1, rx: 2 } } })),
+      };
+      const client = new NodeTrafficClientService(
+        http as unknown as HttpService,
+      );
+      const batch = await client.claimTrafficBatch({
+        id: 'hy',
+        protocol: 'hysteria2',
+        hostname: 'node.invalid',
+        port: 443,
+        trafficApiBaseUrl: 'http://stats.invalid',
+        trafficApiSecret: 'fixture',
+      });
+      expect(batch.traffic).toEqual({ user: { tx: 1, rx: 2 } });
+      expect(batch.id).toMatch(/^legacy-hy-/);
+    },
+  );
+
   it('does not accept a legacy VLESS removed-user count as a live disconnect', async () => {
     const post = jest.fn().mockReturnValue(of({ data: { kicked: 1 } }));
     const client = new NodeTrafficClientService({

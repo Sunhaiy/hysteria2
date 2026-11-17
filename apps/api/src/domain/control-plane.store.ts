@@ -1915,6 +1915,29 @@ export class ControlPlaneStoreService {
     throw new ConflictException('Traffic batch could not be applied');
   }
 
+  async getPendingTrafficAcknowledgements(
+    nodeId: string,
+    deferredIds: string[] = [],
+  ) {
+    return this.prisma.usageImportBatch.findMany({
+      where: { nodeId, status: 'APPLIED', externalId: { notIn: deferredIds } },
+      orderBy: [{ appliedAt: 'desc' }, { id: 'desc' }],
+      take: 20,
+      select: {
+        externalId: true,
+        enforcementQueuedAt: true,
+        rollups: { distinct: ['userId'], select: { userId: true } },
+      },
+    });
+  }
+
+  async markTrafficEnforcementQueued(nodeId: string, externalId: string) {
+    await this.prisma.usageImportBatch.updateMany({
+      where: { nodeId, externalId, enforcementQueuedAt: null },
+      data: { enforcementQueuedAt: new Date() },
+    });
+  }
+
   async acknowledgeTrafficBatch(nodeId: string, externalId: string) {
     await this.prisma.usageImportBatch.update({
       where: { nodeId_externalId: { nodeId, externalId } },

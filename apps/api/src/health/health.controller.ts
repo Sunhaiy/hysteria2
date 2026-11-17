@@ -3,6 +3,7 @@ import { CacheService } from '../cache/cache.service';
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { apiPublicUrl, webPublicUrl } from '../common/public-url';
+import { userSyncStaleBefore } from '../domain/node-sync-health';
 
 @Controller('api/health')
 export class HealthController {
@@ -77,6 +78,7 @@ export class HealthController {
       );
       const staleBefore = new Date(Date.now() - staleSeconds * 1000);
       const pendingBefore = new Date(Date.now() - staleSeconds * 1000);
+      const usersStaleBefore = userSyncStaleBefore();
       const [staleNodes, pendingBatches] = await Promise.all([
         this.prisma.node.count({
           where: {
@@ -85,6 +87,15 @@ export class HealthController {
               { lastSyncAt: null },
               { lastSyncAt: { lt: staleBefore } },
               { lastSyncError: { not: null } },
+              { lastTrafficSyncError: { not: null } },
+              { lastUserSyncError: { not: null } },
+              {
+                protocol: 'VLESS_REALITY',
+                OR: [
+                  { lastUserSyncAt: null },
+                  { lastUserSyncAt: { lt: usersStaleBefore } },
+                ],
+              },
             ],
           },
         }),

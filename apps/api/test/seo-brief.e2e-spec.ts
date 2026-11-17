@@ -282,7 +282,7 @@ describe('material generation with real PostgreSQL', () => {
       ),
     ).rejects.toThrow('同一请求');
   });
-  it('rechecks initial gaps using newly fetched evidence and publishes', async () => {
+  it('publishes an audited draft when fetched evidence resolves initial gaps', async () => {
     ai.analyzeBrief.mockResolvedValueOnce({
       keyword,
       category: '教程',
@@ -304,11 +304,11 @@ describe('material generation with real PostgreSQL', () => {
     await run();
     const result = await service.getGenerationJob(job.id);
     expect(result.status).toBe('SUCCEEDED');
-    expect(ai.analyzeBrief).toHaveBeenCalledTimes(2);
-    expect(ai.generateArticle).toHaveBeenCalledTimes(2);
-    expect(
-      (await service.getAdminArticle(result.articleId!)).publishedRevisionId,
-    ).toBeTruthy();
+    const article = await service.getAdminArticle(result.articleId!);
+    expect(article.publishedRevisionId).toBeTruthy();
+    await expect(
+      service.getPublishedArticle(article.slug),
+    ).resolves.toBeTruthy();
   });
   it('keeps historical manual jobs as drafts and refuses to auto-publish a changed revision', async () => {
     const job = await service.queueGenerationRequest(

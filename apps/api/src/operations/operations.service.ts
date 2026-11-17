@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { CacheService } from '../cache/cache.service';
 import { pageResponse, parsePage, type PageQuery } from '../common/pagination';
 import { NodeControlService } from '../domain/node-control.service';
+import { hasFreshUserSync } from '../domain/node-sync-health';
 import { OnlinePresenceService } from '../domain/online-presence.service';
 import { NodeAdapterRegistry } from '../integrations/node.adapter';
 import { MonitoringService } from '../monitoring/monitoring.service';
@@ -117,11 +118,21 @@ export class OperationsService {
               _max: { observedAt: true },
             });
             const probe = await this.adapters.probeHealth(node);
+            const userSyncFresh = hasFreshUserSync(
+              node.protocol,
+              node.lastUserSyncAt,
+              checkedAt,
+            );
+            const error =
+              probe.error ??
+              node.lastSyncError ??
+              (userSyncFresh ? null : 'VLESS user synchronization is stale');
             const healthy =
               probe.agentReachable &&
               probe.coreHealthy !== false &&
               probe.publicEndpointReachable !== false &&
-              !node.lastSyncError;
+              !node.lastSyncError &&
+              userSyncFresh;
             await this.prisma.nodeHealthSnapshot.create({
               data: {
                 nodeId: node.id,
@@ -133,9 +144,7 @@ export class OperationsService {
                 onlineUsers: presence._sum.concurrentClients ?? 0,
                 userSyncAt: node.lastUserSyncAt
                   ? new Date(node.lastUserSyncAt)
-                  : node.lastSyncAt
-                    ? new Date(node.lastSyncAt)
-                    : null,
+                  : null,
                 trafficAt: node.lastTrafficAt
                   ? new Date(node.lastTrafficAt)
                   : node.lastSyncAt
@@ -144,11 +153,11 @@ export class OperationsService {
                 presenceAt: node.lastPresenceAt
                   ? new Date(node.lastPresenceAt)
                   : presence._max.observedAt,
-                error: probe.error ?? node.lastSyncError,
+                error,
                 checkedAt,
               },
             });
-            return { nodeId: node.id, healthy, ...probe };
+            return { nodeId: node.id, healthy, ...probe, error };
           } catch (error) {
             const message =
               error instanceof Error ? error.message : String(error);

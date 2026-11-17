@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'dotenv';
 import { QuotaEnforcementService } from './quota-enforcement.service';
@@ -39,9 +39,12 @@ databaseTests('QuotaEnforcementService PostgreSQL integration', () => {
     );
 
   beforeAll(async () => {
-    const env = parse(readFileSync(join(process.cwd(), '.env')));
+    const envFile = join(process.cwd(), '.env');
+    const env = existsSync(envFile) ? parse(readFileSync(envFile)) : {};
     const url = new URL(
-      process.env.QUOTA_TEST_DATABASE_URL ?? env.DATABASE_URL,
+      process.env.QUOTA_TEST_DATABASE_URL ??
+        process.env.DATABASE_URL ??
+        env.DATABASE_URL,
     );
     if (!['localhost', '127.0.0.1', '::1', '[::1]'].includes(url.hostname)) {
       throw new Error('Quota integration tests require a local database');

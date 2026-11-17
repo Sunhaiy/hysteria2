@@ -40,14 +40,20 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async get(key: string) {
+  async get(key: string, requireRedis = false) {
     if (this.redis?.status === 'ready') {
       return this.redis.get(key);
     }
+    this.assertMemoryFallbackAllowed(requireRedis);
     return this.memory.get(key) ?? null;
   }
 
-  async set(key: string, value: string, ttlSeconds?: number) {
+  async set(
+    key: string,
+    value: string,
+    ttlSeconds?: number,
+    requireRedis = false,
+  ) {
     if (this.redis?.status === 'ready') {
       if (ttlSeconds) {
         await this.redis.set(key, value, 'EX', ttlSeconds);
@@ -57,25 +63,28 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    this.assertMemoryFallbackAllowed(requireRedis);
     this.memory.set(key, value);
     if (ttlSeconds) {
       setTimeout(() => this.memory.delete(key), ttlSeconds * 1000).unref();
     }
   }
 
-  async del(key: string) {
+  async del(key: string, requireRedis = false) {
     if (this.redis?.status === 'ready') {
       await this.redis.del(key);
       return;
     }
+    this.assertMemoryFallbackAllowed(requireRedis);
     this.memory.delete(key);
   }
 
-  async addMember(key: string, value: string) {
+  async addMember(key: string, value: string, requireRedis = false) {
     if (this.redis?.status === 'ready') {
       await this.redis.sadd(key, value);
       return;
     }
+    this.assertMemoryFallbackAllowed(requireRedis);
     const members = new Set<string>(
       JSON.parse(this.memory.get(key) ?? '[]') as string[],
     );
@@ -83,19 +92,25 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     this.memory.set(key, JSON.stringify([...members]));
   }
 
-  async members(key: string): Promise<string[]> {
+  async members(key: string, requireRedis = false): Promise<string[]> {
     if (this.redis?.status === 'ready') return this.redis.smembers(key);
+    this.assertMemoryFallbackAllowed(requireRedis);
     return JSON.parse(this.memory.get(key) ?? '[]') as string[];
   }
 
-  async removeMember(key: string, value: string) {
+  async removeMember(key: string, value: string, requireRedis = false) {
     if (this.redis?.status === 'ready') {
       await this.redis.srem(key, value);
       return;
     }
+    this.assertMemoryFallbackAllowed(requireRedis);
     const members = new Set<string>(await this.members(key));
     members.delete(value);
     this.memory.set(key, JSON.stringify([...members]));
+  }
+
+  private assertMemoryFallbackAllowed(requireRedis: boolean) {
+    if (requireRedis) throw new Error('Shared Redis is unavailable');
   }
 
   async onModuleDestroy() {

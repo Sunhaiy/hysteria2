@@ -86,7 +86,6 @@ enum DestinationTargetType {
 }
 
 enum AdminPermission {
-  AGENT_UPDATES_MANAGE
   DESTINATION_AUDIT_READ
   ADMIN_PERMISSIONS_MANAGE
   SEO_CONTENT_MANAGE
@@ -562,68 +561,7 @@ model PlanOffer {
   @@index([planId, active, archivedAt])
 }
 
-model AgentRelease {
-  id           String @id @default(cuid())
-  version      String
-  architecture String
-  sha256       String
-  size         Int
-  manifest     String
-  signature    String
-  binary       Bytes
-  createdAt    DateTime @default(now())
-  createdBy    String
-  rollouts     AgentRollout[]
-  @@unique([version, architecture])
-}
-
-model AgentInstallation {
-  id             String @id @default(cuid())
-  serverId       String
-  serviceUnit    String
-  architecture   String
-  tokenHash      String @unique
-  currentVersion String @default("未连接")
-  currentSha256  String @default("")
-  lastSeenAt     DateTime?
-  enabled        Boolean @default(true)
-  createdAt      DateTime @default(now())
-  server         NodeServer @relation(fields: [serverId], references: [id])
-  jobs           AgentUpdateJob[]
-  @@unique([serverId, serviceUnit])
-}
-
-model AgentRollout {
-  id             String @id @default(cuid())
-  releaseId      String
-  idempotencyKey String @unique
-  targetHash     String
-  status         String @default("RUNNING")
-  createdBy      String
-  createdAt      DateTime @default(now())
-  release        AgentRelease @relation(fields: [releaseId], references: [id])
-  jobs           AgentUpdateJob[]
-}
-
-model AgentUpdateJob {
-  id             String @id @default(cuid())
-  rolloutId      String
-  installationId String
-  position       Int
-  status         String @default("QUEUED")
-  activeKey      String? @unique
-  message        String @default("")
-  startedAt      DateTime?
-  updatedAt      DateTime @updatedAt
-  finishedAt     DateTime?
-  rollout        AgentRollout @relation(fields: [rolloutId], references: [id])
-  installation   AgentInstallation @relation(fields: [installationId], references: [id])
-  @@unique([rolloutId, position])
-  @@index([installationId, status])
-}
-
 model NodeServer {
-  agentInstallations   AgentInstallation[]
   id                   String    @id @default(cuid())
   slug                 String    @unique
   name                 String
@@ -686,6 +624,8 @@ model Node {
   exclusiveAccessProfileId    String?
   lastSyncAt                  DateTime?
   lastSyncError               String?
+  lastUserSyncError           String?
+  lastTrafficSyncError        String?
   lastUserSyncAt              DateTime?
   lastTrafficAt               DateTime?
   lastPresenceAt              DateTime?
@@ -1150,6 +1090,7 @@ model UsageImportBatch {
   status       UsageImportBatchStatus @default(APPLIED)
   claimedAt    DateTime
   appliedAt    DateTime               @default(now())
+  enforcementQueuedAt DateTime?
   ackedAt      DateTime?
   totalTxBytes BigInt
   totalRxBytes BigInt

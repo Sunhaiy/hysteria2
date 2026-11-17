@@ -12,6 +12,8 @@ EnvironmentFile=/opt/hysteria2-control-plane/shared/app.env
 ExecStart=/usr/local/bin/node dist/src/sync-worker.js
 Restart=always
 RestartSec=5
+TimeoutStopSec=180
+SendSIGKILL=no
 
 [Install]
 WantedBy=multi-user.target

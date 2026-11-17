@@ -9,6 +9,8 @@ describe('UsageSyncService', () => {
     });
     const node = (id: string) => ({ id, active: true, protocol: 'hysteria2' });
     const store = {
+      getPendingTrafficAcknowledgements: jest.fn().mockResolvedValue([]),
+      markTrafficEnforcementQueued: jest.fn().mockResolvedValue(undefined),
       getNodeForControl: jest.fn((id: string) => Promise.resolve(node(id))),
       acknowledgeTrafficBatch: jest.fn(),
       markTrafficSyncSuccess: jest.fn(),
@@ -53,6 +55,8 @@ describe('UsageSyncService', () => {
   it('does not let an in-flight fast pass swallow the full permission refresh', async () => {
     const node = { id: 'vless', protocol: 'vless_reality', active: true };
     const store = {
+      getPendingTrafficAcknowledgements: jest.fn().mockResolvedValue([]),
+      markTrafficEnforcementQueued: jest.fn().mockResolvedValue(undefined),
       getNodesForControl: jest.fn().mockResolvedValue([node]),
       acknowledgeTrafficBatch: jest.fn(),
       markUserSyncSuccess: jest.fn(),
@@ -100,6 +104,8 @@ describe('UsageSyncService', () => {
   });
   it('applies and acknowledges one durable traffic batch', async () => {
     const store = {
+      getPendingTrafficAcknowledgements: jest.fn().mockResolvedValue([]),
+      markTrafficEnforcementQueued: jest.fn().mockResolvedValue(undefined),
       getNodesForControl: jest.fn().mockResolvedValue([
         {
           id: 'node_hk_core',
@@ -186,6 +192,8 @@ describe('UsageSyncService', () => {
       active: true,
     };
     const store = {
+      getPendingTrafficAcknowledgements: jest.fn().mockResolvedValue([]),
+      markTrafficEnforcementQueued: jest.fn().mockResolvedValue(undefined),
       getNodesForControl: jest.fn().mockResolvedValue([node]),
       getNodeProvisioningUsers: jest
         .fn()
@@ -284,7 +292,10 @@ describe('UsageSyncService', () => {
       getNodeAccess: jest.fn(),
     };
     const service = new UsageSyncService(
-      {} as never,
+      {
+        getPendingTrafficAcknowledgements: jest.fn().mockResolvedValue([]),
+        markTrafficEnforcementQueued: jest.fn().mockResolvedValue(undefined),
+      } as never,
       nodeClient as never,
       {
         withNodeLock: (_id: string, work: () => Promise<unknown>) => work(),
@@ -309,6 +320,7 @@ describe('UsageSyncService', () => {
     expect(nodes.markSyncFailure).toHaveBeenCalledWith(
       'node_vless',
       expect.objectContaining({ message: 'traffic endpoint 502' }),
+      'traffic',
     );
     expect(result[0]).toMatchObject({ nodeId: 'node_vless' });
     expect(String((result[0] as { error?: string }).error)).toContain('502');
@@ -325,6 +337,8 @@ describe('UsageSyncService', () => {
     let activeDatabaseWrites = 0;
     let maxConcurrentDatabaseWrites = 0;
     const store = {
+      getPendingTrafficAcknowledgements: jest.fn().mockResolvedValue([]),
+      markTrafficEnforcementQueued: jest.fn().mockResolvedValue(undefined),
       getNodesForControl: jest.fn().mockResolvedValue(nodes),
       acknowledgeTrafficBatch: jest.fn().mockResolvedValue(undefined),
       applyOnlineSnapshot: jest.fn().mockResolvedValue(undefined),
@@ -388,6 +402,8 @@ describe('UsageSyncService', () => {
     let activeAccessChecks = 0;
     let maxConcurrentAccessChecks = 0;
     const store = {
+      getPendingTrafficAcknowledgements: jest.fn().mockResolvedValue([]),
+      markTrafficEnforcementQueued: jest.fn().mockResolvedValue(undefined),
       getNodesForControl: jest.fn().mockResolvedValue([node]),
       acknowledgeTrafficBatch: jest.fn().mockResolvedValue(undefined),
       applyOnlineSnapshot: jest.fn().mockResolvedValue(undefined),
@@ -450,6 +466,8 @@ describe('UsageSyncService', () => {
       active: true,
     };
     const store = {
+      getPendingTrafficAcknowledgements: jest.fn().mockResolvedValue([]),
+      markTrafficEnforcementQueued: jest.fn().mockResolvedValue(undefined),
       getNodesForControl: jest.fn().mockResolvedValue([node]),
       acknowledgeTrafficBatch: jest.fn().mockResolvedValue(undefined),
       markUserSyncSuccess: jest.fn().mockResolvedValue(undefined),

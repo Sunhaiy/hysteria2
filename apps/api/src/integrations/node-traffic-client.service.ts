@@ -5,6 +5,12 @@ import { createConnection } from 'node:net';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
+export class UnknownTrafficAcknowledgementError extends Error {
+  constructor() {
+    super('The node cannot verify this historical traffic acknowledgement');
+  }
+}
+
 export interface TrafficNode {
   id: string;
   protocol: 'hysteria2' | 'vless_reality';
@@ -86,7 +92,13 @@ export class NodeTrafficClientService {
       );
       return data;
     } catch (error) {
-      if (node.protocol === 'vless_reality') throw error;
+      const status = (error as { response?: { status?: number } }).response
+        ?.status;
+      if (
+        node.protocol === 'vless_reality' ||
+        (status !== 404 && status !== 405)
+      )
+        throw error;
 
       // Compatibility for Hysteria Traffic Stats API. This is a single
       // read-and-reset call, which avoids the old read/apply/reset gap.
@@ -111,17 +123,31 @@ export class NodeTrafficClientService {
     if (node.trafficApiBaseUrl.startsWith('mock://')) return { ok: true };
     if (batchId.startsWith(`legacy-${node.id}-`)) return { ok: true };
 
-    const { data } = await firstValueFrom(
-      this.httpService.post<{ ok: boolean }>(
-        `${node.trafficApiBaseUrl}/traffic/ack`,
-        { id: batchId },
-        {
-          headers: { Authorization: node.trafficApiSecret },
-          timeout: REQUEST_TIMEOUT_MS,
-        },
-      ),
-    );
-    return data;
+    try {
+      const { data } = await firstValueFrom(
+        this.httpService.post<{ ok: boolean }>(
+          `${node.trafficApiBaseUrl}/traffic/ack`,
+          { id: batchId },
+          {
+            headers: { Authorization: node.trafficApiSecret },
+            timeout: REQUEST_TIMEOUT_MS,
+          },
+        ),
+      );
+      if (data?.ok !== true)
+        throw new Error('Traffic acknowledgement was not confirmed');
+      return data;
+    } catch (error) {
+      const response = (
+        error as { response?: { status?: number; data?: { message?: string } } }
+      ).response;
+      if (
+        response?.status === 409 &&
+        response.data?.message === 'traffic batch is not pending'
+      )
+        throw new UnknownTrafficAcknowledgementError();
+      throw error;
+    }
   }
 
   async controlService(

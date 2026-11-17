@@ -2279,6 +2279,10 @@ export class EntitlementService {
     const user = await tx.user.findUnique({ where: { id: userId } });
     if (!user) return false;
     const account = await this.ensureAccessAccount(userId, tx);
+    // A long-lived connection can cross a monthly reset without authenticating
+    // again. Materialize its billing period in the same transaction as usage,
+    // using the receipt's time so delayed batches never consume a later period.
+    await this.ensureV2CurrentBuckets(userId, tx, bucketStart);
     const physical = BigInt(counters.tx) + BigInt(counters.rx);
     const accountMultiplierBasisPoints = Math.max(
       nodeMultiplierBasisPoints,
@@ -2404,23 +2408,47 @@ export class EntitlementService {
         }
         if (bucket.grant.legacySubscriptionId) {
           subscriptionId = bucket.grant.legacySubscriptionId;
-          const cycle = await tx.subscriptionCycle.findFirst({
+          let cycle = await tx.subscriptionCycle.findFirst({
             where: {
               subscriptionId,
               startsAt: { lte: bucketStart },
               endsAt: { gt: bucketStart },
             },
           });
+          if (!cycle) {
+            cycle = await tx.subscriptionCycle.upsert({
+              where: {
+                subscriptionId_startsAt: {
+                  subscriptionId,
+                  startsAt: bucket.startsAt,
+                },
+              },
+              create: {
+                subscriptionId,
+                startsAt: bucket.startsAt,
+                endsAt: bucket.endsAt,
+                grantedBytes: bucket.grantedBytes,
+                consumedBytes: bucket.consumedBytes,
+              },
+              update: {},
+            });
+          }
           if (cycle) {
             subscriptionCycleId = cycle.id;
             const updated = await tx.subscriptionCycle.update({
               where: { id: cycle.id },
               data: { consumedBytes: { increment: consumed } },
             });
-            await tx.subscription.update({
-              where: { id: subscriptionId },
-              data: { consumedTrafficBytes: updated.consumedBytes },
-            });
+            const currentTime = new Date();
+            if (
+              updated.startsAt <= currentTime &&
+              updated.endsAt > currentTime
+            ) {
+              await tx.subscription.update({
+                where: { id: subscriptionId },
+                data: { consumedTrafficBytes: updated.consumedBytes },
+              });
+            }
           }
         }
       }
@@ -2575,14 +2603,19 @@ export class EntitlementService {
         where: { id: cycle.id },
         data: { consumedBytes: { increment: consumed } },
       });
-      await tx.subscription.update({
-        where: { id: subscription!.id },
-        data: {
-          includedTrafficBytes: cycle.grantedBytes + cycle.adjustmentBytes,
-          bonusTrafficBytes: BigInt(0),
-          consumedTrafficBytes: cycle.consumedBytes,
-        },
-      });
+      // Delayed receipts still belong to their original cycle, but must not
+      // replace the current-cycle compatibility totals shown to the member.
+      const currentTime = new Date();
+      if (cycle.startsAt <= currentTime && cycle.endsAt > currentTime) {
+        await tx.subscription.update({
+          where: { id: subscription!.id },
+          data: {
+            includedTrafficBytes: cycle.grantedBytes + cycle.adjustmentBytes,
+            bonusTrafficBytes: BigInt(0),
+            consumedTrafficBytes: cycle.consumedBytes,
+          },
+        });
+      }
       remaining -= consumed;
     }
     if (remaining > BigInt(0) && cycle) {
@@ -2710,14 +2743,20 @@ export class EntitlementService {
     }
   }
 
-  private async ensureV2CurrentBuckets(userId: string) {
-    const now = new Date();
-    const grants = await this.prisma.entitlementGrant.findMany({
+  private async ensureV2CurrentBuckets(
+    userId: string,
+    client: DbClient = this.prisma,
+    now = new Date(),
+  ) {
+    const grants = await client.entitlementGrant.findMany({
       where: {
         userId,
         status: EntitlementGrantStatus.ACTIVE,
         startsAt: { lte: now },
         endsAt: { gt: now },
+        quotaBuckets: {
+          none: { startsAt: { lte: now }, endsAt: { gt: now } },
+        },
         OR: [
           { quotaCadenceSnapshot: QuotaCadence.MONTHLY_RESET },
           {
@@ -2742,7 +2781,7 @@ export class EntitlementService {
         grant.endsAt,
         now,
       );
-      await this.prisma.quotaBucket.upsert({
+      await client.quotaBucket.upsert({
         where: {
           grantId_startsAt: { grantId: grant.id, startsAt: bounds.startsAt },
         },

@@ -1313,7 +1313,10 @@ describe('EntitlementService V2', () => {
         update: jest.fn(),
       },
       subscriptionCycle: { findFirst: jest.fn(), update: jest.fn() },
-      entitlementGrant: { count: jest.fn().mockResolvedValue(1) },
+      entitlementGrant: {
+        count: jest.fn().mockResolvedValue(1),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       subscription: {
         count: jest.fn(),
         findFirst: jest.fn().mockResolvedValue(null),
@@ -1414,7 +1417,10 @@ describe('EntitlementService V2', () => {
         update: jest.fn().mockResolvedValue({}),
       },
       quotaBucket: { findMany: jest.fn().mockResolvedValue([]) },
-      entitlementGrant: { count: jest.fn() },
+      entitlementGrant: {
+        count: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       trafficPack: {
         findMany: jest
           .fn()
@@ -1493,7 +1499,10 @@ describe('EntitlementService V2', () => {
         findMany: jest.fn().mockResolvedValue([bucket]),
         update: jest.fn().mockResolvedValue({}),
       },
-      entitlementGrant: { count: jest.fn() },
+      entitlementGrant: {
+        count: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       trafficPack: {
         findUnique: jest.fn(),
         findMany: jest
@@ -1669,6 +1678,7 @@ describe('EntitlementService V2', () => {
           findMany: jest.fn().mockResolvedValue([bucket]),
           update: jest.fn().mockResolvedValue({}),
         },
+        entitlementGrant: { findMany: jest.fn().mockResolvedValue([]) },
         trafficPack: { findUnique: jest.fn(), update: jest.fn() },
         subscriptionCycle: { findFirst: jest.fn(), update: jest.fn() },
         subscription: { update: jest.fn() },
@@ -1768,6 +1778,7 @@ describe('EntitlementService V2', () => {
       trafficPack: { findUnique: jest.fn(), update: jest.fn() },
       subscriptionCycle: { findFirst: jest.fn(), update: jest.fn() },
       subscription: { count: jest.fn(), update: jest.fn() },
+      entitlementGrant: { findMany: jest.fn().mockResolvedValue([]) },
       usageRollup: { create: jest.fn().mockResolvedValue({ id: 'usage_21x' }) },
     };
     const prisma = {
@@ -1868,6 +1879,7 @@ describe('EntitlementService V2', () => {
       trafficPack: { findUnique: jest.fn(), update: jest.fn() },
       subscriptionCycle: { findFirst: jest.fn(), update: jest.fn() },
       subscription: { count: jest.fn(), update: jest.fn() },
+      entitlementGrant: { findMany: jest.fn().mockResolvedValue([]) },
       usageRollup: {
         create: jest.fn().mockResolvedValue({ id: 'usage_mixed' }),
       },
@@ -1975,6 +1987,7 @@ describe('EntitlementService V2', () => {
         findFirst: jest.fn().mockResolvedValue(null),
         update: jest.fn(),
       },
+      entitlementGrant: { findMany: jest.fn().mockResolvedValue([]) },
       usageRollup: {
         create: jest.fn().mockResolvedValue({ id: 'usage_ultra_boundary' }),
       },

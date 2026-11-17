@@ -36,6 +36,12 @@ jobs:
       JWT_SECRET: ci-only-jwt-secret
       SETTINGS_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       NEXT_PUBLIC_API_BASE_URL: http://localhost:4000
+      QUOTA_DATABASE_TEST: '1'
+      QUOTA_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hysteria2_test
+      AUTH_TELEMETRY_DATABASE_TEST: '1'
+      AUTH_TELEMETRY_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hysteria2_test
+      NODE_SYNC_DATABASE_TEST: '1'
+      NODE_SYNC_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hysteria2_test
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -57,7 +63,35 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
-      - run: pnpm --filter @hysteria/api test:e2e
+      - name: Verify retired updater removal and migration staging
+        env:
+          RETIREMENT_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hysteria2_test
+        run: |
+          python3 ops/xray-agent/remove_agent_updater_test.py
+          node --test ops/release/staged-migrations.test.mjs
+          node --test apps/api/prisma/remove-agent-updates-migration.test.js
+      - name: Verify traffic billing against isolated schema
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hysteria2_test?schema=billing_test
+          BILLING_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hysteria2_test?schema=billing_test
+        run: |
+          pnpm --filter @hysteria/api exec prisma db push --skip-generate
+          pnpm --filter @hysteria/api test:billing
+      - name: Verify acknowledgement recovery against isolated schema
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hysteria2_test?schema=traffic_ack_test
+          TRAFFIC_ACK_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hysteria2_test?schema=traffic_ack_test
+        run: |
+          pnpm --filter @hysteria/api exec prisma db push --skip-generate
+          pnpm --filter @hysteria/api test:traffic-ack
+      - name: Verify HTTP and dedicated-database scenarios
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/seo_brief_test
+        run: |
+          psql postgresql://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE seo_brief_test'
+          pnpm --filter @hysteria/api exec prisma migrate deploy
+          pnpm --filter @hysteria/api prisma:seed
+          pnpm --filter @hysteria/api test:e2e --runInBand
       - run: pnpm build
       - name: Package Linux release artifact
         run: |
@@ -79,3 +113,17 @@ jobs:
         working-directory: ops/xray-agent
       - run: go test ./...
         working-directory: ops/destination-agent
+      - name: Build Linux node Agent binaries
+        working-directory: ops/xray-agent
+        run: |
+          mkdir -p "$RUNNER_TEMP/node-agents"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$RUNNER_TEMP/node-agents/xray-agent-linux-amd64" .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o "$RUNNER_TEMP/node-agents/xray-agent-linux-arm64" .
+          cd "$RUNNER_TEMP/node-agents"
+          sha256sum xray-agent-linux-* > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-agents
+          path: ${{ runner.temp }}/node-agents/
+          if-no-files-found: error
+          retention-days: 7

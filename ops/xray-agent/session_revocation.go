@@ -18,7 +18,10 @@ func (a *agent) capabilities(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"sessionRevocation": revocationMarker})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"sessionRevocation":      revocationMarker,
+		"trafficAcknowledgement": "suxin-traffic-ack-v1",
+	})
 }
 
 func (a *agent) requireSessionRevocation(ctx context.Context) error {
@@ -51,4 +54,3 @@ func (a *agent) verifyRunningCoreRevocation(ctx context.Context) error {
 	}
 	return nil
 }
-

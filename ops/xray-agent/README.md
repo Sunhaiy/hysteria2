@@ -60,8 +60,10 @@ Xray 或 Hysteria2。
 
 ## 3. 在管理后台添加节点
 
-后续需要从后台统一更新 Agent 时，参见 [独立更新器](../agent-updater/README.md)。
-该更新器只重启 Agent，保留流量批次状态，不重启代理核心。
+后台统一更新 Agent 的功能已移除。之前安装过独立更新器的节点，将 [remove-agent-updater.sh](remove-agent-updater.sh) 和 [remove-agent-updater.py](remove-agent-updater.py) 一起复制后卸载。
+卸载前检查全部实例，任何未完成任务记录都会阻止删除；没有 FORCE 模式。
+卸载只停止更新器，校验 Agent PID 不变，保留仍被 Agent 使用的二进制和流量批次状态，不重启 Agent、Xray 或 Hysteria2。
+数据库表和权限的删除安排在旧进程退出后，按[分阶段退役流程](../release/AGENT_UPDATER_RETIREMENT.md)执行。
 
 选择 `VLESS + REALITY`，填写：
 
@@ -76,3 +78,17 @@ VLESS 节点可以复用监控 Agent。Hysteria2 若仍使用原生统计 API，
 
 API 服务设置 `NODE_SYNC_ENABLED=true` 后，每分钟同步用户、流量与在线状态。也可以在节点编辑抽屉里点击“立即同步”。Xray 重启会丢失通过 HandlerService 动态加入的用户；下一次自动或手动同步会恢复。
 后台启动 Xray 后会立即触发一次用户同步，周期 worker 仍保留为失败重试。
+
+## 流量确认与手动升级
+
+`POST /traffic/ack` 会先把最后一个成功确认的批次写入
+`XRAY_AGENT_STATE_FILE.last-ack`，再删除 pending 批次。升级时同时保留原批次
+文件和这个 sidecar；重复确认不会重复计费，也不会清除新批次。
+`GET /capabilities` 返回 `trafficAcknowledgement: suxin-traffic-ack-v1`，
+发布前检查会验证正在运行的 Agent 已具备这一能力。
+
+新 Agent 收到 SIGTERM 后会等待在途 HTTP 请求完成，最多等待 20 秒，再关闭
+Xray gRPC 连接。首次从旧 Agent 升级时，旧进程还没有这个退出逻辑：必须先
+阻止新的管理同步请求、暂停唯一的采集 worker，并确认在途采集/入账已结束，
+然后仅替换并启动 Agent，保持 Xray/Hy2 核心和现有连接运行。保留原二进制及
+批次状态，以便核验失败时回退；确认能力和核心 PID 后恢复唯一的 worker。

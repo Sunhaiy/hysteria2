@@ -344,7 +344,7 @@ describe('Health (e2e)', () => {
     expect(matching).toHaveLength(1);
   });
 
-  it('supports standalone packs, immediate plan switching, and offer idempotency', async () => {
+  it('supports standalone packs, scheduled plan switching, and offer idempotency', async () => {
     const unique = Date.now();
     const adminAgent = request.agent(app.getHttpServer());
     const adminCsrf = await login(
@@ -368,7 +368,11 @@ describe('Health (e2e)', () => {
       .post(`/api/admin/customers/${userId}/balance-adjustments`)
       .set('X-CSRF-Token', adminCsrf)
       .set('Idempotency-Key', `v2-balance-${unique}`)
-      .send({ deltaCents: 50000, note: 'V2 commerce integration balance' })
+      .send({
+        expectedBalanceCents: 0,
+        deltaCents: 50000,
+        note: 'V2 commerce integration balance',
+      })
       .expect(201);
 
     const memberAgent = request.agent(app.getHttpServer());
@@ -507,7 +511,11 @@ describe('Health (e2e)', () => {
       .post(`/api/admin/customers/${userId}/balance-adjustments`)
       .set('X-CSRF-Token', adminCsrf)
       .set('Idempotency-Key', `wallet-commerce-funding-${unique}`)
-      .send({ deltaCents: 20_000, note: 'Wallet commerce E2E funding' })
+      .send({
+        expectedBalanceCents: 0,
+        deltaCents: 20_000,
+        note: 'Wallet commerce E2E funding',
+      })
       .expect(201);
 
     const memberAgent = request.agent(app.getHttpServer());
@@ -547,7 +555,11 @@ describe('Health (e2e)', () => {
         items: Array<{
           kind: string;
           productName: string;
-          buckets: Array<{ id: string; grantedBytes: number }>;
+          buckets: Array<{
+            id: string;
+            grantedBytes: number;
+            remainingBytes: number;
+          }>;
         }>;
       }
     ).items.find(
@@ -562,6 +574,7 @@ describe('Health (e2e)', () => {
       )
       .set('X-CSRF-Token', adminCsrf)
       .send({
+        expectedRemainingBytes: bucket!.remainingBytes,
         remainingBytes: remainingBeforeReset,
         reason: 'Wallet reset E2E usage',
       })
@@ -734,6 +747,7 @@ describe('Health (e2e)', () => {
           .set('X-CSRF-Token', adminCsrf)
           .set('Idempotency-Key', `group-buy-funding-${role}-${unique}`)
           .send({
+            expectedBalanceCents: 0,
             deltaCents: initialBalanceCents,
             note: 'Two-member group-buy E2E funding',
           })

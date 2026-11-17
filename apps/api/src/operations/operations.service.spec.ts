@@ -97,7 +97,7 @@ describe('OperationsService', () => {
 
   it('records protocol health and collection timestamps in the current snapshot', async () => {
     const observedAt = new Date('2026-08-24T09:59:50.000Z');
-    const lastSyncAt = '2026-08-24T09:59:00.000Z';
+    const lastSyncAt = new Date().toISOString();
     const prisma = {
       onlinePresence: {
         aggregate: jest.fn().mockResolvedValue({
@@ -122,6 +122,7 @@ describe('OperationsService', () => {
           trafficApiBaseUrl: 'https://agent.example.com',
           trafficApiSecret: 'secret',
           lastSyncAt,
+          lastUserSyncAt: lastSyncAt,
           lastSyncError: null,
         },
       ]),
@@ -155,6 +156,49 @@ describe('OperationsService', () => {
       presenceAt: observedAt,
     });
     expect(monitoring.runChecks).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not treat fresh metering as proof that VLESS users were synchronized', async () => {
+    const prisma = {
+      onlinePresence: {
+        aggregate: jest.fn().mockResolvedValue({
+          _sum: { concurrentClients: 0 },
+          _max: { observedAt: null },
+        }),
+      },
+      nodeHealthSnapshot: {
+        create: jest.fn().mockResolvedValue({}),
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
+    const store = {
+      getNodesForControl: jest.fn().mockResolvedValue([
+        {
+          id: 'vless-stale-users',
+          active: true,
+          lifecycleStatus: 'active',
+          protocol: 'vless_reality',
+          lastSyncAt: new Date().toISOString(),
+          lastUserSyncAt: null,
+          lastSyncError: null,
+        },
+      ]),
+    };
+    const adapters = {
+      probeHealth: jest.fn().mockResolvedValue({
+        agentReachable: true,
+        coreHealthy: true,
+        publicEndpointReachable: true,
+        latencyMs: 1,
+        error: null,
+      }),
+    };
+    const monitoring = { runChecks: jest.fn().mockResolvedValue({}) };
+    const service = createService({ prisma, store, adapters, monitoring });
+
+    await expect(service.probeHealth()).resolves.toEqual([
+      expect.objectContaining({ nodeId: 'vless-stale-users', healthy: false }),
+    ]);
   });
 
   it('records a successful presence collection even when nobody is online', async () => {

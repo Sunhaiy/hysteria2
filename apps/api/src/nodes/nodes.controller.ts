@@ -13,14 +13,14 @@ import { AdminGuard } from '../common/admin.guard';
 import { JwtAuthGuard } from '../common/jwt-auth.guard';
 import { CreateNodeDto, UpdateNodeDto } from '../contracts/http.dto';
 import { NodeControlService } from '../domain/node-control.service';
-import { UsageSyncService } from '../usage-sync/usage-sync.service';
+import { NodeSyncRequestService } from '../usage-sync/node-sync-request.service';
 
 @Controller('api/admin/nodes')
 @UseGuards(JwtAuthGuard, AdminGuard)
 export class NodesController {
   constructor(
     private readonly nodes: NodeControlService,
-    private readonly usageSync: UsageSyncService,
+    private readonly syncRequests: NodeSyncRequestService,
   ) {}
 
   @Get()
@@ -39,8 +39,9 @@ export class NodesController {
   }
 
   @Post(':id/sync')
+  @HttpCode(202)
   syncNode(@Param('id') id: string) {
-    return this.usageSync.syncNode(id);
+    return this.syncRequests.request(id);
   }
 
   @Delete(':id')

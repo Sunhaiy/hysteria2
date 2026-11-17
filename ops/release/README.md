@@ -1,5 +1,10 @@
 # Control-plane release runbook
 
+For the release retiring Agent updates, use the
+[staged retirement runbook](AGENT_UPDATER_RETIREMENT.md). Apply additive
+migrations before candidate startup and the updater-table contract only after
+old processes drain. Do not run the full migration directory before cutover.
+
 This release separates node access from the node process runtime:
 
 - Stopping access removes an endpoint from new subscriptions, authentication,

@@ -255,7 +255,21 @@ export class DestinationTelemetryService {
   async listAdminPermissions() {
     const users = await this.prisma.user.findMany({
       where: { role: 'ADMIN' },
-      include: { adminPermissions: true },
+      include: {
+        adminPermissions: {
+          // The candidate release runs before the retired updater enum value is
+          // removed. Exclude it in SQL before Prisma decodes enum values.
+          where: {
+            permission: {
+              in: [
+                AdminPermission.DESTINATION_AUDIT_READ,
+                AdminPermission.ADMIN_PERMISSIONS_MANAGE,
+                AdminPermission.SEO_CONTENT_MANAGE,
+              ],
+            },
+          },
+        },
+      },
       orderBy: { email: 'asc' },
     });
     return users.map((user) => ({
