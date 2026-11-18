@@ -60,10 +60,8 @@ Xray 或 Hysteria2。
 
 ## 3. 在管理后台添加节点
 
-后台统一更新 Agent 的功能已移除。之前安装过独立更新器的节点，将 [remove-agent-updater.sh](remove-agent-updater.sh) 和 [remove-agent-updater.py](remove-agent-updater.py) 一起复制后卸载。
-卸载前检查全部实例，任何未完成任务记录都会阻止删除；没有 FORCE 模式。
-卸载只停止更新器，校验 Agent PID 不变，保留仍被 Agent 使用的二进制和流量批次状态，不重启 Agent、Xray 或 Hysteria2。
-数据库表和权限的删除安排在旧进程退出后，按[分阶段退役流程](../release/AGENT_UPDATER_RETIREMENT.md)执行。
+后台支持签名 Agent 发布和逐台更新，安装独立更新器见 [Agent updater](../agent-updater/README.md)。
+更新器只重启登记的 Agent 服务，保留流量批次及 ACK 状态，不重启代理核心。
 
 选择 `VLESS + REALITY`，填写：
 

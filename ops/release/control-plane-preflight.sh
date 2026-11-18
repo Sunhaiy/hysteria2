@@ -31,18 +31,7 @@ cd "$release_dir"
 test -f apps/api/prisma/migrations/20260825120000_node_runtime_control/migration.sql
 test -f apps/api/dist/src/main.js
 test -f apps/web/.next/BUILD_ID
-case "${MIGRATION_PHASE:-complete}" in
-  expand)
-    "$node_bin" ops/release/staged-migrations.mjs expand-status "$release_dir"
-    ;;
-  complete)
-    pnpm --filter @hysteria/api exec prisma migrate status
-    ;;
-  *)
-    echo "MIGRATION_PHASE must be expand or complete" >&2
-    exit 2
-    ;;
-esac
+pnpm --filter @hysteria/api exec prisma migrate status
 "$node_bin" apps/api/prisma/verify-runtime-agent-inventory.js "$agent_checks_file"
 curl --silent --show-error --fail --max-time 10 "$api_url" >/dev/null
 curl --silent --show-error --fail --max-time 10 "$web_url" >/dev/null

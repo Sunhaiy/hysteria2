@@ -64,6 +64,7 @@ response-loss and database-failure injection, Agent persistence/restart tests,
 and held-row-lock authentication tests. CI explicitly enables the database
 tests instead of relying on the default skipped configuration.
 
-Agent updater retirement is separate: the application and updater executors
-are removed, followed by the destructive database contract only after old
-processes have drained. See `ops/release/AGENT_UPDATER_RETIREMENT.md`.
+The signed Agent update feature and independent updater executors remain active
+(ADR 0016). These fixes preserve their tables, credentials and release history.
+Agent upgrades must preserve pending traffic and the acknowledgement sidecar,
+and must never restart the Hysteria2 or Xray proxy core.

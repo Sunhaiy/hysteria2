@@ -195,6 +195,7 @@ export interface DestinationVisitResponse {
 }
 
 export type AdminPermissionName =
+  | "agent_updates.manage"
   | "destination_audit.read"
   | "admin_permissions.manage"
   | "seo_content.manage";

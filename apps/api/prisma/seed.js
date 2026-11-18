@@ -193,6 +193,11 @@ async function main() {
         userId: 'usr_admin',
         permission: 'SEO_CONTENT_MANAGE',
       },
+      {
+        id: 'perm_admin_agent_updates',
+        userId: 'usr_admin',
+        permission: 'AGENT_UPDATES_MANAGE',
+      },
     ],
   });
 

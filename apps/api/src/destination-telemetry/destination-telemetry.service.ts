@@ -257,11 +257,11 @@ export class DestinationTelemetryService {
       where: { role: 'ADMIN' },
       include: {
         adminPermissions: {
-          // The candidate release runs before the retired updater enum value is
-          // removed. Exclude it in SQL before Prisma decodes enum values.
+          // Keep each dedicated grant distinct when listing and editing access.
           where: {
             permission: {
               in: [
+                AdminPermission.AGENT_UPDATES_MANAGE,
                 AdminPermission.DESTINATION_AUDIT_READ,
                 AdminPermission.ADMIN_PERMISSIONS_MANAGE,
                 AdminPermission.SEO_CONTENT_MANAGE,
@@ -358,22 +358,34 @@ export class DestinationTelemetryService {
   private toPermission(
     value: UpdateAdminPermissionsDto['permissions'][number],
   ) {
+    if (value === 'agent_updates.manage') {
+      return AdminPermission.AGENT_UPDATES_MANAGE;
+    }
     if (value === 'destination_audit.read') {
       return AdminPermission.DESTINATION_AUDIT_READ;
     }
     if (value === 'seo_content.manage') {
       return AdminPermission.SEO_CONTENT_MANAGE;
     }
-    return AdminPermission.ADMIN_PERMISSIONS_MANAGE;
+    if (value === 'admin_permissions.manage') {
+      return AdminPermission.ADMIN_PERMISSIONS_MANAGE;
+    }
+    throw new BadRequestException('Unknown administrator permission');
   }
 
   private fromPermission(value: AdminPermission) {
+    if (value === AdminPermission.AGENT_UPDATES_MANAGE) {
+      return 'agent_updates.manage';
+    }
     if (value === AdminPermission.DESTINATION_AUDIT_READ) {
       return 'destination_audit.read';
     }
     if (value === AdminPermission.SEO_CONTENT_MANAGE) {
       return 'seo_content.manage';
     }
-    return 'admin_permissions.manage';
+    if (value === AdminPermission.ADMIN_PERMISSIONS_MANAGE) {
+      return 'admin_permissions.manage';
+    }
+    throw new BadRequestException('Unknown administrator permission');
   }
 }

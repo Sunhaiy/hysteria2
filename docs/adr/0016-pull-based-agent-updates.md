@@ -1,20 +1,6 @@
 # ADR 0016: Signed pull-based Agent updates
 
-Status: superseded, 2026-11-16. This release removes the feature's code and admin
-page. Database removal (`20261116120000_remove_agent_updates`) is the final
-contract phase, after old API/web/worker processes drain. The retirement is not
-complete until its tables, signing key and permission enum value are removed.
-See [the staged retirement runbook](../../ops/release/AGENT_UPDATER_RETIREMENT.md).
-
-Node updaters are uninstalled using `ops/xray-agent/remove-agent-updater.sh`
-and its Python helper. It checks all targets before mutation, refuses every
-unfinished journal, freezes updater cgroups to close the check/stop race and
-verifies serving Agent PIDs before deleting only updater units/binaries/secrets.
-There is no FORCE mode and no ignored stop failure. Agent executable links and
-their release files remain until a manual installation replaces them; no updater
-executor remains after successful removal. Agents are updated manually.
-
-Originally accepted, 2026-09-15.
+Status: accepted, 2026-09-15.
 
 ## Decision
 
